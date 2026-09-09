@@ -1,0 +1,49 @@
+# =============================================================================
+#  Open Remote - Einbinde-Datei ("adoptieren")
+# =============================================================================
+# Diese Datei ist der Einstiegspunkt zum Uebernehmen der Firmware in die eigene
+# ESPHome-/Home-Assistant-Installation - ohne das Repo lokal zu klonen.
+#
+# ESPHome-Oberflaeche -> "Neues Geraet" -> nicht verbinden -> Zahnrad/Editor ->
+# den Inhalt dieser Datei einfuegen (oder ueber den Button im README).
+# Dann secrets.yaml.example -> secrets.yaml ausfuellen und flashen.
+#
+# Die eigentliche Firmware + die eigenen Komponenten werden ueber die Pakete
+# unten direkt aus GitHub gezogen. Zum Anpassen an dein Zuhause: die
+# substitutions hier ueberschreiben, Details in ANPASSEN / README.
+# =============================================================================
+
+substitutions:
+  device_name:    "open-remote"
+  friendly_name:  "Open Remote"
+
+  # Home-Assistant-Entitaeten (auf deine aendern) - siehe README "An dein
+  # Zuhause anpassen". Nicht gesetzte zeigen im Menue nur "nicht verfuegbar".
+  ent_media:      "media_player.wohnzimmer"
+  ent_streamer:   "remote.wohnzimmer_streamer"
+  ent_adb:        "media_player.android_tv"
+  ent_wz_light:   "light.wohnzimmer"
+  ent_wz_cover:   "cover.wohnzimmer"
+  ent_sz_light:   "light.schlafzimmer"
+  ent_sz_cover:   "cover.schlafzimmer"
+  ent_ku_cover:   "cover.kueche"
+  ent_doorbell:   "input_boolean.klingel"
+  ent_door_lock:  "lock.haustuer"
+  ent_sh_test:    "input_boolean.beispielschalter"
+  ent_doorbell2:  "input_boolean.klingel_2"
+  ent_door_lock2: "lock.wohnungstuer"
+  ent_open_ok1:   "input_boolean.tuer_1_oeffnen_erlauben"
+  ent_open_ok2:   "input_boolean.tuer_2_oeffnen_erlauben"
+  ent_sleeptimer: "timer.sleeptimer"
+  ent_sleep_flag: "input_boolean.sleeptimer_laeuft"
+
+dashboard_import:
+  package_import_url: github://Aggro600/ESPHomeRemote/open-remote.yaml@master
+  import_full_config: false
+
+packages:
+  firmware: github://Aggro600/ESPHomeRemote/open-remote-firmware.yaml@master
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password

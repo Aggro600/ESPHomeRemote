@@ -1,0 +1,26 @@
+# =============================================================================
+#  Open Remote - Web-Installer-Variante (ohne Home Assistant)
+# =============================================================================
+# Zum Flashen direkt aus dem Browser (ESP Web Tools). Nach dem Aufspielen wird
+# das WLAN im Browser eingegeben (Improv ueber die serielle Verbindung) - eine
+# Home-Assistant-Installation ist dafuer nicht noetig.
+#
+#   Web-Installer:  https://aggro600.github.io/ESPHomeRemote/
+#
+# Wer ESPHome / Home Assistant nutzt, nimmt open-remote.yaml.
+#
+# Der veroeffentlichte Build nutzt neutrale Platzhalter-Secrets (Setup-WLAN,
+# unverschluesselte lokale API). Beim Booten ist das WLAN unkonfiguriert ->
+# Setup-Hotspot + Improv im Browser.
+# =============================================================================
+
+substitutions:
+  device_name:    "open-remote"
+  friendly_name:  "Open Remote"
+
+packages:
+  firmware: github://Aggro600/ESPHomeRemote/open-remote-firmware.yaml@master
+
+# WLAN nach dem Flashen im Browser setzen (persistiert im Flash und hat Vorrang
+# vor den kompilierten Platzhaltern).
+improv_serial:

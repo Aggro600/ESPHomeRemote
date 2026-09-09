@@ -1,0 +1,6 @@
+# Nicht ins Repository
+secrets.yaml
+.esphome/
+__pycache__/
+*.bin
+*.elf
