@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Remote &ndash; Web-Installer</title>
+<meta name="description" content="ESPHome-Firmware fuer die OMOTE / Open Remote Rev6 direkt aus dem Browser flashen.">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem 4rem;
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0b0f14; color: #e5e7eb;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  main { width: 100%; max-width: 40rem; }
+  h1 { font-size: 1.7rem; margin: 0 0 .3rem; }
+  .sub { color: #9aa4b2; margin: 0 0 2rem; }
+  .card {
+    background: #1a1f27; border: 1px solid #2a313c; border-radius: 14px;
+    padding: 1.5rem; margin: 1.25rem 0;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 .6rem; }
+  ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  li { margin: .3rem 0; }
+  a { color: #22c55e; }
+  code { background: #11161d; padding: .1rem .35rem; border-radius: 5px; font-size: .9em; }
+  .install { display: flex; justify-content: center; margin: .5rem 0 .25rem; }
+  esp-web-install-button { --esp-tools-button-color: #22c55e; --esp-tools-button-text-color: #06210f; }
+  .browsers { color: #9aa4b2; font-size: .85rem; text-align: center; margin-top: .4rem; }
+  footer { color: #6b7280; font-size: .85rem; margin-top: 2.5rem; text-align: center; }
+  .warn { background: #241c11; border-color: #4a3a1c; }
+</style>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</head>
+<body>
+<main>
+  <h1>Open Remote &ndash; Web-Installer</h1>
+  <p class="sub">ESPHome-Firmware fuer die OMOTE / Open&nbsp;Remote Rev6 &mdash; ohne Home Assistant, direkt aus dem Browser.</p>
+
+  <div class="card">
+    <h2>Flashen</h2>
+    <ol>
+      <li>Die Fernbedienung per <strong>USB-C</strong> an den Rechner stecken.</li>
+      <li>Auf <strong>&bdquo;Connect&ldquo;</strong> tippen und den seriellen Port waehlen.</li>
+      <li>Nach dem Aufspielen fragt der Browser das <strong>WLAN</strong> ab (Improv).</li>
+    </ol>
+    <div class="install">
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate">Connect &amp; Install</button>
+        <span slot="unsupported">Dein Browser unterstuetzt Web Serial nicht.</span>
+        <span slot="not-allowed">Web Serial ist hier nicht erlaubt (kein HTTPS?).</span>
+      </esp-web-install-button>
+    </div>
+    <p class="browsers">Funktioniert in <strong>Chrome</strong>, <strong>Edge</strong> und <strong>Opera</strong> am Desktop.</p>
+  </div>
+
+  <div class="card warn">
+    <h2>Hinweis</h2>
+    <p>Dieser Build nutzt neutrale Platzhalter-Zugangsdaten und eine
+    unverschluesselte lokale API. Wer die Fernbedienung in
+    <strong>Home&nbsp;Assistant / ESPHome</strong> betreibt, nutzt stattdessen
+    <a href="https://github.com/Aggro600/ESPHomeRemote"><code>open-remote.yaml</code></a>
+    (eigener API-Schluessel, OTA-Updates).</p>
+  </div>
+
+  <div class="card">
+    <h2>Was ist das?</h2>
+    <p>Universalfernbedienung auf ESP32-S3: tastenbedienbares Menue, Bluetooth-HID
+    fuer mehrere Geraete, zwei Sprachassistenten, Rev6-Tiefschlaf.
+    Quellcode und Details:
+    <a href="https://github.com/Aggro600/ESPHomeRemote">github.com/Aggro600/ESPHomeRemote</a>.</p>
+  </div>
+
+  <footer>
+    ESPHome &middot; <a href="https://github.com/Aggro600/ESPHomeRemote">Repository</a> &middot;
+    <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/LICENSE">MIT</a>
+  </footer>
+</main>
+</body>
+</html>
