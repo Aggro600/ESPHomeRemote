@@ -18,6 +18,11 @@ zugleich ein vollwertiges Home-Assistant-Geraet.
 - **Echter Rev6-Tiefschlaf**: gemessene ~1 mA, Wochen bis Monate Standby; Wecken per Taste, Hochheben (Lagesensor) oder Ladekabel
 - **Vollwertiges Home-Assistant-Geraet**: steuert Licht/Rollos/Szenen/Multiroom/Kameras und meldet Akku, BT-Verbindung, WLAN und alle Schalter zurueck
 - **Datenschutz-Mikrofonschalter**, der die Stromversorgung *physisch* kappt
+- **Optionale microSD-Karte**: eigenes App-Logo auf der Startseite/Medienseite fuer Apps ohne HA-Metadaten (Netflix, Disney+ &c.), Menue/Geraete wahlweise von der Karte (OpenRemote-Studio-kompatibel)
+- **Kamera-Integration**: Live-Bild und Klingel-Overlay direkt auf dem Display, auch aufs TV schaltbar
+- **IR lernen**: eigene Fernbedienungscodes per IR-Empfaenger einlesen, ohne Cloud-Datenbank
+- **YouTube-artige Zeitleiste** fuer laufende Wiedergabe, auf der Medienseite *und* als schlanker Balken direkt auf der Startseiten-Karte
+- **WLAN-Selbstheilung**: erkennt eine haengende Verbindung zu Home Assistant selbst und repariert sie automatisch (Sparmodus neu setzen, notfalls WLAN neu starten)
 - **Alles in ESPHome** — jede Funktion per YAML, keine Arduino-Toolchain
 
 ---
@@ -107,15 +112,62 @@ Assistentenwahl, Kopplungsknoepfe und einen Neustart-Knopf.
 ### Energie und Komfort
 
 - **Display-Timeout** sekundengenau einstellbar, von fuenf Sekunden bis "Nie".
-- **Hochheben weckt das Display** ueber den Lagesensor. Gemessen wird der
-  Winkel gegen die Lage beim Ablegen, mit Haltezeit — Wackeln auf der Couch
-  loest nicht aus. Empfindlichkeit dreistufig.
-- **Helligkeit** fuer Display und Tastenbeleuchtung, zusaetzlich ein
-  senkrechter Regler direkt auf der Startseite.
+- **Zwei Weckarten, unabhaengig einstellbar**: *Hochheben* (Winkel gegen die
+  Lage beim Ablegen, mit Haltezeit — Wackeln auf der Couch loest nicht aus)
+  oder *Bewegung* (jede Handhabung), je mit eigener Empfindlichkeit.
+- **"Auch beim Abdunkeln"**: dieselbe Bewegungs-/Hochheben-Erkennung hellt das
+  Display schon auf, wenn es nur abgedunkelt (nicht ausgeschaltet) ist.
+- **"Nicht abdunkeln bei Bewegung"**: solange die Fernbedienung gerade bewegt
+  wird, wird das Abdunkeln aufgeschoben — praktisch, wenn man sie laenger in
+  der Hand haelt. Eigene, unabhaengige Empfindlichkeit.
+- **Tiefschlaf einzeln zuschaltbar**: aus = immer sofort erreichbar (mehr
+  Verbrauch), an = nach eingestellter Zeit echter Tiefschlaf (Aufwachen dauert
+  dafuer laenger, siehe *Top-Features*).
+- **Helligkeit** fuer Display und Tastenbeleuchtung, zusaetzlich zwei
+  gleich lange senkrechte Regler direkt auf der Startseite (links Tasten-,
+  rechts Displayhelligkeit).
 - **Statuszeile konfigurierbar**: Bluetooth, WLAN, Akku und Uhr einzeln
-  abschaltbar.
+  abschaltbar. Die WLAN-Anzeige unterscheidet "WLAN da" (bernstein) von
+  "WLAN *und* Home Assistant verbunden" (gruen).
 - **Begruessungsbildschirm** nach jedem Start — eine verlaessliche Rueckmeldung,
-  dass neue Firmware laeuft.
+  dass neue Firmware laeuft. Bleibt stehen, bis man sie aktiv wegtippt/
+  wegdrueckt, auch nach einer laengeren Ruhephase.
+- **Reinigungsmodus**: Tasten und Touch fuer einstellbare Zeit gesperrt, zum
+  Abwischen des Displays. Start ueber Doppeldruck der Aus-Taste oder im Menue.
+
+### Medien / Streaming
+
+- **Ein Player fuer alles**: Titel/Interpret/Cover kommen wahlweise vom
+  Streamer, vom Chromecast oder direkt vom Fernseher — je nachdem, was gerade
+  laeuft. Laeuft etwas auf dem Fernseher, zeigt die Fernbedienung das.
+- **YouTube-artige Zeitleiste** mit Restzeit, sobald eine Dauer bekannt ist —
+  auf der grossen Medienseite mit Zeitangaben, auf der Startseiten-Karte als
+  schlanker Balken unter dem Interpreten.
+- **App-Erkennung ohne eigene Metadaten** (z. B. Netflix): zeigt das App-Logo
+  von der SD-Karte, solange kein Titel bekannt ist, und automatisch die echten
+  Metadaten, sobald welche kommen.
+
+### SD-Karte (optional)
+
+Mit bestueckter microSD-Karte (FAT32, Ordnerstruktur wie bei OpenRemote
+Studio, siehe [`sd-karte/README.md`](sd-karte/README.md)):
+
+- **App-Logos** fuer die Startseite und die Medienseite, eigene RLE-komprimierte
+  Bilder (~5-13 KB je Cover), per `make_sd_assets.py` aus Simple-Icons (CC0)
+  erzeugt.
+- **Menue/Geraete von der Karte** (`runtime.json`, `menu.json`,
+  `devices/*.ir`) statt fest in der Firmware — kompatibel zum Dateiformat von
+  OpenRemote Studio.
+- Karte und Mikrofon teilen sich Pins; das Mikrofon bleibt waehrend der
+  Kartennutzung nutzbar (kein Neustart noetig).
+
+### Kameras
+
+- **Live-Bild** einer Home-Assistant-Kamera direkt auf dem Display, mit
+  Weiterschalten zwischen mehreren Kameras.
+- **Klingel-Overlay**: sobald der konfigurierte Klingel-Sensor "on" wird,
+  kommt automatisch eine Seite mit Bild und "Tuer oeffnen".
+- Kamerabild wahlweise auch **auf den Fernseher** legbar.
 
 ---
 
@@ -127,9 +179,13 @@ Assistentenwahl, Kopplungsknoepfe und einen Neustart-Knopf.
 | `espidf_ble_keyboard` | BLE-HID mit mehreren Host-Plaetzen, Bluedroid-GATTS. Optionen `pointer:` und `alpha_keyboard:` blenden Maus und Tastatur aus der Geraetebeschreibung aus. |
 | `atv_voice` | Android-TV-Sprachdienst (ATVV) ueber BLE, ADPCM 16 kHz, mit weicher Begrenzung statt hartem Clipping. |
 | `tca8418` | Tastenfeld, interruptgesteuert. |
-| `lis3dh` | Lagesensor. Achtung: Bewegungsinterrupt und Lagemessung schliessen sich gegenseitig aus (Hochpassfilter im Ausgaberegister). |
+| `lis3dh` | Lagesensor. Bewegung/Hochheben werden per Software aus den rohen Beschleunigungswerten erkannt (entprellt, mehrere Messungen in Folge) — der eingebaute Hardware-Interrupt loeste sich als zu stoeranfaellig heraus (feuerte auch bei stillliegendem Geraet) und wird nicht mehr fuer Aktionen ausgewertet. |
 | `max17048` | MAX17048-Ladestandsanzeige (nur Spannung, kein Shunt) inkl. Laderate. |
 | `open_remote_core` | Sammelheader (esp_pm.h, Deep-Sleep-RTC-Merker, Multiroom-Tabelle), den ESPHome vor die Lambdas einbindet. |
+| `sd_card` | *(optional)* SPI-Treiber fuer die microSD-Karte inkl. HTTP-Konfig-Modus zum Hochladen von Dateien uebers WLAN. |
+| `menu_ui` | *(optional)* Datengetriebenes Menue/Icons aus `menu.json`/`runtime.json` von der SD-Karte. |
+| `runtime_config` | *(optional)* Liest die OpenRemote-Studio-kompatible Konfiguration (Geraete, Aktivitaeten) von der Karte. |
+| `ir_learn` | Lernt Infrarot-Codes ueber den eingebauten IR-Empfaenger ein, ohne Cloud-Datenbank. |
 
 ## Ohne Home Assistant: Web-Installer
 
@@ -204,11 +260,13 @@ Stufen:
    aendern: Media-Player/Streamer, Licht + Rollo Wohn-/Schlafzimmer,
    Kueche-Rollo, zwei Klingel-/Tuer-Paare, Sleeptimer.
 2. **Fest in einzelnen Menue-Seiten** hinterlegt (kein `substitutions`):
-   `page_room_ku` (Kueche), `page_room_bad` (Bad), `page_room_flur` (Flur),
-   `page_all_rooms`, `page_music*` (Multiroom-Audio), einzelne Szenen und eine
-   Steckdose. Diese IDs dort direkt ersetzen oder die Seite ignorieren — die
-   Navigation bricht davon nicht, nicht belegte Buttons zeigen "nicht
-   verfuegbar".
+   `page_room_ku` (Kueche), `page_room_bad` (Bad, inkl. Lüfter), `page_room_flur`
+   (Flur), `page_all_rooms`, `page_music*` (Multiroom-Audio), Kamera- und
+   Klingel-Seiten, einzelne Szenen und eine Steckdose. Diese IDs dort direkt
+   ersetzen oder die Seite ignorieren — die Navigation bricht davon nicht,
+   nicht belegte Buttons zeigen "nicht verfuegbar". (Die zunehmende Zahl neuer
+   Funktionen macht eine vollstaendige `substitutions`-Abdeckung aller
+   Entitaeten zu einem groesseren, noch offenen Umbau.)
 
 | Datei / Ordner | Zweck |
 |---|---|
@@ -220,6 +278,9 @@ Stufen:
 | `mikrofon-kontakttest.yaml` | eigenstaendiges Loetstellen-Pruefprogramm (siehe unten) |
 | `docs/` | technische Notizen (ATVV-Angleichungen) |
 | `secrets.yaml.example` | Vorlage fuer `secrets.yaml` |
+| `sd-karte/` | Beispiel-Ordnerstruktur + fertige Cover fuer die optionale microSD-Karte ([Details](sd-karte/README.md)) |
+| `make_sd_assets.py` | erzeugt die SD-Karten-Cover aus Simple-Icons (CC0) |
+| `open-remote-pm.h`, `open-remote-musik.h`, `open-remote-strom.h`, `open-remote-eingabe.h`, `open-remote-sd-bilder.h` | von der Firmware eingebundene Helfer (Energie, Multiroom, Tasteneingabe, SD-Cover) |
 
 ## Stand
 
@@ -238,6 +299,24 @@ Ein paar Punkte aus der Entwicklung, die auf andere Projekte uebertragbar sind:
 - **Ein Messwert, der zu einem Defekt passt, passt oft genauso gut zu einem
   gesunden Bauteil.** Beim Mikrofon-Test wird L/R deshalb erst dann bewertet,
   wenn die Datenleitungen als in Ordnung erkannt sind.
+- **Ein stromloses I2S-Mikrofon bremst die SD-Karte aus, wenn sich beide Pins
+  teilen**: Die ESD-Schutzdiode des abgeschalteten Mikrofons klemmt die
+  gemeinsame MISO-Leitung nach Low, und der SD-Treiber wartet dadurch vor
+  jedem Befehl bis zu 40 ms (`poll_busy`) — gemessen 5 KB/s statt 200+ KB/s,
+  unabhaengig vom SPI-Takt. Loesung: die Versorgung des Mikrofons waehrend der
+  Kartennutzung eingeschaltet lassen, nicht abschalten.
+- **Ein Hardware-Bewegungsinterrupt ist nicht automatisch zuverlaessiger als
+  Software-Polling.** Der LIS3DH-Interrupt fuer "Bewegung" loeste hier
+  wiederholt aus, obwohl das Geraet unbewegt lag — nachweisbar per Log
+  (Sensor-Auswertung meldete nichts, waehrend der Interrupt feuerte). Direktes
+  Auslesen der Rohwerte mit Entprellung (mehrere Messungen in Folge) war am
+  Ende zuverlaessiger als der eingebaute Interrupt-Pfad.
+- **Ein Timer, der "zur Sicherheit" im Hintergrund weiterlaeuft, kann
+  Zustaende zuruecksetzen, die man gerade bewusst haelt.** Ein "Menue nach X
+  Sekunden vergessen"-Mechanismus lief auch dann weiter, wenn eine andere
+  Seite (hier: der Begruessungsbildschirm) bewusst laenger stehen bleiben
+  sollte — er ist an der Ursache oft schwerer zu finden als am Symptom, weil
+  er nicht an der Stelle steht, die das Symptom zeigt.
 - Details zum ATVV-Audiopfad: `docs/atv-voice-vs-reference-firmware.md`.
 
 ## Lizenz
