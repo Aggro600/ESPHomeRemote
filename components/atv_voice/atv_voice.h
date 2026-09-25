@@ -266,6 +266,11 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   // Verlaufsspeicher fuer den Anti-Aliasing-Filter vor der
   // Dezimierung (Binomialfilter [1,3,3,1]/8).
   int32_t aa_hist_[3]{0, 0, 0};
+  // TEMPORAERER TEST (25.09.2026, s. Kommentar in on_mic_data_): Zustand fuer
+  // einen einfachen Hochpass gegen Brumm/Griffgeraeusche unterhalb der
+  // Sprachgrundfrequenz. Bei Revert: dieses Feld + den Filterblock entfernen.
+  float hp_prev_x_{0.0f};
+  float hp_prev_y_{0.0f};
   // Anzahl roher Mic-Samples, die nach Start noch verworfen
   // werden - ueberbrueckt den I2S/DC-Einschwingvorgang, der sonst als lauter
   // Knacks/Schwung am Anfang jeder Aufnahme landet.

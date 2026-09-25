@@ -164,6 +164,13 @@ esphome:
         - lambda: 'delay(300);'
     - priority: 100
       then:
+        # NUR fuer den Mikrofon-A/B-Test (Sabrina vs. BT25, 25.09.2026):
+        # Branch claude/modest-gauss-tktz74, NICHT master. Deutlich im Log
+        # markiert, damit beim Vergleich sofort klar ist, welcher Build laeuft
+        # (ESPHome-Logs bzw. "esphome logs" nach "TESTBUILD" durchsuchen).
+        # Nach dem Test: Sabrinas Paket-Import wieder auf @master zeigen lassen,
+        # dann verschwindet diese Zeile automatisch mit dem naechsten Flash.
+        - lambda: 'ESP_LOGW("TESTBUILD", "=== MIKROFON-A/B-TEST 25.09.2026: Hochpass ~120Hz probeweise an (atv_voice) - branch claude/modest-gauss-tktz74 ===");'
         # Laeuft NACH dem Setup aller Komponenten (auch der Template-Schalter).
         # Echter Boot (nicht Deep-Sleep-Wake) -> Testmodus zwangsweise AUS
         # (Stand 2026-09-16, Nutzerwunsch: echtes Stromsparverhalten als

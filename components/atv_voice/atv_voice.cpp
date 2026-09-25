@@ -670,6 +670,23 @@ void AtvVoice::on_mic_data_(const std::vector<uint8_t> &data) {
       sample = filtered;
     }
 
+    // TEMPORAERER TEST (25.09.2026): einfacher Hochpass, Eckfrequenz ~120 Hz
+    // (unterhalb jeder Sprachgrundfrequenz), VOR den Pegel-Messwerten und vor
+    // dem Gain. Andere Achse als die schon mehrfach real durchgemessene
+    // Gain-/AGC-Abstimmung (s. Kommentare bei `gain:`/`agc:` in der YAML) -
+    // die galt als ausgereizt (3.0/4.0/10.0 fix und AGC mit Deckel 6.5 wurden
+    // alle schon probiert und wieder verworfen). Soll Netzbrumm/tiefes
+    // Griffrauschen aus dem MS3625 wegfiltern, das sonst mitverstaerkt wird -
+    // noch NICHT an echter Hardware verifiziert. Bei schlechterem Ergebnis
+    // einfach diesen Block + hp_prev_x_/hp_prev_y_ wieder entfernen.
+    {
+      const float hp_alpha = 0.955f;
+      const float hp_out = hp_alpha * (this->hp_prev_y_ + (float) sample - this->hp_prev_x_);
+      this->hp_prev_x_ = (float) sample;
+      this->hp_prev_y_ = hp_out;
+      sample = (int32_t) hp_out;
+    }
+
     // Level stats on the raw, pre-gain sample — tells us what the mic itself
     // is actually picking up, independent of gain/encoding/BLE.
     const int32_t abs_sample = sample < 0 ? -sample : sample;
