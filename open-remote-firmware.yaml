@@ -1362,8 +1362,19 @@ interval:
   - interval: 250ms
     then:
       - if:
+          # Nutzerwunsch 2026-09-26: "Hochdimmen bei Bewegung" (dim_wake) muss
+          # unabhaengig vom Weckmodus funktionieren - vorher gab es dim_wake nur,
+          # wenn motion_mode zufaellig auch "Hochheben" war. Der Winkel-Ansatz hier
+          # braucht aber die unfilterten, schwerkraft-behafteten Werte, die der Chip
+          # NUR im "Hochheben"-Register-Modus liefert (s. apply_motion_sens) - bei
+          # anderem Weckmodus stehen hier nur Hochpass-gefilterte Werte, der Winkel
+          # waere bedeutungslos. Deshalb bleibt DIESER Block (Winkel-Erkennung) an
+          # motion_mode == 2 gebunden; die eigentliche Entkopplung von dim_wake
+          # passiert im Ruck-Block direkt darunter (funktioniert mit jedem
+          # Register-Modus) - der deckt den abgedunkelten Fall jetzt IMMER ab,
+          # unabhaengig vom Weckmodus.
           condition:
-            lambda: "return (id(disp_off) || (id(disp_dimmed) && id(dim_wake))) && id(motion_mode) == 2;"
+            lambda: "return id(disp_off) && id(motion_mode) == 2;"
           then:
             - lambda: |-
                 uint8_t d[6];
@@ -1481,8 +1492,19 @@ interval:
   - interval: 250ms
     then:
       - if:
+          # Nutzerwunsch 2026-09-26: dim_wake (Hochdimmen aus dem abgedunkelten
+          # Zustand) darf NICHT mehr an motion_mode haengen - vorher lief dieser
+          # Block nur bei motion_mode == 1, war also bei "Hochheben" oder "Aus" als
+          # Weckmodus komplett wirkungslos. Die Ruck-Erkennung braucht (anders als
+          # der Winkel-Block oben) keine bestimmte Chip-Registerkonfiguration -
+          # eine Differenz zweier aufeinanderfolgender Messungen zeigt eine
+          # Bewegung so oder so, unabhaengig davon, ob die Schwerkraft im Rohwert
+          # steckt oder herausgefiltert ist. Deshalb jetzt zwei getrennte Faelle:
+          # disp_off + motion_mode==1 bleibt fuer das eigentliche Aufwecken aus dem
+          # Ruhezustand (Weckmodus-Auswahl bleibt hier massgeblich); disp_dimmed +
+          # dim_wake laeuft ab jetzt IMMER, ganz gleich welcher Weckmodus aktiv ist.
           condition:
-            lambda: "return (id(disp_off) || (id(disp_dimmed) && id(dim_wake))) && id(motion_mode) == 1;"
+            lambda: "return (id(disp_off) && id(motion_mode) == 1) || (id(disp_dimmed) && id(dim_wake));"
           then:
             - lambda: |-
                 uint8_t d[6];
@@ -4074,7 +4096,7 @@ script:
           lv_label_set_text(id(h_cov_h), "GANZ: Das Bild wird vollständig gezeigt, es können Ränder bleiben. VOLL: Es füllt die ganze Fläche, die Ränder werden abgeschnitten. Gilt für die Startseite.");
           lv_label_set_text(id(h_motion), "Was die Remote im Ruhezustand von selbst aufweckt. Aus: nur Tasten und Touch. Bewegung: schon ein Anstoßen. Hochheben: erst, wenn sie aus der Ablage gehoben wird.");
           lv_label_set_text(id(h_sens), "Wie stark die Remote bewegt werden muss. Rechts = empfindlicher, aber auch mehr ungewollte Weckungen, etwa durch Erschütterungen am Tisch.");
-          lv_label_set_text(id(h_dim_wake), "AN: Bewegung bzw. Hochheben (siehe oben, je nach „Aufwecken bei“) hellt die Remote schon auf, wenn sie nur abgedunkelt ist - nicht erst, wenn sie ganz aus ist. AUS: wie bisher, dann holt erst ein Tipp sie aus dem Abgedunkelten zurück.");
+          lv_label_set_text(id(h_dim_wake), "AN: schon ein Anstoßen hellt die Remote auf, wenn sie nur abgedunkelt ist - nicht erst, wenn sie ganz aus ist. Unabhängig von „Aufwecken bei“ oben, funktioniert also auch wenn dort „Aus“ oder „Hochheben“ eingestellt ist. AUS: wie bisher, dann holt erst ein Tipp sie aus dem Abgedunkelten zurück.");
           lv_label_set_text(id(h_dim_hold), "AN: Solange sich die Remote bewegt, dunkelt sie gar nicht erst ab und schaltet auch nicht aus - praktisch, wenn man sie länger in der Hand hält. Kostet selbst kaum Strom (ein kurzer Sensor-Check alle 250 ms), aber indirekt mehr: Das Display bleibt dann länger hell, auch wenn nur der Tisch wackelt oder man im Auto sitzt - und das Display ist der größte Verbraucher. Darum standardmäßig AUS.");
           lv_label_set_text(id(h_dim_sens), "Eigene Empfindlichkeit für die beiden Optionen oben, getrennt von „Empfindlichkeit“ bei Aufwecken bei. Rechts = empfindlicher, aber auch mehr Fehlauslöser.");
           lv_label_set_text(id(h_assi), "Google: Die Mikrofon-Taste startet die Google-Sprachsuche am Streamer, wie bei der Originalfernbedienung. Home Assistant: Die Abfrage geht an Assist in Home Assistant, zum Beispiel für Smart-Home-Befehle. Tippen schaltet um. Das Mikrofon-Symbol in SmartTube funktioniert immer.");
