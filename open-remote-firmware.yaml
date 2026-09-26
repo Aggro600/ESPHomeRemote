@@ -1046,6 +1046,35 @@ globals:
   - {id: bw_z,           type: int,       restore_value: false, initial_value: "0"}
   - {id: bw_have,        type: bool,      restore_value: false, initial_value: "false"}
   - {id: bw_cnt,         type: int,       restore_value: false, initial_value: "0"}
+  # Nutzerwunsch 2026-09-26: "Nur Menue-Taste weckt" (motion_mode 3) braucht ein
+  # verlaessliches "die Anzeige ist gerade aus/wurde noch nicht geweckt" - anders
+  # als disp_off (initial_value false, wacht also nach einem echten Tiefschlaf-
+  # Neustart faelschlich schon als "an" auf, siehe on_key) startet dieses Flag
+  # bewusst auf true und wird nur von wake_backlight (echtes Aufwecken) wieder
+  # auf false gesetzt - zusaetzlich ueberall dort auf true, wo auch disp_off auf
+  # true geht (backlight_idle_timeout).
+  - {id: awaiting_wake,  type: bool,      restore_value: false, initial_value: "true"}
+  # "Doppelt klopfen zum Wecken" (Nutzerwunsch 2026-09-26): eigener, unabhaengig
+  # zuschaltbarer Schalter - kombinierbar mit jedem "Aufwecken bei"-Modus, auch
+  # mit "Nur Menue-Taste". Eigene Empfindlichkeit (tap_sens), nicht motion_sens/
+  # dim_sens. Funktioniert wie dim_hold_motion per Ruck-Erkennung unabhaengig von
+  # der Chip-Registerkonfiguration - NUR waehrend disp_off und solange die CPU
+  # noch pollt (250ms-Intervalle laufen nicht mehr im echten Tiefschlaf). Deckt
+  # also die ersten Minuten nach dem Ausschalten ab, nicht den stromsparenden
+  # Tiefschlaf danach - siehe Kommentar beim Poll-Intervall weiter unten.
+  - {id: tap_wake,       type: bool,      restore_value: true,  initial_value: "false"}
+  - {id: tap_sens,       type: int,       restore_value: true,  initial_value: "1"}   # 0 hoch, 1 mittel, 2 niedrig
+  - {id: tap_x,          type: int,       restore_value: false, initial_value: "0"}
+  - {id: tap_y,          type: int,       restore_value: false, initial_value: "0"}
+  - {id: tap_z,          type: int,       restore_value: false, initial_value: "0"}
+  - {id: tap_have,       type: bool,      restore_value: false, initial_value: "false"}
+  # Kleine Zustandsmaschine gegen falsche Treffer beim blossen Schuetteln/Tragen:
+  # 0 = wartet auf den ersten Klopfer, 1 = erster Klopfer erkannt, wartet bis der
+  # Ausschlag wieder unter die Schwelle faellt (Nachschwingen des ersten Klopfers
+  # soll nicht schon als zweiter zaehlen), 2 = abgeklungen, wartet auf den
+  # zweiten Klopfer innerhalb des Zeitfensters.
+  - {id: tap_stage,      type: int,       restore_value: false, initial_value: "0"}
+  - {id: tap_t0,         type: uint32_t,  restore_value: false, initial_value: "0"}
 
 i2c:
   id: hauptbus
@@ -1545,6 +1574,82 @@ interval:
           else:
             - lambda: 'id(bw_have) = false; id(bw_cnt) = 0;'
 
+  # "Doppelt klopfen zum Wecken" (tap_wake, Nutzerwunsch 2026-09-26): eigener,
+  # von "Aufwecken bei" unabhaengiger Zusatzweg, kombinierbar mit jedem Modus
+  # (auch "Nur Menue-Taste"). 50ms statt 250ms wie bei den Bloecken oben - ein
+  # Klopfer ist ein kurzer mechanischer Stoss, zwei davon dicht hintereinander
+  # brauchen feinere zeitliche Aufloesung, um sie ueberhaupt als zwei separate
+  # Ereignisse statt als eines zu erkennen. Erkennt EIN Klopfen -> muss wieder
+  # unter die Schwelle fallen (Nachschwingen zaehlt nicht als zweites) -> ZWEITES
+  # Klopfen innerhalb des Zeitfensters -> weckt. Wie bei dim_hold_motion per
+  # Ruck-Erkennung, also unabhaengig von der Chip-Registerkonfiguration - laeuft
+  # aber NUR, solange die CPU noch pollt (disp_off, vor dem echten Tiefschlaf).
+  # Schwellen/Fenster noch nicht an echter Hardware verifiziert - bei zu vielen
+  # Fehlauslösern "Niedrig" probieren, bei fehlendem Auslösen "Hoch".
+  - interval: 50ms
+    then:
+      - if:
+          condition:
+            lambda: "return id(disp_off) && id(tap_wake);"
+          then:
+            - lambda: |-
+                uint8_t d[6];
+                if (!id(motion_chip)->read_bytes(0x28 | 0x80, d, 6)) return;
+                const float x = ((int16_t)((uint16_t) d[1] << 8 | d[0])) >> 4;
+                const float y = ((int16_t)((uint16_t) d[3] << 8 | d[2])) >> 4;
+                const float z = ((int16_t)((uint16_t) d[5] << 8 | d[4])) >> 4;
+                if (!id(tap_have)) {
+                  id(tap_x) = (int) x; id(tap_y) = (int) y; id(tap_z) = (int) z;
+                  id(tap_have) = true;
+                  return;
+                }
+                const float dx = x - id(tap_x), dy = y - id(tap_y), dz = z - id(tap_z);
+                id(tap_x) = (int) x; id(tap_y) = (int) y; id(tap_z) = (int) z;
+                const float ruck = sqrtf(dx*dx + dy*dy + dz*dz);
+                // Gleiche Groessenordnung wie die anderen Ruck-Schwellen (120/250/400
+                // bei 250ms-Abtastung) - ein einzelner Klopfer ist aber typischerweise
+                // ein haerterer, kuerzerer Stoss als blosses Anstossen, deshalb etwas
+                // hoeher angesetzt. Reine Erststaetzung.
+                const float lim[3] = {200.0f, 350.0f, 550.0f};
+                int i = id(tap_sens);
+                if (i < 0) i = 0;
+                if (i > 2) i = 2;
+                const bool ueber = ruck >= lim[i];
+                const uint32_t jetzt = millis();
+                switch (id(tap_stage)) {
+                  case 0:
+                    if (ueber) { id(tap_stage) = 1; id(tap_t0) = jetzt; }
+                    break;
+                  case 1:
+                    if (!ueber) {
+                      id(tap_stage) = 2;
+                    } else if (jetzt - id(tap_t0) > 400) {
+                      // Schwingt zu lange nach - eher durchgehendes Schuetteln
+                      // als ein einzelner Klopfer. Von vorn.
+                      id(tap_stage) = 0;
+                    }
+                    break;
+                  case 2:
+                    if (ueber) {
+                      if (jetzt - id(tap_t0) <= 600) {
+                        id(tap_stage) = 0;
+                        ESP_LOGI("motion", "Doppelt geklopft: %.0f (Schwelle %.0f)", ruck, lim[i]);
+                        id(motion_icon_blip)->execute();
+                        id(wake_backlight)->execute();
+                      } else {
+                        // Zu spaet fuers alte Fenster - als neuer erster Klopfer werten.
+                        id(tap_stage) = 1; id(tap_t0) = jetzt;
+                      }
+                    } else if (jetzt - id(tap_t0) > 600) {
+                      id(tap_stage) = 0;  // Zeitfenster fuer den zweiten Klopfer verstrichen
+                    }
+                    break;
+                  default:
+                    id(tap_stage) = 0;
+                }
+          else:
+            - lambda: 'id(tap_have) = false; id(tap_stage) = 0;'
+
   # Ergebnis des fruehen Leitungstests ausgeben, sobald das Log haengt.
   - interval: 1s
     then:
@@ -1712,6 +1817,7 @@ script:
       - light.turn_off: display_backlight
       - light.turn_off: button_backlight
       - globals.set: {id: disp_off, value: "true"}
+      - globals.set: {id: awaiting_wake, value: "true"}
       - globals.set: {id: lift_cnt, value: "0"}
       # Reine Anzeigewerte anhalten, solange niemand hinschaut. Der Akkustand
       # laeuft weiter (alle 20 s ein I2C-Read faellt nicht ins Gewicht).
@@ -2135,7 +2241,10 @@ script:
       - lambda: |-
           // --- 1. LIS3DH fuer den Bewegungs-Weck-Interrupt (Bus noch versorgt) ---
           uint64_t mask = (1ULL << 8);   // GPIO8 = TCA8418-INT (HW-Pull-up R36)
-          if (id(motion_mode) != 0) {
+          // Modus 3 ("Nur Menue-Taste") UND Modus 0 ("Tastendruck") sollen NICHT
+          // per Bewegung/Hochheben aufwachen - nur 1 (Bewegung) und 2 (Hochheben)
+          // scharf schalten (Nutzerwunsch 2026-09-26, neuer Modus 3 hinzugekommen).
+          if (id(motion_mode) == 1 || id(motion_mode) == 2) {
             id(motion_chip)->write_byte(0x20, 0x2F);   // CTRL_REG1: 10 Hz Low-Power, XYZ
             id(motion_chip)->write_byte(0x21, 0x09);   // CTRL_REG2: HPIS1 + FDS (Hochpass -> INT1)
             id(motion_chip)->write_byte(0x23, 0x80);   // CTRL_REG4: BDU
@@ -2212,7 +2321,10 @@ script:
           esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
           ESP_LOGI("schlaf", "ext1 scharf: mask=0x%llx (GPIO8 Taste%s%s)",
                    (unsigned long long) mask,
-                   id(motion_mode) ? " + GPIO2 Bewegung" : "",
+                   // Direkt aus der Maske ablesen statt aus motion_mode - seit
+                   // Modus 3 ("Nur Menue-Taste") setzen zwei Modi (0 und 3) das
+                   // GPIO2-Bit NICHT, nicht mehr nur einer (vorher: nur 0).
+                   (mask & (1ULL << 2)) ? " + GPIO2 Bewegung" : "",
                    gpio1_frei ? " + GPIO1 Ladekabel" : " [GPIO1 aktiv - nicht scharf]");
           // Rail + Pegel setzen lassen, bevor esp_deep_sleep_start() folgt
           // (Referenz: delay(100) vor dem Schlaf).
@@ -2238,6 +2350,7 @@ script:
       - script.stop: ble_ruhe_timer
       - script.stop: deep_ruhe_timer
       - globals.set: {id: disp_off, value: "false"}
+      - globals.set: {id: awaiting_wake, value: "false"}
       # BLE-Verbindung wieder auf das schnelle HID-Profil, Takt zurueck auf voll.
       - lambda: 'id(kb).request_conn_profile(false);'
       - script.stop: cpu_ruhe_timer
@@ -2601,8 +2714,11 @@ script:
   - id: apply_motion_on
     then:
       - lambda: |-
-          lv_obj_t *mk[3] = {id(mm_0_mk), id(mm_1_mk), id(mm_2_mk)};
-          for (int i = 0; i < 3; i++)
+          // Modus 0 hiess vorher "Aus" - umbenannt auf "Tastendruck", weil er
+          // das immer schon war (irgendeine Taste weckt, nur kein Bewegungssensor).
+          // Neu dazugekommen: Modus 3 "Nur Menue-Taste" (Nutzerwunsch 2026-09-26).
+          lv_obj_t *mk[4] = {id(mm_0_mk), id(mm_1_mk), id(mm_2_mk), id(mm_3_mk)};
+          for (int i = 0; i < 4; i++)
             lv_label_set_text(mk[i], i == id(motion_mode) ? "AKTIV" : " ");
       - lvgl.label.update:
           id: motion_mode_lbl
@@ -2610,7 +2726,8 @@ script:
             switch (id(motion_mode)) {
               case 1:  return std::string("Bewegung");
               case 2:  return std::string("Hochheben");
-              default: return std::string("AUS");
+              case 3:  return std::string("Nur Menü-Taste");
+              default: return std::string("Tastendruck");
             }
       - lvgl.label.update:
           id: motion_mode_lbl
@@ -2726,9 +2843,10 @@ script:
           // JEDER neue horizontale Slider MUSS hier mit rein - ohne das bleibt er bei LVGLs
           // eigener (viel kleinerer) Standardgroesse, egal was width/height im YAML sagen.
           // Genau das fehlte bei ds_sld (Nutzerkorrektur 2026-09-22: "duenner und schmaler").
-          lv_obj_t *waag[6] = {id(disp_bri_sld), id(kbd_bri_sld),
-                               id(to_sld), id(ms_sld), id(ps_dim_sld), id(ds_sld)};
-          for (int i = 0; i < 6; i++) {
+          lv_obj_t *waag[7] = {id(disp_bri_sld), id(kbd_bri_sld),
+                               id(to_sld), id(ms_sld), id(ps_dim_sld), id(ds_sld),
+                               id(tap_sld)};
+          for (int i = 0; i < 7; i++) {
             lv_obj_set_width(waag[i], 180);
             lv_obj_set_height(waag[i], 26);
             // Mittig statt linksbuendig: die Seite ist 216 breit, der Regler
@@ -3246,10 +3364,13 @@ script:
               row(id(mm_0),            nullptr, nullptr);
               row(id(mm_1),            nullptr, nullptr);
               row(id(mm_2),            nullptr, nullptr);
+              row(id(mm_3),            nullptr, nullptr);
               row(id(ms_sld),          nullptr, nullptr);
               row(id(dim_wake_btn),    nullptr, nullptr);
               row(id(dim_hold_btn),    nullptr, nullptr);
               row(id(ds_sld),          nullptr, nullptr);
+              row(id(tap_wake_btn),    nullptr, nullptr);
+              row(id(tap_sld),         nullptr, nullptr);
               row(id(ps_touch_btn),    nullptr, nullptr);
               row(id(ps_touchms_btn),  nullptr, nullptr);
               row(id(ps_deep_btn),     nullptr, nullptr);
@@ -4094,7 +4215,9 @@ script:
           lv_label_set_text(id(h_sh_assi), "Zeigt, welcher Sprachassistent auf der Mikrofon-Taste liegt: Google oder Home Assistant.");
           lv_label_set_text(id(h_cov_p), "GANZ: Das Bild wird vollständig gezeigt, es können Ränder bleiben. VOLL: Es füllt die ganze Fläche, die Ränder werden abgeschnitten. Gilt für den Player.");
           lv_label_set_text(id(h_cov_h), "GANZ: Das Bild wird vollständig gezeigt, es können Ränder bleiben. VOLL: Es füllt die ganze Fläche, die Ränder werden abgeschnitten. Gilt für die Startseite.");
-          lv_label_set_text(id(h_motion), "Was die Remote im Ruhezustand von selbst aufweckt. Aus: nur Tasten und Touch. Bewegung: schon ein Anstoßen. Hochheben: erst, wenn sie aus der Ablage gehoben wird.");
+          lv_label_set_text(id(h_motion), "Was die Remote im Ruhezustand von selbst aufweckt. Tastendruck: jede Taste (und Touch, siehe „Touch weckt“ bei Strom). Bewegung: schon ein Anstoßen. Hochheben: erst, wenn sie aus der Ablage gehoben wird. Nur Menü-Taste: keine andere Taste weckt sie, egal ob kurz oder lang gedrückt - für „wirklich nur die Menü-Taste“ zusätzlich „Touch weckt“ bei Strom ausschalten.");
+          lv_label_set_text(id(h_tap), "Zusätzlich zum Modus oben: zweimal kurz hintereinander auf das Gehäuse klopfen weckt die Remote, egal welcher Modus dort gewählt ist. Funktioniert nur kurz nach dem Ausschalten, solange die Remote noch nicht im stromsparenden Tiefschlaf ist - noch nicht an echter Hardware verifiziert, bei Bedarf Empfindlichkeit unten anpassen.");
+          lv_label_set_text(id(h_tap_sens), "Eigene Empfindlichkeit fürs Doppelklopfen, getrennt von den anderen Empfindlichkeits-Reglern. Rechts = empfindlicher, aber auch mehr Fehlauslöser.");
           lv_label_set_text(id(h_sens), "Wie stark die Remote bewegt werden muss. Rechts = empfindlicher, aber auch mehr ungewollte Weckungen, etwa durch Erschütterungen am Tisch.");
           lv_label_set_text(id(h_dim_wake), "AN: schon ein Anstoßen hellt die Remote auf, wenn sie nur abgedunkelt ist - nicht erst, wenn sie ganz aus ist. Unabhängig von „Aufwecken bei“ oben, funktioniert also auch wenn dort „Aus“ oder „Hochheben“ eingestellt ist. AUS: wie bisher, dann holt erst ein Tipp sie aus dem Abgedunkelten zurück.");
           lv_label_set_text(id(h_dim_hold), "AN: Solange sich die Remote bewegt, dunkelt sie gar nicht erst ab und schaltet auch nicht aus - praktisch, wenn man sie länger in der Hand hält. Kostet selbst kaum Strom (ein kurzer Sensor-Check alle 250 ms), aber indirekt mehr: Das Display bleibt dann länger hell, auch wenn nur der Tisch wackelt oder man im Auto sitzt - und das Display ist der größte Verbraucher. Darum standardmäßig AUS.");
@@ -5309,6 +5432,21 @@ tca8418:
   long_press: ${key_long_ms}ms
   on_key:
     - then:
+        # Nutzerwunsch 2026-09-26: "Nur Menue-Taste weckt" (motion_mode 3). Jede
+        # Taste loest weiterhin den gemeinsamen GPIO8-Interrupt aus - das TCA8418
+        # hat nur EINE IRQ-Leitung fuer die ganze Matrix, welche Taste es war
+        # steht erst nach dem I2C-Auslesen fest, laesst sich also nicht schon auf
+        # Hardware-Ebene auf die Menue-Taste eingrenzen. Deshalb hier, sobald das
+        # bekannt ist, alles ausser der Menue-Taste (31) still verwerfen, solange
+        # noch kein Weckereignis stattgefunden hat (awaiting_wake) - weder Druck
+        # noch Loslassen wirkt dann, unabhaengig von der Haltedauer. "Touch weckt"
+        # (ps_touch_wake, Menue > Einstellungen > Strom) ist davon unberuehrt -
+        # fuer WIRKLICH nur die Menue-Taste muss der Nutzer das dort zusaetzlich
+        # ausschalten, sonst weckt weiterhin auch ein Tippen aufs Display.
+        - lambda: |-
+            if (id(motion_mode) == 3 && id(awaiting_wake) && keycode != 31) {
+              return;
+            }
         # Zustand VOR dem Wecken festhalten - wake_backlight setzt disp_off
         # sofort zurueck.
         - lambda: 'id(key_was_dark) = id(disp_off);'
@@ -10004,6 +10142,12 @@ lvgl:
             int ds = id(dim_sens); if (ds < 0) ds = 0; if (ds > 2) ds = 2;
             lv_label_set_text(id(dim_sens_lbl), (const char *[]){"Hoch", "Mittel", "Niedrig"}[ds]);
             lv_slider_set_value(id(ds_sld), 2 - ds, LV_ANIM_OFF);
+            lv_label_set_text(id(tap_wake_lbl), id(tap_wake) ? "AN" : "AUS");
+            lv_obj_set_style_text_color(id(tap_wake_lbl),
+                lv_color_hex(id(tap_wake) ? 0x22C55E : 0x8B94A3), LV_PART_MAIN);
+            int ts = id(tap_sens); if (ts < 0) ts = 0; if (ts > 2) ts = 2;
+            lv_label_set_text(id(tap_sens_lbl), (const char *[]){"Hoch", "Mittel", "Niedrig"}[ts]);
+            lv_slider_set_value(id(tap_sld), 2 - ts, LV_ANIM_OFF);
         - script.execute: apply_hints
         - script.execute: focus_apply
       widgets:
@@ -10175,7 +10319,7 @@ lvgl:
               - script.execute: apply_motion_sens
               - script.execute: apply_motion_on
             widgets:
-              - label: {text: "Aus", text_font: a13, flex_grow: 1}
+              - label: {text: "Tastendruck", text_font: a13, flex_grow: 1}
               - label: {id: mm_0_mk, text: " ", text_font: a13, text_color: 0x22C55E}
         - button:
             id: mm_1
@@ -10205,6 +10349,20 @@ lvgl:
             widgets:
               - label: {text: "Hochheben", text_font: a13, flex_grow: 1}
               - label: {id: mm_2_mk, text: " ", text_font: a13, text_color: 0x22C55E}
+        - button:
+            id: mm_3
+            width: 100%
+            height: 44
+            styles: [st_ctrlbtn]
+            scrolled: {bg_color: 0x232A35, border_color: 0x232A35, outline_width: 0}
+            layout: {type: flex, flex_flow: row, flex_align_cross: center, pad_column: 10}
+            on_click:
+              - lambda: 'id(motion_mode) = 3;'
+              - script.execute: apply_motion_sens
+              - script.execute: apply_motion_on
+            widgets:
+              - label: {text: "Nur Menü-Taste", text_font: a13, flex_grow: 1}
+              - label: {id: mm_3_mk, text: " ", text_font: a13, text_color: 0x22C55E}
         - label: {id: h_motion, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - obj:
             width: 100%
@@ -10315,6 +10473,59 @@ lvgl:
               - lambda: |-
                   lv_label_set_text(id(dim_sens_lbl), (const char *[]){"Hoch", "Mittel", "Niedrig"}[id(dim_sens)]);
         - label: {id: h_dim_sens, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
+        # Nutzerwunsch 2026-09-26: eigener, unabhaengig zuschaltbarer Schalter -
+        # kombinierbar mit jedem "Aufwecken bei"-Modus oben, auch mit "Nur
+        # Menue-Taste". Eigene Empfindlichkeit (tap_sens/tap_sld), nicht die von
+        # "Aufwecken bei" oder von den beiden Optionen "beim Abdunkeln" oben.
+        - button:
+            id: tap_wake_btn
+            width: 100%
+            height: 44
+            styles: [st_ctrlbtn]
+            scrolled: {bg_color: 0x232A35, border_color: 0x232A35, outline_width: 0}
+            layout: {type: flex, flex_flow: row, flex_align_cross: center, pad_column: 10}
+            on_click:
+              - lambda: 'id(tap_wake) = !id(tap_wake);'
+              - lvgl.label.update: {id: tap_wake_lbl, text: !lambda 'return id(tap_wake) ? std::string("AN") : std::string("AUS");'}
+              - lvgl.label.update: {id: tap_wake_lbl, text_color: !lambda 'return id(tap_wake) ? lv_color_hex(0x22C55E) : lv_color_hex(0x8B94A3);'}
+            widgets:
+              - label: {text: "Doppelt klopfen zum Wecken", text_font: a15, flex_grow: 1}
+              - label: {id: tap_wake_lbl, text: "AUS", text_font: a13, text_color: 0x8B94A3}
+        - label: {id: h_tap, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
+        - obj:
+            width: 100%
+            height: 22
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            layout: {type: flex, flex_flow: row, flex_align_main: space_between, flex_align_cross: center}
+            widgets:
+              - label: {text: "Empfindlichkeit (Doppelklopfen)", styles: [st_muted]}
+              - label: {id: tap_sens_lbl, text: "Mittel", text_font: a13, text_color: 0xF1F3F5}
+        - slider:
+            id: tap_sld
+            width: 180
+            height: 26
+            align: TOP_MID
+            min_value: 0
+            max_value: 2
+            value: 1
+            main: {pad_all: 3}
+            indicator:
+              bg_color: 0x3B82F6
+              focused: {bg_color: 0x60A5FA}
+            knob:
+              bg_color: 0xF1F3F5
+              focused: {bg_color: 0x3B82F6}
+            focused: {border_width: 0, outline_width: 0, bg_color: 0x3A424E}
+            on_value:
+              - lambda: |-
+                  int i = (int) x; if (i < 0) i = 0; if (i > 2) i = 2;
+                  id(tap_sens) = 2 - i;
+              - lambda: |-
+                  lv_label_set_text(id(tap_sens_lbl), (const char *[]){"Hoch", "Mittel", "Niedrig"}[id(tap_sens)]);
+        - label: {id: h_tap_sens, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - button:
             id: ps_touch_btn
             width: 100%
