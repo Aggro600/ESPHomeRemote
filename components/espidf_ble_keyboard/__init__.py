@@ -276,7 +276,12 @@ CONFIG_SCHEMA = cv.All(
         # "allow the device to perform actions" toggle.
         cv.Optional(CONF_HA_ACTION, default=False): cv.boolean,
         cv.Optional(CONF_POINTER, default=True): cv.boolean,
-        cv.Optional(CONF_ALPHA_KEYBOARD, default=True): cv.boolean,
+        # true = volle Tastatur, false = keine, "digits" = nur Ziffern + Enter/Esc/
+        # Backspace/Tab/Leer (kein Buchstaben-Block: Android sieht dann eine NICHT-
+        # alphabetische Tastatur und loest keine Konfigurationsaenderung aus).
+        cv.Optional(CONF_ALPHA_KEYBOARD, default=True): cv.Any(
+            cv.boolean, cv.one_of("digits", lower=True)
+        ),
         cv.Optional(CONF_MOUSE_SENSITIVITY, default=1.0): cv.float_range(min=0.1, max=10.0),
         cv.Optional(CONF_MOUSE_ACCEL, default=0.15): cv.float_range(min=0.0, max=2.0),
         cv.Optional(CONF_MOUSE_MAX_SPEED, default=4.0): cv.float_range(min=0.5, max=20.0),
@@ -321,7 +326,9 @@ async def to_code(config):
     # Ohne Tastatur: Report ID 1, Boot-Tastatur und der Tastatur-Bericht fallen
     # weg. Android wertet eine angeschlossene Hardware-Tastatur als
     # Konfigurationsaenderung und startet die Oberflaeche laufender Apps neu.
-    if not config[CONF_ALPHA_KEYBOARD]:
+    if config[CONF_ALPHA_KEYBOARD] == "digits":
+        cg.add_define("ESPIDF_BLE_KB_DIGITS")
+    elif not config[CONF_ALPHA_KEYBOARD]:
         cg.add_define("ESPIDF_BLE_KB_NO_KEYBOARD")
 
     cg.add(var.set_device_name(config[CONF_DEVICE_NAME]))

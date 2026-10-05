@@ -3,7 +3,7 @@
 // Datengetriebenes Menue fuer die Open Remote. Baut die LVGL-Oberflaeche zur
 // Laufzeit aus /sd/menu.json - der Original-OMOTE-Konfigurator kann Button-/
 // Aktivitaets-/Theme-Teile davon bearbeiten, Licht/Rollo-Items kommen per
-// Hand-JSON oder Konfigurator-Fork dazu (Design-Entscheidung: Weg 3).
+// Hand-JSON oder Konfigurator-Fork dazu (Nils-Entscheidung: Weg 3).
 //
 // Widgets werden dynamisch als Kinder eines Root-Containers (lv_obj_t*, per
 // YAML-id uebergeben) erzeugt und bei jedem Seitenwechsel neu aufgebaut.

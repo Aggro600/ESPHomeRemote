@@ -4,7 +4,7 @@ from esphome import automation, pins
 from esphome.components import i2c
 from esphome.const import CONF_ID, CONF_TRIGGER_ID
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@your-github-handle"]
 DEPENDENCIES = ["i2c"]
 MULTI_CONF = True
 

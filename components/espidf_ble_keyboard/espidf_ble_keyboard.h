@@ -80,6 +80,11 @@ const KeyboardLayout *layout_at(size_t i);
 //
 // Nothing here pulls in the microphone component, so a build without
 // `atv_voice:` is unchanged.
+// FORK 2026-10-04b: Die Sprachsuche (atv_voice) fordert die groessere MTU an, sobald der Host den
+// Sprachdienst nutzt (GET_CAPS). Andere Hosts (Tablet, TV) beantworten die MTU-Anfrage der Remote nicht -
+// die Remote wartete dann 30 s (ATT-Timeout), Tasten stauten sich, Verbindung riss ab.
+void ble_mtu_client_anfordern();
+
 class AtvVoiceHook {
  public:
   virtual ~AtvVoiceHook() = default;
@@ -96,6 +101,11 @@ class AtvVoiceHook {
   /// Mic key pressed / released on the remote.
   virtual void atvv_start_search() = 0;
   virtual void atvv_stop_audio() = 0;
+  // FORK 2026-09-29b: parallele Host-Verbindungen - Sprachzustand einer Verbindung parken /
+  // zurueckholen / vergessen (Standard: nichts tun).
+  virtual void atvv_park(uint16_t conn_id) {}
+  virtual void atvv_unpark(uint16_t conn_id) {}
+  virtual void atvv_forget(uint16_t conn_id) {}
 };
 
 class EspidfBleKeyboard : public Component
@@ -118,6 +128,13 @@ class EspidfBleKeyboard : public Component
   void send_shutdown();
   void send_hibernate();
   void send_consumer(uint16_t usage);
+  void send_button(uint8_t n);  // FORK 2026-09-29: HID-Button-Seite, Report 6
+  // FORK 2026-10-03 (Tasten-Konfigurator): Tap an einen bestimmten Platz - den aktiven
+  // oder einen geparkten (parallel verbunden) - ohne switch_host. false = Platz nicht verbunden.
+  bool conn_for_slot(uint8_t slot, uint16_t &conn) const;
+  bool send_consumer_to(uint8_t slot, uint16_t usage);
+  bool send_button_to(uint8_t slot, uint8_t n);
+  bool send_key_to(uint8_t slot, uint8_t modifiers, uint8_t keycode);
   void send_power();
   void send_media_play_pause();
   void send_media_next();
@@ -423,6 +440,26 @@ class EspidfBleKeyboard : public Component
   bool is_connected() const { return is_connected_; }
   uint16_t conn_id() const { return conn_id_; }
 
+  // FORK 2026-09-29b: Laufzeit-Optionen
+  //  kb_digits: Tastatur nur mit Ziffern melden (Android sieht keine Buchstaben-Tastatur,
+  //             kein Neuaufbau laufender Apps beim Verbinden/Trennen). Gilt ab dem naechsten
+  //             Start, Hosts muessen neu koppeln (Geraetebeschreibung aendert sich).
+  //  parallel:  beim Host-Wechsel die bisherige Verbindung NICHT trennen, sondern parken;
+  //             beim Zurueckwechseln sofort wieder aktiv (kein Neuverbinden).
+  void set_kb_digits(bool d) { kb_digits_ = d; }
+  bool kb_digits() const { return kb_digits_; }
+  void set_parallel(bool p);
+  void adv_fast_again();   // FORK 2026-09-29c: nach langsamer Werbung wieder schnell werben
+  bool parallel() const { return parallel_; }
+  struct StandbyConn { uint16_t conn_id; uint8_t slot; esp_bd_addr_t addr; };
+  std::vector<StandbyConn> standby_;
+  int standby_index(uint16_t conn_id) const {
+    for (size_t i = 0; i < standby_.size(); i++) if (standby_[i].conn_id == conn_id) return (int) i;
+    return -1;
+  }
+  bool kb_digits_{false};
+  bool parallel_{false};
+
   // Multi-host switching
   /// Akkustand fuer den BLE-Batteriedienst setzen (0-100 %). Ohne diesen Aufruf
   /// bleibt der Wert auf der festen 100 stehen, mit der er angelegt wird - der
@@ -589,7 +626,29 @@ class EspidfBleKeyboard : public Component
   // RSSI sensor
   void set_rssi_sensor(sensor::Sensor *sensor) { rssi_sensor_ = sensor; }
   void set_rssi_update_interval(uint32_t ms) { rssi_update_interval_ms_ = ms; }
+  // Aus der YAML per lambda aufrufbar: id(kb).set_rssi_paused(true/false).
+  // s. Kommentar in loop() - haelt den RSSI-HCI-Befehl waehrend einer
+  // ATV-Voice-Sitzung an.
+  void set_rssi_paused(bool paused) { rssi_paused_ = paused; }
   void update_rssi(int8_t rssi);
+
+  // Zeigt an, ob die Verbindung nachweislich (per ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT)
+  // auf dem schnellen HID-Intervall (<=15ms) laeuft. request_conn_profile(false) setzt
+  // dies auf false, solange das aktuell bekannte Intervall noch langsam/unbekannt ist -
+  // erst die Bestaetigung vom Controller setzt es wieder auf true. Grund: nach dem
+  // Aufwachen aus dem Ruheprofil (120-150ms, Latency 3) dauert die tatsaechliche
+  // Umschaltung deutlich laenger als der frueher genutzte feste 200ms-Delay vor dem
+  // Start einer Sprachsitzung - die ersten ADPCM-Pakete liefen dadurch noch auf dem
+  // langsamen Intervall und wurden "congested". voice_start wartet jetzt per
+  // wait_until auf conn_fast_ready() statt blind zu schlafen.
+  bool conn_fast_ready() const { return conn_fast_ready_; }
+  void note_conn_profile_requested(bool idle) {
+    if (idle || known_conn_int_ == 0 || known_conn_int_ > 12) conn_fast_ready_ = false;
+  }
+  void note_conn_params_updated(uint16_t conn_int) {
+    known_conn_int_ = conn_int;
+    conn_fast_ready_ = (conn_int <= 12);
+  }
   void add_rssi_above_callback(std::function<void(int8_t)> cb) { rssi_above_callbacks_.push_back(std::move(cb)); }
   void add_rssi_below_callback(std::function<void(int8_t)> cb) { rssi_below_callbacks_.push_back(std::move(cb)); }
 
@@ -611,6 +670,9 @@ class EspidfBleKeyboard : public Component
   text_sensor::TextSensor *host_mac_sensor_{nullptr};
   sensor::Sensor *rssi_sensor_{nullptr};
   bool rssi_pending_{false};
+  bool rssi_paused_{false};
+  bool conn_fast_ready_{true};
+  uint16_t known_conn_int_{0};
   std::atomic<bool> pending_rssi_nan_{false};
   std::atomic<bool> pending_rssi_update_{false};
   std::atomic<int8_t> pending_rssi_value_{0};

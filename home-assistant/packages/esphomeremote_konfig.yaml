@@ -1,0 +1,6 @@
+# Konfigurator der Fernbedienungen (Seitenleiste "Fernbedienung").
+# Datei nach /config/packages/ kopieren (packages: !include_dir_named packages in configuration.yaml).
+esphomeremote_konfig:
+  key: !secret esphomeremote_konfig_key   # gleicher Wert wie in der secrets.yaml von ESPHome
+  devices:
+    - open-remote                         # = device_name deiner Fernbedienung(en)

@@ -1,0 +1,10 @@
+{
+  "domain": "esphomeremote_konfig",
+  "name": "ESPHomeRemote Tasten-Konfigurator",
+  "codeowners": [],
+  "dependencies": ["http", "frontend", "panel_custom", "websocket_api"],
+  "documentation": "",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "1.0.0"
+}

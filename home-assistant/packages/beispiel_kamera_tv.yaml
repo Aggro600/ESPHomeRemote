@@ -1,0 +1,81 @@
+# Blaue Taste der Fernbedienungen (2026-10-03): kurz = zuletzt auf dem TV WZ gezeigte Kamera,
+# lang = Kamera aus (script.kamera_auf_tv_wz_aus). Belegung im Panel "Fernbedienung".
+# Gemerkt wird jede Kamera, die auf dem TV landet - egal ob von Remote, Dashboard oder Klingel.
+
+input_text:
+  tv_wz_letzte_kamera:
+    name: TV WZ letzte Kamera
+    icon: mdi:cctv
+    max: 100
+
+# Groesse der Kamera auf dem TV (2026-10-04): gilt fuer alle fuenf Kameras, die letzte Wahl bleibt.
+# Breite in den Skripten kamera_*_auf_tv_wz: Klein 320 px, Mittel 480 px, Gross 720 px.
+input_select:
+  tv_wz_kamera_groesse:
+    name: TV WZ Kamera-Größe
+    icon: mdi:resize
+    options: [Klein, Mittel, Groß]
+
+input_boolean:
+  tv_wz_kamera_sichtbar:
+    name: TV WZ Kamera sichtbar
+    icon: mdi:cctv
+
+automation:
+  - id: esphomeremote_tv_wz_letzte_kamera_merken
+    alias: TV WZ letzte Kamera merken
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id:
+          - script.kamera_haustur_auf_tv_wz
+          - script.kamera_3d_drucker_auf_tv_wz
+          - script.kamera_garten_auf_tv_wz
+          - script.kamera_zelt_auf_tv_wz
+          - script.kamera_wohnungstur_auf_tv_wz
+        to: "on"
+    actions:
+      - action: input_text.set_value
+        target: {entity_id: input_text.tv_wz_letzte_kamera}
+        data: {value: "{{ trigger.entity_id }}"}
+      - action: input_boolean.turn_on
+        target: {entity_id: input_boolean.tv_wz_kamera_sichtbar}
+
+  - id: esphomeremote_tv_wz_kamera_aus_merken
+    alias: TV WZ Kamera aus merken
+    triggers:
+      - trigger: state
+        entity_id: script.kamera_auf_tv_wz_aus
+        to: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target: {entity_id: input_boolean.tv_wz_kamera_sichtbar}
+
+  # Neue Groesse gewaehlt, waehrend eine Kamera laeuft: dieselbe Kamera gleich in der neuen Groesse zeigen
+  - id: esphomeremote_tv_wz_kamera_groesse
+    alias: TV WZ Kamera-Größe übernehmen
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_select.tv_wz_kamera_groesse
+    conditions:
+      - condition: state
+        entity_id: input_boolean.tv_wz_kamera_sichtbar
+        state: "on"
+      - "{{ trigger.from_state is not none and trigger.from_state.state not in ['unknown', 'unavailable'] }}"
+    actions:
+      - action: script.kamera_letzte_auf_tv_wz
+
+  # Kamera-Popup: oeffnet/schliesst jetzt die Remote selbst (Auslöser der Menueseite "kameras"
+  # im Panel "Fernbedienung"), keine Automation mehr noetig (2026-10-04).
+
+script:
+  kamera_letzte_auf_tv_wz:
+    alias: Letzte Kamera auf TV WZ
+    icon: mdi:cctv
+    mode: single
+    sequence:
+      - action: script.turn_on
+        target:
+          entity_id: "{{ states('input_text.tv_wz_letzte_kamera') if states('input_text.tv_wz_letzte_kamera').startswith('script.kamera_') else 'script.kamera_haustur_auf_tv_wz' }}"
+

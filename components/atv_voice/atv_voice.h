@@ -1,9 +1,11 @@
 #pragma once
+#include <vector>
 
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 
 #include <string>
+#include <atomic>
 #include "esphome/core/helpers.h"
 #include "esphome/components/microphone/microphone.h"
 #include "esphome/components/espidf_ble_keyboard/espidf_ble_keyboard.h"
@@ -28,8 +30,9 @@ namespace atv_voice {
 //     RX     AB5E0003-…   notify  remote → TV   (audio frames)
 //     CTL    AB5E0004-…   notify  remote → TV   (control/status)
 //
-// Real flow (confirmed by sniffing a working Sony RMF-TX520E's traffic with
-// the actual streamer, via `adb bugreport` + Bluetooth HCI snoop log):
+// Real flow (confirmed 2026-08-20 by sniffing a working Sony RMF-TX520E's
+// traffic with the actual streamer, via `adb bugreport` + Bluetooth HCI
+// snoop log — see esphome/HANDOVER.md and README.md for the full writeup):
 //   1. TV writes GET_CAPS on TX after connecting/bonding.
 //   2. Remote answers CAPS_RESP on CTL: 20 bytes, byte[3] is the codec as a
 //      single value (0x01 = ADPCM 8k, 0x02 = ADPCM 16k), byte[6] is the
@@ -64,7 +67,7 @@ enum : uint8_t {
   ATVV_CTL_MIC_OPEN_ERROR = 0x0C,
 };
 
-// CTL-Nachrichten sind nicht
+// VERSUCH 11 (2026-08-20, aus dem Sony-Sniff): CTL-Nachrichten sind nicht
 // 1 Byte lang, sondern immer auf die Chunk-Groesse (20) gepolstert, und
 // AUDIO_START/AUDIO_STOP tragen ein Payload:
 //   AUDIO_START: 04 03 <codec> <seq>  + Nullen   (seq zaehlt pro Anfrage hoch)
@@ -84,26 +87,34 @@ enum : uint16_t {
 
 // One internal encode/buffer block: 256 samples -> 128 ADPCM bytes. Purely
 // our own bookkeeping granularity for the ring buffer and BLE pacing - the
-// wire format itself has no per-block header or boundary marker (a real RX
-// capture showed a continuous nibble stream with no header and no AUDIO_SYNC
-// during an entire utterance).
-//
-// 256 Samples je Block, 7 Notifications im Buendel, ist ein bewusster Wert.
-// Ein strikter 5-ms-Takt (40 Samples, 1 Notification) wurde gemessen und war
-// schlechter - 152 statt 215 Notif/s: die Buendel fuellen die
-// Sendewarteschlange, sodass der Funk immer Nachschub hat, waehrend ein
-// strikter Takt hoechstens ~200 Pakete/s anbietet und jede Verzoegerung
-// danach endgueltig fehlt. 320 Samples (160 Byte, 50/s wie Firmware 3.56)
-// verschlechterten die Erkennung ebenfalls.
+// wire format itself has no per-block header or boundary marker (VERSUCH 6:
+// a real RX capture showed a continuous nibble stream with no header and no
+// AUDIO_SYNC during an entire utterance).
+// VERSUCH 38 (2026-08-21) GEMESSEN UND ZURUECKGENOMMEN: Die Sendeeinheit auf
+// 40 Samples (20 Byte, eine Notification, 5 ms) zu verkleinern klang
+// plausibel - gleichmaessige Last statt Schuebe. Ergebnis war aber schlechter:
+//   256 Samples, 7 Notifications im Buendel : 215 Notif/s = 98 % Echtzeit
+//    40 Samples, 1 Notification pro Takt    : 152 Notif/s = 76 % Echtzeit
+// Grund: die Buendel sind kein Problem, sondern ein Vorteil. Sie fuellen die
+// Sendewarteschlange, sodass der Funk immer Nachschub hat. Mit striktem
+// 5-ms-Takt bieten wir dagegen hoechstens 200 Pakete/s an, und jede kleine
+// Verzoegerung fehlt danach endgueltig - aufholen laesst der Clamp nur
+// begrenzt. Also zurueck auf 256 Samples.
+// 04.09. ZURUECKGESETZT auf 256. Die Umstellung auf 320 (= 160 Byte, 50/s wie
+// Firmware 3.56) war auf ein Dokument gestuetzt, nicht auf eine Messung - und
+// die Erkennung wurde danach schlechter, nicht besser. Erst wieder anfassen,
+// wenn der gute Ausgangszustand bestaetigt ist und dann ALS EINZIGE Aenderung.
 static const size_t ATVV_FRAME_SAMPLES = 256;
 static const size_t ATVV_FRAME_PAYLOAD = ATVV_FRAME_SAMPLES / 2;  // 128
 
 // Quarter of a second of 16 kHz mono audio. The microphone task fills this and
 // loop() drains it; on overrun the oldest audio is dropped, because a voice
 // query that lags behind the speaker is worse than one with a gap.
-// Von 4096 (0.5 s bei 8 kHz) auf 8192 (1 s) verdoppelt. Bei nur 28 von 31.25
-// noetigen Frames/s (10 % Audioverlust) und ohne Frame-Header - also ohne
-// Resync-Punkte - fehlen sonst Stuecke mitten in den Woertern. Mit mehr Puffer werden kurze Funkengpaesse ueberbrueckt statt
+// VERSUCH 31 (2026-08-21): von 4096 (0.5 s bei 8 kHz) auf 8192 (1 s)
+// verdoppelt. Gemessen kamen nur 28 von 31.25 noetigen Frames/s durch, also
+// 10 % Audioverlust - und da es seit VERSUCH 6 keine Frame-Header und damit
+// keine Resync-Punkte mehr gibt, fehlen dadurch Stuecke mitten in den
+// Woertern. Mit mehr Puffer werden kurze Funkengpaesse ueberbrueckt statt
 // verworfen; die Aufnahme laeuft dann etwas hinterher, bleibt aber
 // vollstaendig. 8192 x 2 Byte = 16 KB, der Heap hat dafuer Reserve.
 static const size_t ATVV_PCM_BUFFER_SAMPLES = 8192;
@@ -132,7 +143,7 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   void set_hd_mode(bool hd) {
     this->codec_ = hd ? ATVV_CODEC_ADPCM_16K : ATVV_CODEC_ADPCM_8K;
     this->sample_rate_ = hd ? 16000 : 8000;
-    // Die WLAN-Abschaltung haengt hier NICHT mehr
+    // VERSUCH 33 (2026-08-21): Die WLAN-Abschaltung haengt hier NICHT mehr
     // dran. Gemessen: sie beschaedigt den Koexistenz-Zeitplan dauerhaft.
     //   erste Session nach Neustart : 377 Notif/s = 81 % Echtzeit
     //   nach einem WLAN-Aus/An-Zyklus:  65 Notif/s = 14 % Echtzeit
@@ -161,6 +172,7 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   // muss die Fernbedienung ihr Mikrofon erst mit Strom versorgen - deshalb ein
   // Ausloeser nach draussen und eine kurze Anlaufzeit, bevor gestreamt wird.
   void set_host_warmup_ms(uint32_t ms) { this->host_warmup_ms_ = ms; }
+
   Trigger<> *get_host_open_trigger() { return &this->host_open_trigger_; }
   Trigger<> *get_stream_end_trigger() { return &this->stream_end_trigger_; }
 
@@ -174,6 +186,17 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   void atvv_on_congest(bool congested) override;
   void atvv_start_search() override;
   void atvv_stop_audio() override;
+  // FORK 2026-09-29b: parallele Host-Verbindungen (espidf_ble_keyboard parkt die bisherige
+  // Verbindung beim Host-Wechsel). Pro Verbindung merken: MTU, Abos, Capability-Handshake.
+  void atvv_park(uint16_t conn_id) override;
+  void atvv_unpark(uint16_t conn_id) override;
+  void atvv_forget(uint16_t conn_id) override;
+
+  // Mikrofon fuer die SD-Karte freigeben bzw. zurueckholen (Stand 2026-09-21). Die SD-Karte teilt sich
+  // SCK/MOSI/MISO mit dem I2S-Mikrofon; solange der I2S-Treiber laeuft, belegt er diese Pins. true:
+  // laufende Aufnahme beenden und den Treiber stoppen; false: Treiber wieder starten (wie beim Verbinden).
+  void set_mic_blocked(bool blocked);
+  bool mic_blocked() const { return mic_blocked_; }
 
  protected:
   void handle_get_caps_(const uint8_t *value, uint16_t len);
@@ -186,7 +209,7 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   bool send_ctl_(const uint8_t *data, uint16_t len);
   bool send_audio_frame_(const uint8_t *frame);
   void on_mic_data_(const std::vector<uint8_t> &data);
-  // Audio-Versand laeuft in einem eigenen Task auf
+  // VERSUCH 41 (2026-08-21): Audio-Versand laeuft in einem eigenen Task auf
   // Kern 0 statt in der ESPHome-Hauptschleife. Die kommt nur alle ~27 ms dran,
   // HD braucht aber alle 16 ms ein Paket - der Rest ging als Aufholverlust
   // verloren (gemessen 87 % statt 100 %). Der Task taktet auf 1 ms genau.
@@ -211,6 +234,14 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   uint32_t host_warmup_ms_{250};
   bool host_opened_{false};
   Trigger<> host_open_trigger_;
+  // MIC_OPEN/MIC_CLOSE kommen im Bluetooth-Task (BTC_TASK) an. Die YAML-Aktionen der Trigger
+  // (LVGL, Skripte, delay) duerfen nur im Hauptprogramm laufen - aus dem BTC_TASK heraus
+  // stuerzte die Remote beim zweiten Mikrofon-Aufruf ab (Abort, live 2026-09-28). Deshalb nur
+  // vormerken und in loop() feuern.
+  std::atomic<bool> host_open_pending_{false};
+  std::atomic<bool> stream_end_pending_{false};
+  std::atomic<bool> host_start_pending_{false};
+  volatile uint32_t host_open_at_{0};
   Trigger<> stream_end_trigger_;
   std::string hid_key_action_{"voice"};
 
@@ -229,22 +260,24 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   bool ctl_notify_{false};
   bool service_created_{false};
   bool congested_{false};
-  // Zeitpunkt, seit wann "belegt" gilt. Ohne das
+  // VERSUCH 35 (2026-08-21): Zeitpunkt, seit wann "belegt" gilt. Ohne das
   // konnte das Flag dauerhaft haengen bleiben (siehe atv_voice.cpp).
   uint32_t congested_since_{0};
   bool caps_asked_{false};
   bool caps_ever_asked_{false};
+  struct ParkedCtx { uint16_t conn_id; uint16_t mtu; bool rx_notify; bool ctl_notify; bool caps_asked; };   // FORK 2026-09-29b
+  std::vector<ParkedCtx> parked_;
   uint32_t caps_report_due_{0};
 
   // Stream state
   AtvVoiceState state_{ATVV_IDLE};
   uint32_t state_since_{0};
-  // In Mikrosekunden, weil eine Sendeeinheit bei 16 kHz nur
+  // VERSUCH 38: in Mikrosekunden, weil eine Sendeeinheit bei 16 kHz nur
   // 2.5 ms dauert - in ganzen Millisekunden waere das nicht darstellbar und
   // der Takt wuerde wegdriften.
   uint32_t next_frame_due_us_{0};
   uint16_t frame_counter_{0};
-  uint8_t audio_seq_{0};  // zaehlt pro Sprachanfrage hoch, Byte [3] von AUDIO_START
+  uint8_t audio_seq_{0};  // VERSUCH 11: zaehlt pro Sprachanfrage hoch, Byte [3] von AUDIO_START
   uint8_t frames_since_sync_{0};
   ImaAdpcmEncoder encoder_;
 
@@ -259,14 +292,16 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   TaskHandle_t audio_task_{nullptr};
   bool pcm_overrun_{false};
   bool mic_running_{false};
+  // Mikrofon gesperrt (SD-Karte eingebunden): der I2S-Treiber ist gestoppt und gibt GPIO15/17/7 frei.
+  bool mic_blocked_{false};
   uint8_t mic_bits_{16};
   uint8_t mic_channels_{1};
   uint32_t decim_counter_{0};
   int32_t decim_accum_{0};
-  // Verlaufsspeicher fuer den Anti-Aliasing-Filter vor der
+  // VERSUCH 27: Verlaufsspeicher fuer den Anti-Aliasing-Filter vor der
   // Dezimierung (Binomialfilter [1,3,3,1]/8).
   int32_t aa_hist_[3]{0, 0, 0};
-  // Anzahl roher Mic-Samples, die nach Start noch verworfen
+  // VERSUCH 13: Anzahl roher Mic-Samples, die nach Start noch verworfen
   // werden - ueberbrueckt den I2S/DC-Einschwingvorgang, der sonst als lauter
   // Knacks/Schwung am Anfang jeder Aufnahme landet.
   uint32_t warmup_samples_remaining_{0};
@@ -279,7 +314,7 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   uint32_t level_count_{0};
   uint32_t clip_count_{0};  // Samples, die nach dem Gain am Anschlag klebten
 
-  // Der Rohpegel schwankte zwischen Tests um mehr
+  // VERSUCH 16 (2026-08-20): der Rohpegel schwankte zwischen Tests um mehr
   // als das 12-fache (437 vs. 5350) - ein fester `gain`-Wert ist entweder fuer
   // laute oder fuer leise Aufnahmen falsch. Automatische Pegelregelung: ein
   // Peak-Follower (schnell hoch, langsam runter) schaetzt die aktuelle

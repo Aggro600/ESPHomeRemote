@@ -4,6 +4,8 @@
 // damit die Datei unabhaengig von der Include-Reihenfolge in main.cpp ist.
 // Modus 0 = Ziffernblock, Modus 1 = Tastatur (QWERTZ), Modus 1 + Umschalten = Grossbuchstaben.
 #include <stdint.h>
+#include <cmath>
+#include <cstdio>
 
 namespace eingabe {
 
@@ -78,3 +80,63 @@ inline int weiter(const Layout &l, int sel, int richtung) {
 }
 
 }  // namespace eingabe
+
+#include "lvgl.h"
+// ---- Ziehen ist kein Tippen (2026-10-02) ------------------------------------------------------
+// Auf Seiten, die nicht scrollen, startet LVGL beim Wischen kein Scrollen - das Loslassen loest dann
+// den Knopf aus, auf dem der Finger begann. Hier: bewegt sich der Finger nach dem Aufsetzen um mehr
+// als ZIEHEN_PX, wird der Druck abgebrochen (PRESS_LOST, kein CLICKED). Ausnahmen: Schieberegler
+// (sollen gezogen werden), echtes Scrollen (macht LVGL selbst), und Seiten, die per Rueckruf
+// ziehen_erlaubt() ausgenommen werden.
+#define ZIEHEN_PX 15
+// Aufruf aus touchscreen on_update (LVGL schickt PRESSING nicht an Eingabegeraete-Rueckrufe):
+// dx/dy = Abstand vom Aufsetzpunkt. Bricht den Druck einmalig ab, wenn LVGL nicht selbst scrollt.
+inline void ziehen_pruefen(int dx, int dy, bool ausgenommen, int x0, int y0) {
+  static uint32_t abgebrochen_bei = 0;   // nur einmal je Beruehrung (Aufsetzpunkt als Kennung)
+  const uint32_t kennung = ((uint32_t) (x0 & 0xFFFF) << 16) | (uint32_t) (y0 & 0xFFFF);
+  if (ausgenommen || (LV_ABS(dx) < ZIEHEN_PX && LV_ABS(dy) < ZIEHEN_PX)) return;
+  if (abgebrochen_bei == kennung) return;
+  // Objekt unter dem AUFSETZPUNKT selbst suchen - lv_indev_get_active_obj() ist ausserhalb der
+  // LVGL-Eingabeverarbeitung leer (daran scheiterte die erste Fassung auf der Menue-Startseite).
+  lv_point_t p0{(int32_t) x0, (int32_t) y0};
+  lv_obj_t *o = lv_indev_search_obj(lv_layer_top(), &p0);
+  if (o == nullptr) o = lv_indev_search_obj(lv_screen_active(), &p0);
+  for (lv_obj_t *t = o; t != nullptr; t = lv_obj_get_parent(t))
+    if (lv_obj_check_type(t, &lv_slider_class) || lv_obj_check_type(t, &lv_bar_class)) return;   // Regler: ziehen erlaubt
+  // Kann etwas unter dem Finger in Zugrichtung scrollen, gehoert die Geste LVGL - auch wenn es
+  // noch nicht damit angefangen hat. on_update kommt oft VOR LVGLs eigener Auswertung; bei einem
+  // schnellen Wisch war der Finger schon 15 px weit, bevor LVGL "scrollt" meldete, und der Abbruch
+  // hat das Scrollen abgewuergt (Nutzerbefund 2026-10-03: nur langsames Ziehen scrollte).
+  const bool senkrecht = LV_ABS(dy) >= LV_ABS(dx);
+  for (lv_obj_t *t = o; t != nullptr; t = lv_obj_get_parent(t)) {
+    if (!lv_obj_has_flag(t, LV_OBJ_FLAG_SCROLLABLE)) continue;
+    if (senkrecht ? (lv_obj_get_scroll_top(t) > 0 || lv_obj_get_scroll_bottom(t) > 0)
+                  : (lv_obj_get_scroll_left(t) > 0 || lv_obj_get_scroll_right(t) > 0))
+      return;
+  }
+  for (lv_indev_t *in = lv_indev_get_next(nullptr); in != nullptr; in = lv_indev_get_next(in)) {
+    if (lv_indev_get_type(in) != LV_INDEV_TYPE_POINTER) continue;
+    if (lv_indev_get_scroll_obj(in) != nullptr) continue;          // LVGL scrollt selbst -> kein Klick
+    if (o != nullptr) lv_obj_remove_state(o, LV_STATE_PRESSED);
+    lv_indev_wait_release(in);                                     // Loslassen: PRESS_LOST, kein CLICKED
+    abgebrochen_bei = kennung;
+  }
+}
+
+// Lade-Popup (2026-10-03): Karte auf lv_layer_top, von Script lade_popup angelegt und ausgeblendet.
+inline lv_obj_t *&lade_karte() { static lv_obj_t *k = nullptr; return k; }
+// Akkuanzeige (2026-10-04, Nutzerwunsch): kein "voll" mehr - 100 % nur, wenn der Akku wirklich voll
+// geladen ist (voll = Ladeende erkannt, s. apply_charge_icon), sonst hoechstens 99 %.
+inline int akku_anzeige_pct(float p, bool voll) {
+  if (std::isnan(p)) return -1;
+  int v = (int) p;
+  if (voll) return 100;
+  return v > 99 ? 99 : (v < 0 ? 0 : v);
+}
+// Text der Lade-Karte: "Akku 87 %", ohne Messwert "Akku wird gemessen" (statt "Akku ?").
+inline void lade_popup_text(lv_obj_t *lbl, float p) {
+  char b[28];
+  if (std::isnan(p)) snprintf(b, sizeof(b), "Akku wird gemessen");
+  else snprintf(b, sizeof(b), "Akku %d %%", akku_anzeige_pct(p, false));   // wie oben rechts; beim Laden nie 100
+  lv_label_set_text(lbl, b);
+}

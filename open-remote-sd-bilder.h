@@ -1,5 +1,5 @@
 #pragma once
-// Logo-/Cover-Bilder von der SD-Karte (nur mit bestueckter microSD-Karte).
+// Logo-/Cover-Bilder von der SD-Karte (nur Sabrinas Remote, Stand 2026-09-21).
 //
 // Dateien (Ordner /covers auf der Karte, erzeugt von tools/make_sd_assets.py):
 //   /covers/<app>_player.rle      240 x 320, RGB565 little-endian, lauflaengenkodiert "RL16" (Cover der Medienseite)
@@ -17,12 +17,10 @@
 #include <vector>
 
 #include "esphome/components/sd_card/sd_card.h"
-#include "sdmmc_cmd.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_pm.h"
 #include "driver/gpio.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
@@ -156,76 +154,6 @@ inline bool starte(esphome::sd_card::SdCard *sd, const std::string &slug) {
   if (busy()) return false;
   busy() = true;
   if (xTaskCreate(task_fn, "sdlogo", 8192, new Auftrag{sd, slug}, 1, nullptr) != pdPASS) {
-    busy() = false;
-    return false;
-  }
-  return true;
-}
-
-// ---- Geschwindigkeitstest der Karte (Stand 2026-09-21) --------------------------------------------
-// Misst bei mehreren SPI-Takten (a) fread in 4-KB-Stuecken in einen DMA-faehigen Puffer und (b) rohe
-// Sektorlesezugriffe, um zu sehen, ob die Karte oder die Anbindung bremst. Ergebnis im Log (Tag "sdtest").
-inline void bench_task(void *arg) {
-  // Geschwindigkeitstest (HA-Knopf "SD: Geschwindigkeitstest", Log-Tag "sdtest"). Ursache der frueheren 83 ms je
-  // Lesebefehl: Bei abgeschaltetem Mikrofon (MIC_VDD = 0 V) klemmt dessen ESD-Diode die gemeinsame Leitung MISO
-  // (GPIO7) nach Low, und ESP-IDF wartet vor jedem Befehl bis zu 40 ms, dass MISO hoch geht (poll_busy). Mit
-  // eingeschaltetem Mikrofon: 0,2-3 ms je Befehl. Der Test laeuft darum bei eingeschalteter Versorgung; pruefen
-  // laesst sich das hier an den Werten "Befehl" (soll < 5 ms sein) und "MISO-Pegel" (soll 1 sein).
-  auto *sd = static_cast<esphome::sd_card::SdCard *>(arg);
-  static const uint32_t takte[] = {1000, 8000, 20000};
-  const uint32_t alt = sd->frequency_khz();
-  uint8_t *buf = static_cast<uint8_t *>(heap_caps_malloc(4096, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
-  if (buf == nullptr) {
-    ESP_LOGW("sdtest", "kein DMA-Puffer");
-  } else {
-    sd->unmount();
-    for (uint32_t f : takte) {
-      sd->set_frequency_khz(f);
-      const int64_t t0 = esp_timer_get_time();
-      if (!sd->mount()) {
-        ESP_LOGW("sdtest", "%u kHz: Mount fehlgeschlagen", (unsigned) f);
-        continue;
-      }
-      const int t_mount = (int) ((esp_timer_get_time() - t0) / 1000);
-      sdmmc_card_t *c = sd->card();
-      const int pegel = gpio_get_level(GPIO_NUM_7);
-      // Zeit je Einzelbefehl (1 Sektor)
-      int64_t t1 = esp_timer_get_time();
-      for (int i = 0; i < 16; i++) sdmmc_read_sectors(c, buf, 40000 + i, 1);
-      const int t_befehl = (int) ((esp_timer_get_time() - t1) / 16);
-      // rohe Sektoren: 8 x 4 KB
-      t1 = esp_timer_get_time();
-      int fehler = 0;
-      for (int i = 0; i < 8; i++)
-        if (sdmmc_read_sectors(c, buf, 4096 + i * 8, 8) != ESP_OK) fehler++;
-      const int t_sekt = (int) ((esp_timer_get_time() - t1) / 1000);
-      // Datei ueber fread (FatFS), bis 32 KB
-      size_t gelesen = 0;
-      t1 = esp_timer_get_time();
-      FILE *fp = fopen("/sd/covers/netflix_player.rgb565", "rb");
-      if (fp != nullptr) {
-        size_t n;
-        while (gelesen < 32768 && (n = fread(buf, 1, 4096, fp)) > 0) gelesen += n;
-        fclose(fp);
-      }
-      const int t_datei = (int) ((esp_timer_get_time() - t1) / 1000);
-      ESP_LOGI("sdtest",
-               "%5u kHz: Mount %d ms | MISO-Pegel %d | Befehl %d us | Sektoren 32 KB in %d ms = %.0f KB/s (Fehler %d) | "
-               "fread %u B in %d ms = %.0f KB/s",
-               (unsigned) f, t_mount, pegel, t_befehl, t_sekt, t_sekt ? 32768 / 1.024 / t_sekt : 0.0, fehler,
-               (unsigned) gelesen, t_datei, t_datei ? gelesen / 1.024 / t_datei : 0.0);
-      sd->unmount();
-    }
-    heap_caps_free(buf);
-  }
-  sd->set_frequency_khz(alt);
-  busy() = false;
-  vTaskDelete(nullptr);
-}
-inline bool bench_starten(esphome::sd_card::SdCard *sd) {
-  if (busy()) return false;
-  busy() = true;
-  if (xTaskCreate(bench_task, "sdtest", 6144, sd, 1, nullptr) != pdPASS) {
     busy() = false;
     return false;
   }

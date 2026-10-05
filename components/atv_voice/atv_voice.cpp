@@ -2,7 +2,7 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-#include "esp_coexist.h"  // BT-Vorrang waehrend des Streamings
+#include "esp_coexist.h"  // VERSUCH 28: BT-Vorrang waehrend des Streamings
 
 #include <algorithm>
 #include <cstring>
@@ -104,16 +104,16 @@ static const esp_gatts_attr_db_t ATVV_ATTR_DB[ATVV_IDX_NB] = {
       sizeof(atvv_ctl_ccc), sizeof(atvv_ctl_ccc), atvv_ctl_ccc}},
 };
 
-// Wie viele Sendeeinheiten ein loop()-Durchlauf rausschieben darf. Eine Einheit
-// ist nur noch 20 Byte (5 ms bei 8 kHz, 2.5 ms bei
+// Wie viele Sendeeinheiten ein loop()-Durchlauf rausschieben darf. Seit
+// VERSUCH 38 ist eine Einheit nur noch 20 Byte (5 ms bei 8 kHz, 2.5 ms bei
 // 16 kHz), es braucht also deutlich mehr pro Durchlauf: 200/s bei 8 kHz,
 // 400/s bei 16 kHz. Bei einer ESPHome-Schleife um die 60-100 Hz sind das
 // 2-7 Einheiten je Durchlauf - 24 laesst Reserve und begrenzt zugleich, wie
 // weit nach einer Congestion-Pause aufgeholt werden darf.
-// Von 10 auf 30 erhoeht. Der Wert begrenzt auch, wie
+// VERSUCH 40 (2026-08-21): von 10 auf 30 erhoeht. Der Wert begrenzt auch, wie
 // weit loop() nach einer Pause aufholen darf - alles darueber hinaus wird
 // verworfen. Solange ein Block noch 7 Notifications kostete, war ein kleines
-// Limit sinnvoll. Seit der MTU-Aushandlung geht ein Block in EIN
+// Limit sinnvoll. Seit der MTU-Aushandlung (VERSUCH 39) geht ein Block in EIN
 // Paket, Senden ist also billig; jetzt bremst nur noch dieses Limit. 30
 // entspricht ~960 ms Aufholen und passt damit zum 1-Sekunden-Puffer.
 static const uint8_t MAX_FRAMES_PER_LOOP = 30;
@@ -129,7 +129,7 @@ void AtvVoice::setup() {
   if (this->microphone_ != nullptr) {
     this->microphone_->add_data_callback([this](const std::vector<uint8_t> &data) { this->on_mic_data_(data); });
   }
-  // Eigener Task auf Kern 0 fuer den Audio-Versand. Prioritaet
+  // VERSUCH 41: eigener Task auf Kern 0 fuer den Audio-Versand. Prioritaet
   // bewusst niedriger als der BLE-Stack, aber hoeher als Leerlauf.
   this->tx_lock_ = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(&AtvVoice::audio_task_trampoline_, "atvv_audio", 4096, this, 5, &this->audio_task_, 0);
@@ -184,16 +184,38 @@ void AtvVoice::atvv_on_connect(uint16_t conn_id) {
   this->state_ = ATVV_IDLE;
   this->caps_asked_ = false;
   this->caps_report_due_ = millis() + 10000;
-  // Mikrofon schon beim Verbinden starten und dann
+  // VERSUCH 43 (2026-08-21): Mikrofon schon beim Verbinden starten und dann
   // durchlaufen lassen. Gemessen: der I2S-Treiber liefert erst ~1.3 s nach
   // start() die ersten Samples - wurde er erst beim Tastendruck gestartet,
   // fehlte genau diese Zeit am Anfang der Aufnahme. Der Nutzer redet aber
   // sofort los. on_mic_data_() verwirft die Daten ohnehin, solange keine
   // Anfrage laeuft, es landet also nichts im Puffer.
-  if (this->microphone_ != nullptr && !this->mic_running_) {
+  if (this->microphone_ != nullptr && !this->mic_running_ && !this->mic_blocked_) {
     this->warmup_samples_remaining_ = this->sample_rate_ / 4;
     this->microphone_->start();
     this->mic_running_ = true;
+  }
+}
+
+void AtvVoice::set_mic_blocked(bool blocked) {
+  if (blocked == this->mic_blocked_)
+    return;
+  this->mic_blocked_ = blocked;
+  if (blocked) {
+    this->stop_streaming_(true);
+    if (this->mic_running_ && this->microphone_ != nullptr) {
+      this->microphone_->stop();
+      this->mic_running_ = false;
+    }
+    ESP_LOGI(TAG, "Mikrofon gesperrt (SD-Karte) - I2S-Treiber gestoppt");
+  } else {
+    // Wie beim Verbinden: Treiber wieder anlegen, Einschwingzeit verwerfen.
+    if (this->connected_ && this->microphone_ != nullptr && !this->mic_running_) {
+      this->warmup_samples_remaining_ = this->sample_rate_ / 4;
+      this->microphone_->start();
+      this->mic_running_ = true;
+    }
+    ESP_LOGI(TAG, "Mikrofon wieder freigegeben");
   }
 }
 
@@ -210,6 +232,46 @@ void AtvVoice::atvv_on_disconnect() {
   // again — clearing them would tell it on the next read that its microphone
   // remote had gone away.
   this->stop_streaming_(false);
+}
+
+// FORK 2026-09-29b: Zustand der aktiven Verbindung parken (sie bleibt verbunden, ist aber nicht
+// mehr die, an die Sprache geht) bzw. beim Zurueckwechseln wiederherstellen.
+void AtvVoice::atvv_park(uint16_t conn_id) {
+  this->stop_streaming_(false);
+  for (auto &p : this->parked_) if (p.conn_id == conn_id) { p = {conn_id, this->mtu_, this->rx_notify_, this->ctl_notify_, this->caps_asked_}; this->connected_ = false; return; }
+  this->parked_.push_back({conn_id, this->mtu_, this->rx_notify_, this->ctl_notify_, this->caps_asked_});
+  this->connected_ = false;
+  ESP_LOGI(TAG, "Sprachdienst: Verbindung %u geparkt (MTU %u)", (unsigned) conn_id, (unsigned) this->mtu_);
+}
+
+void AtvVoice::atvv_unpark(uint16_t conn_id) {
+  for (size_t i = 0; i < this->parked_.size(); i++) {
+    if (this->parked_[i].conn_id != conn_id) continue;
+    const ParkedCtx c = this->parked_[i];
+    this->parked_.erase(this->parked_.begin() + i);
+    this->conn_id_ = c.conn_id;
+    this->connected_ = true;
+    this->mtu_ = c.mtu;
+    this->rx_notify_ = c.rx_notify;
+    this->ctl_notify_ = c.ctl_notify;
+    this->caps_asked_ = c.caps_asked;
+    this->congested_ = false;
+    this->state_ = ATVV_IDLE;
+    if (this->microphone_ != nullptr && !this->mic_running_ && !this->mic_blocked_) {
+      this->warmup_samples_remaining_ = this->sample_rate_ / 4;
+      this->microphone_->start();
+      this->mic_running_ = true;
+    }
+    ESP_LOGI(TAG, "Sprachdienst: Verbindung %u wieder aktiv (MTU %u)", (unsigned) conn_id, (unsigned) c.mtu);
+    return;
+  }
+  // Unbekannt: wie eine neue Verbindung behandeln.
+  this->atvv_on_connect(conn_id);
+}
+
+void AtvVoice::atvv_forget(uint16_t conn_id) {
+  for (size_t i = 0; i < this->parked_.size(); i++)
+    if (this->parked_[i].conn_id == conn_id) { this->parked_.erase(this->parked_.begin() + i); return; }
 }
 
 void AtvVoice::atvv_on_mtu(uint16_t mtu) {
@@ -247,7 +309,9 @@ bool AtvVoice::atvv_on_write(uint16_t handle, const uint8_t *value, uint16_t len
       break;
     case ATVV_TX_MIC_CLOSE:
       ESP_LOGI(TAG, "Host closed the microphone");
-      // Sony bestaetigt ein MIC_CLOSE mit AUDIO_STOP, Grund 0x00.
+      // Kam das Schliessen noch vor dem Start (Anlaufzeit), gar nicht erst streamen.
+      this->host_start_pending_ = false;
+      // VERSUCH 11: Sony bestaetigt ein MIC_CLOSE mit AUDIO_STOP, Grund 0x00.
       this->stop_streaming_(true, ATVV_STOP_REASON_HOST);
       break;
     default:
@@ -267,6 +331,8 @@ void AtvVoice::handle_get_caps_(const uint8_t *value, uint16_t len) {
   uint16_t host_codecs = len > 4 ? (uint16_t) ((value[3] << 8) | value[4]) : 0;
   ESP_LOGI(TAG, "Host asked for capabilities (host version %u.%u, codecs 0x%04X)", (unsigned) host_major,
            (unsigned) host_minor, (unsigned) host_codecs);
+  // FORK 2026-10-04b: erst jetzt (Host nutzt den Sprachdienst) die groessere MTU aushandeln
+  espidf_ble_keyboard::ble_mtu_client_anfordern();
 
   uint16_t codec = this->codec_;
   if (host_codecs != 0 && (host_codecs & codec) == 0) {
@@ -284,11 +350,12 @@ void AtvVoice::handle_get_caps_(const uint8_t *value, uint16_t len) {
   }
   this->codec_ = codec;
 
-  // Aus einem BLE-Sniff (HCI-Snoop-Log vom Google TV Streamer): die echte
+  // VERSUCH 5 (2026-08-20, aus echtem BLE-Sniff via `adb bugreport` +
+  // Bluetooth-HCI-Snoop-Log vom Google TV Streamer selbst): die echte
   // CAPS_RESP ist NICHT 5 oder 6 Byte, sondern **20 Byte** - jede CTL-
   // Notification wird offenbar auf die Chunk-Groesse gepolstert.
   //
-  // Die eigentliche Ursache. Byte-Vergleich aller
+  // VERSUCH 10 (2026-08-20) - die eigentliche Ursache. Byte-Vergleich aller
   // drei Fernbedienungen am selben Host:
   //   Host GET_CAPS:      0a 01 00 00 03 03
   //   Sony (geht):        0b 01 00 02 03 00 14 00 00 32 31 30 ... (Seriennr.)
@@ -321,8 +388,9 @@ void AtvVoice::handle_get_caps_(const uint8_t *value, uint16_t len) {
 }
 
 void AtvVoice::handle_mic_open_(const uint8_t *value, uint16_t len) {
-  // atvv_start_search() startet das Streaming sofort, ohne auf MIC_OPEN zu
-  // warten (aus einem BLE-Sniff der eigenen Verbindung bestaetigt). Der Host schickt MIC_OPEN aber trotzdem noch (kommt
+  // VERSUCH 8 (2026-08-20, aus dem echten Sniff unserer eigenen Verbindung):
+  // seit VERSUCH 5 startet atvv_start_search() das Streaming sofort, ohne auf
+  // MIC_OPEN zu warten. Der Host schickt MIC_OPEN aber trotzdem noch (kommt
   // jetzt zuverlaessig, ~70ms nachdem wir AUDIO_START gesendet haben) - und
   // dieser Handler rief bisher unconditional start_streaming_() erneut auf,
   // was ein ZWEITES AUDIO_START mitten im laufenden Stream verschickte (im
@@ -345,12 +413,9 @@ void AtvVoice::handle_mic_open_(const uint8_t *value, uint16_t len) {
   // MEMS-Mikrofon braucht nach dem Einschalten einen Moment, sonst sind die
   // ersten Silben Rauschen. Nicht blockierend, der BLE-Stack laeuft weiter.
   this->host_opened_ = true;
-  this->host_open_trigger_.trigger();
-  this->set_timeout("host_warmup", this->host_warmup_ms_, [this]() {
-    if (this->state_ == ATVV_STREAMING)
-      return;
-    this->start_streaming_();
-  });
+  this->host_open_at_ = millis();
+  this->host_start_pending_ = true;
+  this->host_open_pending_ = true;
 }
 
 void AtvVoice::atvv_start_search() {
@@ -379,15 +444,15 @@ void AtvVoice::atvv_start_search() {
   this->level_sum_abs_ = 0;
   this->level_count_ = 0;
   this->clip_count_ = 0;
-  // Jede Aufnahme faengt garantiert unbelegt an.
+  // VERSUCH 35: jede Aufnahme faengt garantiert unbelegt an.
   this->congested_ = false;
   this->congested_since_ = 0;
   this->agc_gain_min_ = 999.0f;
   this->agc_gain_max_ = 0.0f;
-  // 250ms bei der konfigurierten Mic-Rate verwerfen - der
+  // VERSUCH 13: 250ms bei der konfigurierten Mic-Rate verwerfen - der
   // I2S-Einschwingvorgang (im Spektrogramm als steiler DC-Offset-Bogen
   // sichtbar) ist damit vorbei, bevor echte Samples in den Ringpuffer kommen.
-  // Mikrofon laeuft seit dem Verbinden bereits - nur absichern.
+  // Mikrofon laeuft seit dem Verbinden bereits (VERSUCH 43) - nur absichern.
   if (!this->mic_running_) {
     this->warmup_samples_remaining_ = this->sample_rate_ / 4;
     this->microphone_->start();
@@ -402,18 +467,19 @@ void AtvVoice::atvv_start_search() {
                   "before this firmware existed, unpair and pair the remote again");
   }
 
-  // Im
+  // VERSUCH 5 (2026-08-20, aus echtem BLE-Sniff der Sony RMF-TX520E): im
   // realen Mitschnitt schickt die Remote beim Mic-Tastendruck **kein**
   // START_SEARCH (0x08) und wartet auch nicht auf ein MIC_OPEN vom Host -
   // sie schickt direkt AUDIO_START (0x04) auf CTL und streamt sofort los.
-  // Das erklaert das Warten auf eine Nachricht (MIC_OPEN), die der Host in
-  // diesem Ablauf nie schickt. START_SEARCH kam
+  // Das erklaert vermutlich unser Problem: wir warteten auf eine Nachricht
+  // (MIC_OPEN), die der Host in diesem Ablauf nie schickt. START_SEARCH kam
   // im gesamten ~10-minuetigen Mitschnitt (mehrere erfolgreiche Sessions)
   // kein einziges Mal vor. Neuer Ablauf: HID-Taste, dann sofort streamen.
-  // An beiden echten Fernbedienungen (Sony und Google-Original) muss die
-  // Mic-Taste zum Sprechen gehalten werden - push-to-talk, kein einmaliger
-  // Klick. Ein kurzer Tastendruck (Press+Release binnen ~15 ms) mit
-  // anschliessendem festen max_duration-Fenster passt dazu nicht. Wenn der Host das Ende der
+  // VERSUCH 9 (2026-08-20): Nutzer-Beobachtung an beiden echten Fernbedienungen
+  // (Sony UND Google-Original) - die Mic-Taste muss zum Sprechen gehalten
+  // werden, ist also push-to-talk, kein einmaliger Klick. Bisher sendeten wir
+  // einen kurzen Tastendruck (Press+Release binnen ~15ms) und liefen dann
+  // unabhaengig davon bis zu max_duration weiter. Wenn der Host das Ende der
   // Anfrage am Loslassen der Taste festmacht, widerspricht das unserem festen
   // 10s-Fenster. Jetzt: Taste halten, bis atvv_stop_audio() sie loslaesst.
   if (this->send_hid_key_ && this->keyboard_ != nullptr) {
@@ -424,10 +490,18 @@ void AtvVoice::atvv_start_search() {
   this->start_streaming_();
 }
 
-void AtvVoice::atvv_stop_audio() { this->stop_streaming_(true); }
+void AtvVoice::atvv_stop_audio() {
+  // Taste losgelassen, waehrend eine vom Host angeforderte Aufnahme noch in der Anlaufzeit war:
+  // gar nicht erst streamen, den Host-Ablauf aber sauber beenden (on_stream_end).
+  if (this->host_start_pending_.exchange(false) && this->state_ == ATVV_IDLE && this->host_opened_) {
+    this->host_opened_ = false;
+    this->stream_end_pending_ = true;
+  }
+  this->stop_streaming_(true);
+}
 
 void AtvVoice::start_streaming_() {
-  if (this->microphone_ == nullptr)
+  if (this->microphone_ == nullptr || this->mic_blocked_)
     return;
   if (!this->mic_running_) {
     this->microphone_->start();
@@ -443,11 +517,11 @@ void AtvVoice::start_streaming_() {
              (unsigned) info.get_sample_rate(), (unsigned) this->sample_rate_);
   }
 
-  // Sonys AUDIO_START ist 20 Byte und traegt Stream-Typ, Codec und
+  // VERSUCH 11: Sonys AUDIO_START ist 20 Byte und traegt Stream-Typ, Codec und
   // eine hochzaehlende Sequenznummer: 04 03 02 08 00 ... Wir schickten bisher
   // nur das nackte Opcode-Byte - der Host erfuhr beim Stream-Start also nie,
   // womit er decodieren soll.
-  // Waehrend des Streamings Bluetooth Vorrang vor
+  // VERSUCH 28 (2026-08-20): Waehrend des Streamings Bluetooth Vorrang vor
   // WLAN geben. Der klassische ESP32 teilt sich EINE Funkeinheit zwischen
   // WLAN und BLE - die Sony-Fernbedienung hat diesen Konflikt nicht und
   // schafft deshalb 401 Notifications/s (= exakt 16 kHz ADPCM ueber 20-Byte-
@@ -457,9 +531,16 @@ void AtvVoice::start_streaming_() {
 
   uint8_t msg[20] = {0};
   msg[0] = ATVV_CTL_AUDIO_START;
-  msg[1] = ATVV_STREAM_TYPE;
+  // Zweites Byte = Grund des Streams. 0x03 = Taste gehalten (so macht es die
+  // Sony-Fernbedienung); der Streamer startet dann den Google Assistant. Hat der
+  // HOST das Mikrofon angefordert (MIC_OPEN, z.B. das Mikrofon-Symbol in SmartTube),
+  // muss der Grund 0x00 sein und die Stream-ID 0: nur so speist der Streamer das
+  // Audio in die anfragende App ein. Beleg am 2026-09-21 per logcat: mit 0x03 startete
+  // bei MIC_OPEN der Assistant, die App bekam "leeres Ergebnis"; die BT25 (0x00) liefert
+  // den Text direkt ins SmartTube-Suchfeld.
+  msg[1] = this->host_opened_ ? 0x00 : ATVV_STREAM_TYPE;
   msg[2] = (uint8_t) (this->codec_ & 0xFF);
-  msg[3] = ++this->audio_seq_;
+  msg[3] = this->host_opened_ ? 0x00 : ++this->audio_seq_;
   ESP_LOGD(TAG, "AUDIO_START out: %s", format_hex_pretty(msg, sizeof(msg)).c_str());
   this->send_ctl_(msg, sizeof(msg));
   this->state_ = ATVV_STREAMING;
@@ -473,26 +554,26 @@ void AtvVoice::stop_streaming_(bool notify_host, uint8_t reason) {
   // Eine vom Fernseher angeforderte Aufnahme wurde vielleicht abgebrochen,
   // bevor die Anlaufzeit um war - dann darf der Zeitgeber nicht nachtraeglich
   // doch noch losstreamen.
-  this->cancel_timeout("host_warmup");
+  this->host_start_pending_ = false;
   if (this->host_opened_) {
     this->host_opened_ = false;
-    this->stream_end_trigger_.trigger();
+    this->stream_end_pending_ = true;
   }
   if (notify_host && this->state_ == ATVV_STREAMING) {
-    // Ebenfalls 20 Byte, mit Grund in Byte [1] (Sony: 0x02 wenn die
+    // VERSUCH 11: ebenfalls 20 Byte, mit Grund in Byte [1] (Sony: 0x02 wenn die
     // Taste losgelassen wurde, 0x00 nach einem MIC_CLOSE vom Host).
     uint8_t msg[20] = {0};
     msg[0] = ATVV_CTL_AUDIO_STOP;
     msg[1] = reason;
     this->send_ctl_(msg, sizeof(msg));
   }
-  // Gegenstueck zum "hold:" beim Start - die Taste erst jetzt
+  // VERSUCH 9: Gegenstueck zum "hold:" beim Start - die Taste erst jetzt
   // loslassen, wenn die Anfrage tatsaechlich zu Ende ist (Nutzer-Stop,
   // MIC_CLOSE vom Host, oder max_duration), nicht schon Sekunden vorher.
   if (this->send_hid_key_ && this->keyboard_ != nullptr) {
     this->keyboard_->execute_action("release");
   }
-  // Mikrofon bewusst weiterlaufen lassen - siehe atvv_on_connect.
+  // VERSUCH 43: Mikrofon bewusst weiterlaufen lassen - siehe atvv_on_connect.
   if (this->level_count_ > 0) {
     const uint32_t avg = (uint32_t) (this->level_sum_abs_ / this->level_count_);
     // Full scale is 32767; below ~1% (≈330) of full scale is effectively
@@ -500,7 +581,7 @@ void AtvVoice::stop_streaming_(bool notify_host, uint8_t reason) {
     // look like this. A real voice peak should reach into the thousands.
     // Peak/avg sind der Rohpegel VOR der AGC. agc_gain_min_/max_ zeigen, in
     // welchem Bereich die automatische Regelung diese Aufnahme tatsaechlich
-    // verstaerkt hat - anders als beim alten festen Gain sagt
+    // verstaerkt hat (VERSUCH 16) - anders als beim alten festen Gain sagt
     // ein einzelner Wert hier nicht mehr viel.
     ESP_LOGI(TAG, "Mic level: peak %d raw, avg %u, AGC gain %.1f-%.1fx (Deckel %.1f), clipped %u/%u samples%s",
              (int) this->level_peak_, (unsigned) avg, (double) this->agc_gain_min_,
@@ -510,7 +591,7 @@ void AtvVoice::stop_streaming_(bool notify_host, uint8_t reason) {
                  ? " — looks silent, check mic/wiring/channel"
                  : (this->clip_count_ * 100 > this->level_count_ ? " — CLIPPING, Deckel runter!" : ""));
   }
-  // Funkzeit wieder gleichmaessig verteilen - WLAN (API, Logs,
+  // VERSUCH 28: Funkzeit wieder gleichmaessig verteilen - WLAN (API, Logs,
   // OTA) soll ausserhalb einer Sprachanfrage nicht benachteiligt sein.
   esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
 
@@ -524,13 +605,17 @@ bool AtvVoice::send_ctl_(const uint8_t *data, uint16_t len) {
     return false;
   // Audio-Task und Hauptschleife senden beide - hier serialisieren.
   LockGuard tx(this->tx_lock_);
-  // send_audio_frame_() hat Retries bei Congestion, send_ctl_() nicht - dabei
-  // wiegt ein verlorenes Paket hier am schwersten: AUDIO_START/AUDIO_STOP sind
-  // einmalige Ereignisse ohne Wiederholung im Stream. Verliert der Host das
-  // AUDIO_STOP, weiss er nicht, dass die Anfrage fertig ist. Mit nur 8 Retries
-  // ging in Mitschnitten trotzdem gelegentlich ein AUDIO_STOP verloren, und
-  // eine neue Session startete beim Host noch "auf" der alten. CTL-Nachrichten
-  // sind selten, laengeres Warten hier kostet praktisch nichts.
+  // VERSUCH 14 (2026-08-20): send_audio_frame_() bekam schon in VERSUCH 6
+  // Retries bei Congestion, send_ctl_() nie - dabei geht genau hier ein
+  // verlorenes Paket am teuersten: AUDIO_START/AUDIO_STOP sind einmalige
+  // Ereignisse ohne Wiederholung im Stream. Verliert der Host das AUDIO_STOP,
+  // weiss er nicht, dass die Anfrage fertig ist, und wartet/gibt irgendwann
+  // auf - das saehe fuer den Nutzer wie eine schlecht erkannte statt gar
+  // nicht abgeschlossene Aufnahme aus.
+  // VERSUCH 23 (2026-08-20): 8 Versuche reichten nicht immer - im Sniff
+  // verlor eine Session ihr AUDIO_STOP trotzdem, eine neue Session startete
+  // beim Host noch "auf" der alten. CTL-Nachrichten sind selten (ein paar
+  // pro Anfrage), ein laengeres Warten hier kostet praktisch nichts.
   esp_err_t err = ESP_FAIL;
   for (uint8_t attempt = 0; attempt < 40; attempt++) {
     err = esp_ble_gatts_send_indicate(this->gatts_if_, this->conn_id_, this->ctl_handle_, len,
@@ -548,7 +633,7 @@ bool AtvVoice::send_ctl_(const uint8_t *data, uint16_t len) {
 
 bool AtvVoice::send_audio_frame_(const uint8_t *frame) {
   LockGuard tx(this->tx_lock_);
-  // Uebertragungsgroesse an der tatsaechlichen MTU
+  // VERSUCH 26 (2026-08-20): Uebertragungsgroesse an der tatsaechlichen MTU
   // ausrichten, nicht an `chunk_size`. Das Google-Original meldet in
   // CAPS_RESP ebenfalls 20 (Byte [6]), schickt sein Audio aber in
   // 203-Byte-Notifications - die beiden Werte sind also entkoppelt.
@@ -561,7 +646,8 @@ bool AtvVoice::send_audio_frame_(const uint8_t *frame) {
     chunk = mtu_payload;
   for (size_t off = 0; off < ATVV_FRAME_PAYLOAD; off += chunk) {
     uint16_t len = (uint16_t) std::min((size_t) chunk, ATVV_FRAME_PAYLOAD - off);
-    // Seit dem Wegfall des Frame-Headers gibt es keinen Resync-Punkt mehr - ein einziger verlorener Chunk
+    // VERSUCH 6 Nachbesserung (2026-08-20): seit dem Wegfall des Frame-Headers
+    // gibt es keinen Resync-Punkt mehr - ein einziger verlorener Chunk
     // verschiebt/zerstoert die ADPCM-Decoder-Zustaende fuer den kompletten
     // Rest der Aeusserung (Predictor+Index laufen beim Empfaenger dann
     // dauerhaft falsch weiter). Bisher wurde bei Congestion einfach verworfen
@@ -600,8 +686,8 @@ void AtvVoice::on_mic_data_(const std::vector<uint8_t> &data) {
     return;
   const size_t frames = data.size() / (bytes_per_sample * channels);
 
-  // Der ESP32-I2S-Treiber gibt bei sample_rate: 8000 am INMP441 staendig
-  // ESP_ERR_TIMEOUT - das Mikrofon
+  // VERSUCH 5 Nachbesserung (2026-08-20): der ESP32-I2S-Treiber gibt bei
+  // sample_rate: 8000 am INMP441 staendig ESP_ERR_TIMEOUT - das Mikrofon
   // bleibt daher bei 16 kHz (laeuft zuverlaessig), und wir rechnen hier per
   // simpler Dezimierung auf die vom Codec angekuendigte Rate (8 kHz) runter,
   // statt die ESPHome-Kernkomponente i2s_audio anzufassen.
@@ -610,11 +696,11 @@ void AtvVoice::on_mic_data_(const std::vector<uint8_t> &data) {
                              ? (mic_rate / this->sample_rate_)
                              : 1;
 
-  // Frueher wurde der Mutex ohne Wartezeit geholt
+  // VERSUCH 44 (2026-08-21): frueher wurde der Mutex ohne Wartezeit geholt
   // und der GESAMTE Mic-Block verworfen, wenn er gerade belegt war. Seit der
   // Audio-Task alle 16 ms zugreift, passierte das staendig: das Mikrofon
   // lieferte nur noch ~13400 statt 16000 Samples/s, also 16 % Tonverlust -
-  // exakt die Luecke, die zunaechst faelschlich fuer Anlaufzeit gehalten wurde.
+  // exakt die Luecke, die ich vorher faelschlich fuer Anlaufzeit hielt.
   // Jetzt kurz warten statt wegwerfen; der Mic-Task darf das.
   if (xSemaphoreTake(this->pcm_lock_, pdMS_TO_TICKS(10)) != pdTRUE)
     return;
@@ -624,9 +710,9 @@ void AtvVoice::on_mic_data_(const std::vector<uint8_t> &data) {
       continue;
     }
     const uint8_t *p = data.data() + i * bytes_per_sample * channels;  // first channel only
-    // Die Verstaerkung auf vollen 24 Bit zu rechnen (statt vor dem Kuerzen
-    // auf 16 Bit) klingt plausibel - weniger Quantisierungsrauschen -, macht
-    // es aber messbar SCHLECHTER - der
+    // VERSUCH 17 (2026-08-20) war ein Irrweg und ist zurueckgenommen: die
+    // Verstaerkung auf vollen 24 Bit zu rechnen klang plausibel (weniger
+    // Quantisierungsrauschen), machte es aber messbar SCHLECHTER - der
     // Stoerabstand fiel von 34 dB auf 20 dB. Grund: das Kuerzen auf 16 Bit
     // wirkt beim leisen INMP441 wie ein Rauschgatter und schluckt dessen
     // Eigenrauschen; mit voller Aufloesung kommt genau dieses Rauschen mit
@@ -647,13 +733,13 @@ void AtvVoice::on_mic_data_(const std::vector<uint8_t> &data) {
         continue;
     }
 
-    // Reine Dezimierung (jede zweite Sample verwerfen) brachte das
-    // Assistant-Overlay, aber keine erkannte Sprache - Aliasing (kein
-    // Tiefpass vor dem Downsampling
+    // VERSUCH 5 Nachbesserung 2 (2026-08-20): erster Test mit Dezimierung
+    // (jede zweite Sample verwerfen) brachte Assistant-Overlay, aber keine
+    // erkannte Sprache - Verdacht Aliasing (kein Tiefpass vor dem Downsampling
     // auf 8 kHz). Jetzt: Boxcar-Mittelwert ueber `decim` Samples statt
     // Verwerfen - einfacher, aber wirksamer Tiefpass fuer Faktor-2-Downsampling.
     if (decim > 1) {
-      // Der bisherige 2-Punkt-Mittelwert war als
+      // VERSUCH 27 (2026-08-20): Der bisherige 2-Punkt-Mittelwert war als
       // Anti-Aliasing-Filter viel zu schwach - bei 5 kHz nur -5.1 dB, bei
       // 6 kHz -8.3 dB. Alles zwischen 4 und 8 kHz faltete sich damit ins
       // Sprachband zurueck (5 kHz -> 3 kHz, 6 kHz -> 2 kHz) und verfaelschte
@@ -680,8 +766,8 @@ void AtvVoice::on_mic_data_(const std::vector<uint8_t> &data) {
 
     float applied_gain = this->gain_;
     if (this->agc_enabled_) {
-      // Deutlich sanfter als die erste Fassung: die reagierte mit Attack 0.1
-      // praktisch instantan
+      // VERSUCH 24 (2026-08-20): zweiter Anlauf, deutlich sanfter. Die erste
+      // Fassung (VERSUCH 16) reagierte mit Attack 0.1 praktisch instantan
       // (Zeitkonstante ~1ms bei 8 kHz) - das hoerte sich als Pumpen an, weil
       // der Gain noch innerhalb eines Wortes auf einzelne laute Silben
       // reagierte. Jetzt deutlich traegere Zeitkonstanten (Attack ~6ms,
@@ -712,16 +798,17 @@ void AtvVoice::on_mic_data_(const std::vector<uint8_t> &data) {
 
     sample = (int32_t) (sample * applied_gain);
 
-    // Weiches Limit statt hartem Anschlag. Das Ergebnis wirkt "halb so laut
-    // wie eine Musik-MP3" - gemessen stimmt das (Sprache-RMS 2420, Sonys 7859). Einfach den
+    // VERSUCH 19 (2026-08-20): weiches Limit statt hartem Anschlag. Der
+    // Nutzer beschrieb das Ergebnis als "halb so laut wie eine Musik-MP3" -
+    // gemessen stimmt das (unser Sprache-RMS 2420, Sonys 7859). Einfach den
     // Gain zu verdreifachen wuerde die lauten Stellen abschneiden und die
-    // Erkennung wieder zerstoeren. Stattdessen: bis
+    // Erkennung wieder zerstoeren (siehe VERSUCH 12). Stattdessen: bis
     // `soft_knee` bleibt alles linear, darueber wird sanft komprimiert statt
     // gekappt. So koennen leise Passagen deutlich lauter werden, ohne dass
     // Spitzen verzerren.
     if (this->soft_limit_) {
-      // Eine Schwelle von 8000 komprimiert zu stark - hier hoeher angesetzt,
-      // damit weniger vom Signal gestaucht wird.
+      // VERSUCH 21: 8000 (VERSUCH 20) war dem Nutzer zu stark komprimiert -
+      // Schwelle wieder angehoben, weniger vom Signal wird gestaucht.
       const int32_t knee = 15000;  // ~46% FS, darunter voellig unangetastet
       const int32_t absv = sample < 0 ? -sample : sample;
       if (absv > knee) {
@@ -765,7 +852,7 @@ size_t AtvVoice::pcm_available_() {
 
 bool AtvVoice::pcm_pop_frame_(int16_t *out) {
   // Kurz warten statt sofort aufgeben - sonst verliert der Sendetakt einen
-  // Schritt, nur weil der Mic-Task gerade schreibt.
+  // Schritt, nur weil der Mic-Task gerade schreibt (VERSUCH 44).
   if (xSemaphoreTake(this->pcm_lock_, pdMS_TO_TICKS(5)) != pdTRUE)
     return false;
   size_t avail = (this->pcm_head_ + ATVV_PCM_BUFFER_SAMPLES - this->pcm_tail_) % ATVV_PCM_BUFFER_SAMPLES;
@@ -798,6 +885,31 @@ void AtvVoice::loop() {
     }
   }
 
+  // Vorgemerkte Trigger aus dem Bluetooth-Task hier im Hauptprogramm ausfuehren (s. atv_voice.h).
+  if (this->host_open_pending_.exchange(false))
+    this->host_open_trigger_.trigger();
+  if (this->stream_end_pending_.exchange(false))
+    this->stream_end_trigger_.trigger();
+  // Vom Host angeforderte Aufnahme erst starten, wenn das Mikrofon angelaufen ist UND die
+  // Verbindung auf dem schnellen Intervall laeuft (der Trigger oben weckt das Display, das fordert
+  // es an). Aus dem Ruhezustand lief sie sonst noch im langsamen Stromspar-Takt: "Audio chunk
+  // dropped"/"buffer overran", der Streamer bekam Bruchstuecke -> NO_SPEECH (live 2026-09-28).
+  // Das Mikrofon nimmt waehrenddessen schon in den Puffer auf, der Anfang geht nicht verloren.
+  if (this->host_start_pending_) {
+    const uint32_t el = millis() - this->host_open_at_;
+    const bool fast = this->keyboard_ == nullptr || this->keyboard_->conn_fast_ready();
+    if (el >= this->host_warmup_ms_ && (fast || el >= this->host_warmup_ms_ + 1500)) {
+      this->host_start_pending_ = false;
+      if (this->state_ != ATVV_STREAMING) {
+        if (!fast)
+          ESP_LOGW(TAG, "Fast connection not confirmed after %u ms - streaming anyway", (unsigned) el);
+        else
+          ESP_LOGD(TAG, "Host stream starts after %u ms", (unsigned) el);
+        this->start_streaming_();
+      }
+    }
+  }
+
   if (this->state_ == ATVV_IDLE)
     return;
 
@@ -809,14 +921,14 @@ void AtvVoice::loop() {
     this->stop_streaming_(true);
     return;
   }
-  // "belegt" darf nicht dauerhaft haengen bleiben.
+  // VERSUCH 35 (2026-08-21): "belegt" darf nicht dauerhaft haengen bleiben.
   // Das Flag wurde bei jedem fehlgeschlagenen Senden gesetzt, aber nur durch
   // ein Gegenereignis des Bluetooth-Stacks wieder geloescht - blieb das aus,
   // stieg loop() fuer immer sofort aus und es ging KEIN einziges Audiopaket
   // mehr raus ("Voice query finished (0 frames)", Mikrofon lief dabei
   // einwandfrei). Genau das war der Zustand "erkennt ploetzlich gar nichts
   // mehr". Jetzt wird nach 200 ms auf jeden Fall wieder ein Versuch gewagt.
-  // Wartezeit von 200 ms auf 25 ms. 200 ms waren als
+  // VERSUCH 37 (2026-08-21): Wartezeit von 200 ms auf 25 ms. 200 ms waren als
   // reine Notbremse gedacht, wurden bei 16 kHz aber zum Normalfall: dort tritt
   // Congestion regelmaessig auf, und jedes Mal stand der Stream 200 ms still.
   // Messung: SD kam auf 219 Notif/s, HD nur auf 70 - obwohl dieselbe
@@ -837,7 +949,7 @@ void AtvVoice::loop() {
 
 }
 
-// Der Audio-Versand laeuft jetzt hier, in einem
+// VERSUCH 41 (2026-08-21): Der Audio-Versand laeuft jetzt hier, in einem
 // eigenen Task auf Kern 0. Vorher steckte er in loop() - und die ESPHome-
 // Hauptschleife kommt nur alle ~27 ms dran, waehrend HD alle 16 ms ein Paket
 // braucht. Was dazwischen faellig wurde, ging als Aufholverlust verloren
@@ -854,7 +966,7 @@ void AtvVoice::audio_task_loop_() {
       continue;
     }
     if (this->congested_) {
-      // Wartezeit von 200 auf 20 ms. Sie ist nur die
+      // VERSUCH 42 (2026-08-21): Wartezeit von 200 auf 20 ms. Sie ist nur die
       // Notbremse gegen ein dauerhaft haengendes Flag - normal loescht der
       // Stack es selbst per Ereignis. 200 ms waren dabei teuer: waehrend der
       // Wartezeit laeuft der Sendetakt weiter, und der Aufhol-Deckel verwirft
@@ -881,7 +993,7 @@ void AtvVoice::audio_task_loop_() {
       vTaskDelay(1);
       continue;
     }
-    // Reiner ADPCM-Nibble-Strom, kein Header pro Block.
+    // Reiner ADPCM-Nibble-Strom, kein Header pro Block (VERSUCH 6).
     for (size_t i = 0; i < ATVV_FRAME_SAMPLES; i += 2) {
       uint8_t low = this->encoder_.encode(samples[i]);
       uint8_t high = this->encoder_.encode(samples[i + 1]);

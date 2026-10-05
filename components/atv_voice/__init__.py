@@ -7,7 +7,7 @@ from esphome.components.espidf_ble_keyboard import (
 )
 from esphome.const import CONF_ID, CONF_MICROPHONE
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@aggro600"]
 DEPENDENCIES = ["esp32", "espidf_ble_keyboard", "microphone"]
 
 atv_voice_ns = cg.esphome_ns.namespace("atv_voice")
@@ -104,6 +104,16 @@ async def to_code(config):
 
     mic = await cg.get_variable(config[CONF_MICROPHONE])
     cg.add(var.set_microphone(mic))
+
+    # atv_voice.cpp nutzt esp_coex_preference_set() (BT-Vorrang beim Streamen).
+    # Seit ESPHome 2026.9 / ESP-IDF 5.5 bindet der Build ungenutzte IDF-
+    # Komponenten nicht mehr von selbst ein - ohne diese Zeile bricht das
+    # Kompilieren mit "includes esp_coexist.h, provided by esp_coex" ab.
+    try:
+        from esphome.components.esp32 import include_builtin_idf_component
+        include_builtin_idf_component("esp_coex")
+    except ImportError:
+        pass
 
     codec, sample_rate = CODECS[config[CONF_CODEC]]
     cg.add(var.set_codec(codec))

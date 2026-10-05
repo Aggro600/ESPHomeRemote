@@ -6,7 +6,7 @@ from esphome.core import coroutine_with_priority
 from esphome.components.lvgl.types import lv_obj_t
 from esphome.components.font import Font
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@nils"]
 DEPENDENCIES = ["esp32", "lvgl", "json", "font"]
 
 menu_ui_ns = cg.esphome_ns.namespace("menu_ui")

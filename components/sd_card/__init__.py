@@ -7,7 +7,7 @@ from esphome.components.esp32 import (
     include_builtin_idf_component,
 )
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@nils"]
 DEPENDENCIES = ["esp32", "network"]
 # web_server_base: gemeinsamer HTTP-Server fuer den zeitlich begrenzten
 # Konfig-Endpunkt (sd_http.cpp). Wird nur bei http_enable() gestartet.

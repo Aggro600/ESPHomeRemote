@@ -4,7 +4,7 @@ from esphome import automation
 from esphome.const import CONF_ID, CONF_TRIGGER_ID
 from esphome.core import coroutine_with_priority
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@nils"]
 DEPENDENCIES = ["esp32", "json"]
 AUTO_LOAD = ["remote_base"]
 

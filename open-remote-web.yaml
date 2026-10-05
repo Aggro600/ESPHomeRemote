@@ -17,6 +17,7 @@
 substitutions:
   device_name:    "open-remote"
   friendly_name:  "Open Remote"
+  ha_name:        "open_remote"
 
 packages:
   firmware: github://Aggro600/ESPHomeRemote/open-remote-firmware.yaml@master

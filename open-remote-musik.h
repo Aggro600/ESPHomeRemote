@@ -21,7 +21,7 @@ static const char *const MUS_GRP_ID[MUS_GRP_N] = {
     "media_player.kuchen_lautsprecher_r",
     "media_player.badezimmer_lautsprecher",
     "media_player.fernseher_im_raum_wohnzimmer_2",
-    "media_player.schlafzimmer_lautsprecher",
+    "media_player.schlafzimmer_sabrina_2",
     "media_player.tablet_wohnzimmer_3",
     "media_player.tablet_kuche_music_assi",
 };

@@ -3,7 +3,7 @@ import esphome.config_validation as cv
 from esphome.components import i2c
 from esphome.const import CONF_ID
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@your-github-handle"]
 DEPENDENCIES = ["i2c"]
 
 lis3dh_ns = cg.esphome_ns.namespace("lis3dh")

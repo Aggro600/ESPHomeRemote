@@ -1,41 +1,46 @@
 # =============================================================================
-#  Open Remote - Einbinde-Datei ("adoptieren")
+#  ESPHomeRemote - deine Fernbedienung (diese Datei kommt in dein ESPHome)
 # =============================================================================
-# Diese Datei ist der Einstiegspunkt zum Uebernehmen der Firmware in die eigene
-# ESPHome-/Home-Assistant-Installation - ohne das Repo lokal zu klonen.
+# So geht's (Details im README, Abschnitt "Schnellstart"):
+#   1. ESPHome in Home Assistant oeffnen -> "+ Neues Geraet" -> "Ueberspringen".
+#   2. Den Inhalt DIESER Datei in den Editor kopieren und speichern.
+#   3. Unten "ha_host" auf die Adresse deines Home Assistant setzen.
+#   4. "Installieren" -> per USB flashen. Danach in HA unter "Geraete" uebernehmen.
 #
-# ESPHome-Oberflaeche -> "Neues Geraet" -> nicht verbinden -> Zahnrad/Editor ->
-# den Inhalt dieser Datei einfuegen (oder ueber den Button im README).
-# Dann secrets.yaml.example -> secrets.yaml ausfuellen und flashen.
-#
-# Die eigentliche Firmware + die eigenen Komponenten werden ueber die Pakete
-# unten direkt aus GitHub gezogen. Zum Anpassen an dein Zuhause: die
-# substitutions hier ueberschreiben, Details in ANPASSEN / README.
+# Die eigentliche Firmware wird automatisch aus GitHub geladen (packages unten).
+# Alles, was du anpassen kannst, steht hier in "substitutions".
 # =============================================================================
 
 substitutions:
-  device_name:    "open-remote"
-  friendly_name:  "Open Remote"
+  device_name:    "open-remote"     # Name im Netz: nur a-z, 0-9 und -
+  friendly_name:  "Open Remote"     # Anzeigename (Bluetooth, Begruessung)
+  ha_name:        "open_remote"     # = device_name, aber mit _ statt -
 
-  # Home-Assistant-Entitaeten (auf deine aendern) - siehe README "An dein
-  # Zuhause anpassen". Nicht gesetzte zeigen im Menue nur "nicht verfuegbar".
-  ent_media:      "media_player.wohnzimmer"
-  ent_streamer:   "remote.wohnzimmer_streamer"
-  ent_adb:        "media_player.android_tv"
-  ent_wz_light:   "light.wohnzimmer"
-  ent_wz_cover:   "cover.wohnzimmer"
-  ent_sz_light:   "light.schlafzimmer"
-  ent_sz_cover:   "cover.schlafzimmer"
-  ent_ku_cover:   "cover.kueche"
-  ent_doorbell:   "input_boolean.klingel"
-  ent_door_lock:  "lock.haustuer"
-  ent_sh_test:    "input_boolean.beispielschalter"
-  ent_doorbell2:  "input_boolean.klingel_2"
-  ent_door_lock2: "lock.wohnungstuer"
-  ent_open_ok1:   "input_boolean.tuer_1_oeffnen_erlauben"
-  ent_open_ok2:   "input_boolean.tuer_2_oeffnen_erlauben"
-  ent_sleeptimer: "timer.sleeptimer"
-  ent_sleep_flag: "input_boolean.sleeptimer_laeuft"
+  # Adresse deines Home Assistant (IP:Port), z. B. "192.168.1.10:8123"
+  ha_host:        "192.168.1.10:8123"
+
+  # Optional: Entitaeten fuer die eingebauten Seiten (Startseite, Klingel, Sleeptimer).
+  # Was du nicht hast, einfach stehen lassen - die Seite zeigt dann "nicht verfuegbar".
+  # Das Menue selbst gestaltest du spaeter bequem im Konfigurator in Home Assistant.
+  ent_media:       "media_player.wohnzimmer"           # Fernseher/Player fuer Cover und Zeitleiste
+  ent_streamer:    "remote.wohnzimmer_streamer"        # Android-TV-Fernbedienung (z. B. Google TV)
+  ent_adb:         "media_player.android_tv"           # Android-TV per ADB (App-Erkennung)
+  ent_wz_light:    "light.wohnzimmer"
+  ent_wz_cover:    "cover.wohnzimmer"
+  ent_sz_light:    "light.schlafzimmer"
+  ent_sz_cover:    "cover.schlafzimmer"
+  ent_ku_cover:    "cover.kueche"
+  ent_doorbell:    "input_boolean.klingel"             # wird "on", wenn es klingelt
+  ent_door_lock:   "lock.haustuer"
+  ent_doorbell2:   "input_boolean.klingel_2"
+  ent_door_lock2:  "lock.wohnungstuer"
+  ent_open_ok1:    "input_boolean.tuer_1_oeffnen_erlauben"
+  ent_open_ok2:    "input_boolean.tuer_2_oeffnen_erlauben"
+  ent_sh_test:     "input_boolean.beispielschalter"
+  ent_bildmodus:   "input_select.tv_bildmodus"
+  ent_audioquelle: "input_select.audioquelle"
+  ent_sleeptimer:  "timer.sleeptimer"
+  ent_sleep_flag:  "input_boolean.sleeptimer_laeuft"
 
 dashboard_import:
   package_import_url: github://Aggro600/ESPHomeRemote/open-remote.yaml@master
