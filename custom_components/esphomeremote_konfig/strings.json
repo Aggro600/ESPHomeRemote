@@ -1,0 +1,35 @@
+{
+ "config": {
+  "step": {
+   "user": {
+    "title": "Set up remotes",
+    "description": "Enter the names of your remotes (device_name from ESPHome, comma separated). Keep the key as is.",
+    "data": {
+     "devices": "Remotes (device_name)",
+     "key": "Key"
+    }
+   },
+   "fertig": {
+    "title": "Almost done – add the key to ESPHome",
+    "description": "Copy this line into the ESPHome **Secrets** (ESPHome add-on → top right \"Secrets\") and flash the remote once more:\n\n`esphomeremote_konfig_key: \"{key}\"`\n\nThen open **\"Fernbedienung\"** in the sidebar."
+   }
+  },
+  "abort": {
+   "single_instance_allowed": "Already set up. Add more remotes via \"Configure\"."
+  },
+  "error": {
+   "leer": "Enter at least one name."
+  }
+ },
+ "options": {
+  "step": {
+   "init": {
+    "title": "Remotes",
+    "description": "Remote names (device_name, comma separated). Key for the ESPHome secrets: `{key}`",
+    "data": {
+     "devices": "Remotes (device_name)"
+    }
+   }
+  }
+ }
+}

@@ -38,7 +38,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "13"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "14"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 60000
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102}
@@ -47,7 +47,8 @@ STEP_TYPES = {"ble", "ha", "int", "ir", "wait"}
 
 CONFIG_SCHEMA = vol.Schema(
     {
-        DOMAIN: vol.Schema(
+        # YAML ist optional: einfacher geht es ueber "Integration hinzufuegen" (config_flow.py)
+        vol.Optional(DOMAIN): vol.Schema(
             {
                 vol.Required("key"): cv.string,
                 vol.Optional("devices", default=["open-remote"]): vol.All(
@@ -395,8 +396,33 @@ class StatesView(HomeAssistantView):
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    conf = config[DOMAIN]
-    kd = KonfigData(hass, conf["key"], conf["devices"])
+    if DOMAIN in config:
+        await _starten(hass, config[DOMAIN]["key"], config[DOMAIN]["devices"])
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
+    """Einrichtung ueber die Oberflaeche (Schluessel + Geraete aus dem Dialog)."""
+    if DOMAIN in hass.data:   # schon per YAML eingerichtet
+        return True
+    await _starten(hass, entry.data["key"], entry.options.get("devices", entry.data["devices"]))
+
+    async def geaendert(hass: HomeAssistant, e) -> None:
+        kd: KonfigData = hass.data[DOMAIN]
+        for dev in e.options.get("devices", []):
+            if dev not in kd.devices:
+                await kd.geraet_dazu(dev)
+
+    entry.async_on_unload(entry.add_update_listener(geaendert))
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
+    return True   # Panel und Adressen bleiben bis zum Neustart (HA kann Views nicht abmelden)
+
+
+async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
+    kd = KonfigData(hass, key, devices)
     await kd.load()
     hass.data[DOMAIN] = kd
 
@@ -422,7 +448,6 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     from .einrichten import registrieren
 
     registrieren(hass, kd)
-    return True
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/get"})

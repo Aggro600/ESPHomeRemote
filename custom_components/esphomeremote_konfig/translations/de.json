@@ -1,0 +1,35 @@
+{
+ "config": {
+  "step": {
+   "user": {
+    "title": "Fernbedienungen einrichten",
+    "description": "Trage die Namen deiner Fernbedienungen ein (device_name aus ESPHome, mehrere mit Komma). Den Schlüssel kannst du so lassen.",
+    "data": {
+     "devices": "Fernbedienungen (device_name)",
+     "key": "Schlüssel"
+    }
+   },
+   "fertig": {
+    "title": "Fast fertig – Schlüssel in ESPHome eintragen",
+    "description": "Kopiere diese Zeile in die **Secrets** von ESPHome (ESPHome-Add-on → oben rechts „Secrets“) und spiele die Fernbedienung danach einmal neu auf:\n\n`esphomeremote_konfig_key: \"{key}\"`\n\nDanach findest du links in der Seitenleiste **„Fernbedienung“**."
+   }
+  },
+  "abort": {
+   "single_instance_allowed": "Ist schon eingerichtet. Weitere Fernbedienungen fügst du über „Konfigurieren“ hinzu."
+  },
+  "error": {
+   "leer": "Bitte mindestens einen Namen eintragen."
+  }
+ },
+ "options": {
+  "step": {
+   "init": {
+    "title": "Fernbedienungen",
+    "description": "Namen der Fernbedienungen (device_name, mehrere mit Komma). Schlüssel für die ESPHome-Secrets: `{key}`",
+    "data": {
+     "devices": "Fernbedienungen (device_name)"
+    }
+   }
+  }
+ }
+}

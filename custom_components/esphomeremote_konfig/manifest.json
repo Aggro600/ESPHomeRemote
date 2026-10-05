@@ -1,0 +1,20 @@
+{
+  "domain": "esphomeremote_konfig",
+  "name": "ESPHomeRemote",
+  "codeowners": [
+    "@Aggro600"
+  ],
+  "dependencies": [
+    "http",
+    "frontend",
+    "panel_custom",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/Aggro600/ESPHomeRemote",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "2026.10.5",
+  "config_flow": true,
+  "issue_tracker": "https://github.com/Aggro600/ESPHomeRemote/issues",
+  "single_config_entry": true
+}

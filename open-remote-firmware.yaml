@@ -101,6 +101,9 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
+  project:   # noetig fuer dashboard_import (Uebernehmen in ESPHome)
+    name: aggro600.esphomeremote
+    version: "2026.10"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - open-remote-pm.h
