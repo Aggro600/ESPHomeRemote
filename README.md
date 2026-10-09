@@ -29,6 +29,8 @@ ohne zu programmieren.
 
 - Die Fernbedienung: **OMOTE / Open Remote, Platine Rev6** (ESP32-S3).
   Hardware: https://github.com/OMOTE-Community/OMOTE-Hardware
+  Du bekommst die PCBs evtl. über den Discord buy/sell: [https://discord.com/channels/1138116475559882852/1153343867681243279](https://discord.com/channels/1138116475559882852/1153343867681243279)
+  
 - Ein **USB-C-Kabel** und einen PC mit **Chrome oder Edge** (zum ersten Aufspielen).
 - Für alle Funktionen: **Home Assistant** mit dem **ESPHome**-Add-on (oder „ESPHome Device Builder“)
   und **HACS** (für den Konfigurator).
