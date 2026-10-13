@@ -1,4 +1,9 @@
 #include "ili9341_i80_display.h"
+#include "lvgl.h"
+#include "esp_heap_caps.h"
+#include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #ifdef USE_ESP32
 
@@ -201,6 +206,68 @@ void ILI9341I80Display::wait_trans_() {
   }
 }
 
+// ---- Bildschirmfoto ------------------------------------------------------------------------------
+static uint8_t *g_foto = nullptr;
+static int g_foto_w = 0, g_foto_h = 0;
+static volatile int g_foto_status = 0;   // 0 frei, 1 angefordert, 2 sammelt, 3 fertig
+static uint32_t g_foto_ab = 0;
+static volatile int g_foto_scroll = -1;
+
+// Erster Bereich auf dem Bildschirm, der senkrecht scrollen kann (Menueseite)
+static lv_obj_t *scrollbereich(lv_obj_t *o) {
+  if (o == nullptr) return nullptr;
+  if (lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE) && (lv_obj_get_scroll_top(o) > 0 || lv_obj_get_scroll_bottom(o) > 0))
+    return o;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+    if (lv_obj_t *r = scrollbereich(lv_obj_get_child(o, i))) return r;
+  return nullptr;
+}
+
+bool bildschirmfoto(const uint8_t **data, size_t *len, int *w, int *h, int scroll_y) {
+  if (g_foto_status != 0 && g_foto_status != 3) return false;   // laeuft schon
+  g_foto_scroll = scroll_y;
+  g_foto_status = 1;
+  for (int i = 0; i < 100 && g_foto_status != 3; i++) vTaskDelay(pdMS_TO_TICKS(20));
+  if (g_foto_status != 3 || g_foto == nullptr) { g_foto_status = 0; return false; }
+  *data = g_foto;
+  *len = (size_t) g_foto_w * g_foto_h * 2;
+  *w = g_foto_w;
+  *h = g_foto_h;
+  return true;
+}
+
+void ILI9341I80Display::loop() {
+  if (g_foto_status == 1) {
+    g_foto_w = this->width_;
+    g_foto_h = this->height_;
+    if (g_foto == nullptr)
+      g_foto = static_cast<uint8_t *>(heap_caps_malloc((size_t) g_foto_w * g_foto_h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (g_foto == nullptr) { g_foto_status = 0; return; }
+    memset(g_foto, 0, (size_t) g_foto_w * g_foto_h * 2);
+    if (g_foto_scroll >= 0) {
+      if (lv_obj_t *s = scrollbereich(lv_screen_active())) lv_obj_scroll_to_y(s, g_foto_scroll, LV_ANIM_OFF);
+    }
+    g_foto_status = 2;
+    g_foto_ab = millis();
+    lv_obj_invalidate(lv_screen_active());
+    lv_obj_invalidate(lv_layer_top());
+  } else if (g_foto_status == 2 && millis() - g_foto_ab > 500) {
+    g_foto_status = 3;
+  }
+}
+
+static void foto_kopieren(int x0, int y0, int w, int h, const uint8_t *src, int pw, int ph) {
+  for (int y = 0; y < h; y++) {
+    const int yy = y0 + y;
+    if (yy < 0 || yy >= ph) continue;
+    int x = 0, n = w;
+    if (x0 < 0) { x = -x0; n -= x; }
+    if (x0 + w > pw) n -= (x0 + w - pw);
+    if (n <= 0) continue;
+    memcpy(g_foto + ((size_t) yy * pw + x0 + x) * 2, src + ((size_t) y * w + x) * 2, (size_t) n * 2);
+  }
+}
+
 void ILI9341I80Display::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr,
                                        display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
                                        int x_offset, int y_offset, int x_pad) {
@@ -247,6 +314,8 @@ void ILI9341I80Display::draw_pixels_at(int x_start, int y_start, int w, int h, c
     }
     src = this->scratch_.data();
   }
+
+  if (g_foto_status == 2 && g_foto != nullptr) foto_kopieren(x_start, y_start, w, h, src, g_foto_w, g_foto_h);
 
   // Previous transfer must be off the bus before the window is reprogrammed.
   this->wait_trans_();

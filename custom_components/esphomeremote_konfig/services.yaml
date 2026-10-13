@@ -1,0 +1,17 @@
+an_remotes:
+  name: An alle Fernbedienungen
+  description: Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.<remote>_<dienst>).
+  fields:
+    dienst:
+      name: Dienst
+      description: "Teil hinter dem Geraetenamen, z. B. refresh_cover, doorbell_image, remote_show_keyboard"
+      required: true
+      example: refresh_cover
+      selector:
+        text:
+    daten:
+      name: Daten
+      required: false
+      example: '{"door": 1}'
+      selector:
+        object:

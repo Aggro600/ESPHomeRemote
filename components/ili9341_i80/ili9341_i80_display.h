@@ -26,6 +26,11 @@ namespace ili9341_i80 {
 // `ili9xxx` component (esphome/components/ili9xxx/ili9xxx_init.h) - that
 // exact command sequence is already known-good on this class of panel; only
 // the transport layer (SPI -> parallel i80) differs here.
+// Bildschirmfoto (2026-10-11): kopiert beim naechsten vollstaendigen Neuzeichnen jedes an das Panel gehende Stueck
+// in einen Puffer (RGB565 big-endian, Panel-Koordinaten). Aufruf aus einem anderen Task (HTTP), wartet bis ~1,5 s.
+// true = data/len gueltig bis zum naechsten Aufruf.
+bool bildschirmfoto(const uint8_t **data, size_t *len, int *w, int *h, int scroll_y = -1);
+
 class ILI9341I80Display : public display::DisplayBuffer {
  public:
   void set_cs_pin(InternalGPIOPin *pin) { this->cs_pin_ = pin; }
@@ -45,6 +50,7 @@ class ILI9341I80Display : public display::DisplayBuffer {
   void set_bus_frequency(uint32_t hz) { this->pclk_hz_ = hz; }
 
   void setup() override;
+  void loop() override;
   void update() override;
   void dump_config() override;
 

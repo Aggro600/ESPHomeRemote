@@ -4,7 +4,7 @@ from esphome import pins
 from esphome.components import display
 from esphome.const import CONF_ID, CONF_LAMBDA, CONF_DIMENSIONS, CONF_WIDTH, CONF_HEIGHT
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@your-github-handle"]
 DEPENDENCIES = ["display"]
 
 ili9341_i80_ns = cg.esphome_ns.namespace("ili9341_i80")

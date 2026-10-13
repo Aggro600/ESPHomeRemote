@@ -12,7 +12,7 @@ from esphome.const import (
     UNIT_VOLT,
 )
 
-CODEOWNERS = ["@Aggro600"]
+CODEOWNERS = ["@your-github-handle"]
 DEPENDENCIES = ["i2c"]
 
 max17048_ns = cg.esphome_ns.namespace("max17048")

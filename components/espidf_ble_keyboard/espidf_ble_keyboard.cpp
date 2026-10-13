@@ -8,8 +8,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_gatt_defs.h"
-#include "esp_gatt_common_api.h"  // esp_ble_gatt_set_local_mtu
-#include "esp_gattc_api.h"        // MTU-Anfrage als Client
+#include "esp_gatt_common_api.h"  // esp_ble_gatt_set_local_mtu (VERSUCH 26)
+#include "esp_gattc_api.h"        // MTU-Anfrage als Client (VERSUCH 39)
 #include "esp_bt_defs.h"
 #include "nvs.h"
 #include "esp_random.h"
@@ -20,13 +20,16 @@
 #include <span>
 #include <vector>
 
+// FORK 2026-10-02: Weckprotokoll der YAML-Konfiguration (open-remote-pm.h), falls vorhanden.
+extern void weck_log(const char *s) __attribute__((weak));
+
 namespace esphome {
 namespace espidf_ble_keyboard {
 
 static const char *TAG = "espidf_ble_keyboard";
 static EspidfBleKeyboard *s_instance = nullptr;
 #define GATTS_APP_ID 0x55
-#define GATTC_APP_ID 0x56  // zweite Rolle, nur fuer die MTU-Anfrage
+#define GATTC_APP_ID 0x56  // VERSUCH 39: zweite Rolle nur fuer die MTU-Anfrage
 
 // Forward declarations
 static esp_err_t send_keyboard_input_report(uint16_t conn_id, const uint8_t *report, uint16_t len);
@@ -37,7 +40,7 @@ static esp_err_t send_keyboard_input_report(uint16_t conn_id, const uint8_t *rep
 // Report ID 3: System control — power/sleep (1 byte)
 // Report ID 4: Mouse — buttons + X/Y + scroll (4 bytes)
 // Report ID 5: Absolute mouse — buttons + absolute X/Y 0..32767 (5 bytes)
-static const uint8_t hid_report_map[] = {
+static uint8_t hid_report_map[] = {   // FORK 2026-09-29b: nicht const - Ziffern-Modus wird zur Laufzeit gesetzt
 #ifndef ESPIDF_BLE_KB_NO_KEYBOARD
     // ---- Keyboard (Report ID 1) ----
     0x05, 0x01, 0x09, 0x06, 0xA1, 0x01,
@@ -50,8 +53,17 @@ static const uint8_t hid_report_map[] = {
     // Key array: Logical/Usage Maximum 0x73 (F24) so F13-F24 (0x68-0x73) are in
     // range — hosts silently drop keycodes above the declared maximum. Hosts
     // cache the HID descriptor per bond: re-pair after changing this.
+#ifdef ESPIDF_BLE_KB_DIGITS
+    // Nur 0x1E-0x2C: Ziffern 1-0, Enter, Esc, Backspace, Tab, Leertaste. Kein
+    // Buchstabenblock -> Android stuft das Geraet als NICHT-alphabetische
+    // Tastatur ein (KeyboardType 1, wie eine normale Fernbedienung). Wert 0
+    // ("keine Taste") liegt ausserhalb des Logical Minimum = Null-Zustand.
+    0x95, 0x06, 0x75, 0x08, 0x15, 0x1E, 0x25, 0x2C,
+    0x05, 0x07, 0x19, 0x1E, 0x29, 0x2C, 0x81, 0x00,
+#else
     0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x73,
     0x05, 0x07, 0x19, 0x00, 0x29, 0x73, 0x81, 0x00,
+#endif
     0xC0,
 #endif  // ESPIDF_BLE_KB_NO_KEYBOARD
     // ---- Consumer Control (Report ID 2) — media keys ----
@@ -79,6 +91,24 @@ static const uint8_t hid_report_map[] = {
     0x75, 0x08,        //   Report Size (8)
     0x95, 0x01,        //   Report Count (1)
     0x81, 0x00,        //   Input (Data, Array)
+    0xC0,              // End Collection
+    // ---- Tasten (Report ID 6) — HID-Button-Seite, 8 Tasten als Bitfeld ----
+    // // FORK 2026-09-29 (Report 6, HID-Button-Seite): Linux legt Button-Usages ausserhalb von Maus/Joystick/
+    // Gamepad-Sammlungen auf BTN_MISC+n (Button 1 = BTN_0 ...), Android macht daraus
+    // KEYCODE_BUTTON_1..8 (Generic.kl: key 256.. BUTTON_1..). Gebraucht fuer das Zahnrad-
+    // Menue des Sony TV = KEYCODE_BUTTON_2 (189), das keine Consumer-Usage ausloest.
+    0x05, 0x0C,        // Usage Page (Consumer)
+    0x09, 0x01,        // Usage (Consumer Control)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x06,        //   Report ID (6)
+    0x05, 0x09,        //   Usage Page (Button)
+    0x19, 0x01,        //   Usage Minimum (Button 1)
+    0x29, 0x08,        //   Usage Maximum (Button 8)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x08,        //   Report Count (8)
+    0x81, 0x02,        //   Input (Data, Variable, Absolute)
     0xC0,              // End Collection
 #ifndef ESPIDF_BLE_KB_NO_POINTER
     // ---- Mouse (Report ID 4) — buttons + X/Y movement + scroll wheel ----
@@ -150,7 +180,7 @@ static const uint8_t hid_report_map[] = {
 static uint8_t raw_adv_data[] = {
     0x02, 0x01, 0x06,           // Flags: LE General Discoverable + BR/EDR not supported
     0x03, 0x03, 0x12, 0x18,     // Complete List of 16-bit UUIDs: HID (0x1812)
-    // Appearance war 0x03C1 (generische
+    // VERSUCH 4 (empirisch, 2026-08-20): Appearance war 0x03C1 (generische
     // Tastatur, siehe HID-Kategorie). ATV-Voice-Hypothesen 1-3 (CAPS_RESP-
     // Laenge, Timing, hid_key) sind widerlegt, MIC_OPEN kommt trotz
     // sauberem Capability-Handshake nie. Testet: der Host koennte die
@@ -189,7 +219,39 @@ static uint32_t s_pending_adv_after_close_ms = 0;
 // set randaddress". Frueher wurde blind gestoppt und sofort neu gestartet; das
 // Stoppen ist aber asynchron, und der Neustart kam zu frueh.
 static bool s_adv_running = false;
+static bool s_adv_busy = false;          // FORK 2026-09-29e: Werbe-Kette laeuft gerade
+static uint32_t s_adv_busy_since_ms = 0;
+// FORK 2026-09-29c: Werbung ohne Partner nach 60 s verlangsamen (vorher dauerhaft 20-40 ms = Stromfresser)
+static bool s_adv_slow = false;
+static uint32_t s_adv_fast_since_ms = 0;
 static bool s_restart_adv_pending = false;
+// HALINK (2026-10-05): Zustand der Link-Verbindung (s. Header)
+static bool s_link_connected = false;
+static uint16_t s_link_conn_id = 0xFFFF;
+static esp_bd_addr_t s_link_bda = {0};
+static uint16_t s_link_mtu = 23;
+static bool s_link_congested = false;
+// Link-Werbung neben einem HID-Host: 5 min nach einem Link-Verlust (und nach dem Start) schnell (100-150 ms),
+// damit der Proxy - der nur selten scannt - die Remote rasch findet; danach 250-300 ms (500-640 ms war zu selten:
+// HA bekam keine Verbindung mehr zustande, 2026-10-05).
+static uint32_t s_link_lost_ms = 0;
+static bool s_link_adv_fast = false;
+static const uint32_t LINK_ADV_FAST_MS = 300000;
+// Zuverlaessig senden (2026-10-05): immer nur EIN Notify unterwegs. Bluedroid nimmt send_indicate asynchron an
+// und verwirft das Paket spaeter trotzdem, wenn der Kanal verstopft ist ("ATT fixed channel already congested,
+// drop PDU") - mit zwei Verbindungen (HID + Link) passierte das mitten im API-Strom. CONF_EVT meldet das
+// Ergebnis; bei Fehler wird dasselbe Paket nochmal geschickt.
+static volatile bool s_link_inflight = false;
+static volatile bool s_link_retry = false;
+static uint32_t s_link_sent_ms = 0;
+static uint8_t s_link_last[512];
+static uint16_t s_link_last_len = 0;
+// Zaehler fuer die Diagnose
+static volatile uint32_t s_ln_send_ok = 0, s_ln_send_fail = 0, s_ln_conf_ok = 0, s_ln_conf_err = 0, s_ln_conf_other = 0;
+static volatile uint8_t s_ln_last_status = 0;
+static volatile uint16_t s_ln_last_conf_conn = 0xFFFF;
+// Soll fuer den Link geworben werden (auch neben einem HID-Host)?
+static bool link_wants_adv() { return s_instance && s_instance->link_enabled() && !s_link_connected && !s_instance->funk_aus(); }
   static std::atomic<bool> s_directed_adv_active{false};
   static std::atomic<uint32_t> s_directed_adv_start_ms{0};
   static esp_bd_addr_t s_directed_addr = {};
@@ -260,7 +322,7 @@ static void maybe_reset_bonds_after_security_config_change() {
     nvs_close(handle);
 }
 
-// ── MTU als Client anfordern ────────────────────────────────────────────────
+// ── VERSUCH 39 (2026-08-21): MTU als Client anfordern ────────────────────────
 // Der Streamer handelt mit uns keine groessere MTU aus (mit der Google-Remote
 // schon: 210). Die MTU-Aushandlung darf im BLE aber nur der GATT-*Client*
 // anstossen - und wir sind Server. Ausweg: der ESP32 registriert zusaetzlich
@@ -270,6 +332,21 @@ static void maybe_reset_bonds_after_security_config_change() {
 // noch eines. Genau das ist der Engpass (219 noetige Pakete/s bei 8 kHz gegen
 // ~215-220 machbare, also null Reserve).
 static esp_gatt_if_t s_gattc_if = ESP_GATT_IF_NONE;
+// FORK 2026-10-04: MTU-Client erst NACH erfolgreicher Kopplung/Verschluesselung oeffnen, mit dem echten
+// Adresstyp des Partners. Vorher lief esp_ble_gattc_aux_open direkt im CONNECT-Ereignis mit fest PUBLIC:
+// der Streamer nutzt eine Random-Adresse -> der Controller fand die bestehende Verbindung nicht und
+// versuchte ~30 s selbst zu verbinden; in der Zeit blieb die SMP-Kopplung liegen (Pairing Failed 0x63,
+// Streamer: SMP_RSP_TIMEOUT). Belegt im Log 2026-10-04: "GATTS: Connected" ... 33 s ... "GATTC: opened".
+static esp_bd_addr_t s_mtu_peer;
+static esp_ble_addr_type_t s_mtu_peer_type = BLE_ADDR_TYPE_PUBLIC;
+static bool s_mtu_offen = false;
+static void mtu_client_oeffnen();
+void ble_mtu_client_anfordern() { mtu_client_oeffnen(); }
+static void mtu_client_oeffnen() {
+    if (!s_mtu_offen || s_gattc_if == ESP_GATT_IF_NONE) return;
+    s_mtu_offen = false;
+    esp_ble_gattc_aux_open(s_gattc_if, s_mtu_peer, s_mtu_peer_type, true);
+}
 
 static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                                 esp_ble_gattc_cb_param_t *param) {
@@ -303,8 +380,9 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
 static void request_host_friendly_conn_params(const esp_bd_addr_t bda) {
     esp_ble_conn_update_params_t conn_params = {};
     memcpy(conn_params.bda, bda, sizeof(esp_bd_addr_t));
-    // 7.5 ms zu erzwingen ist kontraproduktiv: der Streamer geht ohnehin nur
-    // auf 11.25 ms, und kuerzere Fenster lassen bei aktiver WLAN-Koexistenz
+    // VERSUCH 34 (2026-08-21) zurueckgenommen: Der Versuch, 7.5 ms zu
+    // erzwingen, war kontraproduktiv. Der Streamer ging ohnehin nur auf
+    // 11.25 ms, und kuerzere Fenster lassen bei aktiver WLAN-Koexistenz
     // weniger Pakete pro Fenster durch - unterm Strich WENIGER Durchsatz:
     //   15 ms   : 2.7 Pakete/Fenster -> 182 Notif/s
     //   11.25 ms: 0.95 Pakete/Fenster ->  85 Notif/s
@@ -320,7 +398,7 @@ static void request_host_friendly_conn_params(const esp_bd_addr_t bda) {
     }
 }
 
-// Nie angefordert, lief also auf dem Default (27 Byte
+// VERSUCH 7 (2026-08-20): nie angefordert, lief also auf dem Default (27 Byte
 // Nutzlast pro Link-Layer-Paket). atv_voice sieht bei einer echten Voice-
 // Session dauerhaft "ATT fixed channel already congested" - der Verdacht ist,
 // dass ohne Data Length Extension nur ein 20-Byte-ATT-Paket pro 7.5-15ms-
@@ -401,111 +479,163 @@ static void apply_security_params(bool use_static_passkey) {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, sizeof(uint8_t));
 }
 
+// FORK 2026-09-29d: Werbung ueber die Bluetooth-5-Schnittstelle (Extended Advertising mit
+// LEGACY-PDUs - fuer die Hosts sieht das aus wie bisher). Grund: jedes Werbe-Set hat seine EIGENE
+// Random-Adresse. Mit den alten Aufrufen gab es nur eine Adresse fuer alles; war eine Verbindung
+// geparkt (Option "parallel verbunden"), liess sie sich fuer den naechsten Platz nicht sauber
+// umstellen -> ein anderes gebondetes Geraet verband sich dauernd neu, die geparkte Verbindung riss
+// mit 0x3D ab. Ablauf (je Schritt ausgeloest vom Complete-Ereignis): Parameter -> Adresse -> Daten ->
+// Scan-Antwort -> Start. Instanz 0 ist das einzige Werbe-Set.
+static const uint8_t ADV_INST = 0;
+static uint8_t s_adv_addr[6] = {0};
+static bool s_adv_directed_now = false;
+static std::vector<uint8_t> s_scan_rsp;
+
+static void adv_stop_() {
+    uint8_t inst = ADV_INST;
+    esp_ble_gap_ext_adv_stop(1, &inst);
+}
+
 static void do_start_advertising() {
     s_pending_adv_after_close_ms = 0;
-    // Laeuft noch Werbung, erst sauber stoppen und im STOP-Ereignis neu
-    // anfangen - dann ist die Adresse setzbar.
+    if (s_instance && s_instance->funk_aus()) return;   // Bluetooth-Funk aus: nicht werben
+    // Laeuft noch Werbung, erst sauber stoppen und im STOP-Ereignis neu anfangen.
     if (s_adv_running) {
         s_restart_adv_pending = true;
-        esp_ble_gap_stop_advertising();
+        adv_stop_();
         return;
     }
-    // Set per-slot random address so each slot appears as a different BLE device.
-    // This prevents hosts bonded to other slots from auto-reconnecting.
-    if (s_instance) {
-        uint8_t slot = s_instance->active_host_slot();
-        const uint8_t *laddr = s_instance->get_slot_addr(slot);
-        esp_ble_gap_set_rand_addr(const_cast<uint8_t *>(laddr));
-        adv_params.own_addr_type = BLE_ADDR_TYPE_RANDOM;
-        ESP_LOGD(TAG, "ADV: Using slot %u addr %02X:%02X:%02X:%02X:%02X:%02X", slot,
-                 laddr[0], laddr[1], laddr[2], laddr[3], laddr[4], laddr[5]);
+    // FORK 2026-09-29e: laeuft die Kette (Parameter->...->Start) noch, nicht eine zweite
+    // daneben anwerfen - das ergab "Parameter fehlgeschlagen (268)". Neustart nach START_COMPLETE.
+    if (s_adv_busy && millis() - s_adv_busy_since_ms < 2000) {
+        s_restart_adv_pending = true;
+        return;
     }
-
-    // If directed advertising is requested, target the specific bonded host
+    s_adv_busy = true;
+    s_adv_busy_since_ms = millis();
+    if (s_instance) {
+        const uint8_t *laddr = s_instance->get_slot_addr(s_instance->active_host_slot());
+        memcpy(s_adv_addr, laddr, 6);
+        // FORK 2026-09-30: auch die Host-Adresse (nicht nur die des Werbe-Sets) auf die Platz-Adresse
+        // setzen. Bluedroid schickt beim Koppeln diese Adresse als IDENTITAET. Ohne den Aufruf (so seit
+        // der BLE5-Umstellung 29d) bekam der Host die Grundadresse des Chips als Identitaet, sah beim
+        // naechsten Verbinden aber die Platz-Adresse -> erkannte die Remote nicht wieder und wollte neu
+        // koppeln (Tablet fragte nach Minuten jedes Mal nach, Kopplung scheiterte).
+        esp_ble_gap_set_rand_addr(const_cast<uint8_t *>(laddr));
+    }
+    esp_ble_gap_ext_adv_params_t p = {};
+    p.channel_map = ADV_CHNL_ALL;
+    p.own_addr_type = BLE_ADDR_TYPE_RANDOM;
+    p.filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
+    p.tx_power = EXT_ADV_TX_PWR_NO_PREFERENCE;
+    p.primary_phy = ESP_BLE_GAP_PHY_1M;
+    p.max_skip = 0;
+    p.secondary_phy = ESP_BLE_GAP_PHY_1M;
+    p.sid = 0;
+    p.scan_req_notif = false;
+    s_adv_directed_now = false;
     if (s_directed_adv_pending) {
         s_directed_adv_pending = false;
         s_directed_adv_active = true;
         s_directed_adv_start_ms = millis();
+        s_adv_directed_now = true;
         ESP_LOGI(TAG, "ADV: Directed advertising to %02X:%02X:%02X:%02X:%02X:%02X",
                  s_directed_addr[0], s_directed_addr[1], s_directed_addr[2],
                  s_directed_addr[3], s_directed_addr[4], s_directed_addr[5]);
-        esp_ble_adv_params_t dir_params = adv_params;
-        dir_params.adv_type = ADV_TYPE_DIRECT_IND_HIGH;
-        memcpy(dir_params.peer_addr, s_directed_addr, sizeof(esp_bd_addr_t));
-        dir_params.peer_addr_type = s_directed_addr_type;
-        // Set adv data then start (directed low-duty still needs adv data on some stacks)
-        s_adv_data_set = false;
-        s_scan_rsp_data_set = false;
-        esp_ble_gap_config_adv_data_raw(raw_adv_data, sizeof(raw_adv_data));
-        std::string dev_name = (s_instance != nullptr) ? s_instance->device_name() : "ESP32 BLE KB";
-        std::vector<uint8_t> scan_rsp;
-        scan_rsp.push_back(static_cast<uint8_t>(dev_name.length() + 1));
-        scan_rsp.push_back(0x09);
-        for (char c : dev_name) scan_rsp.push_back(static_cast<uint8_t>(c));
-        esp_ble_gap_config_scan_rsp_data_raw(scan_rsp.data(), static_cast<uint16_t>(scan_rsp.size()));
-        // Override adv_params for this cycle — the GAP completion handler will use dir_params
-        adv_params.adv_type = ADV_TYPE_DIRECT_IND_HIGH;
-        memcpy(adv_params.peer_addr, s_directed_addr, sizeof(esp_bd_addr_t));
-        adv_params.peer_addr_type = s_directed_addr_type;
-        return;
+        p.type = ESP_BLE_GAP_SET_EXT_ADV_PROP_LEGACY_HD_DIR;
+        p.interval_min = 0x20;
+        p.interval_max = 0x20;
+        memcpy(p.peer_addr, s_directed_addr, sizeof(esp_bd_addr_t));
+        p.peer_addr_type = s_directed_addr_type;
+    } else {
+        p.type = ESP_BLE_GAP_SET_EXT_ADV_PROP_LEGACY_IND;
+        // schnell (20-40 ms) bzw. nach 60 s ohne Partner langsam (1-1,28 s) - FORK 2026-09-29c
+        p.interval_min = s_adv_slow ? 0x640 : 0x20;
+        p.interval_max = s_adv_slow ? 0x800 : 0x40;
+        if (!s_adv_slow) s_adv_fast_since_ms = millis();
+        // HALINK: HID-Host ist da, geworben wird nur noch fuer den Link (schnell nach Verlust, sonst 500-640 ms)
+        if (s_instance && s_instance->is_connected()) {
+            s_link_adv_fast = millis() - s_link_lost_ms < LINK_ADV_FAST_MS;
+            p.interval_min = s_link_adv_fast ? 0xA0 : 0x190;
+            p.interval_max = s_link_adv_fast ? 0xF0 : 0x1E0;
+        }
     }
-
-    // Normal undirected advertising (pairing mode / default)
-    adv_params.adv_type = ADV_TYPE_IND;
-    memset(adv_params.peer_addr, 0, sizeof(esp_bd_addr_t));
-    adv_params.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
-
-    s_adv_data_set = false;
-    s_scan_rsp_data_set = false;
-    esp_err_t adv_ret = esp_ble_gap_config_adv_data_raw(raw_adv_data, sizeof(raw_adv_data));
     std::string dev_name = (s_instance != nullptr) ? s_instance->device_name() : "ESP32 BLE KB";
-    std::vector<uint8_t> scan_rsp;
-    scan_rsp.push_back(static_cast<uint8_t>(dev_name.length() + 1));
-    scan_rsp.push_back(0x09);  // Complete Local Name AD type
-    for (char c : dev_name) scan_rsp.push_back(static_cast<uint8_t>(c));
-    esp_err_t scan_ret = esp_ble_gap_config_scan_rsp_data_raw(scan_rsp.data(), static_cast<uint16_t>(scan_rsp.size()));
-
-    if (adv_ret != ESP_OK) {
-        ESP_LOGE(TAG, "GAP: Failed to config adv data (%d)", adv_ret);
-        s_adv_data_set = true;
-    }
-    if (scan_ret != ESP_OK) {
-        ESP_LOGE(TAG, "GAP: Failed to config scan rsp data (%d)", scan_ret);
-        s_scan_rsp_data_set = true;
-    }
-    if (s_adv_data_set && s_scan_rsp_data_set) {
-        esp_ble_gap_start_advertising(&adv_params);
-    }
+    s_scan_rsp.clear();
+    s_scan_rsp.push_back(static_cast<uint8_t>(dev_name.length() + 1));
+    s_scan_rsp.push_back(0x09);  // Complete Local Name
+    for (char c : dev_name) s_scan_rsp.push_back(static_cast<uint8_t>(c));
+    esp_err_t r = esp_ble_gap_ext_adv_set_params(ADV_INST, &p);
+    if (r != ESP_OK) { ESP_LOGE(TAG, "ADV: Parameter abgelehnt (%d)", r); s_adv_busy = false; }
 }
 
 // ── GAP Event Handler ────────────────────────────────────────────────────────
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
     switch (event) {
-        case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
-        case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
-            s_adv_data_set = true;
-            if (s_scan_rsp_data_set) esp_ble_gap_start_advertising(&adv_params);
+        // FORK 2026-09-29d: Extended-Advertising-Kette (s. do_start_advertising)
+        case ESP_GAP_BLE_EXT_ADV_SET_PARAMS_COMPLETE_EVT:
+            if (param->ext_adv_set_params.status != ESP_BT_STATUS_SUCCESS)
+                ESP_LOGE(TAG, "ADV: Parameter fehlgeschlagen (%d)", param->ext_adv_set_params.status);
+            esp_ble_gap_ext_adv_set_rand_addr(ADV_INST, s_adv_addr);
             break;
-        case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
-        case ESP_GAP_BLE_SCAN_RSP_DATA_RAW_SET_COMPLETE_EVT:
-            s_scan_rsp_data_set = true;
-            if (s_adv_data_set) esp_ble_gap_start_advertising(&adv_params);
-            break;
-        case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
-            if (param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS) {
-                s_adv_running = true;
-                ESP_LOGI(TAG, "GAP: Advertising started");
-            } else {
-                s_adv_running = false;
-                ESP_LOGE(TAG, "GAP: Advertising start failed (%d)", param->adv_start_cmpl.status);
+        case ESP_GAP_BLE_EXT_ADV_SET_RAND_ADDR_COMPLETE_EVT:
+            if (param->ext_adv_set_rand_addr.status != ESP_BT_STATUS_SUCCESS)
+                ESP_LOGE(TAG, "ADV: Adresse fehlgeschlagen (%d)", param->ext_adv_set_rand_addr.status);
+            {
+                // HALINK: Herstellerdaten (Test-Firmen-ID 0xFFFF) "HL" + 4 Byte Kennung (FNV-1a des
+                // Geraetenamens) - daran findet HA die Remote unabhaengig von der Platz-Adresse.
+                static uint8_t adv[31];
+                size_t n = sizeof(raw_adv_data);
+                memcpy(adv, raw_adv_data, n);
+                if (s_instance && s_instance->link_enabled() && n + 10 <= sizeof(adv)) {
+                    uint32_t h = 2166136261u;
+                    for (char ch : s_instance->device_name()) { h ^= (uint8_t) ch; h *= 16777619u; }
+                    const uint8_t m[10] = {9, 0xFF, 0xFF, 0xFF, 'H', 'L', (uint8_t) h, (uint8_t) (h >> 8),
+                                           (uint8_t) (h >> 16), (uint8_t) (h >> 24)};
+                    memcpy(adv + n, m, sizeof(m));
+                    n += sizeof(m);
+                }
+                esp_ble_gap_config_ext_adv_data_raw(ADV_INST, n, adv);
             }
             break;
-        case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+        case ESP_GAP_BLE_EXT_ADV_DATA_SET_COMPLETE_EVT:
+            if (s_adv_directed_now) {   // gerichtete Werbung hat keine Scan-Antwort
+                esp_ble_gap_ext_adv_t a = {ADV_INST, 128, 0};   // max. 1,28 s (High-Duty)
+                esp_ble_gap_ext_adv_start(1, &a);
+            } else {
+                esp_ble_gap_config_ext_scan_rsp_data_raw(ADV_INST, (uint16_t) s_scan_rsp.size(), s_scan_rsp.data());
+            }
+            break;
+        case ESP_GAP_BLE_EXT_SCAN_RSP_DATA_SET_COMPLETE_EVT: {
+            esp_ble_gap_ext_adv_t a = {ADV_INST, 0, 0};
+            esp_ble_gap_ext_adv_start(1, &a);
+            break;
+        }
+        case ESP_GAP_BLE_EXT_ADV_START_COMPLETE_EVT:
+            if (param->ext_adv_start.status == ESP_BT_STATUS_SUCCESS) {
+                s_adv_running = true;
+                ESP_LOGI(TAG, "GAP: Advertising started (%02X:%02X:..:%02X)", s_adv_addr[0], s_adv_addr[1], s_adv_addr[5]);
+            } else {
+                s_adv_running = false;
+                ESP_LOGE(TAG, "GAP: Advertising start failed (%d)", param->ext_adv_start.status);
+            }
+            s_adv_busy = false;
+            if (s_restart_adv_pending) {   // FORK 2026-09-29e: waehrend der Kette angefordert
+                if (s_instance && s_instance->is_connected() && !link_wants_adv()) s_restart_adv_pending = false;
+                else if (s_adv_running) adv_stop_();          // STOP-Ereignis startet neu
+                else { s_restart_adv_pending = false; do_start_advertising(); }
+            }
+            break;
+        case ESP_GAP_BLE_EXT_ADV_STOP_COMPLETE_EVT:
             s_adv_running = false;
             if (s_restart_adv_pending) {
                 s_restart_adv_pending = false;
                 do_start_advertising();
             }
+            break;
+        case ESP_GAP_BLE_ADV_TERMINATED_EVT:
+            // Werbe-Set beendet (Verbindung zustande gekommen oder Dauer abgelaufen)
+            s_adv_running = false;
             break;
         case ESP_GAP_BLE_SEC_REQ_EVT:
             esp_ble_gap_security_rsp(param->ble_security.ble_req.bd_addr, true);
@@ -528,6 +658,8 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         case ESP_GAP_BLE_AUTH_CMPL_EVT:
             if (param->ble_security.auth_cmpl.success) {
                 ESP_LOGI(TAG, "GAP: Pairing Successful");
+                // FORK 2026-10-04b: MTU-Client NICHT mehr hier oeffnen - nur noch, wenn der Host den
+                // Sprachdienst nutzt (ble_mtu_client_anfordern aus atv_voice, GET_CAPS).
                 if (s_instance) {
                     s_instance->queue_paired_state(true);
                     // Matched by identity, so a phone that reconnected on a fresh
@@ -591,6 +723,15 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                      param->update_conn_params.conn_int,
                      param->update_conn_params.latency,
                      param->update_conn_params.timeout);
+            if (s_instance && param->update_conn_params.status == ESP_BT_STATUS_SUCCESS)
+                s_instance->note_conn_params_updated(param->update_conn_params.conn_int);
+            if (weck_log) {   // FORK 2026-10-02: tatsaechlich gueltiger Takt (Spartakt angenommen?)
+                char b[64];
+                snprintf(b, sizeof(b), "BT-Takt %u ms lat %u to %u (st %d)", (unsigned) (param->update_conn_params.conn_int * 5 / 4),
+                         (unsigned) param->update_conn_params.latency, (unsigned) param->update_conn_params.timeout,
+                         (int) param->update_conn_params.status);
+                weck_log(b);
+            }
             break;
         case ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT:
             if (s_instance) {
@@ -640,7 +781,7 @@ static const uint8_t PROP_READ_WRITE  = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_C
 static const uint8_t PROP_READ_NOTIFY = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
 
 // ── DIS (Device Information Service) ─────────────────────────────────────────
-// Vendor ID war 0x02E5 - kein bekannter,
+// VERSUCH 4 (empirisch, 2026-08-20): Vendor ID war 0x02E5 - kein bekannter,
 // zugewiesener Bluetooth-SIG-Wert, vermutlich frei erfunden. Jetzt Googles
 // echte, oeffentlich gelistete Company ID (Bluetooth SIG Assigned Numbers,
 // "Google" = 224 = 0x00E0; Quelle: Nordic Semiconductor bluetooth-numbers-
@@ -692,6 +833,9 @@ static uint8_t  consumer_ref_val[2]   = {0x02, 0x01};
 static uint8_t  system_val            = 0;
 static uint16_t system_ccc_val        = 0;
 static uint8_t  system_ref_val[2]     = {0x03, 0x01};
+static uint8_t  tasten_val            = 0;             // FORK 2026-09-29 (Report 6, HID-Button-Seite): Bitfeld Button 1..8
+static uint16_t tasten_ccc_val        = 0;
+static uint8_t  tasten_ref_val[2]     = {0x06, 0x01};
 static uint8_t  mouse_val[4]          = {0};  // buttons, X, Y, wheel
 static uint16_t mouse_ccc_val         = 0;
 static uint8_t  mouse_ref_val[2]      = {0x04, 0x01};
@@ -721,6 +865,9 @@ enum {
     IDX_CHAR_SYSTEM,       IDX_CHAR_SYSTEM_VAL,
     IDX_CHAR_SYSTEM_CCC,
     IDX_CHAR_SYSTEM_REF,
+    IDX_CHAR_TASTEN,       IDX_CHAR_TASTEN_VAL,       // FORK 2026-09-29 (Report 6, HID-Button-Seite): 
+    IDX_CHAR_TASTEN_CCC,
+    IDX_CHAR_TASTEN_REF,
 #ifndef ESPIDF_BLE_KB_NO_POINTER
     IDX_CHAR_MOUSE,        IDX_CHAR_MOUSE_VAL,
     IDX_CHAR_MOUSE_CCC,
@@ -745,6 +892,8 @@ static uint16_t s_consumer_report_handle = 0;
 static uint16_t s_consumer_ccc_handle = 0;
 static uint16_t s_system_report_handle = 0;
 static uint16_t s_system_ccc_handle = 0;
+static uint16_t s_tasten_report_handle = 0;   // FORK 2026-09-29 (Report 6, HID-Button-Seite): 
+static uint16_t s_tasten_ccc_handle = 0;
 static uint16_t s_mouse_report_handle = 0;
 static uint16_t s_mouse_ccc_handle = 0;
 static uint16_t s_abs_mouse_report_handle = 0;
@@ -786,6 +935,11 @@ static const esp_gatts_attr_db_t hid_attr_db[HID_IDX_NB] = {
     [IDX_CHAR_SYSTEM_VAL] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_HID_REPORT, PERM_R_ENC, sizeof(system_val), sizeof(system_val), &system_val}},
     [IDX_CHAR_SYSTEM_CCC] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CHAR_CLIENT_CONFIG, PERM_RW_ENC, sizeof(system_ccc_val), sizeof(system_ccc_val), (uint8_t *)&system_ccc_val}},
     [IDX_CHAR_SYSTEM_REF] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_RPT_REF_DESCR, PERM_R_ENC, sizeof(system_ref_val), sizeof(system_ref_val), system_ref_val}},
+    // FORK 2026-09-29 (Report 6, HID-Button-Seite): 
+    [IDX_CHAR_TASTEN] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CHAR_DECLARE, PERM_R, 1, 1, (uint8_t *)&PROP_READ_NOTIFY}},
+    [IDX_CHAR_TASTEN_VAL] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_HID_REPORT, PERM_R_ENC, sizeof(tasten_val), sizeof(tasten_val), &tasten_val}},
+    [IDX_CHAR_TASTEN_CCC] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CHAR_CLIENT_CONFIG, PERM_RW_ENC, sizeof(tasten_ccc_val), sizeof(tasten_ccc_val), (uint8_t *)&tasten_ccc_val}},
+    [IDX_CHAR_TASTEN_REF] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_RPT_REF_DESCR, PERM_R_ENC, sizeof(tasten_ref_val), sizeof(tasten_ref_val), tasten_ref_val}},
     // Mouse report (Report ID 4)
 #ifndef ESPIDF_BLE_KB_NO_POINTER
     [IDX_CHAR_MOUSE] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CHAR_DECLARE, PERM_R, 1, 1, (uint8_t *)&PROP_READ_NOTIFY}},
@@ -806,6 +960,30 @@ static const esp_gatts_attr_db_t hid_attr_db[HID_IDX_NB] = {
 #define SVC_INST_HID  2
 // Fork addition: the ATV Voice service, created by the atv_voice component.
 #define SVC_INST_ATVV 3
+#define SVC_INST_LINK 9   // HALINK
+
+// HALINK: Dienst 7e1a0001-..., RX 7e1a0002 (HA -> Remote, write/write-nr), TX 7e1a0003 (Remote -> HA, notify)
+static const uint8_t UUID_LINK_SVC[16] = {0x00, 0x1f, 0x0a, 0x4c, 0x8b, 0x2d, 0x61, 0x9e, 0x2a, 0x4f, 0x3d, 0x5c, 0x01, 0x00, 0x1a, 0x7e};
+static const uint8_t UUID_LINK_RX[16] = {0x00, 0x1f, 0x0a, 0x4c, 0x8b, 0x2d, 0x61, 0x9e, 0x2a, 0x4f, 0x3d, 0x5c, 0x02, 0x00, 0x1a, 0x7e};
+static const uint8_t UUID_LINK_TX[16] = {0x00, 0x1f, 0x0a, 0x4c, 0x8b, 0x2d, 0x61, 0x9e, 0x2a, 0x4f, 0x3d, 0x5c, 0x03, 0x00, 0x1a, 0x7e};
+enum { LINK_IDX_SVC, LINK_IDX_RX_CHAR, LINK_IDX_RX_VAL, LINK_IDX_TX_CHAR, LINK_IDX_TX_VAL, LINK_IDX_TX_CCC, LINK_IDX_NB };
+static uint16_t link_handle_table[LINK_IDX_NB];
+static uint8_t link_rx_val[1] = {0};
+static uint8_t link_tx_val[1] = {0};
+static uint16_t link_ccc_val = 0;
+static const uint8_t PROP_LINK_RX = ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_WRITE_NR;
+static const uint8_t PROP_LINK_TX = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
+static const uint16_t UUID_PRI_SERVICE_L = ESP_GATT_UUID_PRI_SERVICE;
+static const uint16_t UUID_CHAR_DECLARE_L = ESP_GATT_UUID_CHAR_DECLARE;
+static const uint16_t UUID_CCC_L = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
+static const esp_gatts_attr_db_t link_attr_db[LINK_IDX_NB] = {
+    [LINK_IDX_SVC]     = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_PRI_SERVICE_L, ESP_GATT_PERM_READ, 16, 16, (uint8_t *)UUID_LINK_SVC}},
+    [LINK_IDX_RX_CHAR] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CHAR_DECLARE_L, ESP_GATT_PERM_READ, 1, 1, (uint8_t *)&PROP_LINK_RX}},
+    [LINK_IDX_RX_VAL]  = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_128, (uint8_t *)UUID_LINK_RX, ESP_GATT_PERM_WRITE, 512, 1, link_rx_val}},
+    [LINK_IDX_TX_CHAR] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CHAR_DECLARE_L, ESP_GATT_PERM_READ, 1, 1, (uint8_t *)&PROP_LINK_TX}},
+    [LINK_IDX_TX_VAL]  = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_128, (uint8_t *)UUID_LINK_TX, ESP_GATT_PERM_READ, 512, 1, link_tx_val}},
+    [LINK_IDX_TX_CCC]  = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CCC_L, ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, 2, 2, (uint8_t *)&link_ccc_val}},
+};
 
 static uint8_t s_services_started = 0;
 
@@ -814,11 +992,28 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     switch (event) {
         case ESP_GATTS_REG_EVT:
             s_gatts_if = gatts_if;
+            // FORK 2026-09-29b: Ziffern-Modus - Tasten-Array der Tastatur auf 0x1E..0x2C begrenzen
+            // (Ziffern, Enter, Esc, Backspace, Tab, Leertaste). Gleiche Laenge wie die volle
+            // Tastatur, nur Logical/Usage Min/Max aendern sich.
+            if (s_instance && s_instance->kb_digits()) {
+                for (size_t i = 0; i + 15 < sizeof(hid_report_map); i++) {
+                    if (hid_report_map[i] == 0x95 && hid_report_map[i + 1] == 0x06 && hid_report_map[i + 2] == 0x75 &&
+                        hid_report_map[i + 3] == 0x08 && hid_report_map[i + 4] == 0x15 && hid_report_map[i + 8] == 0x05 &&
+                        hid_report_map[i + 9] == 0x07) {
+                        hid_report_map[i + 5] = 0x1E; hid_report_map[i + 7] = 0x2C;
+                        hid_report_map[i + 11] = 0x1E; hid_report_map[i + 13] = 0x2C;
+                        ESP_LOGI(TAG, "Tastatur: nur Ziffern (keine Buchstaben-Tastatur fuer den Host)");
+                        break;
+                    }
+                }
+            }
             esp_ble_gap_set_device_name(s_instance ? s_instance->device_name().c_str() : "ESP32 BLE KB");
             // Create each service as a separate attribute table
             esp_ble_gatts_create_attr_tab(dis_attr_db, gatts_if, DIS_IDX_NB, SVC_INST_DIS);
             esp_ble_gatts_create_attr_tab(bas_attr_db, gatts_if, BAS_IDX_NB, SVC_INST_BAS);
             esp_ble_gatts_create_attr_tab(hid_attr_db, gatts_if, HID_IDX_NB, SVC_INST_HID);
+            if (s_instance && s_instance->link_enabled())   // HALINK
+                esp_ble_gatts_create_attr_tab(link_attr_db, gatts_if, LINK_IDX_NB, SVC_INST_LINK);
             // Fork addition: let the ATV Voice service add its own table on the
             // same GATTS interface, so voice lives on the HID connection.
             if (s_instance && s_instance->atv_voice_hook())
@@ -831,6 +1026,12 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 break;
             }
             uint8_t svc_id = param->add_attr_tab.svc_inst_id;
+            if (svc_id == SVC_INST_LINK) {   // HALINK
+                memcpy(link_handle_table, param->add_attr_tab.handles, sizeof(link_handle_table));
+                esp_ble_gatts_start_service(link_handle_table[LINK_IDX_SVC]);
+                ESP_LOGI(TAG, "HALINK: Dienst angelegt");
+                break;
+            }
             if (svc_id == SVC_INST_DIS) {
                 memcpy(dis_handle_table, param->add_attr_tab.handles, sizeof(dis_handle_table));
                 esp_ble_gatts_start_service(dis_handle_table[DIS_IDX_SVC]);
@@ -853,6 +1054,8 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 s_consumer_ccc_handle = hid_handle_table[IDX_CHAR_CONSUMER_CCC];
                 s_system_report_handle = hid_handle_table[IDX_CHAR_SYSTEM_VAL];
                 s_system_ccc_handle = hid_handle_table[IDX_CHAR_SYSTEM_CCC];
+                s_tasten_report_handle = hid_handle_table[IDX_CHAR_TASTEN_VAL];   // FORK 2026-09-29
+                s_tasten_ccc_handle = hid_handle_table[IDX_CHAR_TASTEN_CCC];
 #ifndef ESPIDF_BLE_KB_NO_POINTER
                 s_mouse_report_handle = hid_handle_table[IDX_CHAR_MOUSE_VAL];
                 s_mouse_ccc_handle = hid_handle_table[IDX_CHAR_MOUSE_CCC];
@@ -874,6 +1077,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             uint16_t started = param->start.service_handle;
             bool core = started == dis_handle_table[DIS_IDX_SVC] || started == bas_handle_table[BAS_IDX_SVC] ||
                         started == hid_handle_table[IDX_SVC];
+            if (started != 0 && started == link_handle_table[LINK_IDX_SVC]) break;   // HALINK
             if (!core) {
                 ESP_LOGI(TAG, "GATTS: ATV Voice service started");
                 break;
@@ -886,7 +1090,35 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             break;
         }
         case ESP_GATTS_CONNECT_EVT: {
-            ESP_LOGI(TAG, "GATTS: Connected");
+            if (s_instance && s_instance->is_link_peer(param->connect.remote_bda)) {   // HALINK
+                s_adv_running = false;   // die Verbindung hat das Werbe-Set beendet
+                s_link_connected = true;
+                s_link_conn_id = param->connect.conn_id;
+                s_link_mtu = 23;
+                s_link_congested = false;
+                s_link_inflight = s_link_retry = false;
+                link_ccc_val = 0;
+                memcpy(s_link_bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+                s_instance->link_clear_();
+                ESP_LOGI(TAG, "HALINK: Proxy verbunden (conn %u)", param->connect.conn_id);
+                // Intervall erst nach dem CCC-Abo setzen, sonst dauert die Dienstsuche ewig (29.09.)
+                if (!s_instance->is_connected()) do_start_advertising();   // HID-Host soll weiter finden
+                break;
+            }
+            ESP_LOGI(TAG, "GATTS: Connected (conn %u)", param->connect.conn_id);
+            // HALINK: eine Verbindung beendet das (Legacy-)Werbe-Set immer - auch die gerichtete Werbung, fuer die
+            // kein ADV_TERMINATED kam. Sonst blieb s_adv_running stehen und der Link-Waechter startete nie neu
+            // (zweite Remote nach dem Neustart: Streamer verbunden, keine Link-Werbung, 2026-10-06).
+            s_adv_running = false;
+            // FORK 2026-09-29e: Es gibt schon eine aktive Verbindung (Werbung lief noch) -> die neue
+            // ist ein anderes gebondetes Geraet, das "dazwischen" kam. Nicht die aktive ueberschreiben,
+            // sondern die neue schliessen.
+            if (s_instance && s_instance->is_connected() && s_instance->conn_id() != param->connect.conn_id) {
+                ESP_LOGW(TAG, "GATTS: zweite Verbindung (conn %u) waehrend conn %u aktiv - wird geschlossen",
+                         param->connect.conn_id, s_instance->conn_id());
+                esp_ble_gatts_close(s_gatts_if, param->connect.conn_id);
+                break;
+            }
             if (s_instance) {
                 s_instance->set_connected(true, param->connect.conn_id);
                 memcpy(s_instance->peer_addr_, param->connect.remote_bda, sizeof(esp_bd_addr_t));
@@ -897,29 +1129,63 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             boot_kb_in_ccc_val = 0;
             consumer_ccc_val = 0;
             system_ccc_val = 0;
+            tasten_ccc_val = 0;   // FORK 2026-09-29
             mouse_ccc_val = 0;
             abs_mouse_ccc_val = 0;
             battery_ccc_val = 0;
             request_host_friendly_conn_params(param->connect.remote_bda);
             request_data_length_extension(param->connect.remote_bda);
-            // Client-Rolle auf derselben Verbindung oeffnen, damit
+            // VERSUCH 39: Client-Rolle auf derselben Verbindung oeffnen, damit
             // wir die MTU-Anfrage stellen koennen (siehe gattc_event_handler).
             // Etwas Verzoegerung, damit Verschluesselung/Bonding zuerst durch
             // sind - sonst weist der Host die Anfrage ab.
-            if (s_gattc_if != ESP_GATT_IF_NONE) {
-                esp_bd_addr_t peer;
-                memcpy(peer, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-                esp_ble_gattc_open(s_gattc_if, peer, BLE_ADDR_TYPE_PUBLIC, true);
-            }
+            // FORK 2026-10-04: nur vormerken - geoeffnet wird nach AUTH_CMPL (mtu_client_oeffnen).
+            memcpy(s_mtu_peer, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+            s_mtu_peer_type = (esp_ble_addr_type_t) param->connect.ble_addr_type;
+            s_mtu_offen = true;
             // Trigger encryption with security level matching configured pairing mode
             esp_ble_sec_act_t sec_act = s_require_mitm ? ESP_BLE_SEC_ENCRYPT_MITM : ESP_BLE_SEC_ENCRYPT_NO_MITM;
             esp_ble_set_encryption(param->connect.remote_bda, sec_act);
             if (s_instance && s_instance->atv_voice_hook())
                 s_instance->atv_voice_hook()->atvv_on_connect(param->connect.conn_id);
+            if (link_wants_adv()) do_start_advertising();   // HALINK: weiter (langsam) fuer den Link
             break;
         }
         case ESP_GATTS_DISCONNECT_EVT: {
-            ESP_LOGI(TAG, "GATTS: Disconnected");
+            if (s_link_connected && param->disconnect.conn_id == s_link_conn_id) {   // HALINK
+                s_link_connected = false;
+                s_link_conn_id = 0xFFFF;
+                s_link_inflight = s_link_retry = false;
+                link_ccc_val = 0;
+                if (s_instance) s_instance->link_clear_();
+                ESP_LOGI(TAG, "HALINK: Proxy getrennt (Grund 0x%02X)", param->disconnect.reason);
+                s_link_lost_ms = millis();
+                do_start_advertising();
+                break;
+            }
+            s_mtu_offen = false;   // FORK 2026-10-04
+            if (s_instance) {   // FORK 2026-09-29b: geparkte Verbindung fiel weg - aktive nicht anfassen
+                int sb = s_instance->standby_index(param->disconnect.conn_id);
+                if (sb >= 0) {
+                    ESP_LOGI(TAG, "Parallel: geparkte Verbindung (Platz %u) getrennt, Grund 0x%02X",
+                             s_instance->standby_[sb].slot, param->disconnect.reason);
+                    if (s_instance->atv_voice_hook()) s_instance->atv_voice_hook()->atvv_forget(param->disconnect.conn_id);
+                    s_instance->standby_.erase(s_instance->standby_.begin() + sb);
+                    break;
+                }
+            }
+            // FORK 2026-09-29e: Trennung einer ANDEREN als der aktiven Verbindung (alte, hart
+            // getrennte Verbindung meldet sich spaet, oder eine abgewiesene zweite). Frueher wurde
+            // dadurch die gerade neu aufgebaute Verbindung als getrennt markiert und neu geworben ->
+            // Verbinden/Trennen im Sekundentakt.
+            if (s_instance && s_instance->is_connected() && s_instance->conn_id() != param->disconnect.conn_id) {
+                ESP_LOGI(TAG, "GATTS: fremde Verbindung conn %u getrennt (Grund 0x%02X) - aktive conn %u bleibt",
+                         param->disconnect.conn_id, param->disconnect.reason, s_instance->conn_id());
+                if (s_instance->atv_voice_hook()) s_instance->atv_voice_hook()->atvv_forget(param->disconnect.conn_id);
+                break;
+            }
+            ESP_LOGI(TAG, "GATTS: Disconnected (conn %u, Grund 0x%02X)", param->disconnect.conn_id, param->disconnect.reason);
+            if (weck_log) { char b[40]; snprintf(b, sizeof(b), "BT getrennt Grund 0x%02X", param->disconnect.reason); weck_log(b); }
             uint8_t dc_reason = param->disconnect.reason;
             ESP_LOGD(TAG, "GATTS: Disconnect reason 0x%02X", dc_reason);
 
@@ -959,6 +1225,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             boot_kb_in_ccc_val = 0;
             consumer_ccc_val = 0;
             system_ccc_val = 0;
+            tasten_ccc_val = 0;   // FORK 2026-09-29
             mouse_ccc_val = 0;
             abs_mouse_ccc_val = 0;
             battery_ccc_val = 0;
@@ -967,15 +1234,57 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             do_start_advertising();
             break;
         }
+        case ESP_GATTS_CONF_EVT:
+            if (s_link_connected) {
+                s_ln_last_conf_conn = param->conf.conn_id;
+                s_ln_last_status = param->conf.status;
+                if (param->conf.conn_id != s_link_conn_id) s_ln_conf_other++;
+                else if (param->conf.status == ESP_GATT_OK || param->conf.status == ESP_GATT_CONGESTED) s_ln_conf_ok++;
+                else s_ln_conf_err++;
+            }
+            if (s_link_connected && param->conf.conn_id == s_link_conn_id && s_link_inflight) {   // HALINK
+                // CONGESTED heisst "angenommen, Kanal jetzt voll" - das Paket geht raus. Nur andere Fehler
+                // (z. B. 0x81, "already congested, drop PDU") bedeuten: verworfen -> nochmal.
+                if (param->conf.status == ESP_GATT_OK || param->conf.status == ESP_GATT_CONGESTED) {
+                    s_link_inflight = false;
+                    if (param->conf.status == ESP_GATT_CONGESTED) s_link_congested = true;
+                } else {
+                    s_link_retry = true;
+                    ESP_LOGD(TAG, "HALINK: Notify verworfen (Status 0x%02X) - nochmal", param->conf.status);
+                }
+                break;
+            }
+            break;
         case ESP_GATTS_MTU_EVT:
-            if (s_instance && s_instance->atv_voice_hook())
+            if (s_link_connected && param->mtu.conn_id == s_link_conn_id) {   // HALINK
+                s_link_mtu = param->mtu.mtu;
+                ESP_LOGI(TAG, "HALINK: MTU %u", s_link_mtu);
+                break;
+            }
+            if (s_instance && s_instance->atv_voice_hook() && s_instance->standby_index(param->mtu.conn_id) < 0)   // FORK 2026-09-29b
                 s_instance->atv_voice_hook()->atvv_on_mtu(param->mtu.mtu);
             break;
         case ESP_GATTS_CONGEST_EVT:
-            if (s_instance && s_instance->atv_voice_hook())
+            if (s_link_connected && param->congest.conn_id == s_link_conn_id) {   // HALINK
+                s_link_congested = param->congest.congested;
+                break;
+            }
+            if (s_instance && s_instance->atv_voice_hook() && s_instance->standby_index(param->congest.conn_id) < 0)   // FORK 2026-09-29b
                 s_instance->atv_voice_hook()->atvv_on_congest(param->congest.congested);
             break;
         case ESP_GATTS_WRITE_EVT:
+            if (s_link_connected && param->write.conn_id == s_link_conn_id) {   // HALINK
+                if (param->write.handle == link_handle_table[LINK_IDX_TX_CCC] && param->write.len >= 2) {
+                    link_ccc_val = param->write.value[0] | (param->write.value[1] << 8);
+                    ESP_LOGI(TAG, "HALINK: Notify abonniert (CCC=0x%04X)", link_ccc_val);
+                    if (s_instance) s_instance->link_request_interval_();
+                } else if (param->write.handle == link_handle_table[LINK_IDX_RX_VAL] && s_instance) {
+                    s_instance->link_rx_(param->write.value, param->write.len);
+                }
+                if (param->write.need_rsp)
+                    esp_ble_gatts_send_response(s_gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, nullptr);
+                break;
+            }
             if (param->write.handle == s_proto_mode_handle && param->write.len > 0) {
                 proto_mode_val = param->write.value[0];
                 ESP_LOGD(TAG, "GATTS: Protocol mode set to 0x%02X", proto_mode_val);
@@ -994,6 +1303,11 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 consumer_ccc_val = static_cast<uint16_t>(param->write.value[0]) |
                                    (static_cast<uint16_t>(param->write.value[1]) << 8);
                 ESP_LOGI(TAG, "GATTS: Consumer CCC=0x%04X (media keys)", consumer_ccc_val);
+            }
+            if (param->write.handle == s_tasten_ccc_handle && param->write.len >= 2) {   // FORK 2026-09-29
+                tasten_ccc_val = static_cast<uint16_t>(param->write.value[0]) |
+                                 (static_cast<uint16_t>(param->write.value[1]) << 8);
+                ESP_LOGI(TAG, "GATTS: Tasten-CCC=0x%04X (HID-Buttons)", tasten_ccc_val);
             }
             if (param->write.handle == s_system_ccc_handle && param->write.len >= 2) {
                 system_ccc_val = static_cast<uint16_t>(param->write.value[0]) |
@@ -1016,7 +1330,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 if (s_instance) s_instance->queue_led_state(param->write.value[0]);
             }
             // Fork addition: the ATV Voice service parses its own handles.
-            if (s_instance && s_instance->atv_voice_hook())
+            if (s_instance && s_instance->atv_voice_hook() && s_instance->standby_index(param->write.conn_id) < 0)   // FORK 2026-09-29b
                 s_instance->atv_voice_hook()->atvv_on_write(param->write.handle, param->write.value,
                                                             param->write.len);
             break;
@@ -2098,6 +2412,21 @@ void EspidfBleKeyboard::assign_host_slot_(uint8_t slot, const esp_bd_addr_t addr
 
 void EspidfBleKeyboard::request_conn_profile(bool idle) {
     if (!is_connected_) return;
+    // wake_backlight ruft das hier auf, und ein echter Tastendruck loest
+    // wake_backlight oft binnen desselben Sekundenbruchteils mehrfach aus
+    // (das rohe Tastenereignis selbst, dazu zweimal aus voice_start). Jeder
+    // Aufruf schickt einen eigenen L2CAP Connection-Parameter-Update-Request
+    // an den Host - mehrere davon kurz hintereinander liessen den
+    // ATV-Voice-Stream in der Praxis "congested" laufen, obwohl das
+    // Zielprofil laengst aktiv war (live nachgewiesen 2026-09-17: ein echter
+    // Tastendruck zeigte 3x "Conn-Profil aktiv angefordert" binnen ~150ms).
+    // Ist das schnelle Profil schon bestaetigt aktiv, ueberspringen wir die
+    // erneute Anfrage.
+    if (!idle && conn_fast_ready_ && known_conn_int_ != 0 && known_conn_int_ <= 12) {
+        ESP_LOGD(TAG, "Conn-Profil aktiv bereits bestaetigt (int=%u) - Anfrage uebersprungen",
+                 (unsigned) known_conn_int_);
+        return;
+    }
     esp_ble_conn_update_params_t p = {};
     memcpy(p.bda, peer_addr_, sizeof(esp_bd_addr_t));
     if (idle) {
@@ -2114,8 +2443,9 @@ void EspidfBleKeyboard::request_conn_profile(bool idle) {
         p.timeout = 400;    // 4000 ms
     }
     esp_err_t ret = esp_ble_gap_update_conn_params(&p);
-    ESP_LOGI(TAG, "Conn-Profil %s angefordert (int %u-%u, lat %u, to %u) -> %d",
+    ESP_LOGD(TAG, "Conn-Profil %s angefordert (int %u-%u, lat %u, to %u) -> %d",
              idle ? "idle" : "aktiv", p.min_int, p.max_int, p.latency, p.timeout, (int) ret);
+    note_conn_profile_requested(idle);
 }
 
 void EspidfBleKeyboard::set_battery_level(uint8_t percent) {
@@ -2142,6 +2472,8 @@ void EspidfBleKeyboard::switch_host(uint8_t slot) {
     // left holding the key until it notices the disconnect.
     release_held();
 
+    const uint8_t old_slot = active_slot_;   // FORK 2026-09-29b
+    s_adv_slow = false;                       // FORK 2026-09-29c: neuer Platz -> schnell werben
     active_slot_ = slot;
     save_host_slots_();
     if (active_host_sensor_ != nullptr)
@@ -2183,6 +2515,73 @@ void EspidfBleKeyboard::switch_host(uint8_t slot) {
     }
     // else: empty slot — undirected advertising (pairing mode)
 
+    // FORK 2026-09-29b: parallele Verbindungen
+    if (parallel_) {
+        if (is_connected_ && old_slot != slot) {
+            // Aktuelle Verbindung parken statt trennen. Hoechstens EINE geparkte (FORK 2026-09-29c):
+            // mehr als zwei gleichzeitige Verbindungen schafft die Remote in der Praxis nicht - mit
+            // zwei geparkten konnte sich das dritte Geraet nicht mehr verbinden (Nutzerbefund).
+            // Die aelteste wird deshalb VOR dem Werben fuer das neue Geraet getrennt.
+            bool ziel_geparkt = false;
+            for (auto &sb0 : standby_) if (sb0.slot == slot) ziel_geparkt = true;
+            // 2026-10-06: Zahl der geparkten Verbindungen einstellbar (max_parked_, Standard 1 wie bisher). Nach dem
+            // Wechsel sind geparkt: alle bisherigen + die aktuelle - das Ziel (falls es schon geparkt war). Die
+            // aeltesten (nie das Ziel) werden getrennt, bis das passt.
+            auto nach_wechsel = [&]() { return standby_.size() + 1 - (ziel_geparkt ? 1 : 0); };
+            while (nach_wechsel() > max_parked_) {
+                size_t k = 0;
+                while (k < standby_.size() && standby_[k].slot == slot) k++;
+                if (k >= standby_.size()) break;
+                ESP_LOGI(TAG, "Parallel: aelteste geparkte Verbindung (Platz %u) wird getrennt", standby_[k].slot);
+                esp_ble_gatts_close(s_gatts_if, standby_[k].conn_id);
+                if (atv_voice_hook_) atv_voice_hook_->atvv_forget(standby_[k].conn_id);
+                standby_.erase(standby_.begin() + k);
+            }
+            StandbyConn sb;
+            sb.conn_id = conn_id_;
+            sb.slot = old_slot;
+            memcpy(sb.addr, peer_addr_, sizeof(esp_bd_addr_t));
+            standby_.push_back(sb);
+            if (atv_voice_hook_) atv_voice_hook_->atvv_park(conn_id_);
+            {   // 2026-10-06: geparkte Verbindung auf das Ruhe-Profil - sie lief sonst mit dem schnellen Takt (15 ms)
+                // weiter, obwohl ueber sie nichts geht. Mehrere davon kosteten spuerbar Rechenzeit (Menue oeffnete
+                // langsamer, Nutzer) und Strom. Beim Zurueckholen setzt die Bedienung wieder das schnelle Profil.
+                esp_ble_conn_update_params_t cp = {};
+                memcpy(cp.bda, peer_addr_, sizeof(esp_bd_addr_t));
+                cp.min_int = 0x60;   // 120 ms
+                cp.max_int = 0x78;   // 150 ms
+                cp.latency = 3;
+                cp.timeout = 600;    // 6 s
+                esp_ble_gap_update_conn_params(&cp);
+            }
+            ESP_LOGI(TAG, "Parallel: Platz %u geparkt (conn %u, Ruhe-Profil)", old_slot, conn_id_);
+            is_connected_ = false;
+            queue_paired_state(false);
+        }
+        for (size_t i = 0; i < standby_.size(); i++) {
+            if (standby_[i].slot != slot) continue;
+            // Ziel ist schon verbunden (geparkt) - sofort aktiv, kein Werben/Verbinden.
+            StandbyConn sb = standby_[i];
+            standby_.erase(standby_.begin() + i);
+            set_connected(true, sb.conn_id);
+            memcpy(peer_addr_, sb.addr, sizeof(esp_bd_addr_t));
+            if (atv_voice_hook_) atv_voice_hook_->atvv_unpark(sb.conn_id);
+            queue_paired_state(true);
+            queue_host_mac_update();
+            s_directed_adv_pending = false;
+            if (s_adv_running) adv_stop_();   // FORK 2026-09-29d
+            // aus dem Ruhe-Profil (s. Parken) sofort wieder auf schnell - sonst haengt der erste Tastendruck im 150-ms-Takt
+            conn_fast_ready_ = false;
+            known_conn_int_ = 0;
+            request_conn_profile(false);
+            ESP_LOGI(TAG, "Parallel: Platz %u wieder aktiv (conn %u) - ohne Neuverbinden", slot, sb.conn_id);
+            return;
+        }
+        // Ziel nicht verbunden: normal werben, die geparkte Verbindung bleibt stehen.
+        do_start_advertising();
+        return;
+    }
+
     if (is_connected_) {
         // Disconnect current host; DISCONNECT_EVT will trigger advertising.
         // Notfrist mitlaufen lassen: bleibt das Ereignis aus, weil der alte
@@ -2198,13 +2597,58 @@ void EspidfBleKeyboard::switch_host(uint8_t slot) {
     }
 }
 
+// FORK 2026-09-29b
+// FORK 2026-09-29c: bei Bedienung sofort wieder schnell werben (falls gerade langsam)
+void EspidfBleKeyboard::adv_fast_again() {
+    if (is_connected_ || !s_adv_slow) return;
+    s_adv_slow = false;
+    ESP_LOGI(TAG, "ADV: Bedienung - wirbt wieder schnell");
+    do_start_advertising();
+}
+
+void EspidfBleKeyboard::set_parallel(bool p) {
+    parallel_ = p;
+    if (!p) {
+        for (auto &sb : standby_) {
+            esp_ble_gatts_close(s_gatts_if, sb.conn_id);
+            if (atv_voice_hook_) atv_voice_hook_->atvv_forget(sb.conn_id);
+        }
+        standby_.clear();
+    }
+    ESP_LOGI(TAG, "Parallel verbunden bleiben: %s", p ? "AN" : "AUS");
+}
+
 void EspidfBleKeyboard::forget_host(uint8_t slot) {
     if (slot >= MAX_HOST_SLOTS || !hosts_[slot].occupied) return;
-
+    // FORK 2026-09-30: Platz bekommt beim Loeschen einer Kopplung eine NEUE eigene Adresse.
+    // NUR wenn wirklich eine Kopplung da war: "Neu koppeln" ruft forget_host auch fuer leere Plaetze
+    // auf - dort wuerde jede neue Adresse einen gerade laufenden Kopplungsversuch des Hosts abreissen
+    // (Streamer/TV fanden die Remote unter einer Adresse, die es beim Verbinden schon nicht mehr gab).
+    // Der Host haelt fuer die alte Adresse evtl. noch Schluessel (z.B. aus einer Kopplung mit falscher
+    // Identitaet, s. do_start_advertising) und versucht dann nur zu verschluesseln statt neu zu koppeln
+    // (Tablet: verbunden, nach 30 s getrennt, Fehler 0x66). Mit neuer Adresse ist die Remote fuer ihn
+    // ein neues Geraet. Andere Plaetze behalten ihre Adresse.
+    {
+        esp_fill_random(slot_addrs_[slot], 6);
+        slot_addrs_[slot][0] |= 0xC0;   // random static
+        nvs_handle_t h;
+        if (nvs_open("espidf_ble_kb", NVS_READWRITE, &h) == ESP_OK) {
+            char key[16];
+            snprintf(key, sizeof(key), "slot%u_laddr", slot);
+            nvs_set_blob(h, key, slot_addrs_[slot], sizeof(esp_bd_addr_t));
+            nvs_commit(h);
+            nvs_close(h);
+        }
+        ESP_LOGI(TAG, "Platz %u: neue Adresse %02X:%02X:%02X:%02X:%02X:%02X", slot,
+                 slot_addrs_[slot][0], slot_addrs_[slot][1], slot_addrs_[slot][2],
+                 slot_addrs_[slot][3], slot_addrs_[slot][4], slot_addrs_[slot][5]);
+    }
     ESP_LOGI(TAG, "Forgetting host slot %u", slot);
 
-    // Remove the BLE bond
+    // Remove the BLE bond - unter der gespeicherten Adresse UND der Identitaet (bei Hosts mit
+    // wechselnder Adresse liegen die Schluessel unter der Identitaet).
     esp_ble_remove_bond_device(hosts_[slot].addr);
+    if (hosts_[slot].has_identity) esp_ble_remove_bond_device(hosts_[slot].identity);
 
     // Clear the slot
     hosts_[slot].occupied = false;
@@ -2215,9 +2659,19 @@ void EspidfBleKeyboard::forget_host(uint8_t slot) {
 
     save_host_slots_();
 
+    // FORK 2026-09-29b: geparkte Verbindung dieses Platzes ebenfalls beenden
+    for (size_t i = 0; i < standby_.size(); i++) {
+        if (standby_[i].slot != slot) continue;
+        esp_ble_gatts_close(s_gatts_if, standby_[i].conn_id);
+        if (atv_voice_hook_) atv_voice_hook_->atvv_forget(standby_[i].conn_id);
+        standby_.erase(standby_.begin() + i);
+        break;
+    }
     // If this was the active slot and we're connected, disconnect
     if (slot == active_slot_ && is_connected_) {
         esp_ble_gatts_close(s_gatts_if, conn_id_);
+    } else if (slot == active_slot_) {
+        do_start_advertising();   // FORK 2026-09-30: mit der neuen Adresse werben
     }
 }
 
@@ -2358,7 +2812,7 @@ void EspidfBleKeyboard::setup() {
     get_active_slot_passkey(startup_has_pk, startup_pk, startup_sc);
     apply_security_params(startup_has_pk);
 
-    // Ohne diesen Aufruf bleibt die lokale MTU beim
+    // VERSUCH 26 (2026-08-20): Ohne diesen Aufruf bleibt die lokale MTU beim
     // BLE-Standardwert 23 - egal was der Host anfragt, ausgehandelt wird
     // min(Anfrage, 23), also 20 Byte Nutzlast pro Notification. Im Sniff des
     // Google-Originals fragt der Streamer MTU 210 an und die Original-
@@ -2454,13 +2908,45 @@ void EspidfBleKeyboard::loop() {
         publish_host_mac_();
     }
 
+    link_service_();   // HALINK: unbestaetigtes Notify nachschicken
+    {
+        static uint32_t last_resends = 0, last_log = 0;
+        if (link_resends_ != last_resends && millis() - last_log > 5000) {
+            ESP_LOGI(TAG, "HALINK: %u Notifies nachgeschickt", (unsigned) link_resends_);
+            last_resends = link_resends_;
+            last_log = millis();
+        }
+    }
+    // HALINK: Waechter - der Link braucht Werbung, aber die HID-Wege (Verbinden, Platzwechsel, Parken)
+    // beenden sie an vielen Stellen. Laeuft keine, alle 2 s neu anstossen.
+    {
+        static uint32_t last_check = 0;
+        if (link_wants_adv() && millis() - last_check > 2000) {
+            last_check = millis();
+            if (!s_adv_running && !s_adv_busy && !s_directed_adv_active) {
+                ESP_LOGD(TAG, "HALINK: keine Werbung - starte fuer den Link");
+                do_start_advertising();
+            } else if (s_adv_running && !s_adv_busy && s_link_adv_fast && is_connected_ &&
+                       millis() - s_link_lost_ms >= LINK_ADV_FAST_MS) {
+                do_start_advertising();   // schnelle Phase vorbei -> sparsam weiterwerben
+            }
+        }
+    }
+    // FORK 2026-09-29c: 60 s schnell ohne Erfolg -> langsam weiterwerben
+    if (!is_connected_ && s_adv_running && !s_adv_slow && !s_directed_adv_active &&
+        s_adv_fast_since_ms != 0 && millis() - s_adv_fast_since_ms > 60000) {
+        s_adv_slow = true;
+        ESP_LOGI(TAG, "ADV: 60 s kein Partner - wirbt jetzt langsam (1 s)");
+        do_start_advertising();
+    }
     if (is_connected_) {
         s_directed_adv_active = false;
+        s_adv_slow = false;
     } else if (s_directed_adv_active) {
         if (millis() - s_directed_adv_start_ms > 2000) {
             s_directed_adv_active = false;
             ESP_LOGW(TAG, "ADV: Directed advertising timeout. Falling back to undirected...");
-            esp_ble_gap_stop_advertising();
+            adv_stop_();   // FORK 2026-09-29d
             do_start_advertising();
         }
     }
@@ -2480,7 +2966,11 @@ void EspidfBleKeyboard::loop() {
     uint32_t now = millis();
 
     // RSSI polling: read signal strength of connected host on configured interval.
-    if (rssi_sensor_ != nullptr && !rssi_pending_) {
+    // Pausierbar (rssi_paused_) - esp_ble_gap_read_rssi() ist ein HCI-Befehl
+    // ueber denselben Controller, ueber den auch Audio-Notifications laufen;
+    // live nachgewiesen (2026-09-17), dass er waehrend einer ATV-Voice-
+    // Sitzung Paketverluste ausloest ("Link congested").
+    if (rssi_sensor_ != nullptr && !rssi_pending_ && !rssi_paused_) {
         if (now - rssi_last_poll_ms_ >= rssi_update_interval_ms_) {
             rssi_last_poll_ms_ = now;
             rssi_pending_ = true;
@@ -2875,9 +3365,160 @@ void EspidfBleKeyboard::send_sleep() {
     ESP_LOGI(TAG, "System Sleep sent");
 }
 
+void EspidfBleKeyboard::set_funk_aus(bool aus) {
+    if (aus == funk_aus_) return;
+    funk_aus_ = aus;
+    if (aus) {
+        ESP_LOGI(TAG, "Bluetooth-Funk AUS: alle Verbindungen trennen, keine Werbung");
+        if (s_adv_running) adv_stop_();
+        for (auto &sb : standby_) esp_ble_gatts_close(s_gatts_if, sb.conn_id);
+        if (is_connected_) esp_ble_gatts_close(s_gatts_if, conn_id_);
+        if (s_link_connected) esp_ble_gatts_close(s_gatts_if, s_link_conn_id);
+    } else {
+        ESP_LOGI(TAG, "Bluetooth-Funk AN");
+        s_adv_slow = false;
+        do_start_advertising();
+    }
+}
+
+// ── HALINK (2026-10-05) ──────────────────────────────────────────────────────
+void EspidfBleKeyboard::add_link_peer(const std::string &mac) {
+    unsigned b[6];
+    if (sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6) {
+        ESP_LOGE(TAG, "HALINK: ungueltige Adresse '%s'", mac.c_str());
+        return;
+    }
+    std::array<uint8_t, 6> a;
+    for (int i = 0; i < 6; i++) a[i] = (uint8_t) b[i];
+    // Auch zur Laufzeit (Proxys aus dem Konfigurator, 2026-10-11): is_link_peer() liest im Bluetooth-Task mit.
+    // Platz einmalig vorab reservieren (passiert in setup(), vor dem Bluetooth-Start), dann verschiebt push_back nie.
+    if (link_peers_.capacity() < 16) link_peers_.reserve(16);
+    for (auto &x : link_peers_) if (x == a) return;
+    if (link_peers_.size() >= 16) { ESP_LOGW(TAG, "HALINK: zu viele Proxys, %s ignoriert", mac.c_str()); return; }
+    link_peers_.push_back(a);
+    ESP_LOGI(TAG, "HALINK: Proxy %s angenommen", mac.c_str());
+}
+bool EspidfBleKeyboard::is_link_peer(const uint8_t *bda) const {
+    for (auto &a : link_peers_) if (memcmp(a.data(), bda, 6) == 0) return true;
+    return false;
+}
+bool EspidfBleKeyboard::link_connected() const { return s_link_connected && (link_ccc_val & 0x0001); }
+uint16_t EspidfBleKeyboard::link_payload() const { return s_link_mtu > 3 ? s_link_mtu - 3 : 20; }
+bool EspidfBleKeyboard::link_congested() const { return s_link_congested; }
+// Diagnose fuer ha_tunnel (0x38): inflight, retry, congested, sendable, resends
+void EspidfBleKeyboard::link_diag(uint8_t *out) const {
+    out[0] = s_link_inflight; out[1] = s_link_retry; out[2] = s_link_congested;
+    out[3] = (uint8_t) std::min<uint16_t>(esp_ble_get_cur_sendable_packets_num(s_link_conn_id), 255);
+    memcpy(out + 4, &link_resends_, 4);
+    uint32_t age = millis() - s_link_sent_ms;
+    memcpy(out + 8, &age, 4);
+    ESP_LOGI(TAG, "HALINK-Diagnose: conn %u, send ok %u / fail %u, CONF ok %u / Fehler %u / andere Verbindung %u, "
+             "letzter CONF conn %u Status 0x%02X, Handle %u",
+             s_link_conn_id, (unsigned) s_ln_send_ok, (unsigned) s_ln_send_fail, (unsigned) s_ln_conf_ok,
+             (unsigned) s_ln_conf_err, (unsigned) s_ln_conf_other, s_ln_last_conf_conn, s_ln_last_status,
+             link_handle_table[LINK_IDX_TX_VAL]);
+}
+bool EspidfBleKeyboard::link_send(const uint8_t *data, size_t len) {
+    std::lock_guard<std::recursive_mutex> g(link_tx_mtx_);
+    if (!link_connected()) return false;
+    link_service_();
+    if (s_link_inflight) return false;   // das vorige ist noch nicht bestaetigt
+    if (len > link_payload()) len = link_payload();
+    if (len > sizeof(s_link_last)) len = sizeof(s_link_last);
+    memcpy(s_link_last, data, len);
+    s_link_last_len = (uint16_t) len;
+    s_link_inflight = true;
+    s_link_retry = false;
+    s_link_sent_ms = millis();
+    if (esp_ble_gatts_send_indicate(s_gatts_if, s_link_conn_id, link_handle_table[LINK_IDX_TX_VAL], s_link_last_len,
+                                    s_link_last, false) != ESP_OK) {
+        s_link_inflight = false;
+        s_ln_send_fail++;
+        return false;
+    }
+    s_ln_send_ok++;
+    return true;
+}
+// Verworfenes Paket nochmal schicken (Fehler im CONF_EVT). Kommt 3 s gar keine Bestaetigung, gilt es als
+// gesendet - lieber das als ein doppeltes Paket im API-Strom.
+void EspidfBleKeyboard::link_service_() {
+    std::lock_guard<std::recursive_mutex> g(link_tx_mtx_);
+    if (!s_link_inflight || !link_connected()) return;
+    if (!s_link_retry) {
+        if (millis() - s_link_sent_ms > 3000) {
+            ESP_LOGW(TAG, "HALINK: keine Bestaetigung fuer Notify - gilt als gesendet");
+            s_link_inflight = false;
+        }
+        return;
+    }
+    // Nicht auf den Stau-Merker warten (das "Stau vorbei" kam nicht immer) - alle 20 ms neu versuchen.
+    if (millis() - s_link_sent_ms < 20 || esp_ble_get_cur_sendable_packets_num(s_link_conn_id) == 0) return;
+    s_link_retry = false;
+    s_link_sent_ms = millis();
+    if (esp_ble_gatts_send_indicate(s_gatts_if, s_link_conn_id, link_handle_table[LINK_IDX_TX_VAL], s_link_last_len,
+                                    s_link_last, false) != ESP_OK)
+        s_link_retry = true;
+    else
+        link_resends_++;
+}
+void EspidfBleKeyboard::link_rx_(const uint8_t *data, size_t len) {
+    std::lock_guard<std::mutex> g(link_mtx_);
+    // HTTP (0x40-0x42) und OTA (0x60-0x64) gehoeren dem Task von ha_tunnel - die Hauptschleife steckt waehrend
+    // eines Bild-Abrufs bzw. eines Updates fest
+    if (len > 0 && ((data[0] >= 0x40 && data[0] <= 0x42) || (data[0] >= 0x60 && data[0] <= 0x64)))
+        link_http_queue_.emplace_back(data, data + len);
+    else link_rx_queue_.emplace_back(data, data + len);
+}
+bool EspidfBleKeyboard::link_pop_http(std::vector<uint8_t> &frame) {
+    std::lock_guard<std::mutex> g(link_mtx_);
+    if (link_http_queue_.empty()) return false;
+    frame.swap(link_http_queue_.front());
+    link_http_queue_.pop_front();
+    return true;
+}
+bool EspidfBleKeyboard::link_pop(std::vector<uint8_t> &frame) {
+    std::lock_guard<std::mutex> g(link_mtx_);
+    if (link_rx_queue_.empty()) return false;
+    frame.swap(link_rx_queue_.front());
+    link_rx_queue_.pop_front();
+    return true;
+}
+void EspidfBleKeyboard::link_clear_() {
+    std::lock_guard<std::mutex> g(link_mtx_);
+    link_rx_queue_.clear();
+    link_http_queue_.clear();
+}
+void EspidfBleKeyboard::set_link_interval(uint16_t mn, uint16_t mx, uint16_t lat) {
+    link_int_min_ = mn; link_int_max_ = mx; link_latency_ = lat;
+    if (link_connected()) link_request_interval_();
+}
+void EspidfBleKeyboard::link_request_interval_() {
+    esp_ble_conn_update_params_t cp = {};
+    memcpy(cp.bda, s_link_bda, sizeof(esp_bd_addr_t));
+    cp.min_int = link_int_min_;
+    cp.max_int = link_int_max_;
+    cp.latency = link_latency_;
+    cp.timeout = 600;   // 6 s
+    esp_ble_gap_update_conn_params(&cp);
+    ESP_LOGI(TAG, "HALINK: Intervall %u-%u ms, Latency %u", link_int_min_ * 5 / 4, link_int_max_ * 5 / 4, link_latency_);
+}
+
 void EspidfBleKeyboard::send_shutdown() {
     if (!is_connected_) return;
     send_power();
+}
+
+// FORK 2026-09-29: HID-Button n (1..8) antippen -> Android KEYCODE_BUTTON_n
+// (Sony TV: Button 2 = Zahnrad-/Action-Menue).
+void EspidfBleKeyboard::send_button(uint8_t n) {
+    if (!is_connected_ || n < 1 || n > 8) return;
+    uint8_t down = (uint8_t) (1u << (n - 1)), up = 0;
+    esp_ble_gatts_send_indicate(s_gatts_if, conn_id_, s_tasten_report_handle, 1, &down, false);
+    esp_ble_gatts_set_attr_value(s_tasten_report_handle, 1, &down);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    esp_ble_gatts_send_indicate(s_gatts_if, conn_id_, s_tasten_report_handle, 1, &up, false);
+    esp_ble_gatts_set_attr_value(s_tasten_report_handle, 1, &up);
+    ESP_LOGI(TAG, "HID-Button %u gesendet (CCC=0x%04X)", (unsigned) n, tasten_ccc_val);
 }
 
 void EspidfBleKeyboard::send_consumer(uint16_t usage) {
@@ -2901,6 +3542,57 @@ void EspidfBleKeyboard::send_consumer(uint16_t usage) {
     esp_ble_gatts_send_indicate(s_gatts_if, conn_id_, s_consumer_report_handle, 2, release, false);
     esp_ble_gatts_set_attr_value(s_consumer_report_handle, 2, release);
     ESP_LOGI(TAG, "Consumer report sent: 0x%04X", usage);
+}
+
+// FORK 2026-10-03 (Tasten-Konfigurator): Taps an einen bestimmten Platz. Ein geparkter
+// Platz (standby_) bekommt die Notification ueber seine eigene conn_id; die
+// Report-Handles sind fuer alle Verbindungen dieselben. Gehaltenes (held_*) gehoert
+// nur der aktiven Verbindung und wird hier nicht beruehrt.
+bool EspidfBleKeyboard::conn_for_slot(uint8_t slot, uint16_t &conn) const {
+    if (slot == active_slot_) {
+        if (!is_connected_) return false;
+        conn = conn_id_;
+        return true;
+    }
+    for (const auto &s : standby_) {
+        if (s.slot == slot) { conn = s.conn_id; return true; }
+    }
+    return false;
+}
+
+bool EspidfBleKeyboard::send_consumer_to(uint8_t slot, uint16_t usage) {
+    if (slot == active_slot_) { if (!is_connected_) return false; send_consumer(usage); return true; }
+    uint16_t c;
+    if (!conn_for_slot(slot, c)) { ESP_LOGW(TAG, "Platz %u nicht verbunden - Consumer 0x%04X verworfen", slot, usage); return false; }
+    uint8_t down[2] = {(uint8_t)(usage & 0xFF), (uint8_t)(usage >> 8)}, up[2] = {0, 0};
+    esp_ble_gatts_send_indicate(s_gatts_if, c, s_consumer_report_handle, 2, down, false);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    esp_ble_gatts_send_indicate(s_gatts_if, c, s_consumer_report_handle, 2, up, false);
+    ESP_LOGI(TAG, "Consumer 0x%04X an Platz %u (geparkt)", usage, slot);
+    return true;
+}
+
+bool EspidfBleKeyboard::send_button_to(uint8_t slot, uint8_t n) {
+    if (n < 1 || n > 8) return false;
+    if (slot == active_slot_) { if (!is_connected_) return false; send_button(n); return true; }
+    uint16_t c;
+    if (!conn_for_slot(slot, c)) { ESP_LOGW(TAG, "Platz %u nicht verbunden - Button %u verworfen", slot, n); return false; }
+    uint8_t down = (uint8_t) (1u << (n - 1)), up = 0;
+    esp_ble_gatts_send_indicate(s_gatts_if, c, s_tasten_report_handle, 1, &down, false);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    esp_ble_gatts_send_indicate(s_gatts_if, c, s_tasten_report_handle, 1, &up, false);
+    return true;
+}
+
+bool EspidfBleKeyboard::send_key_to(uint8_t slot, uint8_t modifiers, uint8_t keycode) {
+    if (slot == active_slot_) { if (!is_connected_) return false; send_key_combo(modifiers, keycode); return true; }
+    uint16_t c;
+    if (!conn_for_slot(slot, c)) { ESP_LOGW(TAG, "Platz %u nicht verbunden - Taste 0x%02X verworfen", slot, keycode); return false; }
+    uint8_t rep[8] = {modifiers, 0, keycode, 0, 0, 0, 0, 0}, up[8] = {0};
+    send_keyboard_input_report(c, rep, 8);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    send_keyboard_input_report(c, up, 8);
+    return true;
 }
 
 // ── Press and hold (push-to-talk) ─────────────────────────────────
@@ -2968,6 +3660,19 @@ void EspidfBleKeyboard::release_held() {
     // a hold list can name left_click as readily as a key.
     if (held_mouse_buttons_ != 0) send_mouse_click_release();
     if (had_keys || had_consumer) ESP_LOGI(TAG, "Released all held keys");
+    // Der doppelte Loslass-Versand (15ms Pause, dann nochmal) vom 2026-09-16
+    // ist zurueckgenommen (Stand 2026-09-17, Nutzerhinweis "Sprachsuche zum
+    // Streamer erkennt fast nichts mehr", nach dem Zuruecknehmen aller
+    // sdkconfig-Stapelgroessen weiterhin kaputt): das war die letzte noch
+    // uebrige Aenderung von heute an genau dieser Komponente. Ob der
+    // zusaetzliche vTaskDelay(15ms) hier tatsaechlich die Ursache war, ist
+    // NICHT bewiesen (release_held() laeuft vermutlich nicht im selben Task
+    // wie das Audio-Streaming) - aber es ist die einzige verbliebene
+    // Verdaechtige, und der Nutzer wollte den vorherigen Stand zurueck.
+    // Das urspruengliche Problem (D-Pad/OK vereinzelt als gehalten erkannt,
+    // wenn der Streamer beim Nachladen beschaeftigt war) bleibt damit
+    // ungeloest - falls es wieder auffaellt, braucht es einen anderen Ansatz
+    // als ein Blockieren in dieser Funktion.
 }
 
 void EspidfBleKeyboard::send_power() {
@@ -3422,6 +4127,11 @@ void EspidfBleKeyboard::execute_action(const std::string &action) {
         int mod = 0, key = 0;
         if (sscanf(action.c_str(), "combo:%i:%i", &mod, &key) == 2)
             send_key_combo((uint8_t) mod, (uint8_t) key);
+        return;
+    }
+    if (action.find("taste:") == 0) {   // FORK 2026-09-29: "taste:2" = HID-Button 2
+        int n = 0;
+        if (sscanf(action.c_str(), "taste:%i", &n) == 1) send_button((uint8_t) n);
         return;
     }
     if (action.find("consumer:") == 0) {

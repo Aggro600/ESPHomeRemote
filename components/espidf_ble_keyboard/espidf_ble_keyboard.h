@@ -1,4 +1,7 @@
 #pragma once
+#include <array>
+#include <deque>
+#include <mutex>
 #include "esphome/core/defines.h"
 #include "esphome/core/component.h"
 #include "esphome/components/button/button.h"
@@ -80,6 +83,11 @@ const KeyboardLayout *layout_at(size_t i);
 //
 // Nothing here pulls in the microphone component, so a build without
 // `atv_voice:` is unchanged.
+// FORK 2026-10-04b: Die Sprachsuche (atv_voice) fordert die groessere MTU an, sobald der Host den
+// Sprachdienst nutzt (GET_CAPS). Andere Hosts (Tablet, TV) beantworten die MTU-Anfrage der Remote nicht -
+// die Remote wartete dann 30 s (ATT-Timeout), Tasten stauten sich, Verbindung riss ab.
+void ble_mtu_client_anfordern();
+
 class AtvVoiceHook {
  public:
   virtual ~AtvVoiceHook() = default;
@@ -96,6 +104,11 @@ class AtvVoiceHook {
   /// Mic key pressed / released on the remote.
   virtual void atvv_start_search() = 0;
   virtual void atvv_stop_audio() = 0;
+  // FORK 2026-09-29b: parallele Host-Verbindungen - Sprachzustand einer Verbindung parken /
+  // zurueckholen / vergessen (Standard: nichts tun).
+  virtual void atvv_park(uint16_t conn_id) {}
+  virtual void atvv_unpark(uint16_t conn_id) {}
+  virtual void atvv_forget(uint16_t conn_id) {}
 };
 
 class EspidfBleKeyboard : public Component
@@ -118,6 +131,45 @@ class EspidfBleKeyboard : public Component
   void send_shutdown();
   void send_hibernate();
   void send_consumer(uint16_t usage);
+  void send_button(uint8_t n);  // FORK 2026-09-29: HID-Button-Seite, Report 6
+  // FORK 2026-10-03 (Tasten-Konfigurator): Tap an einen bestimmten Platz - den aktiven
+  // oder einen geparkten (parallel verbunden) - ohne switch_host. false = Platz nicht verbunden.
+  bool conn_for_slot(uint8_t slot, uint16_t &conn) const;
+  bool send_consumer_to(uint8_t slot, uint16_t usage);
+  bool send_button_to(uint8_t slot, uint8_t n);
+  bool send_key_to(uint8_t slot, uint8_t modifiers, uint8_t keycode);
+
+  // HALINK (2026-10-05): zweite, parallele BLE-Verbindung zu Home Assistant ueber einen
+  // ESPHome-Bluetooth-Proxy (erkannt an dessen Adresse). Transportiert Rahmen fuer ha_tunnel:
+  // HA -> Remote per Write auf RX, Remote -> HA per Notify auf TX. Ohne Peer ist alles aus.
+  bool link_enabled() const { return !link_peers_.empty(); }
+  void add_link_peer(const std::string &mac);
+  void clear_link_peers() { link_peers_.clear(); }
+  // Parallel-Modus: so viele Hosts duerfen im Hintergrund verbunden bleiben (Standard 1, s. switch_host)
+  void set_max_parked(uint8_t n) { max_parked_ = n; }
+  // Bluetooth-Funk aus (Schnelleinstellungen, 2026-10-06): alle Verbindungen trennen (HID, geparkt, HA-Link) und
+  // nicht mehr werben - wie ein Flugmodus. Nicht gespeichert: nach einem Neustart ist Bluetooth wieder an.
+  void set_funk_aus(bool aus);
+  bool funk_aus() const { return funk_aus_; }
+  bool funk_aus_{false};
+  uint8_t max_parked_{1};   // Notaus: vor dem Bluetooth-Start aufrufen (on_boot)
+  bool is_link_peer(const uint8_t *bda) const;
+  bool link_connected() const;     // verbunden UND Notify abonniert
+  uint16_t link_payload() const;   // max. Bytes pro Notify (MTU - 3)
+  bool link_congested() const;
+  bool link_send(const uint8_t *data, size_t len);   // ein Notify, false = spaeter nochmal
+  bool link_pop(std::vector<uint8_t> &frame);         // naechster empfangener Rahmen (Hauptthread)
+  // HTTP-Rahmen (0x40-0x42) landen in einer eigenen Warteschlange - die liest der HTTP-Task von ha_tunnel, auch
+  // waehrend die Hauptschleife in einem blockierenden HTTP-Abruf (online_image) steckt.
+  bool link_pop_http(std::vector<uint8_t> &frame);
+  void link_rx_(const uint8_t *data, size_t len);     // aus dem BTC-Task
+  void link_clear_();
+  void set_link_interval(uint16_t min_1_25ms, uint16_t max_1_25ms, uint16_t latency);
+  void link_request_interval_();
+  void link_service_();          // unbestaetigtes Notify erneut senden (aus link_send und loop)
+  uint32_t link_resends_{0};
+  void link_diag(uint8_t *out) const;   // 12 Bytes
+  uint16_t link_int_min_{80}, link_int_max_{120}, link_latency_{0};   // 100-150 ms
   void send_power();
   void send_media_play_pause();
   void send_media_next();
@@ -423,6 +475,26 @@ class EspidfBleKeyboard : public Component
   bool is_connected() const { return is_connected_; }
   uint16_t conn_id() const { return conn_id_; }
 
+  // FORK 2026-09-29b: Laufzeit-Optionen
+  //  kb_digits: Tastatur nur mit Ziffern melden (Android sieht keine Buchstaben-Tastatur,
+  //             kein Neuaufbau laufender Apps beim Verbinden/Trennen). Gilt ab dem naechsten
+  //             Start, Hosts muessen neu koppeln (Geraetebeschreibung aendert sich).
+  //  parallel:  beim Host-Wechsel die bisherige Verbindung NICHT trennen, sondern parken;
+  //             beim Zurueckwechseln sofort wieder aktiv (kein Neuverbinden).
+  void set_kb_digits(bool d) { kb_digits_ = d; }
+  bool kb_digits() const { return kb_digits_; }
+  void set_parallel(bool p);
+  void adv_fast_again();   // FORK 2026-09-29c: nach langsamer Werbung wieder schnell werben
+  bool parallel() const { return parallel_; }
+  struct StandbyConn { uint16_t conn_id; uint8_t slot; esp_bd_addr_t addr; };
+  std::vector<StandbyConn> standby_;
+  int standby_index(uint16_t conn_id) const {
+    for (size_t i = 0; i < standby_.size(); i++) if (standby_[i].conn_id == conn_id) return (int) i;
+    return -1;
+  }
+  bool kb_digits_{false};
+  bool parallel_{false};
+
   // Multi-host switching
   /// Akkustand fuer den BLE-Batteriedienst setzen (0-100 %). Ohne diesen Aufruf
   /// bleibt der Wert auf der festen 100 stehen, mit der er angelegt wird - der
@@ -589,7 +661,29 @@ class EspidfBleKeyboard : public Component
   // RSSI sensor
   void set_rssi_sensor(sensor::Sensor *sensor) { rssi_sensor_ = sensor; }
   void set_rssi_update_interval(uint32_t ms) { rssi_update_interval_ms_ = ms; }
+  // Aus der YAML per lambda aufrufbar: id(kb).set_rssi_paused(true/false).
+  // s. Kommentar in loop() - haelt den RSSI-HCI-Befehl waehrend einer
+  // ATV-Voice-Sitzung an.
+  void set_rssi_paused(bool paused) { rssi_paused_ = paused; }
   void update_rssi(int8_t rssi);
+
+  // Zeigt an, ob die Verbindung nachweislich (per ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT)
+  // auf dem schnellen HID-Intervall (<=15ms) laeuft. request_conn_profile(false) setzt
+  // dies auf false, solange das aktuell bekannte Intervall noch langsam/unbekannt ist -
+  // erst die Bestaetigung vom Controller setzt es wieder auf true. Grund: nach dem
+  // Aufwachen aus dem Ruheprofil (120-150ms, Latency 3) dauert die tatsaechliche
+  // Umschaltung deutlich laenger als der frueher genutzte feste 200ms-Delay vor dem
+  // Start einer Sprachsitzung - die ersten ADPCM-Pakete liefen dadurch noch auf dem
+  // langsamen Intervall und wurden "congested". voice_start wartet jetzt per
+  // wait_until auf conn_fast_ready() statt blind zu schlafen.
+  bool conn_fast_ready() const { return conn_fast_ready_; }
+  void note_conn_profile_requested(bool idle) {
+    if (idle || known_conn_int_ == 0 || known_conn_int_ > 12) conn_fast_ready_ = false;
+  }
+  void note_conn_params_updated(uint16_t conn_int) {
+    known_conn_int_ = conn_int;
+    conn_fast_ready_ = (conn_int <= 12);
+  }
   void add_rssi_above_callback(std::function<void(int8_t)> cb) { rssi_above_callbacks_.push_back(std::move(cb)); }
   void add_rssi_below_callback(std::function<void(int8_t)> cb) { rssi_below_callbacks_.push_back(std::move(cb)); }
 
@@ -611,11 +705,19 @@ class EspidfBleKeyboard : public Component
   text_sensor::TextSensor *host_mac_sensor_{nullptr};
   sensor::Sensor *rssi_sensor_{nullptr};
   bool rssi_pending_{false};
+  bool rssi_paused_{false};
+  bool conn_fast_ready_{true};
+  uint16_t known_conn_int_{0};
   std::atomic<bool> pending_rssi_nan_{false};
   std::atomic<bool> pending_rssi_update_{false};
   std::atomic<int8_t> pending_rssi_value_{0};
 
  protected:
+  std::vector<std::array<uint8_t, 6>> link_peers_;   // HALINK
+  std::deque<std::vector<uint8_t>> link_rx_queue_;
+  std::deque<std::vector<uint8_t>> link_http_queue_;
+  std::recursive_mutex link_tx_mtx_;   // link_send/link_service_ aus Hauptschleife UND HTTP-Task
+  mutable std::mutex link_mtx_;
   // Fork addition: optional ATV Voice service owner (nullptr without `atv_voice:`).
   AtvVoiceHook *atv_voice_hook_{nullptr};
   /// The ID key a bonded peer distributed, looked up by either the address it
