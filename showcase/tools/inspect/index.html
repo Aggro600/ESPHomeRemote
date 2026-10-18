@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#20242a}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script></head>
+<body><script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+const q = new URLSearchParams(location.search);
+const W = +(q.get("w") || 1200), H = +(q.get("h") || 900);
+const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); r.setSize(W, H); document.body.appendChild(r.domElement);
+const s = new THREE.Scene(); s.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.2)); const d = new THREE.DirectionalLight(0xffffff, 2); d.position.set(1, 2, 3); s.add(d);
+const L = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+const g = await L.loadAsync("/models/" + (q.get("m") || "remote") + ".glb");
+const root = g.scene; s.add(root);
+const ausblenden = (q.get("aus") || "").split(",").filter(Boolean);
+const durch = (q.get("durch") || "").split(",").filter(Boolean);
+root.traverse((o) => { if (!o.isMesh) return;
+  if (ausblenden.some((a) => o.name.includes(a))) o.visible = false;
+  if (durch.some((a) => o.name.includes(a))) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = +(q.get("op") || 0.25); o.material.depthWrite = false; }
+  if (q.get("rot") && o.name.includes(q.get("rot"))) { o.material = o.material.clone(); o.material.color.set(0xff3030); }
+});
+const box = new THREE.Box3().setFromObject(root); const c = box.getCenter(new THREE.Vector3()); const sz = box.getSize(new THREE.Vector3()).length();
+const ortho = q.get("ortho");
+const cam = ortho ? new THREE.OrthographicCamera(-1, 1, 1, -1, -10, 10) : new THREE.PerspectiveCamera(30, W / H, 0.001, 10);
+const dir = (q.get("v") || "0,0,1").split(",").map(Number); const up = (q.get("up") || "0,1,0").split(",").map(Number);
+const zoom = +(q.get("z") || 1);
+if (ortho) { const a = sz * 0.5 / zoom; cam.left = -a * W / H; cam.right = a * W / H; cam.top = a; cam.bottom = -a; cam.updateProjectionMatrix(); }
+const ziel = q.get("c") ? new THREE.Vector3(...q.get("c").split(",").map(Number)) : c;
+cam.up.set(...up); cam.position.copy(ziel).add(new THREE.Vector3(...dir).normalize().multiplyScalar(sz * 1.6 / zoom)); cam.lookAt(ziel);
+if (q.get("schnitt")) { const [a, v] = q.get("schnitt").split(":"); const n = new THREE.Vector3(); n[a] = -1; r.clippingPlanes = [new THREE.Plane(n, +v)]; }
+r.render(s, cam); window.fertig = true;
+window.info = []; root.traverse((o) => { if (o.isMesh) { const b = new THREE.Box3().setFromObject(o); window.info.push(o.name + " " + b.min.toArray().map(v=>(v*1000).toFixed(1)).join(",") + " .. " + b.max.toArray().map(v=>(v*1000).toFixed(1)).join(",")); } });
+</script></body></html>

@@ -1,0 +1,24 @@
+{
+  "name": "openremote-3d-showcase",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Interaktiver 3D-Showcase der OpenRemote Rev6 mit Dockingstation (ESPHomeRemote-Firmware)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "models": "node tools/build-models.mjs"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "vite": "5.4.11",
+    "occt-import-js": "0.0.23",
+    "@gltf-transform/core": "4.1.1",
+    "@gltf-transform/functions": "4.1.1",
+    "@gltf-transform/extensions": "4.1.1",
+    "meshoptimizer": "0.22.0"
+  }
+}

@@ -8,6 +8,10 @@ ohne zu programmieren.
 > Du brauchst keine Programmierkenntnisse. Wenn du Home Assistant schon benutzt, bist du in etwa
 > 30 Minuten fertig.
 
+<p align="center"><a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><img src="docs/bilder/showcase.png" alt="3D-Showcase: OpenRemote Rev6 im Dock mit Smart Display" width="900"></a></p>
+<p align="center"><b><a href="https://aggro600.github.io/ESPHomeRemote/showcase/">▶ Remote und Dockingstation in 3D ansehen</a></b><br>
+<sub>Interaktiv im Browser: aus den Original-CAD-Daten, mit der echten Display-Oberfläche, Andocken, Laden und Explosionsansicht</sub></p>
+
 ---
 
 ## Was sie kann

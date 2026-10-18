@@ -1,0 +1,41 @@
+{
+  "quelle": "tools/dock-pose.mjs (aus Dock Rev6 v51.stl, Case with/No Pogo Pins Rev6 v40.stl, Cover Plate)",
+  "drehungXGrad": -17.63,
+  "versatzMm": [
+    0.003,
+    123.173,
+    -19.232
+  ],
+  "pogoAchse": [
+    0.0006,
+    0.9485,
+    0.3169
+  ],
+  "pogoAchseNeigungGrad": 18.48,
+  "pogoBohrungenMm": [
+    [
+      -5,
+      15.277,
+      -1.213
+    ],
+    [
+      5.004,
+      15.289,
+      -1.212
+    ]
+  ],
+  "kontaktRemoteMm": [
+    [
+      -5.246,
+      -106.219,
+      -14.008
+    ],
+    [
+      5.246,
+      -106.219,
+      -14.008
+    ]
+  ],
+  "federwegMm": 2.55,
+  "restVoxel": 20
+}

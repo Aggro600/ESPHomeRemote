@@ -1,0 +1,19 @@
+remote.glb und dock.glb sind abgeleitet aus OpenRemote-Hardware von LORDSn1per
+https://github.com/LORDSn1per/OpenRemote-Hardware  (Stand: Commit 32cc7e28)
+Lizenz: GNU General Public License v3.0 (GPL-3.0) - https://www.gnu.org/licenses/gpl-3.0.html
+
+Verwendete Originaldateien:
+  CAD/BuyDisplay LCD/STL/Case - Screws with Pogo Pins Rev6 v40.stl
+  CAD/BuyDisplay LCD/STL/Cover Plate 5mm (+1mm) Rev6-v37.stl
+  CAD/BuyDisplay LCD/STL/Button Grid BuyDisplay Rev6-v37.stl
+  CAD/BuyDisplay LCD/STL/Colour Button BuyDisplay Rev6-v37.stl   (viermal verwendet)
+  CAD/BuyDisplay LCD/STL/Off Button BuyDisplay Rev6-v37.stl
+  CAD/PCB Imports/OpenRemote Rev6 PCB.step
+  CAD/Dock/STL/Dock Rev6 v51.stl
+  CAD/Dock/STL/Dock Base Lid Rev6 v51.stl
+  CAD/Dock/STL/Dock Menu Button Rev6-v47.stl
+  PCB/Dock Rev6/Dock Rev6 PCB Assembly.step
+
+Aenderungen: nach glTF umgewandelt, Normalen neu berechnet, unsichtbar fein vereinfacht (Fehler <= 0,05 %),
+quantisiert und mit meshopt komprimiert, Platinenteile nach Material zusammengefasst, Beschriftung auf dem
+Display-Modell entfernt. Formen und Lagen sind unveraendert. Erzeugt mit showcase/tools/build-models.mjs.
