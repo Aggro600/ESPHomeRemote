@@ -1,0 +1,9 @@
+# Ein Dock = diese kleine Datei (Name je Dock aendern). Firmware: dock-basis.yaml (gemeinsam fuer alle Docks).
+# Im ESPHome-Ordner ablegen als dock-<name>.yaml, dock-basis.yaml nach templates/ kopieren.
+# Oder bequemer: Konfigurator > Firmware & Geraete > "Neues Dock" legt die Datei selbst an.
+substitutions:
+  name: dock-wohnzimmer
+  friendly_name: Dock Wohnzimmer
+
+packages:
+  basis: !include templates/dock-basis.yaml

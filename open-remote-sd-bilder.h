@@ -1,10 +1,9 @@
 #pragma once
-// Logo-/Cover-Bilder von der SD-Karte (nur der ersten Remote, Stand 2026-09-21).
+// Logo-/Cover-Bilder von der SD-Karte: fuer Apps ohne eigenes Cover (Netflix, Disney+ ...).
 //
 // Dateien (Ordner /covers auf der Karte, erzeugt von tools/make_sd_assets.py):
 //   /covers/<app>_player.rle      240 x 320, RGB565 little-endian, lauflaengenkodiert "RL16" (Cover der Medienseite)
 //   /covers/<app>_home.rle        216 x 172, gleiches Format (Cover-Banner der Startseite)
-// (Ersatzweise werden gleichnamige rohe .rgb565-Dateien gelesen - die Karte liest aber nur ~5 KB/s.)
 // <app> = kleingeschriebener Name ohne Sonderzeichen, "+" wird zu "plus" (Netflix -> netflix,
 // Disney+ -> disneyplus, Prime Video -> primevideo).
 //
@@ -67,7 +66,7 @@ inline void fuellen(Bild &b, int w, int h) {
   b.ok = true;
 }
 
-// Lauflaengenkodiertes Bild ("RL16", tools/make_sd_assets.py): winzige Dateien, weil die Karte nur ~5 KB/s liest.
+// Lauflaengenkodiertes Bild ("RL16", tools/make_sd_assets.py): kleine Dateien, schnell gelesen.
 inline bool laden_rle(esphome::sd_card::SdCard *sd, const std::string &pfad, int w, int h, Bild &b) {
   b.ok = false;
   std::vector<uint8_t> roh;
@@ -95,33 +94,10 @@ inline bool laden_rle(esphome::sd_card::SdCard *sd, const std::string &pfad, int
   return true;
 }
 
-// Bild "<basis>.rle" (bevorzugt) oder "<basis>.rgb565" (roh, langsam) laden.
-inline bool laden_bild(esphome::sd_card::SdCard *sd, const std::string &basis, int w, int h, Bild &b);
-
-// Rohes RGB565-Bild von der (eingebundenen) Karte in den Cache lesen und den LVGL-Deskriptor fuellen.
-inline bool laden(esphome::sd_card::SdCard *sd, const std::string &pfad, int w, int h, Bild &b) {
-  const size_t soll = (size_t) w * (size_t) h * 2;
-  b.ok = false;
-  if (!sd->read_binary(pfad, b.daten, soll + 64)) return false;
-  if (b.daten.size() != soll) {   // falsche Groesse: lieber nichts anzeigen als Muell
-    b.daten.clear();
-    b.daten.shrink_to_fit();
-    return false;
-  }
-  fuellen(b, w, h);
-  return true;
-}
-
-inline bool laden_bild(esphome::sd_card::SdCard *sd, const std::string &basis, int w, int h, Bild &b) {
-  if (laden_rle(sd, basis + ".rle", w, h, b)) return true;
-  return laden(sd, basis + ".rgb565", w, h, b);
-}
-
 // ---- Laden in einem eigenen Task (Stand 2026-09-21) ---------------------------------------------
-// Die Karte liest mit den 4k7-Serienwiderstaenden an SCK/MOSI/MISO nur langsam (gemessen ~5 KB/s bei
-// 8 MHz). Ein Lesen im Hauptprogramm blockierte laenger als der Task-Watchdog erlaubt -> Absturz und
-// Neustart-Schleife, solange Netflix lief. Deshalb: mount, lesen und unmount im Hintergrund-Task; das
-// Hauptprogramm wartet nur auf das Ende (busy() = false) und uebernimmt dann das Ergebnis.
+// Einbinden, Lesen und Auswerfen im Hintergrund-Task: im Hauptprogramm loeste das Lesen den Task-Watchdog aus
+// (Absturz und Neustart-Schleife). Das Hauptprogramm wartet nur auf das Ende (busy() = false) und uebernimmt dann
+// das Ergebnis.
 inline volatile bool &busy() {
   static volatile bool b = false;
   return b;
@@ -140,14 +116,14 @@ inline void task_fn(void *arg) {
   e = App();
   bool ok = false;
   if (a->sd->mount()) {
-    const bool p = laden_bild(a->sd, "/covers/" + a->slug + "_player", 240, 320, e.player);
-    const bool h = laden_bild(a->sd, "/covers/" + a->slug + "_home", 216, 172, e.home);
+    const bool p = laden_rle(a->sd, "/covers/" + a->slug + "_player.rle", 240, 320, e.player);
+    const bool h = laden_rle(a->sd, "/covers/" + a->slug + "_home.rle", 216, 172, e.home);
     ok = p || h;
     // Kein Logo fuer diese App: Standard-Cover der Karte (covers/standard_*, 2026-10-11)
     if (!ok && a->slug != "standard") {
       e = App();
-      const bool p2 = laden_bild(a->sd, "/covers/standard_player", 240, 320, e.player);
-      const bool h2 = laden_bild(a->sd, "/covers/standard_home", 216, 172, e.home);
+      const bool p2 = laden_rle(a->sd, "/covers/standard_player.rle", 240, 320, e.player);
+      const bool h2 = laden_rle(a->sd, "/covers/standard_home.rle", 216, 172, e.home);
       ok = p2 || h2;
     }
     a->sd->unmount();

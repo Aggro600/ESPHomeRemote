@@ -103,7 +103,8 @@ void LIS3DHComponent::configure_runtime(uint8_t ruck_ths, uint8_t klopf_ths) {
   this->write_byte(REG_CTRL_REG1, 0x67);    // 200 Hz Normalmodus, X/Y/Z
   this->write_byte(REG_CTRL_REG2, 0x05);    // Hochpass nur fuer INT1 + Klopfen (FDS=0: Rohdaten bleiben)
   this->write_byte(REG_CTRL_REG4, 0x80);    // BDU, +-2 g
-  this->write_byte(REG_CTRL_REG5, 0x08);    // LIR_INT1: Ruck festhalten bis INT1_SRC gelesen
+  this->write_byte(REG_CTRL_REG5, this->fifo_ ? 0x48 : 0x08);   // LIR_INT1 (+ FIFO_EN fuer Gesten)
+  this->write_byte(0x2E, this->fifo_ ? 0x80 : 0x00);             // FIFO: Stream bzw. Bypass
   this->write_byte(REG_CTRL_REG6, 0x00);    // aktiv-HIGH (vor dem Tiefschlaf wird umgestellt)
   this->write_byte(REG_INT1_THS, ruck_ths & 0x7F);
   // 2 Takte (10 ms): ein Ruck dauert 50-100 ms und wird sicher erkannt, eine einzelne
@@ -146,7 +147,8 @@ void LIS3DHComponent::arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uin
   this->write_byte(REG_CTRL_REG1, klopf ? 0x6F : 0x4F);
   this->write_byte(REG_CTRL_REG2, 0x05);
   this->write_byte(REG_CTRL_REG4, 0x80);
-  this->write_byte(REG_CTRL_REG5, 0x00);    // Ruck NICHT festhalten: die Leitung folgt der Bewegung
+  this->write_byte(REG_CTRL_REG5, 0x00);    // Ruck NICHT festhalten: die Leitung folgt der Bewegung (FIFO aus)
+  this->write_byte(0x2E, 0x00);             // FIFO: Bypass
   this->write_byte(REG_CTRL_REG6, 0x02);    // aktiv-LOW - ext1 weckt bei LOW
   this->write_byte(REG_INT1_THS, ruck_ths & 0x7F);
   // Mindestdauer: bei 200 Hz 4 Takte (20 ms) gegen Einzel-Spitzen, bei 50 Hz reicht eine Messung.
@@ -164,6 +166,30 @@ void LIS3DHComponent::arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uin
   this->read_byte(REG_CLICK_SRC, &d);
   if (ruck) this->write_byte(REG_INT1_CFG, 0x2A);
   this->write_byte(REG_CTRL_REG3, (ruck ? 0x40 : 0x00) | (klopf ? 0x80 : 0x00));
+}
+
+void LIS3DHComponent::set_fifo(bool an) {
+  if (this->is_failed() || an == this->fifo_) return;
+  this->fifo_ = an;
+  this->write_byte(REG_CTRL_REG5, an ? 0x48 : 0x08);
+  this->write_byte(0x2E, 0x00);             // erst Bypass: FIFO leeren
+  if (an) this->write_byte(0x2E, 0x80);     // dann Stream
+}
+
+int LIS3DHComponent::fifo_lesen(int16_t *xyz, int max) {
+  if (this->is_failed() || !this->fifo_) return -1;
+  uint8_t src = 0;
+  if (!this->read_byte(0x2F, &src)) return -1;
+  int n = src & 0x1F;
+  if (src & 0x40) n = 32;                   // uebergelaufen: voll
+  if (n > max) n = max;
+  if (n <= 0) return 0;
+  uint8_t d[6 * 32];
+  if (!this->read_bytes(0x28 | 0x80, d, 6 * n)) return -1;
+  for (int i = 0; i < n; i++)
+    for (int a = 0; a < 3; a++)
+      xyz[i * 3 + a] = ((int16_t) ((uint16_t) d[i * 6 + a * 2 + 1] << 8 | d[i * 6 + a * 2])) >> 4;
+  return n;
 }
 
 void LIS3DHComponent::dump_config() {

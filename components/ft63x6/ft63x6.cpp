@@ -29,7 +29,7 @@
 
   Why: OpenRemote's own phantom-touch investigation on the same touch
   controller family (FT5x06/FT6206, shared LCD_EN power rail with the panel -
-  identical hardware situation to the second remote's +VSW rail) found that EVERY
+  identical hardware situation to this remote's +VSW rail) found that EVERY
   firmware version that actively wrote power-mode/threshold registers to this
   chip showed some degree of ghost/phantom touches, while the one version
   that never wrote a single register to it (relying entirely on the chip's
@@ -186,6 +186,9 @@ void FT63X6Touchscreen::update_touches() {
   this->aktiv_ = false;
   this->in_luecke_ = false;
   const int dx = (int) this->lx_ - (int) this->x0_, dy = (int) this->ly_ - (int) this->y0_;
+  this->w_dx_ = dx;
+  this->w_dy_ = dy;
+  this->w_ms_ = this->zuletzt_ms_ - this->start_ms_;
   if (this->max_weg_ > 30 || this->luecken_ > 0) {
     ESP_LOGI(TAG, "Wisch: %d ms, %d/%d px (roh), weg %u, %u Abfragen, %u neue Punkte, %u Luecken ueberbrueckt, %u Lesefehler",
              (int) (this->zuletzt_ms_ - this->start_ms_), dx, dy, this->max_weg_, this->abfragen_, this->punkte_,

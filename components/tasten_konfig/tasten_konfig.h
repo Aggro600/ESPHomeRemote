@@ -7,8 +7,8 @@
 //   weicht er ab, holt ein eigener Task die Datei per HTTP; Hash des Inhalts wird geprueft.
 // - Gesten: eigene Zeitsteuerung je Taste (keine gemeinsamen gest_*-Variablen).
 // - Ausfuehrung: Hooks (siehe open-remote-tasten.h), weil sie an YAML-ids haengt.
-// Ohne gueltige oder ausgeschaltete Belegung meldet ereignis() false -> die eingebaute
-// Logik der YAML laeuft wie bisher.
+// Ohne gueltige oder ausgeschaltete Belegung meldet ereignis() false: dann bedienen die Tasten nur die
+// Seiten der Remote (Navigation), nichts geht an ein Geraet.
 
 #include "esphome/core/component.h"
 #include "esphome/components/json/json_util.h"
@@ -57,6 +57,8 @@ class TastenKonfig : public Component {
   std::function<void(int phase, int pct, const char *text)> anzeige;
   // Darf jetzt geladen werden (keine Sprache aktiv)? Sperrt dabei Schlaf/WLAN-Aus.
   std::function<bool()> darf_laden;
+  // Folgemodus fuers Display: name + Restzeit in ms; ms = 0 = Modus vorbei.
+  std::function<void(const char *name, uint32_t ms)> modus_anzeige;
 
   // ---- Laufzeit ----
   bool aktiv() const { return doc_ != nullptr && an_; }
@@ -74,8 +76,6 @@ class TastenKonfig : public Component {
   const std::string &host() const { return host_; }
   const std::string &schluessel() const { return key_; }
   void bei_neuer_konfig(std::function<void()> &&f) { neu_cbs_.push_back(std::move(f)); }
-  // Eingebaute Popups (config.popups.<name>): an? und ggf. eigene Menueseite statt der eingebauten.
-  bool popup_an(const char *name) const;
   // Aktivitaeten aus der Konfiguration (2026-10-04): Anzahl (0 = keine Konfig), Name, Bluetooth-Platz.
   int aktivitaeten() const;
   std::string aktivitaet_name(int i) const;
@@ -84,20 +84,50 @@ class TastenKonfig : public Component {
   // Startseite (config.home, 2026-10-04): true = eigener Aufbau aktiv. Bereich in Rasterzellen (6 x 8, 40 px).
   bool home_eigen() const;
   bool home_bereich(const char *name, int &x, int &y, int &w, int &h, bool &an) const;
-  std::string popup_ersatz(const char *name) const;
+  // Folgemodus (2026-10-15, cfg.modi): belegt einzelne Tasten fuer s Sekunden um, z. B. Kanal +/-
+  // dimmt die Haengelampe, nachdem sie per Rot doppelt geschaltet wurde. Jeder Druck einer
+  // Modus-Taste verlaengert die Zeit. Start per Schritt {"t":"modus","id":..} oder Menue-Eintrag "modus".
+  void modus_starten(const char *id);
+  void modus_beenden();
+  bool modus_taste(int taste) const;   // gehoert die Taste gerade dem Folgemodus?
+  // Aktivitaet startet/endet (2026-10-16): Schritte der Pseudo-Tasten 900 ("Beim Starten") / 901 ("Beim Beenden").
+  void aktivitaet_ereignis(int aktivitaet, bool start) { if (aktiv()) ausfuehren_(aktivitaet, start ? 900 : 901, KURZ, false); }
   // Schrittfolge ausfuehren (Menue-Kacheln): wie eine Tastengeste KURZ.
+  // Teil der Konfiguration (z. B. "gesten", "makros"), leer ohne Konfiguration. Nur bis zur naechsten Uebernahme gueltig.
+  JsonVariantConst konfig(const char *k) const {
+    if (doc_ == nullptr) return JsonVariantConst();
+    return doc_->as<JsonObjectConst>()[k];
+  }
   void schritte(JsonArrayConst steps, bool dunkel = false) { folge_(steps, Ctx{0, KURZ, dunkel, 0}, 0, gen_); }
+  // Taste kurz "druecken" wie ihre Belegung in der Aktivitaet (Bewegungsgesten "wirkt wie Taste", 2026-10-17)
+  void taste_kurz(int taste, int aktivitaet, bool dunkel = false) { if (aktiv()) ausfuehren_(aktivitaet, taste, KURZ, dunkel); }
 
   // Einen IR-Schritt (JSON wie in der Belegung) sofort senden - Test aus dem Konfigurator, Sendeweg wie eingestellt.
   void ir_test(const std::string &json);
   // Name des Bluetooth-Platzes i (0..3) aus dem Konfigurator, leer = nicht vergeben.
   std::string slot_name(int i) const;
+  // Kameras fuer die Seiten "Kamerabild"/"Live-Bild" (Konfigurator: cfg.kameras): Anzahl, Name, camera.*-Entitaet
+  int kameras() const;
+  std::string kamera_name(int i) const;
+  std::string kamera_entitaet(int i) const;
 
   // HA-Aufruf mit kurzer Warteschlange (WLAN/API kann nach dem Aufwachen noch fehlen).
   void ha_senden(const std::string &svc, std::map<std::string, std::string> d);
 
+  // ---- Geraete-Einstellungen (2026-10-16): gepflegt im Konfigurator (cfg.einst = {"name": [wert, rev]}) ----
+  // Die YAML meldet jede Einstellung an (Name = id des globals). Neue Konfiguration aus HA: Werte mit geaenderter
+  // Revision uebernehmen (Aenderung im Konfigurator); gleiche Revision = Wert der Remote bleibt (am Geraet geaendert).
+  // Die Remote meldet ihre Werte nach dem Start und bei jeder Aenderung an HA (einst_melden, JSON {"name": wert}).
+  void einst_feld(const char *k, bool bol, std::function<int()> get, std::function<void(int)> set) {
+    einst_.push_back(EinstFeld{k, bol, std::move(get), std::move(set), 0});
+  }
+  std::function<void()> einst_angewendet;                   // nach Uebernahme: Seiten auffrischen, Wirkung
+  std::function<void(const std::string &)> einst_melden;    // Werte an HA (Ereignis)
+
  protected:
   JsonObjectConst taste_cfg_(int aktivitaet, int taste);
+  JsonObjectConst modus_keys_() const;
+  void modus_verlaengern_();
   void schritt_(JsonObjectConst s, const Ctx &c, bool halten);
   void ble_(JsonObjectConst s, bool halten);
   void ha_(JsonObjectConst s);
@@ -111,6 +141,7 @@ class TastenKonfig : public Component {
   void ausfuehren_(int aktivitaet, int taste, Geste g, bool dunkel);
   void folge_(JsonArrayConst steps, Ctx c, size_t ab, uint32_t gen);
   void wiederholen_(int taste, uint32_t ms);
+  void lang_wiederholen_(int taste, uint32_t ms);
   std::vector<std::function<void()>> neu_cbs_;
   bool anwenden_(const char *daten, size_t len, const std::string &h, bool speichern);
   void status_melden_();
@@ -157,6 +188,17 @@ class TastenKonfig : public Component {
     uint32_t los_ms{0};
   };
   Zustand z_[110];
+
+  // Folgemodus: Index in cfg.modi (-1 = keiner), gueltig fuer Generation modus_gen_
+  int modus_{-1};
+  uint32_t modus_gen_{0}, modus_bis_{0}, modus_ms_{0};
+
+  struct EinstFeld { std::string k; bool bol; std::function<int()> get; std::function<void(int)> set; int gemeldet; };
+  std::vector<EinstFeld> einst_;
+  bool einst_voll_{true};   // alle Werte melden (nach dem Start)
+  uint32_t einst_ms_{0}, einst_log_ms_{0};
+  void einst_uebernehmen_(JsonDocument *alt, JsonDocument *neu);
+  void einst_pruefen_();
 
   struct HaJob { std::string svc; std::map<std::string, std::string> d; uint32_t t0; };
   std::vector<HaJob> ha_q_;

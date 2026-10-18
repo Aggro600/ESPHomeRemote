@@ -13,16 +13,16 @@
 
 #include "esphome/components/api/api_server.h"
 #include "esphome/components/espidf_ble_keyboard/espidf_ble_keyboard.h"
+#include "ir_encoders.h"
 #ifdef TK_USE_IR
 #include "esphome/components/remote_transmitter/remote_transmitter.h"
-#include "esphome/components/runtime_config/ir_encoders.h"
 #endif
 
 namespace esphome {
 namespace tasten_konfig {
 
 static const char *const TAG = "tasten_konfig";
-static const size_t MAX_BYTES = 64 * 1024;
+static const size_t MAX_BYTES = 96 * 1024;   // HA begrenzt auf 90000 Byte (esphomeremote_konfig)
 static const char *const NVS_NS = "tasten";
 
 static std::string fnv1a(const char *d, size_t n) {
@@ -31,6 +31,17 @@ static std::string fnv1a(const char *d, size_t n) {
   char b[9];
   snprintf(b, sizeof(b), "%08x", (unsigned) h);
   return b;
+}
+
+// Rohzeiten als Text "9000,-4500,..." fuer die Docks (Aktionen esphome.<dock>_ir_roh / _rf_roh)
+static std::string zeiten_text(const IrTimings &t) {
+  std::string s;
+  s.reserve(t.size() * 6);
+  for (size_t i = 0; i < t.size(); i++) {
+    if (i) s += ',';
+    s += std::to_string(t[i]);
+  }
+  return s;
 }
 
 // Scheduler-IDs: je Taste eigene Zeitgeber fuer "lang" und "einzeln (nach Doppel-Fenster)"
@@ -52,7 +63,7 @@ void TastenKonfig::setup() {
     }
     nvs_close(h);
   }
-  if (doc_ == nullptr) ESP_LOGI(TAG, "Keine gespeicherte Belegung - eingebaute Tastenlogik aktiv");
+  if (doc_ == nullptr) ESP_LOGI(TAG, "Keine gespeicherte Belegung - Tasten bedienen nur die Seiten der Remote");
   status_melden_();
 }
 
@@ -74,7 +85,7 @@ void TastenKonfig::melden_(int phase, int pct, const std::string &text) {
 
 void TastenKonfig::status_melden_() {
   if (status_ == nullptr) return;
-  if (doc_ == nullptr) status_->publish_state("eingebaut");
+  if (doc_ == nullptr) status_->publish_state("keine Belegung");
   else status_->publish_state(an_ ? hash_ : hash_ + " aus");
 }
 
@@ -102,6 +113,7 @@ bool TastenKonfig::anwenden_(const char *daten, size_t len, const std::string &h
     cancel_timeout(id_einzeln(k));
     z_[k] = Zustand{};
   }
+  if (speichern) einst_uebernehmen_(doc_, neu);   // beim Start aus dem NVS nicht: die Remote hat ihre Werte schon
   delete doc_;
   doc_ = neu;
   gen_++;
@@ -120,6 +132,50 @@ bool TastenKonfig::anwenden_(const char *daten, size_t len, const std::string &h
   }
   for (auto &f : neu_cbs_) f();
   return true;
+}
+
+// ------------------------------------------------------------------ Geraete-Einstellungen
+
+void TastenKonfig::einst_uebernehmen_(JsonDocument *alt, JsonDocument *neu) {
+  JsonObjectConst n = (*neu)["einst"].as<JsonObjectConst>();
+  if (n.isNull() || einst_.empty()) return;
+  JsonObjectConst a = alt != nullptr ? (*alt)["einst"].as<JsonObjectConst>() : JsonObjectConst();
+  int geaendert = 0;
+  for (auto &f : einst_) {
+    JsonArrayConst w = n[f.k].as<JsonArrayConst>();
+    if (w.isNull()) continue;
+    JsonArrayConst wa = a.isNull() ? JsonArrayConst() : a[f.k].as<JsonArrayConst>();
+    if (!wa.isNull() && (wa[1] | -1L) == (w[1] | -2L)) continue;   // im Konfigurator nicht geaendert
+    const int v = w[0].is<bool>() ? (w[0].as<bool>() ? 1 : 0) : (w[0] | 0);
+    if (f.get() == v) continue;
+    ESP_LOGI(TAG, "Einstellung %s: %d -> %d (Konfigurator)", f.k.c_str(), f.get(), v);
+    f.set(v);
+    geaendert++;
+  }
+  if (geaendert && einst_angewendet) einst_angewendet();
+}
+
+void TastenKonfig::einst_pruefen_() {
+  if (einst_.empty() || !einst_melden || millis() - einst_ms_ < 2000) return;
+  einst_ms_ = millis();
+  bool anders = einst_voll_;
+  for (auto &f : einst_) if (f.get() != f.gemeldet) { anders = true; break; }
+  if (!anders) return;
+  if (!api_ok_()) {
+    if (millis() - einst_log_ms_ > 60000) { einst_log_ms_ = millis(); ESP_LOGI(TAG, "Einstellungen geaendert, warte auf HA"); }
+    return;
+  }
+  JsonDocument d(&alloc_);
+  for (auto &f : einst_) {
+    f.gemeldet = f.get();
+    if (f.bol) d[f.k] = f.gemeldet != 0;
+    else d[f.k] = f.gemeldet;
+  }
+  std::string s;
+  serializeJson(d, s);
+  einst_voll_ = false;
+  ESP_LOGI(TAG, "%u Einstellungen an HA gemeldet (%u Byte)", (unsigned) einst_.size(), (unsigned) s.size());
+  einst_melden(s);
 }
 
 void TastenKonfig::angekuendigt(const std::string &h) {
@@ -141,8 +197,6 @@ void TastenKonfig::download_starten_() {
   letzt_pct_ = -2;
   versuch_++;
   ESP_LOGI(TAG, "Hole Belegung %s (Versuch %u)", dl_soll_.c_str(), (unsigned) versuch_);
-  ESP_LOGI("ram", "vor Download: intern frei %u, groesster Block %u", (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-           (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
   melden_(1, 0, "Verbinde mit Home Assistant");
   // Arbeits-Task einmalig anlegen, Stapel im PSRAM (2026-10-04): vorher bei jedem Download
   // xTaskCreate mit 6 KB internem Stapel -> Zerstueckelung des knappen internen RAM.
@@ -202,6 +256,9 @@ void TastenKonfig::download_einmal_(TastenKonfig *self) {
 }
 
 void TastenKonfig::loop() {
+  einst_pruefen_();
+  if (modus_ >= 0 && ((int32_t) (millis() - modus_bis_) >= 0 || modus_gen_ != gen_)) modus_beenden();
+
   // HA-Warteschlange pumpen
   if (!ha_q_.empty()) {
     const bool con = api_ok_();
@@ -226,21 +283,10 @@ void TastenKonfig::loop() {
     dl_laeuft_ = false;
     if (dl_status_ == 200 && dl_buf_ != nullptr && dl_len_ > 0) {
       const std::string h = fnv1a(dl_buf_, dl_len_);
-      if (h != dl_soll_) {
-        // HA hat inzwischen neu gespeichert (Ankuendigung verpasst/ueberholt): die Datei ist der
-        // aktuelle Stand - uebernehmen und nicht weiter dem alten Hash hinterherladen.
-        ESP_LOGI(TAG, "Neuerer Stand als angekuendigt (erwartet %s, erhalten %s) - uebernommen", dl_soll_.c_str(), h.c_str());
-        if (anwenden_(dl_buf_, dl_len_, h, true)) {
-          if (soll_hash_ == dl_soll_) soll_hash_ = h;
-          versuch_ = 0;
-          erzwingen_ = false;
-          melden_(3, 100, "Übernommen (" + h + ")");
-        } else {
-          melden_(4, 0, "Fehler: ungültige Daten");
-        }
-      } else if (anwenden_(dl_buf_, dl_len_, h, true)) {
-        ESP_LOGI("ram", "nach Laden: intern frei %u, groesster Block %u", (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                 (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+      if (anwenden_(dl_buf_, dl_len_, h, true)) {
+        // Anderer Stand als angekuendigt: HA hat inzwischen neu gespeichert - die Datei ist der aktuelle
+        // Stand, nicht weiter dem alten Hash hinterherladen.
+        if (h != dl_soll_ && soll_hash_ == dl_soll_) soll_hash_ = h;
         versuch_ = 0;
         erzwingen_ = false;
         melden_(3, 100, "Übernommen (" + h + ")");
@@ -263,12 +309,10 @@ void TastenKonfig::loop() {
   // Neu laden noetig?
   const bool abweichung = !soll_hash_.empty() && (soll_hash_ != hash_ || erzwingen_);
   if (!abweichung) return;
-  if (dl_laeuft_ && millis() - dl_start_ > 30000) {
-    ESP_LOGW(TAG, "Download haengt seit 30 s - gebe ihn auf");
-    dl_laeuft_ = false;  // Task laeuft evtl. noch; sein Ergebnis wird ueber dl_fertig_ trotzdem verarbeitet
-  }
   const char *grund = nullptr;
-  if (dl_laeuft_) grund = "Download laeuft";
+  // Laeuft der Download noch (auch ein haengender, bis zum HTTP-Timeout): abwarten - ein zweiter Auftrag wuerde
+  // Adresse und Puffer des laufenden ueberschreiben.
+  if (dl_laeuft_) grund = millis() - dl_start_ > 30000 ? "Download haengt" : "Download laeuft";
   else if (versuch_ >= 8) grund = "zu viele Versuche";
   else if ((int32_t) (millis() - laden_ab_) < 0) grund = "Wartezeit";
   else if (!api_ok_()) grund = "keine HA-Verbindung";
@@ -284,12 +328,6 @@ void TastenKonfig::ha_senden(const std::string &svc, std::map<std::string, std::
   if (api_ok_()) { kb_->call_homeassistant_service(svc, d); return; }
   if (ha_q_.size() < 8) ha_q_.push_back({svc, std::move(d), millis()});
   ESP_LOGI(TAG, "HA-Aufruf %s wartet auf die Verbindung", svc.c_str());
-}
-
-bool TastenKonfig::popup_an(const char *name) const {
-  if (doc_ == nullptr) return true;
-  JsonObjectConst p = (*doc_)["popups"][name];
-  return p.isNull() || (p["on"] | true);
 }
 
 int TastenKonfig::aktivitaeten() const {
@@ -322,11 +360,6 @@ bool TastenKonfig::home_bereich(const char *name, int &x, int &y, int &w, int &h
   return true;
 }
 
-std::string TastenKonfig::popup_ersatz(const char *name) const {
-  if (doc_ == nullptr) return "";
-  return (*doc_)["popups"][name]["page"] | "";
-}
-
 // ------------------------------------------------------------------ Ausfuehrung
 
 bool TastenKonfig::api_ok_() const { return api::global_api_server != nullptr && api::global_api_server->is_connected(); }
@@ -343,6 +376,49 @@ void TastenKonfig::schritt_(JsonObjectConst s, const Ctx &c, bool halten) {
   else if (!strcmp(typ, "ir")) ir_(s);
   else if (!strcmp(typ, "rf")) rf_(s);
   else if (!strcmp(typ, "int")) { if (intern) intern(s["fn"] | "", s["arg"] | 0, c.geste, c.dunkel); }
+  else if (!strcmp(typ, "modus")) modus_starten(s["id"] | "");
+}
+
+// ------------------------------------------------------------------ Folgemodus
+
+void TastenKonfig::modus_starten(const char *id) {
+  if (doc_ == nullptr) return;
+  int i = 0;
+  for (JsonObjectConst m : (*doc_)["modi"].as<JsonArrayConst>()) {
+    if (strcmp(m["id"] | "", id) == 0) {
+      modus_ = i;
+      modus_gen_ = gen_;
+      modus_ms_ = (uint32_t) (m["s"] | 7) * 1000u;
+      ESP_LOGI(TAG, "Folgemodus %s fuer %u s", m["name"] | id, (unsigned) (modus_ms_ / 1000));
+      modus_verlaengern_();
+      return;
+    }
+    i++;
+  }
+  ESP_LOGW(TAG, "Folgemodus '%s' nicht in der Konfiguration", id);
+}
+
+void TastenKonfig::modus_verlaengern_() {
+  modus_bis_ = millis() + modus_ms_;
+  if (modus_anzeige) modus_anzeige((*doc_)["modi"][modus_]["name"] | "", modus_ms_);
+}
+
+void TastenKonfig::modus_beenden() {
+  if (modus_ < 0) return;
+  modus_ = -1;
+  ESP_LOGD(TAG, "Folgemodus vorbei");
+  if (modus_anzeige) modus_anzeige("", 0);
+}
+
+JsonObjectConst TastenKonfig::modus_keys_() const {
+  if (modus_ < 0 || doc_ == nullptr || modus_gen_ != gen_) return JsonObjectConst();
+  return (*doc_)["modi"][modus_]["keys"];
+}
+
+bool TastenKonfig::modus_taste(int taste) const {
+  char k[6];
+  snprintf(k, sizeof(k), "%d", taste);
+  return !modus_keys_()[k].isNull();
 }
 
 void TastenKonfig::ble_(JsonObjectConst s, bool halten) {
@@ -379,12 +455,12 @@ void TastenKonfig::ha_(JsonObjectConst s) {
 }
 
 // IR-Schritt (2026-10-11): {"t":"ir", "proto":"NEC","addr":..,"cmd":..} oder {"t":"ir","raw":[9000,-4500,..],"f":38000}.
-// Sendeweg aus der Konfiguration ("ir": {"route": 0..3, "dock": "dock_wz_nils"}) wie beim OpenRemote-Original:
+// Sendeweg aus der Konfiguration ("ir": {"route": 0..3, "docks": ["dock_wz"]}) wie beim OpenRemote-Original:
 //   0 = nur Remote, 1 = Remote und Dock, 2 = nur Dock, 3 = Remote, danach Dock (zwei saubere Frames nacheinander).
 // Das Dock bekommt die fertigen Zeiten ueber HA (Aktion esphome.<dock>_ir_roh). Ist HA gerade nicht verbunden
 // (oder kein Dock eingetragen), sendet die Remote selbst - eine Vorliebe fuer den Sender, kein "dann gar nicht".
 void TastenKonfig::ir_(JsonObjectConst s) {
-  runtime_config::IrTimings t;
+  IrTimings t;
   uint32_t f = 38000;
   JsonArrayConst raw = s["raw"];
   if (!raw.isNull()) {
@@ -396,7 +472,7 @@ void TastenKonfig::ir_(JsonObjectConst s) {
     }
   } else {
     const std::string proto = s["proto"] | "NEC";
-    if (!runtime_config::ir_encode_parsed(proto, s["addr"] | 0u, s["cmd"] | 0u, t, f)) {
+    if (!ir_encode_parsed(proto, s["addr"] | 0u, s["cmd"] | 0u, t, f)) {
       ESP_LOGW(TAG, "IR-Protokoll %s unbekannt", proto.c_str());
       return;
     }
@@ -411,13 +487,7 @@ void TastenKonfig::ir_(JsonObjectConst s) {
   const bool lokal = !dock_geht || route != 2;
 
   auto ueber_dock = [&]() {
-    std::string code;
-    code.reserve(t.size() * 6);
-    for (size_t i = 0; i < t.size(); i++) {
-      if (i) code += ',';
-      code += std::to_string(t[i]);
-    }
-    const std::string tr = std::to_string(f);
+    const std::string code = zeiten_text(t), tr = std::to_string(f);
     for (const auto &dock : docks) {
       std::map<std::string, std::string> d;
       d["code"] = code;
@@ -450,18 +520,13 @@ void TastenKonfig::ir_(JsonObjectConst s) {
 
 // 433-MHz-Schritt (2026-10-11): {"t":"rf","raw":[350,-1050,..],"wdh":5}. Senden kann nur das Dock (CC1101) -
 // ueber HA (Aktion esphome.<dock>_rf_roh). Ohne HA-Verbindung wartet der Aufruf kurz in der Warteschlange.
-// Docks eines Schritts: eigene Liste "d" oder die Vorgabe "ir.docks" (aeltere Konfig: "ir.dock").
+// Docks eines Schritts: eigene Liste "d" oder die Vorgabe "ir.docks".
 std::vector<std::string> TastenKonfig::docks_(JsonObjectConst s) const {
   std::vector<std::string> v;
   JsonArrayConst a = s["d"];
   if (a.isNull() && doc_ != nullptr) a = (*doc_)["ir"]["docks"];
-  if (!a.isNull()) {
-    for (JsonVariantConst x : a) {
-      std::string d = x | "";
-      if (!d.empty()) v.push_back(std::move(d));
-    }
-  } else if (doc_ != nullptr) {
-    std::string d = (*doc_)["ir"]["dock"] | "";
+  for (JsonVariantConst x : a) {
+    std::string d = x | "";
     if (!d.empty()) v.push_back(std::move(d));
   }
   return v;
@@ -473,20 +538,21 @@ std::string TastenKonfig::slot_name(int i) const {
   return std::string((*doc_)["slots"][i] | "");
 }
 
+int TastenKonfig::kameras() const { return doc_ != nullptr ? (int) (*doc_)["kameras"].size() : 0; }
+std::string TastenKonfig::kamera_name(int i) const { return doc_ != nullptr ? std::string((*doc_)["kameras"][i]["n"] | "") : ""; }
+std::string TastenKonfig::kamera_entitaet(int i) const { return doc_ != nullptr ? std::string((*doc_)["kameras"][i]["e"] | "") : ""; }
+
 void TastenKonfig::rf_(JsonObjectConst s) {
   const std::vector<std::string> docks = docks_(s);
   if (docks.empty()) {
     ESP_LOGW(TAG, "433 MHz: kein Dock eingetragen (Konfigurator > Infrarot)");
     return;
   }
-  std::string code;
-  for (JsonVariantConst v : s["raw"].as<JsonArrayConst>()) {
-    const int32_t us = v.as<int32_t>();
-    if (us == 0) continue;
-    if (!code.empty()) code += ',';
-    code += std::to_string(us);
-  }
-  if (code.empty()) return;
+  IrTimings t;
+  for (JsonVariantConst v : s["raw"].as<JsonArrayConst>())
+    if (v.as<int32_t>() != 0) t.push_back(v.as<int32_t>());
+  if (t.empty()) return;
+  const std::string code = zeiten_text(t);
   const std::string wdh = std::to_string((int) (s["wdh"] | 5));
   for (const auto &dock : docks) {
     std::map<std::string, std::string> d;
@@ -509,10 +575,12 @@ void TastenKonfig::ir_test(const std::string &json) {
 
 JsonObjectConst TastenKonfig::taste_cfg_(int aktivitaet, int taste) {
   if (doc_ == nullptr) return JsonObjectConst();
-  JsonArrayConst acts = (*doc_)["activities"];
-  if (aktivitaet < 0 || aktivitaet >= (int) acts.size()) return JsonObjectConst();
   char k[6];
   snprintf(k, sizeof(k), "%d", taste);
+  JsonObjectConst m = modus_keys_()[k];   // Folgemodus geht vor
+  if (!m.isNull()) return m;
+  JsonArrayConst acts = (*doc_)["activities"];
+  if (aktivitaet < 0 || aktivitaet >= (int) acts.size()) return JsonObjectConst();
   return acts[aktivitaet]["keys"][k];
 }
 
@@ -540,6 +608,7 @@ bool TastenKonfig::weckt(int taste, int aktivitaet) {
 }
 
 void TastenKonfig::ausfuehren_(int aktivitaet, int taste, Geste g, bool dunkel) {
+  if (modus_taste(taste)) modus_verlaengern_();
   JsonObjectConst kc = taste_cfg_(aktivitaet, taste);
   JsonArrayConst steps = kc[gname(g)];
   ESP_LOGD(TAG, "Taste %d %s (Aktivitaet %d, %u Schritte)", taste,
@@ -566,6 +635,13 @@ void TastenKonfig::wiederholen_(int taste, uint32_t ms) {
   if (!z.unten || !z.wdh) return;
   ausfuehren_(z.aktivitaet, taste, KURZ, z.dunkel);
   set_timeout(id_lang(taste), std::max<uint32_t>(ms, 50), [this, taste, ms]() { wiederholen_(taste, ms); });
+}
+
+void TastenKonfig::lang_wiederholen_(int taste, uint32_t ms) {
+  Zustand &z = z_[taste];
+  if (!z.unten || !z.lang_fertig) return;   // losgelassen (Loslassen bricht den Zeitgeber ohnehin ab)
+  ausfuehren_(z.aktivitaet, taste, LANG, z.dunkel);
+  set_timeout(id_lang(taste), std::max<uint32_t>(ms, 100), [this, taste, ms]() { lang_wiederholen_(taste, ms); });
 }
 
 bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunkel, bool darf_neu) {
@@ -618,6 +694,7 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
 
   // ---- gedrueckt
   if (!aktiv() || !darf_neu) return false;
+  if (modus_taste(taste)) modus_verlaengern_();   // bis zum Loslassen/Doppel-Fenster sicher im Modus
   JsonObjectConst kc = taste_cfg_(aktivitaet, taste);
   z.eigen = true;
   z.unten = true;
@@ -658,12 +735,15 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
     z.dunkel = dunkel;  // beim Doppeldruck zaehlt der ERSTE Druck
   }
   if (h_l) {
-    set_timeout(id_lang(taste), long_ms_, [this, taste]() {
+    // "Lang wiederholen" (lrepeat ms, 2026-10-15): nach der Haltezeit im Takt weiter, bis losgelassen
+    const uint32_t lwdh = kc["lrepeat"] | 0;
+    set_timeout(id_lang(taste), long_ms_, [this, taste, lwdh]() {
       Zustand &zz = z_[taste];
       if (!zz.unten || zz.lang_fertig) return;
       zz.lang_fertig = true;
       zz.doppel = false;
       ausfuehren_(zz.aktivitaet, taste, LANG, zz.dunkel);
+      if (lwdh > 0) set_timeout(id_lang(taste), lwdh, [this, taste, lwdh]() { lang_wiederholen_(taste, lwdh); });
     });
   }
   return true;

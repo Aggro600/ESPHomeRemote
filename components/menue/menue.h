@@ -4,10 +4,11 @@
 // "menu": {
 //   "on": true, "start": "main",
 //   "pages": [ { "id": "main", "title": "Menü", "remember": true, "flow": true,
-//                "items": [ { "t": "special", "page": "rooms", "label": "Räume", "w": 6, "h": 1 }, ... ] } ]
+//                "items": [ { "t": "special", "page": "media", "label": "Medienplayer", "w": 6, "h": 1 }, ... ] } ]
 // }
 // Item-Typen (t): page (Unterseite, target), special (eingebaute Seite, page), action (steps wie
-// bei den Tasten), toggle / light / cover / sensor (entity, optional steps statt Standard), text.
+// bei den Tasten), toggle / light / cover / sensor / number / select (entity, optional steps statt Standard),
+// camera (Klingelbild), setting (Einstellung der Remote), text.
 // Raster: 6 Spalten, 40-px-Zeilen. flow=true: Items fliessen in ihrer Reihenfolge (w/h), sonst x/y.
 
 #include "esphome/core/component.h"
@@ -110,6 +111,12 @@ class Menue : public Component {
   // Popup-Ausloeser (page.popup.open/close): Seite als Popup zeigen bzw. schliessen.
   std::function<void(const std::string &seite, bool wecken)> popup_auf;
   std::function<void(const std::string &seite)> popup_zu;
+  // Popup mit eingebautem Inhalt (Seite "inhalt", z. B. "tastatur", 2026-10-13): statt der Menueseite zeigt die
+  // YAML ihre eigene Seite. wert = Wert des ausloesenden Wechsels (Tastatur: "zahlen" -> Ziffernblock).
+  std::function<void(const std::string &inhalt, const std::string &wert, bool wecken)> inhalt_auf;
+  std::function<void(const std::string &inhalt)> inhalt_zu;
+  // Ereignis der Remote als Popup-Ausloeser (z. B. art "aktivitaet", wert = Name der gewaehlten Aktivitaet)
+  void ereignis(const std::string &art, const std::string &wert);
   // Kamerabild-Kachel (t: "camera", src: "klingel_haus" | "klingel_wohnung"): Bildquelle aus der YAML.
   std::function<const void *(const std::string &quelle)> bild;
   void bild_neu();   // Bild wurde neu geladen -> sichtbare Kamera-Kacheln auffrischen
@@ -131,9 +138,10 @@ class Menue : public Component {
   // Menue oeffnen: merken=true -> zuletzt gezeigte Seite, wenn sie (bzw. ein Vorgaenger) "merken" hat.
   void oeffnen(bool merken);
   void anzeigen();               // aktuelle Seite neu aufbauen (Rueckkehr aus einer Spezialseite)
-  void einblenden(uint32_t ab, uint32_t zeitlupe = 1);   // Karten von oben nach unten einblenden (Menue oeffnen)
+  void einblenden(uint32_t ab);   // Karten von oben nach unten einblenden (Menue oeffnen)
+  // Gemerkte eingebaute Seite wieder oeffnen (Menue-Taste im Merkfenster), wie per Eintrag mit "merken"
+  void spezial_oeffnen(const std::string &name);
   bool zurueck();                // false = war schon oben
-  bool oben() const { return stapel_.size() <= 1; }
   void fokus(int dx, int dy);
   void ok();
   // Hardware-Taste auf einer Menueseite (vor der Navigation). true = verbraucht.
@@ -146,7 +154,6 @@ class Menue : public Component {
   void verlassen();              // beim Schliessen: Merken vorbereiten, Widgets loeschen
   // Spezialseite, die zuletzt aus dem Menue geoeffnet wurde (cur_page-Nummer), -1 = keine
   int einstieg() const { return einstieg_; }
-  void einstieg_weg() { einstieg_ = -1; }
   bool einstieg_merken() const { return einstieg_merken_; }
 
  protected:
@@ -159,12 +166,40 @@ class Menue : public Component {
   std::vector<Item> wartend_;         // noch nicht angelegte Eintraege (Reihenfolge = Index in items_)
   size_t wartend_pos_{0};
   uint32_t rest_ms_{0};
-  uint32_t einbl_t0_{0}, einbl_bis_{0}, einbl_ab_{0}, einbl_zl_{1};   // Karten-Einblendung (einblenden)
+  uint32_t zurueck_fc_{0xF1F3F5};   // Rahmenfarbe des markierten Zurueck/X (Seite "bfc")
+  uint32_t zurueck_bg_{0x3B82F6};   // Farbe des Zurueck/X-Knopfs (Seite "bc")
+  bool zurueck_x_{false};           // Seite "bsym": x = Knopf zeigt X und schliesst das Menue
+  uint32_t einbl_t0_{0}, einbl_bis_{0}, einbl_ab_{0};   // Karten-Einblendung (einblenden)
   void einbl_item_(Item &it);
+  // Seitenwechsel im Menue (2026-10-13): alte Seite rutscht weg, neue kommt nach. r = +1 vorwaerts
+  // (alte nach links, neue von rechts), -1 zurueck (umgekehrt)
+  int rutsch_{0};
+  lv_obj_t *alt_{nullptr};          // Karten der verlassenen Seite waehrend des Rutschens
+  lv_obj_t *alt_abheben_();
+  void alt_weg_();
+  void rutschen_(int r);
+  // Titel rutscht mit der Seite (2026-10-13): alter Titel fliegt hinter das blaue Zurueck-Feld bzw. rechts aus dem
+  // Display, der neue kommt von der anderen Seite. r = +1 vorwaerts, -1 zurueck; ohne alten Titel nur der neue.
+  void titel_anim_(int r, uint32_t verz);
+  void titel_weg_();
+  void titel_einbl_();
+  int32_t titel_ty_{0};
+  static inline Menue *titel_menue_{nullptr};
+  std::string titel_alt_;
+  lv_obj_t *titel_fenster_{nullptr};   // Ausschnitt rechts vom blauen Feld mit beiden Titeln (nur waehrend der Animation)
+  int titel_r_{0};
+  lv_obj_t *titel_ende_{nullptr};
+  int32_t titel_x0_{0}, titel_weit_{0};
   void leeren_();
   void karte_(Item &it);
   void zustand_(Item &it);
   void aktualisieren_(const std::string &entity);
+  bool bedingungen_ok_(JsonObjectConst pp);
+  void popup_ausloesen_(const Seite &s, bool auf, const std::string &wert);
+  // Popup "exklusiv" (2026-10-13): solange es offen ist, warten andere Popups und gehen danach auf
+  bool exklusiv_offen_(const std::string &ausser) const;
+  std::vector<std::pair<std::string, std::string>> warten_;   // Seite, Ausloeser-Wert
+  uint32_t warten_ab_{0};
   void abonnieren_(const std::string &entity, const char *attr);
   void zahl_setzen_(Item &it, float wert);
   void ausloeser_(const std::string &entity, const std::string &attr, const std::string &alt, const std::string &neu);
@@ -202,17 +237,11 @@ class Menue : public Component {
   lv_obj_t *root_{nullptr}, *titel_{nullptr}, *zurueck_lbl_{nullptr}, *zurueck_btn_{nullptr};
   static const int FOKUS_ZURUECK = -2;   // X/Zurueck-Knopf in der Kopfzeile
  public:
-  // Diagnose-Ausgabe zusaetzlich zum Log (z. B. durch den Bluetooth-Tunnel ins HA-Log, ohne WLAN). Leer = nur Log.
-  std::function<void(const std::string &)> diag;
-  bool diag_fokus{false};   // Fokus-Schritte melden (laut, nur zur Fehlersuche); Aufbauzeiten meldet diag immer
-  uint32_t mess_ms_{0};     // Ende des letzten Seitenaufbaus (Messung bis zur naechsten Runde = Zeichnen)
-  uint8_t mess_runden_{0};
-  char mess_b_[150]{0};
+  uint32_t zeitlupe{1};   // alle Animationen (Menue, Kopfzeile, Leiste) x-mal langsamer - nur fuer Bildschirmfotos
  private:
   const lv_font_t *f_text_{nullptr}, *f_klein_{nullptr}, *f_icon_{nullptr}, *f_gross_{nullptr};
 
   bool an_{false};
-  uint32_t gen_{0};
   std::string start_;
   PVec<Seite> seiten_;
   std::vector<std::string> stapel_;     // Seiten-IDs, oben = aktuell
@@ -226,11 +255,9 @@ class Menue : public Component {
   int halt_{-1};          // gerade gehaltener Eintrag (Halte-Knopf), -1 = keiner
   std::string popup_id_;
   std::vector<std::string> gemerkt_;    // Stapel beim Schliessen, falls die Seite "merken" hat
-  std::string popup_id_merk_;
 
   PMap<PStr, EntZustand> zustand_cache_;
   PVec<PStr> abos_;                     // "entity|attr", schon bei der API angemeldet
-  bool abo_neu_{false};
   // Zustaende der sichtbaren Kacheln per HTTP von HA (statt Dauer-Abos, die internes RAM kosten)
   static void abfrage_task_(void *arg);   // dauerhafter Arbeits-Task (Stapel im PSRAM)
   static void abfrage_einmal_(Menue *self);

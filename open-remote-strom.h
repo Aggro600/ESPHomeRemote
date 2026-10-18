@@ -1,6 +1,7 @@
 #pragma once
+#include <cmath>
 #include <cstdint>
-// Reine Rechenfunktionen fuer die Ruhe-Zeiten der Remote (Energie sparen).
+// Reine Rechenfunktionen fuer die Ruhe-Zeiten (Energie sparen) und die Bewegungserkennung.
 // Bewusst OHNE Zugriff auf ESPHome-Globals - die uebergibt der Aufrufer.
 // "low" = Sparmodus bei niedrigem Akku aktiv: alle Zeiten werden gekappt.
 namespace remote_strom {
@@ -36,4 +37,12 @@ inline uint8_t ruck_ths(int sens)  { static const uint8_t t[3] = {0x08, 0x10, 0x
 inline uint8_t dim_ths(int sens)   { static const uint8_t t[3] = {0x03, 0x06, 0x0C}; return t[(sens >= 0 && sens <= 2) ? sens : 1]; }
 // Klopfen: Spitze eines einzelnen Klopfers, 320 / 512 / 768 mg.
 inline uint8_t klopf_ths(int sens) { static const uint8_t t[3] = {0x14, 0x20, 0x30}; return t[(sens >= 0 && sens <= 2) ? sens : 1]; }
+// Winkel in Grad zwischen zwei Lagen (Schwerkraftvektoren), -1 = eine davon unbrauchbar (Laenge ~0)
+inline float winkel_grad(float x, float y, float z, float bx, float by, float bz) {
+  const float mc = sqrtf(x * x + y * y + z * z), mb = sqrtf(bx * bx + by * by + bz * bz);
+  if (mb < 1.0f || mc < 1.0f) return -1;
+  float c = (x * bx + y * by + z * bz) / (mb * mc);
+  c = c > 1.0f ? 1.0f : (c < -1.0f ? -1.0f : c);
+  return acosf(c) * 57.2957795f;
+}
 }  // namespace remote_strom

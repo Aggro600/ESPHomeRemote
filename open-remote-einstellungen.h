@@ -1,4 +1,4 @@
-// GENERIERT (einst_gen.py, 2026-10-04): Einstellungs-Eintraege des Konfigurator-Menues -> Widgets der
+// GENERIERT (tools/einst_parse.py + einst_gen.py): Einstellungs-Eintraege des Konfigurator-Menues -> Widgets der
 // eingebauten Einstellungsseiten. Das Menue steuert diese Widgets fern (Klick / Regler), die Logik bleibt in der YAML.
 #pragma once
 #include "esphome/components/menue/menue.h"
@@ -107,17 +107,22 @@ inline esphome::menue::EinstRef finden(const std::string &k) {
     {"tile_mic_warm", 'b', tile_mic_warm, mic_warm_lbl, 3},   // voice_set: Mikrofon vorwärmen
     {"h_mic_warm", 'i', nullptr, h_mic_warm, 3},   // voice_set: Hinweis
     {"ble_state_lbl", 'i', nullptr, ble_state_lbl, 4},   // ble: Nicht verbunden
-    {"ble_slot0", 'b', ble_slot0, ble_slot0_name, 4},   // ble: Google Streamer
-    {"ble_slot1", 'b', ble_slot1, ble_slot1_name, 4},   // ble: TV
-    {"ble_slot2", 'b', ble_slot2, ble_slot2_name, 4},   // ble: Tablet Wohnzimmer
-    {"ble_slot3", 'b', ble_slot3, ble_slot3_name, 4},   // ble: Slot 4
-    {"ble_target_lbl", 'i', nullptr, ble_target_lbl, 4},   // ble: Aktion für: 1
+    {"ble_slot0", 'b', ble_slot0, ble_slot0_name, 4},   // ble: Platz 1
+    {"ble_slot1", 'b', ble_slot1, ble_slot1_name, 4},   // ble: Platz 2
+    {"ble_slot2", 'b', ble_slot2, ble_slot2_name, 4},   // ble: Platz 3
+    {"ble_slot3", 'b', ble_slot3, ble_slot3_name, 4},   // ble: Platz 4
+    {"ble_target_lbl", 'i', nullptr, ble_target_lbl, 4},   // ble: Platz 1
     {"ble_connect", 'b', ble_connect, nullptr, 4},   // ble: Verbinden
-    {"ble_pair", 'b', ble_pair, nullptr, 4},   // ble: Neu koppeln
-    {"ble_forget", 'b', ble_forget, nullptr, 4},   // ble: Kopplung löschen
-    {"ble_kbd_btn", 'b', ble_kbd_btn, ble_kbd_lbl, 4},   // ble: Tastatur
-    {"ble_kbd_hint", 'i', nullptr, ble_kbd_hint, 4},   // ble: Hinweis
+    {"ble_pair", 'b', ble_pair, nullptr, 4},   // ble: Koppeln
+    {"ble_forget", 'b', ble_forget, nullptr, 4},   // ble: Löschen
+    {"ble_eingabe_btn", 'b', ble_eingabe_btn, ble_eingabe_lbl, 4},   // ble: Eingabe
+    {"h_plaetze", 'i', nullptr, h_plaetze, 4},   // ble: Hinweis
     {"ble_par_btn", 'b', ble_par_btn, ble_par_lbl, 4},   // ble: Parallel verbunden
+    {"maus_tempo_sld", 's', maus_tempo_sld, maus_tempo_lbl, 4},   // ble: Zeigertempo
+    {"maus_dpad_btn", 'b', maus_dpad_btn, maus_dpad_lbl, 4},   // ble: Steuerkreuz als Maus
+    {"maus_dpad_sld", 's', maus_dpad_sld, maus_dpad_lbl2, 4},   // ble: Tempo Steuerkreuz
+    {"maus_zurueck_btn", 'b', maus_zurueck_btn, maus_zurueck_lbl, 4},   // ble: Zurück-Taste
+    {"h_maus_dpad", 'i', nullptr, h_maus_dpad, 4},   // ble: Hinweis
     {"ak_status", 'i', nullptr, ak_status, 5},   // akku: Status
     {"ak_pct", 'i', nullptr, ak_pct, 5},   // akku: Akkustand
     {"ak_volt", 'i', nullptr, ak_volt, 5},   // akku: Spannung
@@ -128,52 +133,31 @@ inline esphome::menue::EinstRef finden(const std::string &k) {
     {"ak_geladen", 'i', nullptr, ak_geladen, 5},   // akku: Zuletzt geladen
     {"ak_geladen2", 'i', nullptr, ak_geladen2, 5},   // akku: ak_geladen2
     {"ak_schlaf", 'i', nullptr, ak_schlaf, 5},   // akku: Tiefschlaf seit Ladung
-    {"tile_touchtest", 'b', tile_touchtest, nullptr, 6},   // service: Touch-Test
-    {"h_touch", 'i', nullptr, h_touch, 6},   // service: Hinweis
-    {"tile_button_test", 'b', tile_button_test, nullptr, 6},   // service: Tasten-Test
-    {"h_btn", 'i', nullptr, h_btn, 6},   // service: Hinweis
-    {"clean_dur_sld", 's', clean_dur_sld, clean_dur_lbl, 6},   // service: Reinigungsdauer
-    {"h_cleandur", 'i', nullptr, h_cleandur, 6},   // service: Hinweis
-    {"tile_clean", 'b', tile_clean, nullptr, 6},   // service: Reinigungsmodus
-    {"h_clean", 'i', nullptr, h_clean, 6},   // service: Hinweis
-    {"tile_sd", 'b', tile_sd, nullptr, 6},   // service: SD-Karte
-    {"h_sd_tile", 'i', nullptr, h_sd_tile, 6},   // service: Hinweis
-    {"ps_log_btn", 'b', ps_log_btn, ps_log_lbl, 6},   // service: Debug-Modus
-    {"ps_h_log", 'i', nullptr, ps_h_log, 6},   // service: Hinweis
-    {"testmod_btn", 'b', testmod_btn, testmod_lbl, 6},   // service: Testmodus (immer online)
-    {"ps_h_test", 'i', nullptr, ps_h_test, 6},   // service: Hinweis
-    {"tile_shutdown", 'b', tile_shutdown, nullptr, 6},   // service: Gerät herunterfahren
-    {"tile_restart", 'b', tile_restart, restart_lbl, 6},   // service: Gerät neu starten
-    {"h_restart", 'i', nullptr, h_restart, 6},   // service: Hinweis
-    {"streamer_state_lbl", 'i', nullptr, streamer_state_lbl, 31},   // streamer: Wiedergabe
-    {"streamer_refresh", 'b', streamer_refresh, nullptr, 31},   // streamer: Metadaten jetzt aktualisieren
-    {"tv_src_lbl", 'i', nullptr, tv_src_lbl, 31},   // tv: Quelle
-    {"tv_power", 'b', tv_power, tv_pwr_lbl, 31},   // tv: Fernseher
-    {"tv_bm_btn", 'b', tv_bm_btn, tv_bm_lbl, 31},   // tv: Bildmodus
-    {"hdmi_1", 'b', hdmi_1, nullptr, 31},   // tv: HDMI 1
-    {"hdmi_2", 'b', hdmi_2, nullptr, 31},   // tv: HDMI 2
-    {"hdmi_3", 'b', hdmi_3, nullptr, 31},   // tv: HDMI 3 (ARC)
-    {"hdmi_4", 'b', hdmi_4, nullptr, 31},   // tv: HDMI 4
-    {"tablet_conn_lbl", 'i', nullptr, tablet_conn_lbl, 7},   // tablet: Status
-    {"tablet_connect", 'b', tablet_connect, nullptr, 7},   // tablet: Mit Tablet verbinden
-    {"tablet_close_page", 'b', tablet_close_page, nullptr, 7},   // tablet: Dashboard: aktuelle Seite schließen
-    {"tablet_fully_open", 'b', tablet_fully_open, nullptr, 7},   // tablet: Fully Kiosk Browser öffnen
-    {"tablet_cam_toggle", 'b', tablet_cam_toggle, nullptr, 7},   // tablet: Dashboard: Kamera
-    {"tablet_screensaver_toggle", 'b', tablet_screensaver_toggle, nullptr, 7},   // tablet: Dashboard: Bildschirmschoner
-    {"tablet_fully_reboot", 'b', tablet_fully_reboot, nullptr, 7},   // tablet: Tablet Browser Reboot
-    {"tablet_dash_erlauben", 'b', tablet_dash_erlauben, tablet_dash_erlauben_lbl, 7},   // tablet: Tablet Wohnzimmer erlauben
-    {"grp_b0", 'b', grp_b0, grp_l0, 8},   // music_group: Küche links
-    {"grp_b1", 'b', grp_b1, grp_l1, 8},   // music_group: Küche rechts
-    {"grp_b2", 'b', grp_b2, grp_l2, 8},   // music_group: Bad
-    {"grp_b3", 'b', grp_b3, grp_l3, 8},   // music_group: Wohnzimmer
-    {"grp_b4", 'b', grp_b4, grp_l4, 8},   // music_group: Schlafzimmer
-    {"grp_b5", 'b', grp_b5, grp_l5, 8},   // music_group: Tablet Wohnzimmer
-    {"grp_b6", 'b', grp_b6, grp_l6, 8},   // music_group: Tablet Küche
-    {"grp_alle_an", 'b', grp_alle_an, nullptr, 8},   // music_group: Alle dazu
-    {"grp_alle_aus", 'b', grp_alle_aus, nullptr, 8},   // music_group: Alle raus
-    {"sleep_rem_lbl", 'i', nullptr, sleep_rem_lbl, 31},   // sleeptimer: AUS
-    {"sleep_plus30", 'b', sleep_plus30, nullptr, 31},   // sleeptimer: 30 Minuten
-    {"sleep_cancel", 'b', sleep_cancel, nullptr, 31},   // sleeptimer: Abbrechen
+    {"dock_an_btn", 'b', dock_an_btn, dock_an_lbl, 6},   // extras: Smart Display im Dock
+    {"h_dock_an", 'i', nullptr, h_dock_an, 6},   // extras: Hinweis
+    {"dock_disp_btn", 'b', dock_disp_btn, dock_disp_lbl, 6},   // extras: Display im Dock
+    {"h_dock_disp", 'i', nullptr, h_dock_disp, 6},   // extras: Hinweis
+    {"dock_von_sld", 's', dock_von_sld, dock_von_lbl, 6},   // extras: an ab
+    {"dock_bis_sld", 's', dock_bis_sld, dock_bis_lbl, 6},   // extras: an bis
+    {"tile_touchtest", 'b', tile_touchtest, nullptr, 7},   // service: Touch-Test
+    {"h_touch", 'i', nullptr, h_touch, 7},   // service: Hinweis
+    {"tile_button_test", 'b', tile_button_test, nullptr, 7},   // service: Tasten-Test
+    {"h_btn", 'i', nullptr, h_btn, 7},   // service: Hinweis
+    {"clean_dur_sld", 's', clean_dur_sld, clean_dur_lbl, 7},   // service: Reinigungsdauer
+    {"h_cleandur", 'i', nullptr, h_cleandur, 7},   // service: Hinweis
+    {"tile_clean", 'b', tile_clean, nullptr, 7},   // service: Reinigungsmodus
+    {"h_clean", 'i', nullptr, h_clean, 7},   // service: Hinweis
+    {"tile_sd", 'b', tile_sd, nullptr, 7},   // service: SD-Karte
+    {"h_sd_tile", 'i', nullptr, h_sd_tile, 7},   // service: Hinweis
+    {"ps_log_btn", 'b', ps_log_btn, ps_log_lbl, 7},   // service: Debug-Modus
+    {"ps_h_log", 'i', nullptr, ps_h_log, 7},   // service: Hinweis
+    {"testmod_btn", 'b', testmod_btn, testmod_lbl, 7},   // service: Testmodus (immer online)
+    {"ps_h_test", 'i', nullptr, ps_h_test, 7},   // service: Hinweis
+    {"tile_update", 'b', tile_update, fw_upd_lbl, 7},   // service: Firmware aktualisieren
+    {"h_update", 'i', nullptr, h_update, 7},   // service: Hinweis
+    {"tile_shutdown", 'b', tile_shutdown, nullptr, 7},   // service: Gerät herunterfahren
+    {"tile_restart", 'b', tile_restart, restart_lbl, 7},   // service: Gerät neu starten
+    {"h_restart", 'i', nullptr, h_restart, 7},   // service: Hinweis
     {"ak_graph", 'g', ak_graph->obj, nullptr, 5},   // akku: Verlauf 24 h
   };
   for (const auto &z : tab) if (k == z.k) return {z.t, z.o, z.w, z.g};
@@ -188,9 +172,8 @@ inline void auffrischen(uint32_t maske = 0xFFFFFFFFu) {
   if (maske & (1u << 3)) einst_voice_set->execute();
   if (maske & (1u << 4)) einst_ble->execute();
   if (maske & (1u << 5)) einst_akku->execute();
-  if (maske & (1u << 6)) einst_service->execute();
-  if (maske & (1u << 7)) einst_tablet->execute();
-  if (maske & (1u << 8)) einst_music_group->execute();
+  if (maske & (1u << 6)) einst_extras->execute();
+  if (maske & (1u << 7)) einst_service->execute();
 }
 
 }  // namespace einstellungen

@@ -1,9 +1,9 @@
 #pragma once
-// AUTO-GENERIERT aus fonts/mdi-subset.ttf - Katalog fuer menu.json "icon":
+// Aus fonts/mdi-subset.ttf erzeugt: Symbole fuer Menue-Eintraege ("icon" im Konfigurator).
 // Name -> Unicode-Codepoint. Nur diese Glyphen sind in der Font mdi_menu
-// einkompiliert (siehe open-remote-sd-test.yaml). Unbekannt -> kein Icon.
+// einkompiliert (Schrift mdi_menu in der Firmware). Unbekannt -> kein Icon.
 #include <cstdint>
-namespace esphome { namespace menu_ui {
+namespace esphome { namespace menue {
 struct IconEntry { const char *name; uint32_t cp; };
 static const IconEntry MDI_ICONS[] = {
   {"air-conditioner", 0xF001B},

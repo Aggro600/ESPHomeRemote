@@ -1,0 +1,9 @@
+{
+  "domain": "esphomeremote_now_playing",
+  "name": "ESPHomeRemote Jetzt läuft",
+  "codeowners": [],
+  "documentation": "",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "1.0.0"
+}

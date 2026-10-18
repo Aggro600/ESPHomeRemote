@@ -15,3 +15,28 @@ an_remotes:
       example: '{"door": 1}'
       selector:
         object:
+regeln:
+  name: Schrittweise regeln
+  description: "Für Tasten und Folgemodi der Fernbedienung: Licht heller/dunkler, Farbtemperatur, Lüfterstufe, Drehung umschalten."
+  fields:
+    entity_id:
+      name: Entität
+      required: true
+      selector:
+        entity:
+          domain: [light, fan]
+    art:
+      name: Art
+      required: true
+      selector:
+        select:
+          options: [helligkeit, farbtemperatur, stufe, drehung]
+    schritt:
+      name: Schritt
+      description: "Helligkeit in %, Farbtemperatur in Kelvin, Lüfter in Stufen (negativ = runter/wärmer)"
+      required: false
+      example: 10
+      selector:
+        number:
+          min: -2000
+          max: 2000

@@ -25,6 +25,12 @@ class LIS3DHComponent : public Component, public i2c::I2CDevice {
   bool poll_events(bool &ruck, bool &doppel);
   // Vor dem Tiefschlaf: gewaehlte Ereignisse aktiv-LOW auf INT1 legen.
   void arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uint8_t klopf_ths);
+  // FIFO (2026-10-17, Bewegungsgesten): Stream-Modus, die letzten 32 Messungen (200 Hz) stehen im Chip bereit.
+  // Ist er an, liefern die Ausgangsregister die AELTESTE Messung - Lage dann ueber fifo_lesen holen.
+  void set_fifo(bool an);
+  bool fifo() const { return fifo_; }
+  // Bis zu max Messungen (X/Y/Z, 12 Bit, Einheit ~1 mg) abholen; Rueckgabe = Anzahl, -1 = Lesefehler.
+  int fifo_lesen(int16_t *xyz, int max);
 
   void setup() override;
   void dump_config() override;
@@ -34,6 +40,7 @@ class LIS3DHComponent : public Component, public i2c::I2CDevice {
   uint8_t threshold_{0x10};
   uint8_t duration_{0x02};
   uint8_t ruck_ths_{0};
+  bool fifo_{false};
   void klopf_register_(uint8_t klopf_ths);
 };
 

@@ -481,8 +481,26 @@ class EspidfBleKeyboard : public Component
   //             Start, Hosts muessen neu koppeln (Geraetebeschreibung aendert sich).
   //  parallel:  beim Host-Wechsel die bisherige Verbindung NICHT trennen, sondern parken;
   //             beim Zurueckwechseln sofort wieder aktiv (kein Neuverbinden).
-  void set_kb_digits(bool d) { kb_digits_ = d; }
+  void set_kb_digits(bool d) { kb_digits_ = d; karte_setzen_(); }
   bool kb_digits() const { return kb_digits_; }
+  // FORK 2026-10-17: Geraetebeschreibung JE PLATZ. maus = Bit je Platz: Maus/Touchpad melden; voll = Bit je Platz:
+  // volle Tastatur auch bei kb_digits. Die Beschreibung des aktiven Platzes steht im Report-Map-Attribut (gesetzt
+  // beim Platzwechsel) - ein Host liest sie beim Koppeln, so sieht jeder nur, was fuer seinen Platz gilt (Google TV
+  // weiter ohne Zeiger). Die Maus-Merkmale gibt es in der Tabelle nur, wenn ein Platz sie nutzt (sonst ist alles
+  // genau wie vorher). Rueckgabe true = Neustart noetig (Maus kam dazu oder fiel ganz weg).
+  bool set_slot_flags(uint8_t maus, uint8_t voll);
+  uint8_t maus_mask() const { return maus_mask_; }
+  uint8_t voll_mask() const { return voll_mask_; }
+  bool slot_maus(uint8_t s) const { return maus_db_ && (maus_mask_ >> s) & 1; }
+  bool slot_voll(uint8_t s) const { return !kb_digits_ || ((voll_mask_ >> s) & 1); }
+  bool maus_aktiv() const { return is_connected_ && slot_maus(active_slot_); }
+  bool tastatur_voll() const { return slot_voll(active_slot_); }
+  // Touchpad: Knoepfe + relative Bewegung + Rad in einem Bericht (Ziehen mit gedrueckter Taste)
+  void maus(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel);
+  void karte_setzen_();
+  uint8_t maus_mask_{0};
+  uint8_t voll_mask_{0};
+  bool maus_db_{false};
   void set_parallel(bool p);
   void adv_fast_again();   // FORK 2026-09-29c: nach langsamer Werbung wieder schnell werben
   bool parallel() const { return parallel_; }

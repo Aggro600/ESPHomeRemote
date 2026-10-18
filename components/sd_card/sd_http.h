@@ -3,7 +3,7 @@
 // Zeitlich begrenzter HTTP-Endpunkt zum Hoch-/Runterladen der Konfigdateien
 // (runtime.json / menu.json / learned.json) auf die SD-Karte.
 //
-// Entscheidung: KEIN dauerhaft laufender Webserver (Stromkosten), sondern
+// Bewusst KEIN dauerhaft laufender Webserver (Stromkosten), sondern
 // ein "Konfig-Modus" - per HA-Button/Schalter fuer ein paar Minuten an, dann
 // automatisch wieder aus. Laeuft auf der Stations-IP im Heimnetz (bzw. auf der
 // Fallback-AP-IP, wenn kein WLAN da ist).

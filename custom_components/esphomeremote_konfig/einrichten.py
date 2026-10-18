@@ -1,8 +1,8 @@
 """Neue Fernbedienung einrichten (2026-10-04) + Dienst "an alle Remotes".
 
 Ablauf im Panel ("Neue Fernbedienung"):
-  1. anlegen:   esphome/tools/remotes.py --neu <Name> <IP> erzeugt remote-wz-<kennung>.yaml aus der Vorlage
-                Datei und das IP-Secret; die Remote kommt in die Geraeteliste der Integration.
+  1. anlegen:   esphome/tools/remotes.py --neu <Name> <IP> erzeugt remote-wz-<kennung>.yaml aus
+                templates/remote.yaml und das IP-Secret; die Remote kommt in die Geraeteliste der Integration.
   2. bauen:     Kompilieren ueber den ESPHome Device Builder (Add-on), Fortschritt per Abfrage.
   3. flashen:   a) USB am Computer: Browser (ESP Web Tools) holt Manifest + factory.bin hier ab
                    (kurzlebiges Token, weil der Flasher keinen HA-Login mitschickt).
@@ -16,12 +16,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import secrets
 import socket
 import time
-from pathlib import Path
 
 import aiohttp
 import voluptuous as vol
@@ -29,39 +27,14 @@ from aiohttp import web
 
 from homeassistant.components import websocket_api
 from homeassistant.components.http import HomeAssistantView
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+from .firmware import ESPHOME_DIR, _port, dash as _befehl   # eine Verbindung zum Device Builder fuer alles
 
 _LOGGER = logging.getLogger(__name__)
 
-ESPHOME_DIR = Path("/config/esphome")
-ADDON = "5c53de3b_esphome"
 MAX_ZEILEN = 400
-
-
-async def _port(hass: HomeAssistant) -> int:
-    """Ingress-Port des ESPHome Device Builders (Host-Netz, wie tools/esphome_run.mjs)."""
-    s = async_get_clientsession(hass)
-    async with s.get(f"http://supervisor/addons/{ADDON}/info",
-                     headers={"Authorization": "Bearer " + os.environ.get("SUPERVISOR_TOKEN", "")}) as r:
-        return int((await r.json())["data"]["ingress_port"])
-
-
-async def _befehl(hass: HomeAssistant, command: str, args: dict | None = None):
-    """Befehl an die WebSocket-API des Device Builders (/ws, wie dessen eigene Oberflaeche)."""
-    p = await _port(hass)
-    s = async_get_clientsession(hass)
-    async with s.ws_connect(f"http://127.0.0.1:{p}/ws", timeout=20) as ws:
-        hallo = await ws.receive_json(timeout=10)
-        if "server_version" not in hallo:
-            raise RuntimeError("ESPHome antwortet nicht")
-        await ws.send_json({"message_id": "1", "command": command, **({"args": args} if args else {})})
-        while True:
-            m = await ws.receive_json(timeout=30)
-            if m.get("message_id") == "1":
-                if "error_code" in m:
-                    raise RuntimeError(f"{m.get('error_code')}: {m.get('details')}")
-                return m.get("result", m)
 
 
 def _yaml_info(dev: str) -> dict:
@@ -214,6 +187,8 @@ class Einrichtung:
                 text = f"Eingebunden, feste IP {ip}. Tipp: im Router für die Remote reservieren."
             j["msg"] = text
             j["exit"] = 0 if ok else 1
+            if ok and (b := self.hass.data.get("esphomeremote_konfig_bruecke")) is not None:
+                await b.abgleichen()   # Bluetooth-Bruecke fuer die neue Remote, HA-Eintrag auf die Bruecke
         except Exception as err:  # noqa: BLE001
             j["msg"] = f"Fehler: {err}"
             j["exit"] = 1
@@ -276,31 +251,10 @@ class FirmwareView(HomeAssistantView):
         return web.Response(body=data, content_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
 
-def ip_vorschlag(kd) -> str:
-    """Naechste freie Adresse nach der hoechsten Remote-IP in esphome/secrets.yaml."""
-    sec = (ESPHOME_DIR / "secrets.yaml").read_text(encoding="utf-8")
-    ips = re.findall(r"^ip_remote_\w+:\s*(\d+\.\d+\.\d+)\.(\d+)", sec, re.M)
-    belegt = set(re.findall(r"(\d+\.\d+\.\d+\.\d+)", sec))
-    if not ips:
-        return ""
-    netz, letzte = ips[0][0], max(int(x[1]) for x in ips)
-    for n in range(letzte + 1, 250):
-        ip = f"{netz}.{n}"
-        if ip not in belegt and not _offen(ip, 80, 0.4) and not _offen(ip, 6053, 0.4):
-            return ip
-    return ""
-
-
 def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
     ein = Einrichtung(hass, kd)
     hass.http.register_view(ManifestView(ein))
     hass.http.register_view(FirmwareView(ein))
-
-    @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/neu_info"})
-    @websocket_api.async_response
-    async def ws_neu_info(hass, connection, msg):
-        ip = await hass.async_add_executor_job(ip_vorschlag, kd)
-        connection.send_result(msg["id"], {"ip": ip})
 
     @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/neu",
                                       vol.Required("name"): str, vol.Optional("ip", default=""): str,
@@ -308,7 +262,7 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
     @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_neu(hass, connection, msg):
-        if not (ESPHOME_DIR / "tools" / "remotes.py").exists() or not (ESPHOME_DIR / "remote-wz-vorlage.yaml").exists():
+        if not (ESPHOME_DIR / "tools" / "remotes.py").exists() or not (ESPHOME_DIR / "templates" / "remote.yaml").exists():
             connection.send_error(msg["id"], "neu", "Der Assistent braucht die Entwickler-Einrichtung (esphome/tools/remotes.py). "
                                   "Sonst eine weitere Remote wie die erste anlegen (README) und in packages/esphomeremote_konfig.yaml eintragen.")
             return
@@ -380,7 +334,8 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
         weg = []
         # ESPHome-Eintrag in HA (Name bzw. Host passt zur Remote)
         for e in hass.config_entries.async_entries("esphome"):
-            if e.data.get("device_name") == dev or dev in str(e.data.get("host", "")) or e.title.lower().replace(" ", "-") == dev:
+            host = str(e.data.get("host", ""))
+            if e.data.get("device_name") == dev or host in (dev, f"{dev}.local") or e.title.lower().replace(" ", "-") == dev:
                 await hass.config_entries.async_remove(e.entry_id)
                 weg.append("HA-Eintrag")
         p = await asyncio.create_subprocess_exec(
@@ -390,9 +345,11 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
         weg.append("YAML/Secret" if p.returncode == 0 else "YAML (Fehler)")
         await kd.geraet_weg(dev)
         ein.jobs.pop(dev, None)
+        if (b := hass.data.get("esphomeremote_konfig_bruecke")) is not None:
+            await b.abgleichen()
         connection.send_result(msg["id"], {"entfernt": weg})
 
-    for cmd in (ws_neu_info, ws_neu, ws_job, ws_flash_info, ws_entfernen):
+    for cmd in (ws_neu, ws_job, ws_flash_info, ws_entfernen):
         websocket_api.async_register_command(hass, cmd)
 
     # ---- Dienst: einen ESPHome-Dienst auf allen verbundenen Remotes aufrufen ----

@@ -251,6 +251,14 @@ static volatile uint32_t s_ln_send_ok = 0, s_ln_send_fail = 0, s_ln_conf_ok = 0,
 static volatile uint8_t s_ln_last_status = 0;
 static volatile uint16_t s_ln_last_conf_conn = 0xFFFF;
 // Soll fuer den Link geworben werden (auch neben einem HID-Host)?
+// Lebenspruefung der Link-Verbindung (2026-10-16): alle 30 s RSSI lesen. Scheitert das zweimal, ist die Verbindung
+// weg, ohne dass ein DISCONNECT kam - dann wuerde ohne Pruefung nie mehr fuer den Link geworben.
+static volatile bool s_link_probe_pending = false;
+static volatile uint8_t s_link_probe_fail = 0;
+// HALINK (2026-10-17): letzter Empfang vom Proxy. Die Bruecke schickt alle 20 s ein Lebenszeichen (0x32). Haelt ein
+// Proxy die Funkverbindung, obwohl HA sie verloren hat, antwortet RSSI weiter - nur so faellt der Link auf.
+static volatile uint32_t s_link_rx_ms = 0;
+static uint16_t s_link_tot_conn = 0xFFFF;   // fuer tot erklaerte Link-Verbindung: ihr spaetes DISCONNECT ignorieren
 static bool link_wants_adv() { return s_instance && s_instance->link_enabled() && !s_link_connected && !s_instance->funk_aus(); }
   static std::atomic<bool> s_directed_adv_active{false};
   static std::atomic<uint32_t> s_directed_adv_start_ms{0};
@@ -734,6 +742,12 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
             }
             break;
         case ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT:
+            // HALINK-Lebenspruefung (2026-10-16): Antwort fuer die Link-Verbindung, nicht fuer den HID-Host
+            if (s_link_probe_pending && memcmp(param->read_rssi_cmpl.remote_addr, s_link_bda, 6) == 0) {
+                s_link_probe_pending = false;
+                s_link_probe_fail = param->read_rssi_cmpl.status == ESP_BT_STATUS_SUCCESS ? 0 : s_link_probe_fail + 1;
+                break;
+            }
             if (s_instance) {
             s_instance->rssi_pending_ = false;
                 if (param->read_rssi_cmpl.status == ESP_BT_STATUS_SUCCESS) {
@@ -899,7 +913,7 @@ static uint16_t s_mouse_ccc_handle = 0;
 static uint16_t s_abs_mouse_report_handle = 0;
 static uint16_t s_abs_mouse_ccc_handle = 0;
 
-static const esp_gatts_attr_db_t hid_attr_db[HID_IDX_NB] = {
+static esp_gatts_attr_db_t hid_attr_db[HID_IDX_NB] = {   // FORK 2026-10-17: nicht const - Report-Map je Platz
     [IDX_SVC] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_PRI_SERVICE, PERM_R, sizeof(uint16_t), sizeof(uint16_t), (uint8_t *)&UUID_HID_SVC}},
     [IDX_CHAR_HID_INFO] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_CHAR_DECLARE, PERM_R, 1, 1, (uint8_t *)&PROP_READ}},
     [IDX_CHAR_HID_INFO_VAL] = {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&UUID_HID_INFORMATION, PERM_R_ENC, sizeof(hid_info_val), sizeof(hid_info_val), hid_info_val}},
@@ -987,6 +1001,37 @@ static const esp_gatts_attr_db_t link_attr_db[LINK_IDX_NB] = {
 
 static uint8_t s_services_started = 0;
 
+// ── FORK 2026-10-17: Geraetebeschreibung je Platz ─────────────────────────────────────────────
+// Grundtabelle hid_report_map = volle Tastatur + Medien + System + Tasten (+ Maus am Ende, falls einkompiliert).
+// Je Platz: Ziffern-Tastatur (kb_digits ohne "voll"-Bit) und Maus-Teil nur mit "maus"-Bit.
+static uint8_t s_karte[sizeof(hid_report_map)];
+static uint16_t s_karte_handle = 0;
+
+static size_t maus_anfang_() {
+    static const uint8_t muster[] = {0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x04};
+    for (size_t i = 0; i + sizeof(muster) <= sizeof(hid_report_map); i++)
+        if (memcmp(hid_report_map + i, muster, sizeof(muster)) == 0) return i;
+    return sizeof(hid_report_map);
+}
+
+static size_t karte_bauen_(uint8_t slot) {
+    const bool maus = s_instance && s_instance->slot_maus(slot);
+    const size_t n = maus ? sizeof(hid_report_map) : maus_anfang_();
+    memcpy(s_karte, hid_report_map, n);
+    if (s_instance && !s_instance->slot_voll(slot)) {
+        // Ziffern-Modus: Tasten-Array der Tastatur auf 0x1E..0x2C (Ziffern, Enter, Esc, Backspace, Tab, Leertaste)
+        for (size_t i = 0; i + 15 < n; i++) {
+            if (s_karte[i] == 0x95 && s_karte[i + 1] == 0x06 && s_karte[i + 2] == 0x75 && s_karte[i + 3] == 0x08 &&
+                s_karte[i + 4] == 0x15 && s_karte[i + 8] == 0x05 && s_karte[i + 9] == 0x07) {
+                s_karte[i + 5] = 0x1E; s_karte[i + 7] = 0x2C;
+                s_karte[i + 11] = 0x1E; s_karte[i + 13] = 0x2C;
+                break;
+            }
+        }
+    }
+    return n;
+}
+
 // ── GATTS Event Handler ──────────────────────────────────────────────────────
 static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
@@ -995,7 +1040,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             // FORK 2026-09-29b: Ziffern-Modus - Tasten-Array der Tastatur auf 0x1E..0x2C begrenzen
             // (Ziffern, Enter, Esc, Backspace, Tab, Leertaste). Gleiche Laenge wie die volle
             // Tastatur, nur Logical/Usage Min/Max aendern sich.
-            if (s_instance && s_instance->kb_digits()) {
+            if (false) {   // FORK 2026-10-17: Ziffern jetzt je Platz in karte_bauen_ (Grundtabelle bleibt voll)
                 for (size_t i = 0; i + 15 < sizeof(hid_report_map); i++) {
                     if (hid_report_map[i] == 0x95 && hid_report_map[i + 1] == 0x06 && hid_report_map[i + 2] == 0x75 &&
                         hid_report_map[i + 3] == 0x08 && hid_report_map[i + 4] == 0x15 && hid_report_map[i + 8] == 0x05 &&
@@ -1011,7 +1056,20 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             // Create each service as a separate attribute table
             esp_ble_gatts_create_attr_tab(dis_attr_db, gatts_if, DIS_IDX_NB, SVC_INST_DIS);
             esp_ble_gatts_create_attr_tab(bas_attr_db, gatts_if, BAS_IDX_NB, SVC_INST_BAS);
-            esp_ble_gatts_create_attr_tab(hid_attr_db, gatts_if, HID_IDX_NB, SVC_INST_HID);
+            {
+                // FORK 2026-10-17: Karte des aktiven Platzes als Startwert; Maus-Merkmale nur, wenn ein Platz sie nutzt
+                uint16_t n = HID_IDX_NB;
+#ifndef ESPIDF_BLE_KB_NO_POINTER
+                if (s_instance) s_instance->maus_db_ = s_instance->maus_mask_ != 0;
+                if (!s_instance || !s_instance->maus_db_) n = IDX_CHAR_MOUSE;
+#endif
+                size_t len = karte_bauen_(s_instance ? s_instance->active_host_slot() : 0);
+                hid_attr_db[IDX_CHAR_REPORT_MAP_VAL].att_desc.length = len;
+                hid_attr_db[IDX_CHAR_REPORT_MAP_VAL].att_desc.value = s_karte;
+                ESP_LOGI(TAG, "HID-Tabelle: %u Eintraege, Beschreibung %u Byte (Maus-Merkmale %s)", (unsigned) n,
+                         (unsigned) len, n == HID_IDX_NB ? "ja" : "nein");
+                esp_ble_gatts_create_attr_tab(hid_attr_db, gatts_if, n, SVC_INST_HID);
+            }
             if (s_instance && s_instance->link_enabled())   // HALINK
                 esp_ble_gatts_create_attr_tab(link_attr_db, gatts_if, LINK_IDX_NB, SVC_INST_LINK);
             // Fork addition: let the ATV Voice service add its own table on the
@@ -1039,7 +1097,10 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 memcpy(bas_handle_table, param->add_attr_tab.handles, sizeof(bas_handle_table));
                 esp_ble_gatts_start_service(bas_handle_table[BAS_IDX_SVC]);
             } else if (svc_id == SVC_INST_HID) {
-                memcpy(hid_handle_table, param->add_attr_tab.handles, sizeof(hid_handle_table));
+                memset(hid_handle_table, 0, sizeof(hid_handle_table));
+                memcpy(hid_handle_table, param->add_attr_tab.handles,
+                       std::min<size_t>(param->add_attr_tab.num_handle, HID_IDX_NB) * sizeof(uint16_t));
+                s_karte_handle = hid_handle_table[IDX_CHAR_REPORT_MAP_VAL];
                 s_proto_mode_handle = hid_handle_table[IDX_CHAR_PROTO_MODE_VAL];
 #ifndef ESPIDF_BLE_KB_NO_KEYBOARD
                 s_boot_kb_input_handle = hid_handle_table[IDX_CHAR_BOOT_KB_IN_VAL];
@@ -1057,6 +1118,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 s_tasten_report_handle = hid_handle_table[IDX_CHAR_TASTEN_VAL];   // FORK 2026-09-29
                 s_tasten_ccc_handle = hid_handle_table[IDX_CHAR_TASTEN_CCC];
 #ifndef ESPIDF_BLE_KB_NO_POINTER
+                if (param->add_attr_tab.num_handle >= HID_IDX_NB)
                 s_mouse_report_handle = hid_handle_table[IDX_CHAR_MOUSE_VAL];
                 s_mouse_ccc_handle = hid_handle_table[IDX_CHAR_MOUSE_CCC];
                 s_abs_mouse_report_handle = hid_handle_table[IDX_CHAR_ABS_MOUSE_VAL];
@@ -1090,6 +1152,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             break;
         }
         case ESP_GATTS_CONNECT_EVT: {
+            if (param->connect.conn_id == s_link_tot_conn) s_link_tot_conn = 0xFFFF;   // Nummer neu vergeben
             if (s_instance && s_instance->is_link_peer(param->connect.remote_bda)) {   // HALINK
                 s_adv_running = false;   // die Verbindung hat das Werbe-Set beendet
                 s_link_connected = true;
@@ -1101,6 +1164,10 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 memcpy(s_link_bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
                 s_instance->link_clear_();
                 ESP_LOGI(TAG, "HALINK: Proxy verbunden (conn %u)", param->connect.conn_id);
+                s_link_probe_fail = 0;
+                s_link_probe_pending = false;
+                s_link_rx_ms = millis();
+                if (weck_log) weck_log("HA-Link verbunden");
                 // Intervall erst nach dem CCC-Abo setzen, sonst dauert die Dienstsuche ewig (29.09.)
                 if (!s_instance->is_connected()) do_start_advertising();   // HID-Host soll weiter finden
                 break;
@@ -1108,7 +1175,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             ESP_LOGI(TAG, "GATTS: Connected (conn %u)", param->connect.conn_id);
             // HALINK: eine Verbindung beendet das (Legacy-)Werbe-Set immer - auch die gerichtete Werbung, fuer die
             // kein ADV_TERMINATED kam. Sonst blieb s_adv_running stehen und der Link-Waechter startete nie neu
-            // (zweite Remote nach dem Neustart: Streamer verbunden, keine Link-Werbung, 2026-10-06).
+            // (nach dem Neustart: Streamer verbunden, keine Link-Werbung, 2026-10-06).
             s_adv_running = false;
             // FORK 2026-09-29e: Es gibt schon eine aktive Verbindung (Werbung lief noch) -> die neue
             // ist ein anderes gebondetes Geraet, das "dazwischen" kam. Nicht die aktive ueberschreiben,
@@ -1152,6 +1219,11 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             break;
         }
         case ESP_GATTS_DISCONNECT_EVT: {
+            if (param->disconnect.conn_id == s_link_tot_conn) {   // HALINK: schon fuer tot erklaert (Waechter 2)
+                s_link_tot_conn = 0xFFFF;
+                ESP_LOGI(TAG, "HALINK: tote Verbindung jetzt getrennt (Grund 0x%02X)", param->disconnect.reason);
+                break;
+            }
             if (s_link_connected && param->disconnect.conn_id == s_link_conn_id) {   // HALINK
                 s_link_connected = false;
                 s_link_conn_id = 0xFFFF;
@@ -1159,6 +1231,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 link_ccc_val = 0;
                 if (s_instance) s_instance->link_clear_();
                 ESP_LOGI(TAG, "HALINK: Proxy getrennt (Grund 0x%02X)", param->disconnect.reason);
+                { char b[40]; snprintf(b, sizeof(b), "HA-Link getrennt 0x%02X", param->disconnect.reason); if (weck_log) weck_log(b); }
                 s_link_lost_ms = millis();
                 do_start_advertising();
                 break;
@@ -1401,6 +1474,8 @@ void EspidfBleKeyboard::load_host_slots_() {
     if (nvs_get_u8(handle, "host_act", &active) == ESP_OK && active < MAX_HOST_SLOTS) {
         active_slot_ = active;
     }
+    nvs_get_u8(handle, "maus_mask", &maus_mask_);   // FORK 2026-10-17: Optionen je Platz
+    nvs_get_u8(handle, "voll_mask", &voll_mask_);
 
     nvs_close(handle);
 }
@@ -2475,6 +2550,7 @@ void EspidfBleKeyboard::switch_host(uint8_t slot) {
     const uint8_t old_slot = active_slot_;   // FORK 2026-09-29b
     s_adv_slow = false;                       // FORK 2026-09-29c: neuer Platz -> schnell werben
     active_slot_ = slot;
+    karte_setzen_();                          // FORK 2026-10-17: Beschreibung des neuen Platzes
     save_host_slots_();
     if (active_host_sensor_ != nullptr)
         active_host_sensor_->publish_state(slot);
@@ -2929,6 +3005,61 @@ void EspidfBleKeyboard::loop() {
             } else if (s_adv_running && !s_adv_busy && s_link_adv_fast && is_connected_ &&
                        millis() - s_link_lost_ms >= LINK_ADV_FAST_MS) {
                 do_start_advertising();   // schnelle Phase vorbei -> sparsam weiterwerben
+            }
+        }
+    }
+    // HALINK-Waechter 2 (2026-10-16): Nach dem Ausstecken des Docks (Proxy) blieb Remote 2 3 min fuer HA unsichtbar, bis
+    // zum Neustart - kein Scanner sah mehr Werbung. Deshalb: (a) Link alle 30 s per RSSI pruefen, (b) ist der Link
+    // 30 s weg, die Werbung hart neu aufsetzen (Merker zuruecksetzen, abwechselnd stoppen/direkt starten).
+    {
+        static uint32_t probe_ms = 0, ohne_seit = 0, neu_ms = 0;
+        static uint8_t runde = 0;
+        const uint32_t jetzt = millis();
+        if (!link_enabled() || funk_aus_) {
+            ohne_seit = 0;
+        } else if (s_link_connected) {
+            ohne_seit = 0;
+            runde = 0;
+            const bool stumm = jetzt - s_link_rx_ms > 70000;   // kein Lebenszeichen der Bruecke
+            if (s_link_probe_fail >= 2 || stumm) {
+                if (weck_log) weck_log(stumm ? "HA-Link stumm (70 s) - getrennt" : "HA-Link tot (RSSI) - getrennt");
+                ESP_LOGW(TAG, "HALINK: Verbindung antwortet nicht mehr - trenne und werbe neu");
+                s_link_probe_fail = 0;
+                s_link_probe_pending = false;
+                s_link_connected = false;
+                s_link_tot_conn = s_link_conn_id;
+                s_link_conn_id = 0xFFFF;
+                s_link_inflight = s_link_retry = false;
+                link_ccc_val = 0;
+                link_clear_();
+                s_link_lost_ms = jetzt;
+                esp_ble_gap_disconnect(s_link_bda);
+                do_start_advertising();
+            } else if (jetzt - probe_ms > 30000 && !rssi_paused_) {
+                probe_ms = jetzt;
+                if (s_link_probe_pending) s_link_probe_fail++;   // keine Antwort zaehlt als Fehler
+                s_link_probe_pending = true;
+                esp_ble_gap_read_rssi(s_link_bda);
+            }
+        } else {
+            if (ohne_seit == 0) ohne_seit = jetzt | 1;
+            if (jetzt - ohne_seit > 30000 && jetzt - neu_ms > 30000) {
+                neu_ms = jetzt;
+                char b[80];
+                snprintf(b, sizeof(b), "HA-Link %us weg: Werbung neu (l%d b%d g%d w%d)", (unsigned) ((jetzt - ohne_seit) / 1000),
+                         (int) s_adv_running, (int) s_adv_busy, (int) s_directed_adv_active.load(), (int) s_restart_adv_pending);
+                if (weck_log) weck_log(b);
+                s_adv_busy = false;
+                s_directed_adv_active = false;
+                if ((runde++ & 1) == 0 && s_adv_running) {
+                    s_restart_adv_pending = true;   // STOP-Ereignis startet neu
+                    adv_stop_();
+                } else {
+                    s_restart_adv_pending = false;
+                    s_adv_running = false;
+                    adv_stop_();
+                    do_start_advertising();
+                }
             }
         }
     }
@@ -3462,6 +3593,7 @@ void EspidfBleKeyboard::link_service_() {
         link_resends_++;
 }
 void EspidfBleKeyboard::link_rx_(const uint8_t *data, size_t len) {
+    s_link_rx_ms = millis();
     std::lock_guard<std::mutex> g(link_mtx_);
     // HTTP (0x40-0x42) und OTA (0x60-0x64) gehoeren dem Task von ha_tunnel - die Hauptschleife steckt waehrend
     // eines Bild-Abrufs bzw. eines Updates fest
@@ -3858,7 +3990,41 @@ void EspidfBleKeyboard::send_volume_up()         { send_consumer(0x00E9); }
 void EspidfBleKeyboard::send_volume_down()       { send_consumer(0x00EA); }
 void EspidfBleKeyboard::send_mute()              { send_consumer(0x00E2); }
 
+void EspidfBleKeyboard::karte_setzen_() {
+    if (s_karte_handle == 0) return;
+    const size_t n = karte_bauen_(active_slot_);
+    esp_ble_gatts_set_attr_value(s_karte_handle, n, s_karte);
+    ESP_LOGI(TAG, "Platz %u: Beschreibung %u Byte (Maus %s, Tastatur %s)", (unsigned) active_slot_, (unsigned) n,
+             slot_maus(active_slot_) ? "ja" : "nein", slot_voll(active_slot_) ? "voll" : "Ziffern");
+}
+
+bool EspidfBleKeyboard::set_slot_flags(uint8_t maus, uint8_t voll) {
+    maus &= 0x0F; voll &= 0x0F;
+    if (maus == maus_mask_ && voll == voll_mask_) return false;
+    maus_mask_ = maus; voll_mask_ = voll;
+    nvs_handle_t h;
+    if (nvs_open("espidf_ble_kb", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "maus_mask", maus);
+        nvs_set_u8(h, "voll_mask", voll);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    bool neustart = false;
+#ifndef ESPIDF_BLE_KB_NO_POINTER
+    neustart = s_karte_handle != 0 && (maus != 0) != maus_db_;
+#endif
+    if (!neustart) karte_setzen_();
+    ESP_LOGI(TAG, "Platz-Optionen: Maus %X, volle Tastatur %X%s", maus, voll, neustart ? " - Neustart noetig" : "");
+    return neustart;
+}
+
+void EspidfBleKeyboard::maus(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) {
+    if (!maus_aktiv() || s_mouse_report_handle == 0) return;
+    send_mouse_report_(buttons, dx, dy, wheel);
+}
+
 void EspidfBleKeyboard::send_mouse_report_(uint8_t buttons, int8_t x, int8_t y, int8_t wheel) {
+    if (s_mouse_report_handle == 0) return;
     uint8_t report[4] = {buttons, static_cast<uint8_t>(x), static_cast<uint8_t>(y), static_cast<uint8_t>(wheel)};
     esp_ble_gatts_send_indicate(s_gatts_if, conn_id_, s_mouse_report_handle, sizeof(report), report, false);
     esp_ble_gatts_set_attr_value(s_mouse_report_handle, sizeof(report), report);

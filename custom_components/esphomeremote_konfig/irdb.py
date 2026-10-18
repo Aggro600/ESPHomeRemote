@@ -13,7 +13,6 @@ Dateien:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -32,7 +31,7 @@ QUELLE = "Lucaslhm/Flipper-IRDB"
 URL = "https://codeload.github.com/Lucaslhm/Flipper-IRDB/zip/refs/heads/main"
 MAX_ZIP = 200 * 1024 * 1024
 
-# Protokolle, die die Remote selbst kodieren kann (components/runtime_config/ir_encoders.h)
+# Protokolle, die die Remote selbst kodieren kann (esphome/components/tasten_konfig/ir_encoders.h)
 PROTOKOLLE = {
     "NEC", "NECext", "NEC1", "NEC5", "Onkyo", "NEC42", "NEC42ext", "SIRC", "SIRC15", "SIRC20", "RC5", "RC5X", "RC6",
     "Samsung32", "Kaseikyo", "Panasonic", "Denon", "Pioneer", "RCA", "JVC",
@@ -240,9 +239,10 @@ def registrieren(hass: HomeAssistant, db: IrDb) -> None:
         {vol.Required("type"): "esphomeremote_konfig/irdb_suchen", vol.Optional("q", default=""): str,
          vol.Optional("limit", default=60): vol.All(int, vol.Range(1, 200))}
     )
-    @callback
-    def ws_suchen(hass, connection, msg):
-        connection.send_result(msg["id"], db.suchen(msg["q"], msg["limit"]))
+    @websocket_api.async_response
+    async def ws_suchen(hass, connection, msg):
+        # im Executor: die Suche laeuft ueber den ganzen Index (zehntausende Geraete)
+        connection.send_result(msg["id"], await hass.async_add_executor_job(db.suchen, msg["q"], msg["limit"]))
 
     @websocket_api.websocket_command(
         {vol.Required("type"): "esphomeremote_konfig/irdb_geraet", vol.Required("geraet"): int}

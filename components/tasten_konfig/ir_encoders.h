@@ -1,10 +1,7 @@
 #pragma once
 
-// IR-Encoder fuer das Flipper-".ir"-Dateiformat, das OpenRemote Studio auf die
-// SD-Karte schreibt (/devices/<Name>.ir). Jedes "type: parsed" wird hier zu
-// Roh-Timings gerechnet und dann ueber remote_transmitter gesendet - genau wie
-// die Original-Firmware es macht (die haelt fuer die vier "Extra"-Protokolle
-// ebenfalls einen Raw-Encoder vor).
+// IR-Protokolle (Flipper-Namen wie in der IR-Datenbank des Konfigurators) -> Rohzeiten fuer den
+// remote_transmitter. Ein IR-Schritt der Belegung mit "proto"/"addr"/"cmd" wird hier umgerechnet.
 //
 // Ausgabe: std::vector<int32_t>, + = Mark (LED an, us), - = Space (us).
 // freq_hz wird auf die Traegerfrequenz des Protokolls gesetzt.
@@ -18,7 +15,7 @@
 #include <vector>
 
 namespace esphome {
-namespace runtime_config {
+namespace tasten_konfig {
 
 using IrTimings = std::vector<int32_t>;
 
@@ -261,48 +258,6 @@ inline bool ir_encode_jvc(uint32_t addr, uint32_t cmd, IrTimings &out, uint32_t 
   return true;
 }
 
-// Pronto-Hex ("0000 xxxx once1 once2 <pairs...>") -> Roh-Timings der ersten
-// Sequenz. Identisch zur Original-Firmware (loadProntoTimings).
-inline bool ir_decode_pronto(const std::string &text, IrTimings &out, uint32_t &freq_hz) {
-  const char *cur = text.c_str();
-  uint32_t word[4];
-  for (int i = 0; i < 4; i++) {
-    while (*cur == ' ')
-      cur++;
-    if (!*cur)
-      return false;
-    char *end = nullptr;
-    unsigned long v = strtoul(cur, &end, 16);
-    if (end == cur || v > 0xFFFF)
-      return false;
-    word[i] = (uint32_t) v;
-    cur = end;
-  }
-  if (word[0] != 0 || word[1] == 0)
-    return false;
-  uint32_t carrier = 4145146UL / word[1];
-  if (carrier < 20000 || carrier > 60000)
-    return false;
-  freq_hz = carrier;
-  uint32_t once = word[2] * 2U;
-  if (!once || once > 1024)
-    return false;
-  for (uint32_t i = 0; i < once; i++) {
-    while (*cur == ' ')
-      cur++;
-    if (!*cur)
-      return false;
-    char *end = nullptr;
-    unsigned long cycles = strtoul(cur, &end, 16);
-    if (end == cur)
-      return false;
-    cur = end;
-    uint32_t us = (uint32_t) (((uint64_t) cycles * 1000000ULL + carrier / 2) / carrier);
-    out.push_back((i & 1) ? -(int32_t) us : (int32_t) us);
-  }
-  return true;
-}
-
 // Dispatcher: protocol-Name + address/command -> Timings. Gibt false zurueck,
 // wenn das Protokoll (noch) nicht unterstuetzt wird.
 inline bool ir_encode_parsed(const std::string &proto, uint32_t addr, uint32_t cmd, IrTimings &out, uint32_t &freq_hz) {
@@ -340,5 +295,5 @@ inline bool ir_encode_parsed(const std::string &proto, uint32_t addr, uint32_t c
   return false;
 }
 
-}  // namespace runtime_config
+}  // namespace tasten_konfig
 }  // namespace esphome

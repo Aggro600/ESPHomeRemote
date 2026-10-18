@@ -1,7 +1,6 @@
 // Wertetabellen der Stufen-Regler (Energie & Wecken, Bildschirm, Anzeige, Wartung).
 // Der Regler steht auf dem INDEX, der gespeicherte Wert ist der Tabellenwert.
-// Generiert/gepflegt zusammen mit der Firmware-YAML (Stand 2026-09-28): die
-// max_value der Slider im YAML muessen zur Tabellenlaenge passen (Anzahl - 1).
+// Die max_value der Regler in der Firmware-YAML muessen zur Tabellenlaenge passen (Anzahl - 1).
 #pragma once
 #include <cstdlib>
 

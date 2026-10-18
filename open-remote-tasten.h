@@ -9,8 +9,10 @@
 // Aufruf aus der YAML:
 //   on_boot (-100):  tasten::einrichten();
 //   on_key:          if (tasten::ereignis(keycode, pressed)) return;   (nach Reinigung/Touch-Test)
-//   Weck-Regel:      tasten::weckt(keycode)  statt  keycode == 31
+//   Weck-Regel:      tasten::weckt(keycode)
 //   text_sensor HA:  tk_cfg->angekuendigt(x);
+
+namespace touchpad { inline void oeffnen(); inline bool taste(int k, bool gedrueckt); }   // open-remote-maus.h
 
 // Popup geht auf (2026-10-03): Herkunft merken, damit Schliessen dorthin zurueckfuehrt.
 inline void popup_oeffnet(int seite) {
@@ -26,26 +28,19 @@ namespace tasten {
 using namespace esphome;
 using tasten_konfig::Ctx;
 
-// Diese Tasten gehoeren auf Menueseiten der Navigation (wie bisher in dispatch_key).
+// Diese Tasten gehoeren auf den Seiten der Remote der Navigation (dispatch_key).
 inline bool nav_taste(int k) { return k == 14 || k == 35 || k == 15 || k == 32 || k == 34 || k == 13; }
 
-// ---- Funktionen der Remote (wie bisher die Menuetaste 31 in gesture_action) ----
+// ---- Funktionen der Remote (Schritte "int" der Belegung) ----
 inline bool begruessung_sperrt(bool dunkel) { return cur_page->value() == 24 && (dunkel || millis() < 6000); }
 
 // Weggelegtes Popup noch zurueckholbar? Nur solange sein Anlass besteht, hoechstens 5 min.
 inline bool popup_zurueckholbar() {
   const int m = popup_min->value();
   if (m < 0 || millis() - popup_min_ms->value() > 300000) return false;
-  switch (m) {
-    case 40: return bm_popup->value();
-    case 12: return sleep_flag->state;
-    case 25: return frage_hdmi->value();
-    case 41: return kbd_streamer_offen->value();
-    case 98: return true;   // Menue-Seite als Popup (z. B. Kameras): 5 min zurueckholbar
-    case 7:  return doorbell->state;
-    case 11: return doorbell2->state;
-    default: return false;
-  }
+  if (m == 41) return kbd_streamer_offen->value();   // Tastatur: solange sie am Streamer offen ist
+  if (m == 51) return true;                          // Touchpad (2026-10-17)
+  return m == 98;                                     // Menue-Seite als Popup (z. B. Klingel, Kameras)
 }
 
 // Menuetaste kurz (2026-10-03): offenes Popup weglegen, weggelegtes zurueckholen,
@@ -82,32 +77,41 @@ inline void menue_popup_zu() {
   else if (popup_min->value() == 98) popup_min->value() = -1;
 }
 
-// An jeder Ausloesestelle eines eingebauten Popups (2026-10-03): true = eingebautes Popup zeigen.
-// false = im Konfigurator ausgeschaltet, oder es wurde statt dessen die eigene Menueseite gezeigt.
-inline bool popup_eingebaut(const char *name) {
-  auto *t = tk_cfg;
-  if (!t->popup_an(name)) { ESP_LOGI("popup", "Popup '%s' ist ausgeschaltet", name); return false; }
-  const std::string ersatz = t->popup_ersatz(name);
-  if (!ersatz.empty() && mn->hat_seite(ersatz)) { menue_popup(ersatz); return false; }
-  return true;
-}
-
 // ---- Aktivitaeten aus der Konfiguration (2026-10-04): Anzahl/Namen/Bluetooth-Platz frei, 1-4 ----
-inline int aktivitaeten_anzahl() { const int n = tk_cfg->aktivitaeten(); return n > 0 ? n : 3; }
+inline int aktivitaeten_anzahl() { const int n = tk_cfg->aktivitaeten(); return n > 0 ? n : 1; }
 inline int aktivitaet_slot(int a) {
-  if (tk_cfg->aktivitaeten() <= 0) return a;   // ohne Konfiguration: Aktivitaet = Platz (wie bisher)
+  if (tk_cfg->aktivitaeten() <= 0) return a;   // ohne Konfiguration: Aktivitaet = Platz
   return tk_cfg->aktivitaet_slot(a);
 }
 
-inline void aktivitaet_setzen(int a) {
-  if (a < 0 || a >= aktivitaeten_anzahl()) return;
-  activity->value() = a;
-  apply_activity->execute();
-  if (aktivitaet_slot(a) == 0) streamer_hdmi->execute();   // Streamer: TV auf dessen HDMI-Eingang
+// Aktivitaet, die diesen Bluetooth-Platz nutzt (erste), -1 = keine
+inline int aktivitaet_von_platz(int platz) {
+  for (int a = 0; a < aktivitaeten_anzahl(); a++) if (aktivitaet_slot(a) == platz) return a;
+  return -1;
 }
 
-// Aktivitaetsleiste der Startseite aus der Konfiguration bauen und die aktive markieren. false = keine
-// Konfiguration -> die drei festen YAML-Knoepfe gelten wie bisher.
+// Aktivitaet starten (2026-10-16, wie Harmony): laeuft eine andere, fuehrt sie erst "Beim Beenden" aus
+// (Pseudo-Taste 901), dann die neue "Beim Starten" (900). akt_an = false: keine Aktivitaet laeuft.
+inline void aktivitaet_setzen(int a) {
+  if (a < 0 || a >= aktivitaeten_anzahl()) return;
+  const int alt = activity->value();
+  const bool start = !akt_an->value() || alt != a;
+  if (akt_an->value() && alt != a) tk_cfg->aktivitaet_ereignis(alt, false);
+  activity->value() = a;
+  akt_an->value() = true;
+  apply_activity->execute();
+  if (start) tk_cfg->aktivitaet_ereignis(a, true);
+  mn->ereignis("aktivitaet", tk_cfg->aktivitaet_name(a));   // Popup-Ausloeser (z. B. "TV auf HDMI umschalten?")
+}
+// Laufende Aktivitaet beenden (HA-Schalter aus, Funktion "activity_off"); die Tastenbelegung bleibt.
+inline void aktivitaet_aus() {
+  if (!akt_an->value()) return;
+  tk_cfg->aktivitaet_ereignis(activity->value(), false);
+  akt_an->value() = false;
+  apply_activity->execute();
+}
+
+// Aktivitaetsleiste der Startseite aus der Konfiguration bauen und die aktive markieren.
 struct Dock { std::vector<lv_obj_t *> knoepfe; std::vector<int> akt; std::string sig; int slot = -1; lv_obj_t *ecke[2] = {nullptr, nullptr}; };
 inline Dock &dock() { static Dock d; return d; }
 // Abgerundete Ecke (LCARS) am Nachbarfeld des aktiven Felds: blaues 10x10-Quadrat ueber der Fuge, darin ein
@@ -136,7 +140,7 @@ inline void dock_ecke(lv_obj_t *&e, bool links) {
 // der Zurueck-Knopf sitzt in einem blauen Feld, das bis an den linken und oberen Displayrand reicht und
 // rechts ueber eine ausgerundete Ecke in die Linie uebergeht. hinter = Hintergrundfarbe der Kopfzeile.
 // Einmal pro Kopfzeile; hd ist ein Flex-Behaelter, die Zierde liegt ausserhalb des Layouts.
-struct KopfZier { lv_obj_t *hd, *btn, *linie, *feld, *ecke; int16_t lx, lw, fy, fh, ex; };
+struct KopfZier { lv_obj_t *hd, *btn, *linie, *feld, *ecke; int16_t lx, lw, fy, fh, ex, ey, eo; };
 inline std::deque<KopfZier> &kopf_ziere() { static std::deque<KopfZier> v; return v; }   // deque: Zeiger bleiben gueltig (Animation)
 inline void kopf_linie(lv_obj_t *hd, lv_obj_t *btn, uint32_t hinter = 0x0E1116) {
   static const uint32_t BLAU = 0x3B82F6;
@@ -203,14 +207,15 @@ inline void kopf_linie(lv_obj_t *hd, lv_obj_t *btn, uint32_t hinter = 0x0E1116) 
   z.lx = k.x1 - in.x1;      z.lw = k.x2 - k.x1 + 1;
   z.fy = k.y1 - in.y1;      z.fh = k.y2 - k.y1 + 1 + R;
   z.ex = b.x2 + 1 - in.x1;
+  z.ey = linie - R - in.y1;   // Ecke: oberer Rand
+  z.eo = R + DICK;            // Fuellhoehe, ab der das Feld ueber der Linie ankommt (Feld steht R unter dem Kopf ueber)
   kopf_ziere().push_back(z);
 }
 // Aufbau-Animation beim Oeffnen des Menues (2026-10-13, Nutzerwunsch): die Linie waechst von rechts nach
 // links, erreicht sie den Zurueck-Knopf, fuellt sich sein Feld von unten nach oben blau.
 // verzoegerung = Dauer der Seiten-Einblendung, die Animation folgt danach.
-inline int &kopf_zeitlupe() { static int f = 1; return f; }   // nur fuer Bildschirmfotos (seite_zeigen "menue_zeitlupe")
 inline void kopf_anim(lv_obj_t *hd, lv_obj_t *btn, uint32_t verzoegerung = 150) {
-  const uint32_t T_LINIE = 280 * kopf_zeitlupe(), T_FELD = 160 * kopf_zeitlupe();
+  const uint32_t T_LINIE = 280 * mn->zeitlupe, T_FELD = 160 * mn->zeitlupe;   // zeitlupe: nur fuer Bildschirmfotos
   kopf_linie(hd, btn);
   KopfZier *zp = nullptr;
   for (auto &z : kopf_ziere()) if (z.hd == hd) zp = &z;
@@ -225,7 +230,6 @@ inline void kopf_anim(lv_obj_t *hd, lv_obj_t *btn, uint32_t verzoegerung = 150) 
   lv_obj_add_flag(z.ecke, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_style_bg_opa(z.btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_opa(z.btn, LV_OPA_TRANSP, 0);
-  const int bis_knopf = z.lx + z.lw - z.ex;   // Linienlaenge, bei der sie die Ausrundung erreicht
   lv_anim_t a;
   lv_anim_init(&a);
   lv_anim_set_var(&a, &z);
@@ -242,17 +246,24 @@ inline void kopf_anim(lv_obj_t *hd, lv_obj_t *btn, uint32_t verzoegerung = 150) 
   lv_anim_t f;
   lv_anim_init(&f);
   lv_anim_set_var(&f, &z);
-  // Das Feld startet, sobald die Linie die Ausrundung erreicht (Linie waechst gleichmaessig)
-  lv_anim_set_delay(&f, verzoegerung + T_LINIE * bis_knopf / std::max<int>(1, z.lw));
+  // Das Feld startet, wenn die Linie ganz durch ist (Nutzerwunsch 2026-10-13)
+  lv_anim_set_delay(&f, verzoegerung + T_LINIE);
   lv_anim_set_duration(&f, T_FELD);
   lv_anim_set_values(&f, 0, z.fh);
   lv_anim_set_path_cb(&f, lv_anim_path_ease_out);
-  lv_anim_set_early_apply(&f, false);   // Ecke erst zeigen, wenn die Linie da ist (start_cb)
-  lv_anim_set_start_cb(&f, [](lv_anim_t *an) { lv_obj_remove_flag(((KopfZier *) an->var)->ecke, LV_OBJ_FLAG_HIDDEN); });
+  lv_anim_set_early_apply(&f, false);
   lv_anim_set_exec_cb(&f, [](void *v, int32_t h) {
     auto *z = (KopfZier *) v;
     lv_obj_set_height(z->feld, h);
     lv_obj_set_y(z->feld, z->fy + z->fh - h);
+    // Ausrundung waechst mit dem Feld von der Linie nach oben (nicht schlagartig ganz blau)
+    static const int R = 10;
+    const int eh = std::max(0, std::min<int>(R, h - z->eo));
+    if (eh == 0) { lv_obj_add_flag(z->ecke, LV_OBJ_FLAG_HIDDEN); return; }
+    lv_obj_remove_flag(z->ecke, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_y(z->ecke, z->ey + R - eh);
+    lv_obj_set_height(z->ecke, eh);
+    lv_obj_set_y(lv_obj_get_child(z->ecke, 0), eh - 2 * R);   // Kreis bleibt an seiner Stelle
   });
   lv_anim_set_completed_cb(&f, [](lv_anim_t *an) {
     auto *z = (KopfZier *) an->var;
@@ -261,34 +272,28 @@ inline void kopf_anim(lv_obj_t *hd, lv_obj_t *btn, uint32_t verzoegerung = 150) 
   });
   lv_anim_start(&f);
 }
-inline bool dock_anwenden(int a) {
+inline void dock_anim_aufraeumen();   // unten (Dock-Animation)
+inline void dock_anwenden(int a) {
   // Im Dock: die als "dock" markierten Aktivitaeten (hoechstens 4), der Rest nur ueber Menue/Tasten
   std::vector<int> akt;
   for (int i = 0; i < tk_cfg->aktivitaeten() && akt.size() < 4; i++)
     if (tk_cfg->aktivitaet_im_dock(i)) akt.push_back(i);
   const int n = (int) akt.size();
   Dock &D = dock();
-  lv_obj_t *fest[3] = {home_act_0, home_act_1, home_act_2};
-  lv_obj_t *fo[4] = {dock_f_b1_s1, dock_f_b1_s2, dock_f_b2_s2, dock_f_b2_s3};
-  for (auto *f : fo) lv_obj_add_flag(f, LV_OBJ_FLAG_HIDDEN);   // feste YAML-Ecken nur ohne Konfiguration
-  if (tk_cfg->aktivitaeten() <= 0) {
-    for (auto *k : D.knoepfe) lv_obj_delete(k);
-    D.knoepfe.clear(); D.akt.clear(); D.sig.clear();
-    for (auto *e : D.ecke) if (e) lv_obj_add_flag(e, LV_OBJ_FLAG_HIDDEN);
-    for (auto *f : fest) lv_obj_remove_flag(f, LV_OBJ_FLAG_HIDDEN);
-    D.slot = a;   // ohne Konfiguration: Aktivitaet = Platz
-    return false;
-  }
   std::string sig;
   for (int i : akt) sig += std::to_string(i) + ":" + tk_cfg->aktivitaet_name(i) + "|";
   const int W = lv_obj_get_width(home_dock);
   sig += std::to_string(W);
   if (sig != D.sig) {
+    dock_anim_aufraeumen();   // Fuellung haengt an einem Knopf, der gleich geloescht wird
+    // Felder nebeneinander, 2 px Fuge (im YAML geht ein Flex-Layout ohne feste Kinder nicht)
+    lv_obj_set_flex_flow(home_dock, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(home_dock, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(home_dock, 2, 0);
     for (auto *k : D.knoepfe) lv_obj_delete(k);
     D.knoepfe.clear();
-    for (auto *f : fest) lv_obj_add_flag(f, LV_OBJ_FLAG_HIDDEN);
-    // Breiten wie die festen YAML-Knoepfe (3 Felder: 78 | 80 | 78, 2 px Fuge): Rest geht an das mittlere
-    // Feld, damit die Leiste genau ausgefuellt ist und die Ecken auf den Fugen sitzen.
+    // Gleiche Breiten mit 2 px Fuge; der Rest geht an das mittlere Feld, damit die Leiste genau ausgefuellt
+    // ist und die Ecken auf den Fugen sitzen.
     const int summe = W - 2 * (std::max(n, 1) - 1), basis = n ? summe / n : 0, rest = n ? summe % n : 0;
     for (int i = 0; i < n; i++) {
       const int breite = basis + (i == n / 2 ? rest : 0);
@@ -313,7 +318,7 @@ inline bool dock_anwenden(int a) {
   }
   int pos = -1;   // Position der aktiven Aktivitaet im Dock (-1 = nicht im Dock)
   for (int i = 0; i < n; i++) {
-    const bool an = D.akt[i] == a;
+    const bool an = akt_an->value() && D.akt[i] == a;   // beendet: nichts markiert
     if (an) pos = i;
     lv_obj_set_style_bg_color(D.knoepfe[i], lv_color_hex(an ? 0x3B82F6 : 0x1A1F27), 0);
     lv_obj_set_style_text_color(D.knoepfe[i], lv_color_hex(an ? 0xF1F3F5 : 0x8B94A3), 0);
@@ -341,9 +346,117 @@ inline bool dock_anwenden(int a) {
       lv_obj_move_foreground(D.ecke[1]);
     }
   }
-  return true;
 }
 
+// Aufbau-Animation des Docks beim Erscheinen der Startseite (2026-10-13, Nutzerwunsch, wie die Menue-Kopfzeile):
+// die blaue Linie oben am Dock waechst von beiden Displayraendern zum aktiven Feld - beide Seiten kommen
+// gleichzeitig an (je nach Strecke verschieden schnell; liegt das Feld am Rand, nur von einer Seite). Dann
+// fuellt sich das aktive Feld von oben nach unten blau. Am Ende stellt dock_anwenden den Normalzustand her.
+struct DockAnim { lv_obj_t *li{nullptr}, *re{nullptr}, *oben{nullptr}, *fuell{nullptr}, *knopf{nullptr};
+                  int16_t lx, lw, rx, rw, fh; uint8_t ecken{0}; };
+inline DockAnim &dock_anim_zustand() { static DockAnim a; return a; }
+inline void dock_anim_aufraeumen() {
+  DockAnim &A = dock_anim_zustand();
+  lv_anim_delete(&A, nullptr);
+  for (lv_obj_t **o : {&A.li, &A.re, &A.oben, &A.fuell})
+    if (*o) { lv_obj_delete(*o); *o = nullptr; }
+  A.knopf = nullptr;
+  lv_obj_remove_local_style_prop(home_dock, LV_STYLE_BORDER_OPA, 0);
+  for (auto *e : dock().ecke) if (e) lv_obj_set_height(e, 10);
+}
+// verz: Wartezeit in ms vor dem Start (Seitenwechsel/Display an: sonst ist alles vorbei, bevor man hinsieht)
+inline void dock_anim(uint32_t verz = 0) {
+  const uint32_t T_LINIE = 300 * mn->zeitlupe, T_FUELL = 180 * mn->zeitlupe;
+  static const uint32_t BLAU = 0x3B82F6;
+  dock_anim_aufraeumen();
+  Dock &D = dock();
+  if (lv_obj_has_flag(home_dock, LV_OBJ_FLAG_HIDDEN) || D.knoepfe.empty()) return;
+  int pos = -1;
+  for (size_t i = 0; i < D.akt.size(); i++) if (D.akt[i] == activity->value()) pos = (int) i;
+  if (pos < 0 || !akt_an->value()) return;   // keine Aktivitaet an: kein Feld markieren (sonst kurz blau, dann zurueck)
+  DockAnim &A = dock_anim_zustand();
+  lv_obj_update_layout(home_dock);
+  lv_obj_t *seite = lv_obj_get_parent(home_dock);
+  lv_area_t s, d, k;
+  lv_obj_get_content_coords(seite, &s);
+  lv_obj_get_coords(home_dock, &d);
+  lv_obj_get_coords(D.knoepfe[pos], &k);
+  const int dick = lv_obj_get_style_border_width(home_dock, LV_PART_MAIN);
+  auto teil = [&](lv_obj_t *eltern, int x, int y, int w, int h) {
+    lv_obj_t *o = lv_obj_create(eltern);
+    lv_obj_remove_style_all(o);
+    lv_obj_add_flag(o, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_remove_flag(o, (lv_obj_flag_t) (LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_set_style_bg_color(o, lv_color_hex(BLAU), 0);
+    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+    lv_obj_set_pos(o, x, y);
+    lv_obj_set_size(o, w, h);
+    return o;
+  };
+  // Linien in Seitenkoordinaten ueber dem (ausgeblendeten) Dockrand
+  A.lx = d.x1 - s.x1; A.lw = k.x1 - d.x1;
+  A.rx = k.x2 + 1 - s.x1; A.rw = d.x2 - k.x2;
+  A.li = teil(seite, A.lx, d.y1 - s.y1, 0, dick);
+  A.re = teil(seite, A.rx + A.rw, d.y1 - s.y1, 0, dick);
+  A.oben = teil(seite, k.x1 - s.x1, d.y1 - s.y1, k.x2 - k.x1 + 1, dick);   // Rand ueber dem aktiven Feld
+  lv_obj_add_flag(A.oben, LV_OBJ_FLAG_HIDDEN);
+  // Fuellung im aktiven Feld, hinter der Beschriftung; das Feld selbst vorerst dunkel
+  A.knopf = D.knoepfe[pos];
+  A.fh = k.y2 - k.y1 + 1;
+  // Kinder liegen im Inhaltsbereich: um den Innenabstand des Knopfs nach links/oben versetzen
+  A.fuell = teil(A.knopf, -lv_obj_get_style_pad_left(A.knopf, LV_PART_MAIN), -lv_obj_get_style_pad_top(A.knopf, LV_PART_MAIN),
+                 k.x2 - k.x1 + 1, 0);
+  lv_obj_move_background(A.fuell);
+  lv_obj_set_style_bg_color(A.knopf, lv_color_hex(0x1A1F27), 0);
+  lv_obj_set_style_border_opa(home_dock, LV_OPA_TRANSP, 0);
+  A.ecken = 0;   // welche Nachbar-Ecken dock_anwenden gezeigt hat: kommen mit der Fuellung wieder
+  for (int i = 0; i < 2; i++)
+    if (D.ecke[i] && !lv_obj_has_flag(D.ecke[i], LV_OBJ_FLAG_HIDDEN)) { A.ecken |= 1 << i; lv_obj_add_flag(D.ecke[i], LV_OBJ_FLAG_HIDDEN); }
+  // Linien: Fortschritt 0..1024, beide Seiten erreichen das Feld zur selben Zeit
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, &A);
+  lv_anim_set_delay(&a, verz);   // early_apply: Linien sofort auf 0
+  lv_anim_set_duration(&a, T_LINIE);
+  lv_anim_set_values(&a, 0, 1024);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_set_exec_cb(&a, [](void *v, int32_t p) {
+    auto *A = (DockAnim *) v;
+    const int wl = A->lw * p / 1024, wr = A->rw * p / 1024;
+    lv_obj_set_width(A->li, wl);
+    lv_obj_set_width(A->re, wr);
+    lv_obj_set_x(A->re, A->rx + A->rw - wr);
+  });
+  lv_anim_start(&a);
+  // Feld von oben nach unten fuellen
+  lv_anim_t f;
+  lv_anim_init(&f);
+  lv_anim_set_var(&f, &A);
+  lv_anim_set_delay(&f, verz + T_LINIE);
+  lv_anim_set_early_apply(&f, false);
+  lv_anim_set_duration(&f, T_FUELL);
+  lv_anim_set_values(&f, 0, A.fh);
+  lv_anim_set_path_cb(&f, lv_anim_path_ease_out);
+  lv_anim_set_start_cb(&f, [](lv_anim_t *an) {
+    auto *A = (DockAnim *) an->var;
+    lv_obj_remove_flag(A->oben, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < 2; i++) if ((A->ecken & (1 << i)) && dock().ecke[i]) lv_obj_remove_flag(dock().ecke[i], LV_OBJ_FLAG_HIDDEN);
+  });
+  lv_anim_set_exec_cb(&f, [](void *v, int32_t h) {
+    auto *A = (DockAnim *) v;
+    lv_obj_set_height(A->fuell, h);
+    // runde Ecken der Nachbarn wachsen mit der Fuellung nach unten (nicht schlagartig ganz blau)
+    for (int i = 0; i < 2; i++)
+      if ((A->ecken & (1 << i)) && dock().ecke[i]) lv_obj_set_height(dock().ecke[i], std::max<int>(1, std::min<int>(10, h)));
+  });
+  lv_anim_set_completed_cb(&f, [](lv_anim_t *) {
+    // Nicht im Ablauf der Animation loeschen (lv_anim_delete auf die laufende): erst im naechsten Durchlauf
+    lv_async_call([](void *) { dock_anim_aufraeumen(); dock_anwenden(activity->value()); }, nullptr);
+  });
+  lv_anim_start(&f);
+}
+
+inline void seite_zeigen(lvgl::LvPageType *seite, lv_screen_load_anim_t anim);
 inline void intern(const char *fn, int arg, const Ctx &c) {
   const bool d = c.dunkel;
   // Einstellung "Menütaste bei dunklem Display: Nur Display" (2026-10-11): der weckende Druck oeffnet kein Menue
@@ -362,11 +475,18 @@ inline void intern(const char *fn, int arg, const Ctx &c) {
   else if (!strcmp(fn, "assistant_toggle")) toggle_assistant->execute();
   else if (!strcmp(fn, "activity")) aktivitaet_setzen(arg);
   else if (!strcmp(fn, "activity_next")) aktivitaet_setzen((activity->value() + 1) % aktivitaeten_anzahl());
+  else if (!strcmp(fn, "activity_off")) aktivitaet_aus();
   else if (!strcmp(fn, "keyboard")) kbd_popup_zeigen->execute();
   else if (!strcmp(fn, "kbd_light")) toggle_kbd_light->execute();
   else if (!strcmp(fn, "mic_toggle")) toggle_mic->execute();
   else if (!strcmp(fn, "clean")) clean_run->execute();
   else if (!strcmp(fn, "power_off")) herunterfahren->execute();
+  else if (!strcmp(fn, "touchpad")) touchpad::oeffnen();
+  else if (!strcmp(fn, "maus_tastatur")) {   // 2026-10-17: Touchpad <-> Tastatur, sonst das Touchpad
+    if (cur_page->value() == 51) { kbd_popup_mode->value() = 1; kbd_popup_zeigen->execute(); }
+    else touchpad::oeffnen();
+  }
+  else if (!strcmp(fn, "dock_anzeige")) { popup_seite->value() = -1; seite_zeigen(page_dock, LV_SCR_LOAD_ANIM_FADE_IN); }
   else if (!strcmp(fn, "keymode")) { if (cur_page->value() == 98) mn->tastenmodus(-1); }
   else if (!strcmp(fn, "popup_close")) { if (popup_seite->value() >= 0 && popup_seite->value() == cur_page->value()) popup_schliessen->execute(); }
   else ESP_LOGW("tasten", "Unbekannte Funktion '%s'", fn);
@@ -374,30 +494,39 @@ inline void intern(const char *fn, int arg, const Ctx &c) {
 
 
 // Eingebaute Seiten, die im konfigurierbaren Menue als "Spezialseite" eingehaengt werden koennen.
-// Name (wie im Panel) -> LVGL-Seite und cur_page-Nummer. Vorbereitungen wie beim Antippen im alten Menue.
+// Name (wie im Panel) -> LVGL-Seite und cur_page-Nummer.
 struct Spezial { const char *name; lvgl::LvPageType *seite; int nr; };
-inline int spezial_zeigen(const std::string &n) {
-  // Seit 2026-10-06 nur noch Funktionsseiten - die Navigationsseiten des alten Menues (Raeume, Geraete,
-  // SmartHome, Einstellungen-Uebersicht, Apps, Musik, Aktivitaeten, Kameras) gibt es nicht mehr.
-  const Spezial T[] = {
-    {"streamer", page_streamer, 32}, {"tablet", page_tablet, 33}, {"tv", page_tv, 18},
-    {"bildmodus", page_bildmodus, 40}, {"akku", page_akku, 43}, {"ble", page_ble, 10}, {"media", page_media, 6},
-    {"music_group", page_music_group, 30}, {"voice_set", page_voice_set, 13}, {"bright", page_bright, 22},
-    {"power", page_power, 27}, {"show", page_show, 23}, {"service", page_service, 14},
-    {"sleeptimer", page_sleeptimer, 12}, {"keyboard", page_keyboard, 41}, {"sd", page_sd, 42},
-    {"speaker", page_bildmodus, 40}, {"ziffern", page_keyboard, 41}, {"tastatur", page_keyboard, 41},
-    {"cam_view", page_cam_view, 37}, {"cam_live", page_cam_live, 38}, {"sd_menu", page_dyn, 99},
+inline const std::vector<Spezial> &spezial_tabelle() {
+  static const std::vector<Spezial> T = {
+    {"media", page_media, 6}, {"ble", page_ble, 10}, {"voice_set", page_voice_set, 13}, {"service", page_service, 14},
+    {"bright", page_bright, 22}, {"show", page_show, 23}, {"power", page_power, 27}, {"cam_view", page_cam_view, 37},
+    {"cam_live", page_cam_live, 38}, {"keyboard", page_keyboard, 41}, {"ziffern", page_keyboard, 41},
+    {"tastatur", page_keyboard, 41}, {"sd", page_sd, 42}, {"akku", page_akku, 43},
+    {"dock", page_dock, 50}, {"touchpad", page_maus, 51}, {"extras", page_extras, 44}, {"gesten", page_gesten, 45},
   };
-
-  for (const auto &s : T) {
+  return T;
+}
+// Name der eingebauten Seite mit dieser cur_page-Nummer (nullptr = keine Spezialseite)
+inline const char *spezial_name(int nr) {
+  for (const auto &s : spezial_tabelle()) if (s.nr == nr) return s.name;
+  return nullptr;
+}
+inline void seite_zeigen(lvgl::LvPageType *seite, lv_screen_load_anim_t anim) {
+  seite->get_parent()->show_page(seite->index, anim, 150);
+}
+// Menueseite zeigen (page_konfig) mit Aufbau-Animation: Kopfzeile, dann die Karten
+inline void menue_zeigen() {
+  seite_zeigen(page_konfig, LV_SCR_LOAD_ANIM_OVER_TOP);
+  kopf_anim(lv_obj_get_parent(konf_back), konf_back);
+  mn->einblenden(600);
+}
+inline int spezial_zeigen(const std::string &n) {
+  for (const auto &s : spezial_tabelle()) {
     if (n != s.name) continue;
-    // wie beim Oeffnen aus dem alten Menue
-    if (s.nr == 15) apps_from_home->value() = false;
-    if (s.nr == 6) media_from->value() = 3;
-    if (s.nr == 40) { bm_popup->value() = false; sel_art->value() = (n == "speaker") ? 1 : 0; }
+    if (s.nr == 6) media_from->value() = 3;   // Media-Seite aus dem Menue: zaehlt als Menueseite
     if (s.nr == 41) { kbd_popup->value() = false; if (n == "ziffern") kbd_mode->value() = 0; if (n == "tastatur") kbd_mode->value() = 1; }
     popup_seite->value() = -1;
-    s.seite->get_parent()->show_page(s.seite->index, LV_SCR_LOAD_ANIM_MOVE_LEFT, 150);
+    seite_zeigen(s.seite, LV_SCR_LOAD_ANIM_MOVE_LEFT);
     return s.nr;
   }
   ESP_LOGW("menue", "Unbekannte Spezialseite '%s'", n.c_str());
@@ -408,6 +537,56 @@ inline int spezial_zeigen(const std::string &n) {
 // (lv_layer_top), wie beim Firmware-Update. phase 1 beginnt, 2 laeuft, 3 uebernommen, 4 Fehler.
 struct KonfigKarte { lv_obj_t *karte{nullptr}, *balken{nullptr}, *zeile{nullptr}; uint32_t gen{0}; };
 inline KonfigKarte &konfig_karte() { static KonfigKarte k; return k; }
+// Folgemodus (cfg.modi): kleine Leiste oben mit Namen und ablaufender Zeit; ms = 0 blendet sie aus.
+// Bei dunklem Display nichts zeigen (der Modus selbst gilt trotzdem).
+inline void modus_anzeige(const char *name, uint32_t ms) {
+  static lv_obj_t *pille = nullptr, *text = nullptr, *balken = nullptr;
+  if (ms == 0 || disp_off->value()) {
+    if (pille != nullptr) lv_obj_add_flag(pille, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (pille == nullptr) {
+    pille = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(pille);
+    lv_obj_set_size(pille, 200, 34);
+    lv_obj_align(pille, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_set_style_bg_color(pille, lv_color_hex(0x1A1F27), 0);
+    lv_obj_set_style_bg_opa(pille, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(pille, 17, 0);
+    lv_obj_set_style_border_width(pille, 2, 0);
+    lv_obj_set_style_border_color(pille, lv_color_hex(0x3B82F6), 0);
+    lv_obj_set_style_clip_corner(pille, true, 0);
+    lv_obj_clear_flag(pille, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(pille, LV_OBJ_FLAG_CLICKABLE);
+    text = lv_label_create(pille);
+    lv_obj_set_style_text_font(text, a15->get_lv_font(), 0);
+    lv_obj_set_style_text_color(text, lv_color_hex(0xF1F3F5), 0);
+    lv_label_set_long_mode(text, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(text, 180);
+    lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(text, LV_ALIGN_CENTER, 0, -2);
+    balken = lv_bar_create(pille);
+    lv_obj_set_size(balken, 200, 3);
+    lv_obj_align(balken, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_bar_set_range(balken, 0, 1000);
+    lv_obj_set_style_bg_opa(balken, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(balken, lv_color_hex(0x3B82F6), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(balken, 0, LV_PART_INDICATOR);
+  }
+  lv_label_set_text(text, name);
+  lv_obj_clear_flag(pille, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(pille);
+  // Restzeit als schrumpfender Balken
+  lv_anim_del(balken, nullptr);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, balken);
+  lv_anim_set_values(&a, 1000, 0);
+  lv_anim_set_time(&a, ms);
+  lv_anim_set_exec_cb(&a, [](void *o, int32_t v) { lv_bar_set_value((lv_obj_t *) o, v, LV_ANIM_OFF); });
+  lv_anim_start(&a);
+}
+
 inline void konfig_anzeige(int phase, int pct, const char *text) {
   KonfigKarte &K = konfig_karte();
   lv_obj_t *&karte = K.karte, *&balken = K.balken, *&zeile = K.zeile;
@@ -470,12 +649,11 @@ inline void konfig_anzeige(int phase, int pct, const char *text) {
   }
 }
 
-// Startseite (2026-10-04): Bereiche aus dem Konfigurator ins Raster 6 x 8 (40-px-Zellen, Displaykoordinaten)
-// legen. Ohne eigenen Aufbau bleibt alles exakt wie in apply_home_layout gesetzt.
+// Startseite: Bereiche aus dem Konfigurator ins Raster 6 x 8 (40-px-Zellen, Displaykoordinaten) legen.
+// Ohne eigenen Aufbau bleibt alles exakt wie in apply_home_layout gesetzt.
 inline void startseite_anwenden() {
   auto *t = tk_cfg;
   // Erst die eingebaute Anordnung (Werte wie im YAML von page_home) - falls vorher eine eigene galt
-  lv_obj_align(cam_grid, LV_ALIGN_TOP_MID, 0, 28); lv_obj_set_size(cam_grid, 228, 114);
   lv_obj_align(menu_home_btn, LV_ALIGN_BOTTOM_MID, -54, -46); lv_obj_set_size(menu_home_btn, 104, 44);
   lv_obj_align(app_home_btn, LV_ALIGN_BOTTOM_MID, 54, -46); lv_obj_set_size(app_home_btn, 104, 44);
   lv_obj_align(home_dock, LV_ALIGN_BOTTOM_MID, 0, 12); lv_obj_set_size(home_dock, 240, 50);
@@ -486,7 +664,7 @@ inline void startseite_anwenden() {
   // Bereich in Pixel (Seitenkoordinaten), 2 px Rand je Zelle
   struct R { int x, y, w, h; };
   auto px = [&](int x, int y, int w, int h) { return R{x * 40 + 2 - pl, y * 40 + 2 - pt, w * 40 - 4, h * 40 - 4}; };
-  // Objekt mittig in einen Bereich legen, hoechstens mw x mh gross (Cover/Kamerabild haben feste Groessen)
+  // Objekt mittig in einen Bereich legen, hoechstens mw x mh gross (das Cover hat eine feste Groesse)
   auto mittig = [](lv_obj_t *o, R r, int mw, int mh) {
     const int w = std::min(r.w, mw), h = std::min(r.h, mh);
     lv_obj_set_align(o, LV_ALIGN_TOP_LEFT);
@@ -516,19 +694,7 @@ inline void startseite_anwenden() {
   }
   if (t->home_bereich("medien", x, y, w, h, an)) {
     zeig(home_player_btn, an);
-    if (!an) lv_obj_add_flag(cam_grid, LV_OBJ_FLAG_HIDDEN);
-    else if (!std_stelle(x, y, w, h, 0, 1, 6, 5)) {
-      const R r = px(x, y, w, h);
-      if (home_cams_visible->value() && h >= 4) {
-        // Kameras oben (hoechstens 228 x 114 wie Standard), kompakte Karte (216 x 56) unten
-        mittig(cam_grid, R{r.x, r.y, r.w, r.h - 60}, 228, 114);
-        mittig(home_player_btn, R{r.x, r.y + r.h - 56, r.w, 56}, 216, 56);
-      } else {
-        lv_obj_add_flag(cam_grid, LV_OBJ_FLAG_HIDDEN);
-        // Grosse Karte: Cover ist fest 216 x 172 - Karte nie groesser, mittig im Bereich
-        mittig(home_player_btn, r, 216, home_cams_visible->value() ? 56 : 172);
-      }
-    }
+    if (an && !std_stelle(x, y, w, h, 0, 1, 6, 5)) mittig(home_player_btn, px(x, y, w, h), 216, 172);   // Cover fest 216 x 172
   }
 }
 
@@ -558,7 +724,23 @@ inline void einrichten() {
     if (mn->ist_popup() && mn->popup_seite() == s) menue_popup_zu();
     else if (popup_min->value() == 98 && mn->popup_seite() == s) popup_min->value() = -1;
   };
+  // Popup mit eingebautem Inhalt (2026-10-13): Tastatur. Ausloeser-Wert "zahlen" = Ziffernblock, sonst Buchstaben.
+  mn->inhalt_auf = [](const std::string &inhalt, const std::string &wert, bool wecken) {
+    if (inhalt != "tastatur") return;
+    kbd_streamer_offen->value() = true;
+    kbd_popup_mode->value() = wert == "zahlen" ? 0 : 1;
+    if (wecken) wake_backlight->execute();
+    // Per Menue-Taste weggelegt: nicht ungefragt wieder aufdraengen (die Menue-Taste holt es)
+    if (cur_page->value() != 41 && !kbd_popup_zu->value()) kbd_popup_zeigen->execute();
+  };
+  mn->inhalt_zu = [](const std::string &inhalt) {
+    if (inhalt != "tastatur") return;
+    kbd_streamer_offen->value() = false;
+    kbd_popup_zu->value() = false;
+    if (cur_page->value() == 41 && kbd_popup->value()) kbd_popup_weg->execute();   // selbst geoeffnete Tastatur bleibt
+  };
   t->anzeige = [](int phase, int pct, const char *text) { konfig_anzeige(phase, pct, text); };
+  t->modus_anzeige = [](const char *name, uint32_t ms) { modus_anzeige(name, ms); };
   // Neue Konfiguration: Aktivitaetsleiste neu aufbauen (Namen/Anzahl koennen sich geaendert haben)
   t->bei_neuer_konfig([]() {
     // Gleiches Geraet (Platz) wie vorher aktiv lassen, auch wenn die Aktivitaeten umsortiert wurden
@@ -576,10 +758,10 @@ inline void einrichten() {
   };
 }
 
-// Aus on_key. true = verarbeitet (die eingebaute Logik wird uebersprungen).
+// Aus on_key. true = von der Belegung verarbeitet; false = Navigation auf den Seiten der Remote.
 inline bool ereignis(int keycode, bool pressed) {
   auto *t = tk_cfg;
-  // Tasten-Test und SD-Menue behalten ihre eigene Logik; auf Menueseiten gehoeren
+  // Der Tasten-Test behaelt seine eigene Logik; auf Menueseiten gehoeren
   // D-Pad/OK/Zurueck der Navigation.
   const int p = cur_page->value();
   // Menueseite: Halte-Knoepfe per OK und der Tastenmodus (D-Pad steuert z. B. die Kamera) zuerst
@@ -587,13 +769,18 @@ inline bool ereignis(int keycode, bool pressed) {
   // Display dunkel (und bleibt es): Menue nicht steuern, sondern wie auf der Startseite das Geraet der Aktivitaet
   // (2026-10-07) - sobald das Display an ist, gehoert das Steuerkreuz wieder dem Menue.
   const bool dunkel = key_was_dark->value() && disp_off->value();
-  const bool darf = t->aktiv() && !button_test_mode->value() && p != 99 && !(p != 0 && !dunkel && nav_taste(keycode));
+  // Touchpad: Steuerkreuz/OK/Zurueck/Kanal steuern die Maus (Einstellung "Steuerkreuz als Maus")
+  if (p == 51 && !dunkel && !button_test_mode->value() && touchpad::taste(keycode, pressed)) { if (pressed) held_key->value() = 0; return true; }
+  // Tasten eines laufenden Folgemodus gehoeren ihm auch auf den Menueseiten
+  const bool darf = t->aktiv() && !button_test_mode->value() &&
+                    (t->modus_taste(keycode) || !(p != 0 && p != 50 && p != 51 && !dunkel && nav_taste(keycode)));
+  // Dock-Anzeige (50) und Touchpad (51): Tasten wie auf der Startseite (2026-10-17)
   const bool r = t->ereignis(keycode, pressed, activity->value(), key_was_dark->value(), darf);
   if (r && pressed) held_key->value() = 0;
   return r;
 }
 
-// Weck-Regel: die Taste mit Menue-/Display-Funktion weckt; ohne Belegung wie bisher 31.
+// Weck-Regel: die Taste mit Menue-/Display-Funktion weckt; ohne Belegung die Menuetaste (31).
 inline bool weckt(int keycode) {
   auto *t = tk_cfg;
   if (!t->aktiv()) return keycode == 31;

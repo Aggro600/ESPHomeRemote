@@ -1,6 +1,6 @@
 #include "menue.h"
 #include "esphome/components/tasten_konfig/tasten_konfig.h"
-#include "esphome/components/menu_ui/mdi_icons.h"
+#include "mdi_icons.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #ifdef USE_API
@@ -41,6 +41,12 @@ static void rueckrufe_leeren_() {
 }
 
 
+// Weiches Auslaufen (ease-out cubic) fuer Einblendungen: 1 - (1 - t)^3, Werte 0..1024
+static int32_t ease_out_kubisch(const lv_anim_t *an) {
+  const int64_t r = 1024 - (lv_anim_path_linear(an) - an->start_value);
+  return an->start_value + (int32_t) (1024 - r * r * r / (1024 * 1024));
+}
+
 // Deckkraft der Scrollleiste (Ausblende-Animation)
 static void leiste_opa_(void *o, int32_t v) { lv_obj_set_style_bg_opa((lv_obj_t *) o, (lv_opa_t) v, LV_PART_SCROLLBAR); }
 
@@ -62,7 +68,7 @@ static Typ typ_von(const char *t) {
 const char *Menue::icon_(const char *name) {
   static char buf[5];
   if (name == nullptr || *name == 0) return nullptr;
-  for (const auto &e : menu_ui::MDI_ICONS) {
+  for (const auto &e : MDI_ICONS) {
     if (strcmp(e.name, name) != 0) continue;
     const uint32_t cp = e.cp;  // 4-Byte-UTF-8 (alle MDI-Glyphen liegen > 0xFFFF)
     buf[0] = (char) (0xF0 | (cp >> 18));
@@ -111,11 +117,8 @@ int Menue::seite_index_(const std::string &id) const {
 
 void Menue::laden_() {
   seiten_.clear();
-  gen_ = tk_->generation();
   JsonObjectConst m = tk_->wurzel()["menu"];
-  // Seit 2026-10-04 ersetzt das Konfigurator-Menue das eingebaute immer (kein Umschalter mehr).
-  // Ohne geladene Konfiguration bleibt das eingebaute Menue als Rueckfall.
-  an_ = !m.isNull() && m["pages"].size() > 0;
+  an_ = !m.isNull() && m["pages"].size() > 0;   // ohne Konfiguration gibt es kein Menue
   if (m.isNull()) return;
   for (JsonObjectConst p : m["pages"].as<JsonArrayConst>()) {
     const char *id = p["id"] | "";
@@ -123,27 +126,17 @@ void Menue::laden_() {
   }
   start_ = m["start"] | (seiten_.empty() ? "" : seiten_[0].id.c_str());
   if (seite_index_(start_) < 0 && !seiten_.empty()) start_ = seiten_[0].id.c_str();
-  // Zustaende aller Entitaeten abonnieren (einmal je Entitaet/Attribut)
+  // Zustaende der Popup-Ausloeser abonnieren (die Kacheln holen ihre Zustaende per HTTP, solange die Seite offen
+  // ist - abfrage_*). Neue Entitaeten bekommen ihren Zustand erst beim naechsten Verbinden mit HA: die Abo-Liste
+  // zur Laufzeit neu zu senden brachte HAs Einrichtung mitten im Verbindungsaufbau zum Scheitern (2026-10-03).
   for (auto &s : seiten_) {
-    for (JsonObjectConst it : s.j["items"].as<JsonArrayConst>()) {
-      const char *e = it["entity"] | "";
-      if (!*e) continue;
-      const Typ t = typ_von(it["t"] | "");
-      (void) t;  // Zustaende kommen per HTTP-Abfrage, solange die Seite offen ist (abfrage_*)
-    }
-    // Popup-Ausloeser dieser Seite
-    for (const char *art : {"open", "close"})
+    for (const char *art : {"open", "close", "if"})
       for (JsonObjectConst a : s.j["popup"][art].as<JsonArrayConst>()) {
         const char *e = a["entity"] | "";
         const char *at = a["attr"] | "";
         if (*e) abonnieren_(e, *at ? at : nullptr);
       }
   }
-  // Neue Entitaeten bekommen ihren Zustand erst beim naechsten Verbinden mit HA. Die Abo-Liste
-  // zur Laufzeit neu zu senden (on_subscribe_home_assistant_states_request) traf auch Verbindungen
-  // mitten im Aufbau und brachte HAs Einrichtung zum Scheitern (Timeout ListEntities, 2026-10-03).
-  if (abo_neu_) ESP_LOGI(TAG, "Neue Entitaeten im Menue - ihr Zustand kommt mit der naechsten HA-Verbindung");
-  abo_neu_ = false;
   ESP_LOGI(TAG, "Menue: %u Seiten, Start '%s', %s", (unsigned) seiten_.size(), start_.c_str(), an_ ? "AN" : "aus");
 }
 
@@ -170,7 +163,6 @@ void Menue::abonnieren_(const std::string &entity, const char *attr) {
         if (bekannt.insert(entity + "|" + a).second) return;
         ausloeser_(entity, a, alt, s.str());
       });
-  abo_neu_ = true;
 #endif
 }
 
@@ -184,35 +176,91 @@ void Menue::ausloeser_(const std::string &entity, const std::string &attr, const
       return entity == (a["entity"] | "") && attr == (a["attr"] | "") && strcasecmp(neu.c_str(), a["to"] | "") == 0;
     };
     for (JsonObjectConst a : pp["close"].as<JsonArrayConst>())
-      if (passt(a)) {
-        ESP_LOGI(TAG, "Popup '%s' schliessen (%s -> %s)", s.id.c_str(), entity.c_str(), neu.c_str());
-        if (popup_zu) popup_zu(s.id.c_str());
-      }
+      if (passt(a)) { ESP_LOGI(TAG, "Popup '%s' schliessen (%s -> %s)", s.id.c_str(), entity.c_str(), neu.c_str()); popup_ausloesen_(s, false, neu); break; }
     for (JsonObjectConst a : pp["open"].as<JsonArrayConst>())
-      if (passt(a)) {
-        ESP_LOGI(TAG, "Popup '%s' oeffnen (%s -> %s)", s.id.c_str(), entity.c_str(), neu.c_str());
-        if (popup_auf) popup_auf(s.id.c_str(), pp["wake"] | true);
-        const uint32_t sek = pp["timeout"] | 0;
-        if (sek > 0) {
-          const std::string id = s.id.c_str();
-          set_timeout("popup_zeit", sek * 1000, [this, id]() { if (popup_ && popup_id_ == id && popup_zu) popup_zu(id); });
-        } else {
-          cancel_timeout("popup_zeit");
-        }
-        break;
-      }
+      if (passt(a)) { ESP_LOGI(TAG, "Popup '%s' oeffnen (%s -> %s)", s.id.c_str(), entity.c_str(), neu.c_str()); popup_ausloesen_(s, true, neu); break; }
+  }
+}
+
+void Menue::ereignis(const std::string &art, const std::string &wert) {
+  for (auto &s : seiten_) {
+    JsonObjectConst pp = s.j["popup"];
+    if (pp.isNull()) continue;
+    auto passt = [&](JsonObjectConst a) { return art == (a["ev"] | "") && strcasecmp(wert.c_str(), a["to"] | "") == 0; };
+    for (JsonObjectConst a : pp["close"].as<JsonArrayConst>())
+      if (passt(a)) { popup_ausloesen_(s, false, wert); break; }
+    for (JsonObjectConst a : pp["open"].as<JsonArrayConst>())
+      if (passt(a)) { ESP_LOGI(TAG, "Popup '%s' oeffnen (Ereignis %s = %s)", s.id.c_str(), art.c_str(), wert.c_str()); popup_ausloesen_(s, true, wert); break; }
+  }
+}
+
+// "Nur wenn" (2026-10-13): alle Bedingungen muessen gelten, Werte aus den abonnierten Zustaenden
+bool Menue::bedingungen_ok_(JsonObjectConst pp) {
+  for (JsonObjectConst c : pp["if"].as<JsonArrayConst>()) {
+    const char *e = c["entity"] | "", *at = c["attr"] | "";
+    std::string ist;
+    auto f = zustand_cache_.find(PStr(e));
+    if (f != zustand_cache_.end()) {
+      if (!*at) ist = f->second.state.c_str();
+      else { auto g = f->second.attr.find(PStr(at)); if (g != f->second.attr.end()) ist = g->second.c_str(); }
+    }
+    bool gleich = strcasecmp(ist.c_str(), c["to"] | "") == 0;
+    if (c["neg"] | false) gleich = !gleich;
+    if (!gleich) { ESP_LOGI(TAG, "Bedingung %s%s%s nicht erfuellt (ist '%s')", e, *at ? "." : "", at, ist.c_str()); return false; }
+  }
+  return true;
+}
+
+bool Menue::exklusiv_offen_(const std::string &ausser) const {
+  if (!popup_ || popup_id_ == ausser || root_ == nullptr || lv_screen_active() != lv_obj_get_screen(root_)) return false;
+  const int si = seite_index_(popup_id_);
+  return si >= 0 && (seiten_[si].j["popup"]["excl"] | false);
+}
+
+void Menue::popup_ausloesen_(const Seite &s, bool auf, const std::string &wert) {
+  JsonObjectConst pp = s.j["popup"];
+  const std::string id = s.id.c_str(), inhalt = s.j["inhalt"] | "";
+  if (!auf) {
+    for (size_t i = 0; i < warten_.size(); i++)   // wartet es noch: erledigt
+      if (warten_[i].first == id) { warten_.erase(warten_.begin() + i); break; }
+    if (!inhalt.empty()) { if (inhalt_zu) inhalt_zu(inhalt); }
+    else if (popup_zu) popup_zu(id);
+    return;
+  }
+  if (!bedingungen_ok_(pp)) return;
+  if (exklusiv_offen_(id)) {
+    ESP_LOGI(TAG, "Popup '%s' wartet: '%s' ist offen und laesst nichts darueber", id.c_str(), popup_id_.c_str());
+    for (auto &w : warten_) if (w.first == id) { w.second = wert; return; }
+    warten_.push_back({id, wert});
+    return;
+  }
+  const bool wecken = pp["wake"] | true;
+  if (!inhalt.empty()) { if (inhalt_auf) inhalt_auf(inhalt, wert, wecken); }
+  else if (popup_auf) popup_auf(id, wecken);
+  const uint32_t sek = pp["timeout"] | 0;
+  if (sek > 0) {
+    set_timeout("popup_zeit", sek * 1000, [this, id, inhalt]() {
+      if (!inhalt.empty()) { if (inhalt_zu) inhalt_zu(inhalt); }
+      else if (popup_ && popup_id_ == id && popup_zu) popup_zu(id);
+    });
+  } else {
+    cancel_timeout("popup_zeit");
   }
 }
 
 // ------------------------------------------------------------------ Zustaende per HTTP
 
 void Menue::loop() {
-  if (mess_ms_ != 0 && ++mess_runden_ >= 2) {
-    char b[200];
-    snprintf(b, sizeof(b), "%s, danach bis zur 2. Runde %u ms", mess_b_, (unsigned) (millis() - mess_ms_));
-    mess_ms_ = 0;
-    ESP_LOGD(TAG, "%s", b);
-    if (diag) diag(b);
+  // Wartende Popups: sobald das exklusive zu ist (kurz danach, nach der Schliess-Animation) das naechste oeffnen
+  if (!warten_.empty()) {
+    if (exklusiv_offen_("")) warten_ab_ = millis();
+    else if (millis() - warten_ab_ > 600) {
+      const auto w = warten_.front();
+      warten_.erase(warten_.begin());
+      const int si = seite_index_(w.first);
+      if (si >= 0) { ESP_LOGI(TAG, "Wartendes Popup '%s' oeffnen", w.first.c_str()); popup_ausloesen_(seiten_[si], true, w.second); }
+      warten_ab_ = millis();
+    }
   }
   bau_weiter_();
   if (leiste_bis_ != 0 && (int32_t) (millis() - leiste_bis_) >= 0 && root_ != nullptr) {
@@ -354,21 +402,63 @@ void Menue::oeffnen(bool merken) {
 
 // Karten nacheinander von oben nach unten einblenden (2026-10-13, Nutzerwunsch "edel wie Apple"): jede Karte
 // gleitet 12 px von unten hoch und blendet dabei weich auf; Zeilen im Abstand von 60 ms, Karten derselben
-// Zeile 25 ms versetzt. ab = Start (ms) nach dem Aufruf, z. B. nach der Kopf-Animation.
-void Menue::einblenden(uint32_t ab, uint32_t zeitlupe) {
+// Zeile 5 ms versetzt. ab = Start (ms) nach dem Aufruf, z. B. nach der Kopf-Animation.
+void Menue::einblenden(uint32_t ab) {
   einbl_t0_ = millis();
   einbl_ab_ = ab;
-  einbl_zl_ = std::max<uint32_t>(1, zeitlupe);
-  einbl_bis_ = einbl_t0_ + (ab + 1500) * einbl_zl_;   // spaeter (in Haeppchen) gebaute Karten blenden mit ein
+  einbl_bis_ = einbl_t0_ + (ab + 1500) * zeitlupe;   // spaeter (in Haeppchen) gebaute Karten blenden mit ein
   for (auto &it : items_) einbl_item_(it);
+  titel_einbl_();   // Titel erscheint wie die Karten (Nutzerwunsch 2026-10-13: nicht einfliegen)
+}
+
+// Titel wie eine Karte der ersten Zeile einblenden: weich aufblenden, 12 px von unten. Die Kopfzeile verschiebt
+// den Titel selbst per translate_y (mittig zum Knopf) - darauf aufsetzen und am Ende wiederherstellen.
+void Menue::titel_einbl_() {
+  if (titel_ == nullptr) return;
+  titel_weg_();
+  lv_anim_delete(titel_, nullptr);
+  titel_ty_ = lv_obj_get_style_translate_y(titel_, LV_PART_MAIN);
+  titel_menue_ = this;
+  lv_obj_set_style_opa(titel_, LV_OPA_TRANSP, 0);
+  if (zurueck_lbl_ != nullptr) lv_obj_set_style_opa(zurueck_lbl_, LV_OPA_TRANSP, 0);   // X kommt mit dem Titel
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, titel_);
+  lv_anim_set_delay(&a, einbl_ab_ * zeitlupe);
+  lv_anim_set_duration(&a, 380 * zeitlupe);
+  lv_anim_set_values(&a, 0, 1024);
+  lv_anim_set_path_cb(&a, ease_out_kubisch);
+  lv_anim_set_exec_cb(&a, [](void *v, int32_t p) {
+    lv_obj_set_style_opa((lv_obj_t *) v, (lv_opa_t) std::min<int32_t>(255, p * 255 * 3 / 2048), 0);
+    lv_obj_set_style_translate_y((lv_obj_t *) v, titel_menue_->titel_ty_ + 12 - 12 * p / 1024, 0);
+    if (lv_obj_t *x = titel_menue_->zurueck_lbl_) {
+      lv_obj_set_style_opa(x, (lv_opa_t) std::min<int32_t>(255, p * 255 * 3 / 2048), 0);
+      lv_obj_set_style_translate_y(x, 12 - 12 * p / 1024, 0);
+    }
+  });
+  lv_anim_set_completed_cb(&a, [](lv_anim_t *an) {
+    lv_obj_remove_local_style_prop((lv_obj_t *) an->var, LV_STYLE_OPA, 0);
+    lv_obj_set_style_translate_y((lv_obj_t *) an->var, titel_menue_->titel_ty_, 0);
+    if (lv_obj_t *x = titel_menue_->zurueck_lbl_) {
+      lv_obj_remove_local_style_prop(x, LV_STYLE_OPA, 0);
+      lv_obj_remove_local_style_prop(x, LV_STYLE_TRANSLATE_Y, 0);
+    }
+  });
+  lv_anim_start(&a);
 }
 
 void Menue::einbl_item_(Item &it) {
   static const int HUB = 12;
   lv_obj_t *o = it.obj;
   if (o == nullptr) return;
+  // Welle ab der obersten sichtbaren Zeile (2026-10-14): wer unten weitermacht, wartete sonst, bis die Welle
+  // unsichtbar durch alle Zeilen darueber gelaufen war. Karten ausserhalb des Bildes kommen ohne Animation.
+  const int z0 = std::max<int>(0, (lv_obj_get_scroll_y(root_) - RAND_O) / ZEILE);
+  const int z1 = z0 + lv_obj_get_height(root_) / ZEILE + 1;
+  if (it.y + it.h <= z0 || it.y > z1) return;
   // Zeitpunkt aus der Rasterzeile: Zeilen 60 ms auseinander, Karten derselben Zeile leicht versetzt
-  const uint32_t ziel = einbl_t0_ + (einbl_ab_ + it.y * 60 + it.x * 5) * einbl_zl_;
+  // Karten erst nach X und Titel (die kommen zum Zeitpunkt ab, Nutzerwunsch 2026-10-13)
+  const uint32_t ziel = einbl_t0_ + (einbl_ab_ + 250 + std::max(0, it.y - z0) * 60 + it.x * 5) * zeitlupe;
   const uint32_t jetzt = millis();
   lv_anim_delete(o, nullptr);
   lv_obj_set_style_opa(o, LV_OPA_TRANSP, 0);
@@ -377,13 +467,9 @@ void Menue::einbl_item_(Item &it) {
   lv_anim_init(&a);
   lv_anim_set_var(&a, o);
   lv_anim_set_delay(&a, (int32_t) (ziel - jetzt) > 0 ? ziel - jetzt : 0);
-  lv_anim_set_duration(&a, 380 * einbl_zl_);
+  lv_anim_set_duration(&a, 380 * zeitlupe);
   lv_anim_set_values(&a, 0, 1024);
-  lv_anim_set_path_cb(&a, [](const lv_anim_t *an) -> int32_t {
-    // weiches Auslaufen (ease-out cubic): 1 - (1 - t)^3, t in 0..1024
-    const int64_t r = 1024 - (lv_anim_path_linear(an) - an->start_value);
-    return an->start_value + (int32_t) (1024 - r * r * r / (1024 * 1024));
-  });
+  lv_anim_set_path_cb(&a, ease_out_kubisch);
   lv_anim_set_exec_cb(&a, [](void *v, int32_t p) {
     lv_obj_t *o = (lv_obj_t *) v;
     lv_obj_set_style_opa(o, (lv_opa_t) std::min<int32_t>(255, p * 255 * 3 / 2048), 0);   // Deckkraft etwas frueher voll
@@ -397,6 +483,149 @@ void Menue::einbl_item_(Item &it) {
   lv_anim_start(&a);
 }
 
+// Laufendes Rutschen sofort beenden: alte Karten loeschen, Inhalt wieder an seinen Platz
+void Menue::alt_weg_() {
+  lv_anim_delete(this, nullptr);
+  if (alt_ != nullptr) { lv_obj_delete(alt_); alt_ = nullptr; }
+  if (root_ != nullptr) lv_obj_remove_local_style_prop(root_, LV_STYLE_TRANSLATE_X, 0);
+}
+
+// Karten der aktuellen Seite in einen eigenen Behaelter an derselben Stelle umhaengen (gleicher Scrollstand),
+// damit sie noch wegrutschen koennen, waehrend root_ schon die neue Seite aufbaut. Nicht mehr bedienbar.
+lv_obj_t *Menue::alt_abheben_() {
+  alt_weg_();
+  if (root_ == nullptr || lv_obj_get_child_count(root_) == 0) return nullptr;
+  const int32_t sy = lv_obj_get_scroll_y(root_);
+  lv_obj_t *alt = lv_obj_create(lv_obj_get_parent(root_));
+  lv_obj_remove_style_all(alt);
+  lv_obj_set_pos(alt, lv_obj_get_x(root_), lv_obj_get_y(root_));
+  lv_obj_set_size(alt, lv_obj_get_width(root_), lv_obj_get_height(root_));
+  lv_obj_set_style_pad_bottom(alt, lv_obj_get_style_pad_bottom(root_, LV_PART_MAIN), 0);
+  lv_obj_set_scrollbar_mode(alt, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_remove_flag(alt, LV_OBJ_FLAG_CLICKABLE);
+  while (lv_obj_get_child_count(root_) > 0) lv_obj_set_parent(lv_obj_get_child(root_, 0), alt);
+  lv_obj_tree_walk(alt, [](lv_obj_t *o, void *) {
+    lv_obj_remove_flag(o, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    return LV_OBJ_TREE_WALK_NEXT;
+  }, nullptr);
+  lv_obj_add_flag(alt, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_update_layout(alt);
+  lv_obj_scroll_to_y(alt, sy, LV_ANIM_OFF);
+  lv_obj_remove_flag(alt, LV_OBJ_FLAG_SCROLLABLE);   // Wischen waehrend des Rutschens geht an root_
+  return alt;
+}
+
+void Menue::titel_weg_() {
+  if (titel_ != nullptr && lv_anim_get(titel_, nullptr) != nullptr) {   // Einblendung beim Oeffnen: sofort fertig
+    lv_anim_delete(titel_, nullptr);
+    lv_obj_set_style_translate_y(titel_, titel_ty_, 0);
+    if (zurueck_lbl_ != nullptr) {
+      lv_obj_remove_local_style_prop(zurueck_lbl_, LV_STYLE_OPA, 0);
+      lv_obj_remove_local_style_prop(zurueck_lbl_, LV_STYLE_TRANSLATE_Y, 0);
+    }
+  }
+  if (titel_fenster_ != nullptr) { lv_obj_delete(titel_fenster_); titel_fenster_ = nullptr; }   // loescht auch die Animation
+  if (titel_ != nullptr) lv_obj_remove_local_style_prop(titel_, LV_STYLE_OPA, 0);
+}
+
+void Menue::titel_anim_(int r, uint32_t verz) {
+  if (titel_ == nullptr || zurueck_btn_ == nullptr) return;
+  titel_weg_();
+  lv_obj_t *hd = lv_obj_get_parent(titel_);
+  lv_obj_update_layout(hd);
+  lv_area_t k, t, b, in;
+  lv_obj_get_coords(hd, &k);
+  lv_obj_get_coords(titel_, &t);
+  lv_obj_get_coords(zurueck_btn_, &b);   // mit Verschiebung (translate) ins blaue Feld
+  lv_obj_get_content_coords(hd, &in);
+  const int ab = b.x2 + 1 + 4;            // rechter Rand des blauen Felds (4 px Rand um den Knopf)
+  // Fenster: vom blauen Feld bis zum rechten Displayrand, ganze Kopfhoehe ueber der Linie; schneidet ab
+  lv_obj_t *f = lv_obj_create(hd);
+  lv_obj_remove_style_all(f);
+  lv_obj_add_flag(f, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_remove_flag(f, (lv_obj_flag_t) (LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  lv_obj_set_pos(f, ab - in.x1, k.y1 - in.y1);
+  lv_obj_set_size(f, k.x2 + 1 - ab, t.y2 + 1 - k.y1);
+  lv_obj_set_user_data(f, this);
+  titel_fenster_ = f;
+  titel_r_ = r;
+  titel_x0_ = t.x1 - ab;
+  titel_weit_ = lv_obj_get_width(lv_obj_get_screen(hd));
+  auto kopie = [&](const char *txt) {
+    lv_obj_t *l = lv_label_create(f);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_font(l, lv_obj_get_style_text_font(titel_, LV_PART_MAIN), 0);
+    lv_obj_set_style_text_color(l, lv_obj_get_style_text_color(titel_, LV_PART_MAIN), 0);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(l, t.x2 - t.x1 + 1, t.y2 - t.y1 + 1);
+    lv_obj_set_pos(l, titel_x0_, t.y1 - k.y1);
+    return l;
+  };
+  kopie(lv_label_get_text(titel_));                    // Kind 0: neuer Titel
+  if (!titel_alt_.empty()) kopie(titel_alt_.c_str());   // Kind 1: alter Titel
+  titel_alt_.clear();
+  lv_obj_set_style_opa(titel_, LV_OPA_TRANSP, 0);      // der echte Titel wartet unsichtbar
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, f);
+  lv_anim_set_delay(&a, verz);   // early_apply: neuer Titel sofort draussen
+  lv_anim_set_duration(&a, 260 * zeitlupe);
+  lv_anim_set_values(&a, 0, 1024);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+  lv_anim_set_exec_cb(&a, [](void *v, int32_t p) {
+    lv_obj_t *f = (lv_obj_t *) v;
+    auto *m = (Menue *) lv_obj_get_user_data(f);
+    const int32_t w = m->titel_weit_, r = m->titel_r_;
+    lv_obj_set_x(lv_obj_get_child(f, 0), m->titel_x0_ + r * w * (1024 - p) / 1024);
+    if (lv_obj_get_child_count(f) > 1) lv_obj_set_x(lv_obj_get_child(f, 1), m->titel_x0_ - r * w * p / 1024);
+  });
+  lv_anim_set_completed_cb(&a, [](lv_anim_t *an) {
+    auto *m = (Menue *) lv_obj_get_user_data((lv_obj_t *) an->var);
+    m->titel_ende_ = (lv_obj_t *) an->var;
+    lv_async_call([](void *v) {   // im naechsten Durchlauf - falls inzwischen kein neuer Wechsel kam
+      auto *m = (Menue *) v;
+      if (m->titel_fenster_ != nullptr && m->titel_fenster_ == m->titel_ende_) m->titel_weg_();
+    }, m);
+  });
+  lv_anim_start(&a);
+}
+
+void Menue::rutschen_(int r) {
+  titel_anim_(r, 0);
+  if (alt_ == nullptr || root_ == nullptr) return;
+  rutsch_ = r;   // nur fuer den exec-Rueckruf (Richtung); bauen_ ist schon durch
+  const int32_t W = lv_obj_get_width(root_);
+  lv_obj_set_style_translate_x(root_, r * W, 0);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, this);
+  lv_anim_set_duration(&a, 260 * zeitlupe);
+  lv_anim_set_values(&a, 0, W);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+  lv_anim_set_exec_cb(&a, [](void *v, int32_t x) {
+    auto *m = (Menue *) v;
+    const int32_t W = lv_obj_get_width(m->root_);
+    if (m->alt_) lv_obj_set_style_translate_x(m->alt_, -m->rutsch_ * x, 0);
+    lv_obj_set_style_translate_x(m->root_, m->rutsch_ * (W - x), 0);
+  });
+  lv_anim_set_completed_cb(&a, [](lv_anim_t *an) {
+    // nicht im Ablauf der Animation loeschen: erst im naechsten Durchlauf
+    lv_async_call([](void *v) {
+      auto *m = (Menue *) v;
+      if (lv_anim_get(m, nullptr) != nullptr) return;   // inzwischen schon der naechste Wechsel
+      if (m->alt_) { lv_obj_delete(m->alt_); m->alt_ = nullptr; }
+      if (m->root_) lv_obj_remove_local_style_prop(m->root_, LV_STYLE_TRANSLATE_X, 0);
+      m->rutsch_ = 0;
+    }, an->var);
+  });
+  lv_anim_start(&a);
+}
+
+void Menue::spezial_oeffnen(const std::string &name) {
+  einstieg_merken_ = true;
+  einstieg_ = spezial ? spezial(name) : -1;
+}
+
 void Menue::anzeigen() {
   if (!aktiv()) return;
   popup_ = false;
@@ -406,14 +635,17 @@ void Menue::anzeigen() {
 }
 
 bool Menue::zurueck() {
-  if (stapel_.size() <= 1) return false;
+  if (stapel_.size() <= 1 || zurueck_x_) return false;   // X: Menue schliessen statt eine Seite zurueck
   fokus_mem_.erase(PStr(stapel_.back().c_str()));  // verlassene Seite vergessen (wie die eingebauten Seiten)
   stapel_.pop_back();
+  rutsch_ = -1;
   bauen_();
+  rutschen_(-1);
   return true;
 }
 
 void Menue::verlassen() {
+  titel_weg_();
   if (popup_) { leeren_(); return; }  // Popup: Menue-Erinnerung nicht anfassen
   // Merken: bis zur tiefsten Seite mit "merken", sonst nichts
   gemerkt_.clear();
@@ -433,6 +665,7 @@ void Menue::leeren_() {
   if (halt_ >= 0) halten_(halt_, false);   // nie eine Bewegung "haengen" lassen
   tmodus_ = false;
   if (fokus_ == FOKUS_ZURUECK) fokus_setzen_(-1);
+  alt_weg_();
   if (root_ != nullptr) lv_obj_clean(root_);
   items_.clear();
   wartend_.clear();
@@ -540,13 +773,12 @@ void Menue::leiste_zeigen_() {
   leiste_bis_ = millis() + 900;
 }
 
+static int32_t farbe_von(const char *s);
+
 void Menue::bauen_(bool alles) {
   if (root_ == nullptr || stapel_.empty()) return;
-  ESP_LOGD("ram", "Seite '%s': intern frei %u, groesster Block %u", stapel_.back().c_str(),
-           (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
   const int si = seite_index_(stapel_.back());
   if (si < 0) return;
-  const int64_t t0 = esp_timer_get_time();
   einbl_bis_ = 0;   // neue Seite: keine Einblendung mehr (nur beim Oeffnen, einblenden())
   leiste_einrichten_();
   // X/Zurueck: LVGL merkt sich ein angetipptes Element als "fokussiert" (blauer Rahmen) - die Seite wird
@@ -555,14 +787,32 @@ void Menue::bauen_(bool alles) {
     lv_obj_remove_flag(zurueck_btn_, LV_OBJ_FLAG_CLICK_FOCUSABLE);
     lv_obj_remove_state(zurueck_btn_, (lv_state_t) (LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY));
   }
+  if (rutsch_ != 0 && titel_ != nullptr) titel_alt_ = lv_label_get_text(titel_);
+  lv_obj_t *alt = rutsch_ != 0 ? alt_abheben_() : nullptr;   // vor leeren_: Karten der alten Seite behalten
+  rutsch_ = 0;
   leeren_();
+  alt_ = alt;
   lv_anim_delete(root_, leiste_opa_);
   lv_obj_set_style_bg_opa(root_, LV_OPA_TRANSP, LV_PART_SCROLLBAR);
   leiste_bis_ = 0;
-  const int64_t t1 = esp_timer_get_time();
   const Seite &s = seiten_[si];
   if (titel_ != nullptr) lv_label_set_text(titel_, s.j["title"] | s.id.c_str());
-  if (zurueck_lbl_ != nullptr) lv_label_set_text(zurueck_lbl_, stapel_.size() <= 1 ? "X" : "<");
+  {
+    // Zurueck/X (2026-10-13): Symbol und Farbe pro Seite. bsym "x" = X (schliesst), "back" = <, sonst automatisch
+    const char *bs = s.j["bsym"] | "";
+    zurueck_x_ = !strcmp(bs, "x") || (!*bs && stapel_.size() <= 1);
+    if (zurueck_lbl_ != nullptr) lv_label_set_text(zurueck_lbl_, zurueck_x_ ? "X" : "<");
+    const int32_t bc = farbe_von(s.j["bc"] | "");
+    zurueck_bg_ = bc >= 0 ? (uint32_t) bc : C_RAHMEN_F;
+    if (zurueck_btn_ != nullptr && fokus_ != FOKUS_ZURUECK) {
+      lv_obj_set_style_bg_color(zurueck_btn_, lv_color_hex(zurueck_bg_), 0);
+      lv_obj_set_style_border_color(zurueck_btn_, lv_color_hex(zurueck_bg_), 0);
+    }
+  }
+  {
+    const int32_t bfc = farbe_von(s.j["bfc"] | "");   // Rahmen des markierten Zurueck/X (Konfigurator)
+    zurueck_fc_ = bfc >= 0 ? (uint32_t) bfc : 0xF1F3F5;
+  }
 
   const bool flow = s.j["flow"] | true;
   flow_ = flow;
@@ -596,7 +846,6 @@ void Menue::bauen_(bool alles) {
         if (g < 31) maske |= 1u << g;
       }
   if (maske && einst_auffrischen) einst_auffrischen(maske);
-  const int64_t t2 = esp_timer_get_time();
   for (JsonObjectConst j : arr) {
     Item it;
     it.j = j;
@@ -628,7 +877,6 @@ void Menue::bauen_(bool alles) {
       for (int c = it.x; c < it.x + it.w; c++) belegt[r] |= (1 << c);
     alle.push_back(it);
   }
-  const int64_t t3 = esp_timer_get_time();
   // Fokus: gemerkt oder erstes bedienbares Element (Index in der ganzen Liste)
   auto f = fokus_mem_.find(PStr(stapel_.back().c_str()));
   int start = (f != fokus_mem_.end() && f->second < (int) alle.size()) ? f->second : -1;
@@ -673,13 +921,12 @@ void Menue::bauen_(bool alles) {
   lv_obj_scroll_to_y(root_, 0, LV_ANIM_OFF);
   if (ohne) fokus_setzen_(-1);
   else fokus_setzen_(start >= 0 && start < (int) items_.size() ? start : FOKUS_ZURUECK);
+  // Gemerkte Stelle sofort zeigen statt von oben hinzuscrollen (2026-10-14), auch fuer die Einblend-Welle
+  if (!ohne && start >= 0 && start < (int) items_.size()) {
+    lv_obj_update_layout(root_);
+    lv_obj_scroll_to_view(items_[start].obj, LV_ANIM_OFF);
+  }
   abf_ab_ = millis();   // Zustaende sofort holen
-  const int64_t t5 = esp_timer_get_time();
-  snprintf(mess_b_, sizeof(mess_b_), "Aufbau '%s' (%u, sofort %u): leeren %d, auffrischen %d, Werte %d, Karten+Fokus %d ms",
-           stapel_.back().c_str(), (unsigned) alle.size(), (unsigned) items_.size(), (int) ((t1 - t0) / 1000),
-           (int) ((t2 - t1) / 1000), (int) ((t3 - t2) / 1000), (int) ((t5 - t3) / 1000));
-  mess_ms_ = millis();
-  mess_runden_ = 0;
   rest_ms_ = 0;
 }
 
@@ -725,10 +972,7 @@ void Menue::bau_weiter_() {
   if (wartend_pos_ >= wartend_.size()) {
     wartend_.clear();
     wartend_pos_ = 0;
-    char b[80];
-    snprintf(b, sizeof(b), "Aufbau Rest fertig: %u Eintraege, %u ms verteilt", (unsigned) items_.size(), (unsigned) rest_ms_);
-    ESP_LOGD(TAG, "%s", b);
-    if (diag) diag(b);
+    ESP_LOGD(TAG, "Aufbau Rest fertig: %u Eintraege, %u ms verteilt", (unsigned) items_.size(), (unsigned) rest_ms_);
   }
 }
 
@@ -807,6 +1051,19 @@ static lv_style_t *karten_stil_gedrueckt_() {
   static lv_style_t s, *p = nullptr;
   if (p == nullptr) { lv_style_init(&s); lv_style_set_bg_color(&s, lv_color_hex(C_FOKUS)); p = &s; }
   return p;
+}
+
+// Regler unten in einer zweizeiligen Karte (Einstellung, Licht, Zahl)
+static lv_obj_t *regler_(lv_obj_t *k, int32_t min, int32_t max) {
+  lv_obj_t *sl = lv_slider_create(k);
+  lv_slider_set_range(sl, min, max);
+    lv_obj_set_width(sl, LV_PCT(90));
+    lv_obj_set_height(sl, 8);
+    lv_obj_align(sl, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(0x4B5563), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(C_RAHMEN_F), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(C_TEXT), LV_PART_KNOB);
+  return sl;
 }
 
 void Menue::karte_(Item &it) {
@@ -916,14 +1173,7 @@ void Menue::karte_(Item &it) {
     lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, 4);
     it.wert = text_(k, "", f_klein_, C_GRAU);
     lv_obj_align(it.wert, LV_ALIGN_TOP_RIGHT, 0, 6);
-    lv_obj_t *sl = lv_slider_create(k);
-    lv_slider_set_range(sl, lv_slider_get_min_value(it.einst.obj), lv_slider_get_max_value(it.einst.obj));
-    lv_obj_set_width(sl, LV_PCT(90));
-    lv_obj_set_height(sl, 8);
-    lv_obj_align(sl, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_set_style_bg_color(sl, lv_color_hex(0x4B5563), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sl, lv_color_hex(C_RAHMEN_F), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(sl, lv_color_hex(C_TEXT), LV_PART_KNOB);
+    lv_obj_t *sl = regler_(k, lv_slider_get_min_value(it.einst.obj), lv_slider_get_max_value(it.einst.obj));
     lv_obj_set_user_data(sl, (void *) (intptr_t) (&it - items_.data()));
     lv_obj_add_event_cb(sl, [](lv_event_t *e) {
       auto *self = (Menue *) lv_event_get_user_data(e);
@@ -950,14 +1200,7 @@ void Menue::karte_(Item &it) {
     it.wert = text_(k, "", f_klein_, C_GRAU);
     lv_obj_align(it.wert, LV_ALIGN_TOP_RIGHT, 0, 6);
     if (it.typ == T_LIGHT || it.typ == T_ZAHL) {
-      lv_obj_t *sl = lv_slider_create(k);
-      lv_slider_set_range(sl, 0, 100);
-      lv_obj_set_width(sl, LV_PCT(90));
-      lv_obj_set_height(sl, 8);
-      lv_obj_align(sl, LV_ALIGN_BOTTOM_MID, 0, -8);
-      lv_obj_set_style_bg_color(sl, lv_color_hex(0x4B5563), LV_PART_MAIN);
-      lv_obj_set_style_bg_color(sl, lv_color_hex(C_RAHMEN_F), LV_PART_INDICATOR);
-      lv_obj_set_style_bg_color(sl, lv_color_hex(C_TEXT), LV_PART_KNOB);
+      lv_obj_t *sl = regler_(k, 0, 100);
       lv_obj_set_user_data(sl, (void *) (intptr_t) (&it - items_.data()));
       lv_obj_add_event_cb(sl, Menue::regler_cb_, LV_EVENT_RELEASED, this);
       it.regler = sl;
@@ -1202,7 +1445,6 @@ void Menue::hoehen_jetzt_() {
     const bool anders = (int) (it.j["h"] | 1) <= 0 ? z != it.h : (z > it.h || (st && !it.gestapelt));
     if (anders) {
       ESP_LOGD(TAG, "Texthoehe geaendert -> Seite neu");
-      if (diag) diag("Texthoehe geaendert -> Seite neu");
       const int f = fokus_;
       const int32_t sy = lv_obj_get_scroll_y(root_);
       bauen_(true);
@@ -1241,7 +1483,7 @@ void Menue::zustand_(Item &it) {
       static const char *const DE[][2] = {{"on", "an"}, {"off", "aus"}, {"open", "offen"}, {"closed", "zu"},
                                           {"unavailable", "nicht da"}, {"unknown", "–"}, {"home", "da"},
                                           {"not_home", "weg"}, {"playing", "spielt"}, {"paused", "pausiert"},
-                                          {"idle", "bereit"}, {"standby", "Standby"}};
+                                          {"idle", "bereit"}, {"standby", "Standby"}, {"active", "läuft"}};
       const char *s = z.state.c_str();
       for (auto &d : DE) if (z.state == d[0]) { s = d[1]; break; }
       snprintf(b, sizeof(b), "%s%s%s", s, z.unit.empty() ? "" : " ", z.unit.c_str());
@@ -1373,6 +1615,8 @@ void Menue::regler_cb_(lv_event_t *e) {
   if (i < 0 || i >= (int) self->items_.size()) return;
   const char *ent = self->items_[i].j["entity"] | "";
   const int v = lv_slider_get_value(sl);
+  const char *mo = self->items_[i].j["modus"] | "";
+  if (*mo) self->tk_->modus_starten(mo);
   if (self->items_[i].typ == T_ZAHL) { self->zahl_setzen_(self->items_[i], (float) v); return; }
   if (v <= 0) self->tk_->ha_senden("light.turn_off", {{"entity_id", ent}});
   else self->tk_->ha_senden("light.turn_on", {{"entity_id", ent}, {"brightness_pct", std::to_string(v)}});
@@ -1399,6 +1643,9 @@ void Menue::zahl_setzen_(Item &it, float wert) {
 // richtung: 0 = Tippen/OK, -1/+1 = Links/Rechts (Licht dimmen, Rollo zu/auf), 2 = Rollo Stop
 void Menue::ausloesen_(Item &it, int richtung) {
   abf_ab_ = millis() + 900;   // kurz danach neuen Zustand holen
+  // Folgemodus nach dem Bedienen (cfg.modi), z. B. Ventilator: danach steuert Kanal +/- die Stufe
+  const char *mo = it.j["modus"] | "";
+  if (*mo) tk_->modus_starten(mo);
   const std::string e = it.j["entity"] | "";
   JsonArrayConst steps = it.j["steps"];
   const bool eigene = !steps.isNull() && steps.size() > 0;
@@ -1409,7 +1656,9 @@ void Menue::ausloesen_(Item &it, int richtung) {
       if (seite_index_(z) < 0) { ESP_LOGW(TAG, "Seite '%s' fehlt", z); return; }
       if (fokus_ >= 0) fokus_mem_[PStr(stapel_.back().c_str())] = fokus_;
       stapel_.push_back(z);
+      rutsch_ = 1;
       bauen_();
+      rutschen_(1);
       return;
     }
     case T_SPECIAL: {
@@ -1487,8 +1736,8 @@ void Menue::fokus_setzen_(int idx) {
   // alten Fokus zuruecksetzen
   // X/Zurueck ist blau wie das aktive Dock-Segment (st_back, 2026-10-13); Fokus = weisser Rahmen
   if (fokus_ == FOKUS_ZURUECK && zurueck_btn_ != nullptr) {
-    lv_obj_set_style_bg_color(zurueck_btn_, lv_color_hex(C_RAHMEN_F), 0);
-    lv_obj_set_style_border_color(zurueck_btn_, lv_color_hex(C_RAHMEN_F), 0);
+    lv_obj_set_style_bg_color(zurueck_btn_, lv_color_hex(zurueck_bg_), 0);
+    lv_obj_set_style_border_color(zurueck_btn_, lv_color_hex(zurueck_bg_), 0);
     if (zurueck_lbl_) lv_obj_set_style_text_color(zurueck_lbl_, lv_color_hex(C_TEXT), 0);
   } else if (fokus_ >= 0 && fokus_ < (int) items_.size()) {
     lv_obj_t *o = items_[fokus_].obj;
@@ -1502,8 +1751,8 @@ void Menue::fokus_setzen_(int idx) {
   fokus_ = idx;
   if (idx == FOKUS_ZURUECK && zurueck_btn_ != nullptr) {
     // wie die eingebauten Seiten: Knopf hell hinterlegt, Zeichen weiss
-    lv_obj_set_style_bg_color(zurueck_btn_, lv_color_hex(C_RAHMEN_F), 0);
-    lv_obj_set_style_border_color(zurueck_btn_, lv_color_hex(0xF1F3F5), 0);
+    lv_obj_set_style_bg_color(zurueck_btn_, lv_color_hex(zurueck_bg_), 0);
+    lv_obj_set_style_border_color(zurueck_btn_, lv_color_hex(zurueck_fc_), 0);   // Seite "bfc", Standard weiss
     if (zurueck_lbl_) lv_obj_set_style_text_color(zurueck_lbl_, lv_color_hex(C_TEXT), 0);
     lv_obj_scroll_to_y(root_, 0, LV_ANIM_ON);
     return;
@@ -1514,9 +1763,11 @@ void Menue::fokus_setzen_(int idx) {
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(o, 2, 0);
   }
-  // Farbige Knoepfe behalten ihre Farbe, nur der Rahmen zeigt den Fokus
+  // Farbige Knoepfe behalten ihre Farbe, nur der Rahmen zeigt den Fokus. Standard: blauer Rahmen fuer alle
+  // (2026-10-13, vorher farbige Knoepfe weiss); "fc" (Konfigurator "Markierung") gibt die Rahmenfarbe vor.
   if (items_[idx].bg == C_KARTE) lv_obj_set_style_bg_color(o, lv_color_hex(C_FOKUS), 0);
-  lv_obj_set_style_border_color(o, lv_color_hex(items_[idx].bg == C_KARTE ? C_RAHMEN_F : 0xF1F3F5), 0);
+  const int32_t fc = farbe_von(items_[idx].j["fc"] | "");
+  lv_obj_set_style_border_color(o, lv_color_hex(fc >= 0 ? (uint32_t) fc : C_RAHMEN_F), 0);
   lv_obj_scroll_to_view(o, LV_ANIM_ON);
 }
 
@@ -1543,14 +1794,8 @@ void Menue::fokus(int dx, int dy) {
   }
   // Reihenfolge wie auf den eingebauten Seiten: Eintraege ..., dann X/Zurueck, dann wieder oben.
   if (fokus_ == FOKUS_ZURUECK || fokus_ < 0) {
-    const int vorher = fokus_;
     if (erstes < 0) { fokus_setzen_(FOKUS_ZURUECK); return; }
     fokus_setzen_((dy < 0 || dx < 0) ? letztes : erstes);
-    char b[120];
-    snprintf(b, sizeof(b), "Fokus %+d/%+d: %d -> %d (Zeile %d), bedienbar %d..%d von %u", dx, dy, vorher, fokus_,
-             items_[fokus_].y, erstes, letztes, (unsigned) items_.size());
-    ESP_LOGD(TAG, "%s", b);
-    if (diag && diag_fokus) diag(b);
     return;
   }
   Item &a = items_[fokus_];
@@ -1587,19 +1832,9 @@ void Menue::fokus(int dx, int dy) {
     const float d = haupt + neben * 2.0f;
     if (d < best_d) { best_d = d; best = (int) i; }
   }
-  const int vorher = fokus_;
   if (best >= 0) fokus_setzen_(best);
   else if (dy != 0) fokus_setzen_(FOKUS_ZURUECK);          // oben/unten raus: X/Zurueck
   else if (weit >= 0 && weit_d > 0) fokus_setzen_(weit);   // Zeile umlaufen
-  // Diagnose Tastennavigation (2026-10-06, Nutzer: auf "Energie & Wecken" erst beim 2./3. Druck oben, unten nie)
-  {
-    char b[140];
-    snprintf(b, sizeof(b), "Fokus %+d/%+d: %d (Zeile %d, h %d) -> %d (Zeile %d), bedienbar %d..%d von %u (letztes Zeile %d)",
-             dx, dy, vorher, a.y, a.h, fokus_, (fokus_ >= 0 && fokus_ < (int) items_.size()) ? items_[fokus_].y : -1,
-             erstes, letztes, (unsigned) items_.size(), letztes >= 0 ? items_[letztes].y : -1);
-    ESP_LOGD(TAG, "%s", b);
-    if (diag && diag_fokus) diag(b);
-  }
 }
 
 void Menue::ok() {

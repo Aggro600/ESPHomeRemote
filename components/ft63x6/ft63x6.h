@@ -27,6 +27,10 @@ class FT63X6Touchscreen final : public Touchscreen, public i2c::I2CDevice {
   void set_threshold(uint8_t threshold) { this->threshold_ = threshold; }
   // Groesste Entfernung vom Aufsetzpunkt der letzten Beruehrung (Rohpixel), inkl. Abhebe-Position des Chips
   uint16_t weg() const { return this->max_weg_; }
+  // Letzte Beruehrung (2026-10-17, schnelles Wischen): Weg vom Aufsetzen bis zum Abheben (Rohpixel) und Dauer
+  int16_t wisch_dx() const { return this->w_dx_; }
+  int16_t wisch_dy() const { return this->w_dy_; }
+  uint32_t wisch_ms() const { return this->w_ms_; }
 
  protected:
   void hard_reset_();
@@ -58,6 +62,8 @@ class FT63X6Touchscreen final : public Touchscreen, public i2c::I2CDevice {
   uint16_t abfragen_{0}, punkte_{0}, luecken_{0}, fehler_{0};
   uint16_t x0_{0}, y0_{0}, lx_{0}, ly_{0};
   uint16_t max_weg_{0};
+  int16_t w_dx_{0}, w_dy_{0};
+  uint32_t w_ms_{0};
   void weg_merken_(uint16_t x, uint16_t y);
 };
 

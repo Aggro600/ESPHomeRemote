@@ -12,16 +12,54 @@ ohne zu programmieren.
 
 ## Was sie kann
 
-- **Steuert Fernseher, Streamer und Tablets per Bluetooth** – bis zu 4 Geräte, Umschalten mit einem
-  Fingertipp in der Leiste unten („Aktivitäten“ wie bei Harmony).
-- **Jede Taste frei belegbar** – kurz, doppelt und lang drücken getrennt, je Aktivität anders.
-  Alles im Browser einstellbar (Konfigurator in Home Assistant).
-- **Eigenes Menü auf dem Display** – Seiten, Knöpfe, Licht-Regler, Rollos, Anzeigen, Kamerabilder
-  im Raster frei anordnen. Auch die Startseite und Popups (z. B. „Es hat geklingelt“).
-- **Home Assistant direkt auf der Fernbedienung** – Licht, Rollos, Szenen, Skripte, Musik.
+<p align="center"><img src="docs/bilder/uebersicht.png" alt="Konfigurator: Übersicht" width="900"></p>
+
+**Fernbedienung**
+- **Steuert Fernseher, Streamer, Tablets und PCs per Bluetooth** – 4 Geräte, Umschalten über „Aktivitäten“
+  wie bei Harmony. Je Gerät wählbar: nur Tasten, **Maus (Touchpad)**, **Tastatur** oder beides.
+- **Jede Taste frei belegbar** – kurz, doppelt und lang getrennt, je Aktivität anders, mit Halten und Wiederholen.
+  Dazu Schritte **beim Starten/Beenden** einer Aktivität (TV an, Eingang wählen …).
+- **Folgemodi** – nach einer Aktion gelten ein paar Sekunden andere Tasten (z. B. Kanal +/− dimmt die Lampe).
+- **Bewegungsgesten** – zweimal schütteln, kippen, und **eigene Gesten anlernen** (Kreis, Wischen …):
+  erkannt wird die Form, egal wie groß, schnell oder wie man die Remote hält.
+- **Touchpad** – das Display wird zur Maus, mit Scrollstreifen, Klicktasten und Tastenkürzel-Makros.
+- **Infrarot** – über 9000 Geräte aus der Flipper-IRDB, oder die alte Fernbedienung einfach **anlernen**.
 - **Sprachassistent** – Google auf dem Fernseher oder Home Assistant Assist.
-- **Lange Akkulaufzeit** – Tiefschlaf mit etwa 1 mA, wacht auf beim Hochheben oder Tastendruck.
+
+**Display & Smart Home**
+- **Eigenes Menü** – Seiten, Kacheln, Licht-Regler, Rollos, Anzeigen, Kamerabilder im Raster frei anordnen,
+  dazu **Popups**, die von selbst aufgehen („Es hat geklingelt“, Sleeptimer, Bildmodus bei Netflix …).
+- **Smart Display im Dock** – steht die Remote im Dock, zeigt sie Uhrzeit, Wetter, Raumklima, Termine und Ladestand.
+- **Helligkeit nach Lichtsensor** – Display, Tastenlicht und Dock-LED folgen dem Raumlicht; die Kurve lernt mit.
 - **Kamera und Klingel** – Bild auf der Fernbedienung, Kamera auf dem Fernseher (in drei Größen).
+- **Lange Akkulaufzeit** – Tiefschlaf, wacht auf beim Hochheben, Klopfen oder Tastendruck.
+
+**Dockingstation (optional, ESP32-C3)**
+- **IR-Sender für Home Assistant** – jedes IR-Gerät wird ein Media-Player, eine Remote-Entität
+  (`remote.send_command` mit Harmony-Befehlsnamen) und je Befehl ein Button. Dazu **433 MHz** (CC1101).
+- **Aktivitäts-Schalter** – je Remote und Aktivität ein Schalter in Home Assistant.
+
+**Konfigurator in Home Assistant** – alles im Browser, am PC und am Handy:
+Übersicht mit Akkuverlauf, **Suche mit Strg+K**, Tabelle aller Tasten, Änderungsliste mit Rückgängig,
+Sicherung, **Firmware-Updates per WLAN** (auch vormerken, wenn die Remote schläft) und **USB-Flashen im Browser**.
+Einstellungen gleichen sich in beide Richtungen ab: was du an der Remote umstellst, sieht der Konfigurator.
+
+---
+
+## Bilder
+
+| | |
+|---|---|
+| <img src="docs/bilder/kreisgeste.png" alt="Eigene Geste: Kreis"> | <img src="docs/bilder/lichtsensor.png" alt="Helligkeit nach Lichtsensor"> |
+| **Eigene Geste „Kreis“** – dreimal an der Remote ausgeführt, die Proben (X/Y/Z) im Konfigurator. | **Helligkeit nach Lichtsensor** – Punkte ziehen, die Kurve lernt beim Verstellen mit. |
+| <img src="docs/bilder/tasten.png" alt="Tasten belegen"> | <img src="docs/bilder/menue.png" alt="Menü-Editor"> |
+| **Tasten** – Fernbedienung antippen, je Druckart Aktionen anlegen. | **Menü-Editor** – mit Live-Vorschau des Displays. |
+| <img src="docs/bilder/gesten.png" alt="Gesten"> | <img src="docs/bilder/tabelle.png" alt="Tabelle"> |
+| **Gesten** – eingebaute und eigene, „wirkt wie Taste“ oder eigene Aktionen. | **Tabelle** – alle Aktivitäten und Folgemodi nebeneinander. |
+| <img src="docs/bilder/dock.png" alt="Dockingstation"> | <img src="docs/bilder/suche.png" alt="Suche"> |
+| **Dockingstation** – Dock-LED, Smart Display mit Vorschau, IR-Geräte. | **Suche (Strg+K)** – findet jede Taste, Einstellung und Menüseite. |
+| <img src="docs/bilder/bluetooth.png" alt="Bluetooth"> | <img src="docs/bilder/handy.png" alt="Am Handy" width="300"> <img src="docs/bilder/handy_tasten.png" alt="Tasten am Handy" width="300"> |
+| **Bluetooth** – vier Plätze, Eingabe je Gerät, Maus-Einstellungen. | **Am Handy** – gleiche Funktionen, Leiste unten. |
 
 ---
 
@@ -89,19 +127,23 @@ esphomeremote_konfig_key: "…"      # die kopierte Zeile aus Schritt 2
 
 ## Der Konfigurator
 
-In der Seitenleiste **„Fernbedienung“** (am Handy und am PC):
+In der Seitenleiste **„Fernbedienung“** (am Handy und am PC). Links stehen deine Fernbedienungen mit Akkustand,
+darunter je Remote ihre Seiten:
 
-| Bereich | Was du dort machst |
+| Seite | Was du dort machst |
 |---|---|
-| **Tasten** | Jede Taste je Aktivität belegen: kurz / doppelt / lang. Bluetooth-Befehl, Home-Assistant-Aktion (aus einer Liste wählen), Infrarot oder Funktion der Fernbedienung. Kopieren und Einfügen wie gewohnt. |
-| **Aktivitäten** | Beliebig viele anlegen (z. B. TV, Streamer, Tablet), bis zu 4 erscheinen unten in der Leiste. |
+| **Übersicht** | Alle Remotes und Docks: Akku mit 24-h-Verlauf, Verbindung, Firmware, Hinweise mit Knöpfen zum Erledigen. |
+| **Tasten** | Jede Taste je Aktivität belegen: kurz / doppelt / lang. Bluetooth, Home-Assistant-Aktion, Infrarot, 433 MHz, Funktion der Remote. Aktivitäten und Folgemodi anlegen, Tabellenansicht. |
 | **Startseite** | Bereiche (Player, Kameras, Menü-Knopf, Leiste) per Ziehen verschieben und in der Größe ändern. |
-| **Menü** | Seiten und Unterseiten im Raster gestalten: Knöpfe, Schalter, Licht mit Regler, Rollos, Anzeigen, Kamerabild, alle Einstellungen der Fernbedienung. |
-| **Popups** | Seiten, die von selbst aufgehen, z. B. wenn ein Skript startet oder es klingelt. |
+| **Menü** | Seiten, Unterseiten und Popups im Raster gestalten, mit Vorschau. |
+| **Gesten** | Schütteln, Kippen und eigene Gesten belegen; Touchpad-Makros. |
+| **Bluetooth / Infrarot** | Plätze koppeln, Eingabe je Gerät, IR-Sendeweg und IR-Datenbank. |
+| **Einstellungen** | Alle Einstellungen der Remote, sofort übertragen; Helligkeit nach Lichtsensor. |
+| **Dockingstation** | IR-Geräte, Dock-LED, Smart Display. |
+| **Firmware & Geräte** | Updates per WLAN oder USB, neue Docks anlegen und einbinden. |
+| **Werkstatt** | Neue Fernbedienung, alles kopieren, Sicherung, Platinen-Test, Entwicklermodus. |
 
-**Speichern** schickt alles an die Fernbedienung – sie holt es sich beim nächsten Aufwachen ab
-(Fortschritt wird angezeigt). Über die Pfeile oben rechts machst du eine **Sicherung** (Download)
-und spielst sie auf einem anderen System wieder ein.
+**Speichern** (oder Strg+S) schickt alles an die Fernbedienung – schläft sie, holt sie es beim nächsten Aufwachen ab.
 
 ---
 
