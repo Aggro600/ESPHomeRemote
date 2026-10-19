@@ -43,14 +43,16 @@ substitutions:
   kb_tasten:       "true"
   # HA-Adresse fuer Bilder (Cover, Kamera) und die Konfiguration: LAN-IP statt homeassistant.local
   # (mDNS-Aufloesung vom ESP32 aus war nicht zuverlaessig).
-  ha_host:        "<HA-IP>:8123"
-  # Entitaeten in Home Assistant
-  ent_adb:        "media_player.android_tv"    # Streamer (Android-TV-/ADB-Integration): Texteingabe per ADB
-  ent_tv:         "media_player.fernseher"                      # Fernseher: an/aus (Energie-Zeiten bei laufendem TV, Media-Seite)
-  ent_jetzt:      "media_player.jetzt_laeuft"     # "Jetzt laeuft" (custom_components/esphomeremote_now_playing)
-  ent_multiroom:  "media_player.multiroom"            # Music-Assistant-Gruppe (Media-Seite bei Quelle "multiroom")
-  ent_tts:        "media_player.lautsprecher"                 # Lautsprecher fuer Antworten des HA-Assistenten
-  ent_timer:      "timer.timer"                     # Countdown neben der Uhr
+  ha_host:        "homeassistant.local:8123"
+  ha_adresse:     "homeassistant.local:8123"   # dasselbe fuer den Bluetooth-Tunnel (dort ist ha_host der Tunnel selbst)
+  # Nur der Startwert: Home Assistant kuendigt seine Adresse an (Attribut "basis" von
+  # sensor.esphomeremote_konfig_<remote>), die Remote uebernimmt sie zur Laufzeit.
+  # true in der Bluetooth-Schicht (remote-halink.yaml): dort laeuft HTTP ueber den Tunnel, der die Adresse bekommt.
+  ha_ueber_tunnel: "false"
+  # Entitaeten in Home Assistant (Media Player, Fernseher, Lautsprecher, Streamer, Timer) waehlt man im Konfigurator
+  # (Seite "Verknuepfungen", 2026-10-19). Gelesen wird ueber die Spiegel der Integration
+  # (sensor.esphomeremote_spiegel_<remote>_<rolle>, custom_components/esphomeremote_konfig/spiegel.py), Aktionen gehen
+  # an die gewaehlte Entitaet (id(tk_cfg).ent("tv") ...).
 
 esphome:
   name: ${device_name}
@@ -77,6 +79,7 @@ esphome:
     - open-remote-gesten.h   # Bewegungsgesten (2026-10-17)
     - open-remote-extras.h   # Einstellungsseite Smart Display + Bluetooth "Maus & Tastatur" (2026-10-17)
     - open-remote-gestenseite.h   # Seite Gesten: Liste, Belegung, Anlernen (2026-10-17)
+    - open-remote-musik.h   # Musik-Anzeige: Spektrum ueber das Mikrofon (2026-10-18)
   on_boot:
     # Prioritaet 1100: laeuft VOR dem I2C-Bus (setup_priority BUS = 1000).
     # Nach einem Deep-Sleep-Wake zuerst die Holds loesen UND die +VSW-Rail
@@ -271,7 +274,8 @@ esphome:
             tasten::einrichten();   // Tasten-Konfigurator + Menue: Hooks setzen (open-remote-tasten.h)
             einst_sync::einrichten();   // Einstellungen <-> Konfigurator (open-remote-einst-sync.h)
             id(mn)->set_anzeige(id(konf_root), id(konf_title), id(konf_back_lbl), id(konf_back));
-            id(mn)->set_fonts(id(a15)->get_lv_font(), id(a13)->get_lv_font(), id(mdi_menu)->get_lv_font(), id(a18)->get_lv_font());
+            id(mn)->set_fonts(id(a15)->get_lv_font(), id(a13)->get_lv_font(), id(mdi_menu)->get_lv_font(), id(a18)->get_lv_font(),
+                              id(a11)->get_lv_font(), id(a24)->get_lv_font());
     - priority: 100
       then:
         # Nach dem Setup aller Komponenten. Echter Start (nicht Aufwachen aus dem Tiefschlaf): Testmodus aus.
@@ -482,7 +486,7 @@ external_components:
   - source: {type: local, path: components}
     # online_image: eigene Fassung (2026-10-10) - Download und JPEG-Dekodierung im Hintergrund-Task, die Remote
     # bleibt bedienbar, waehrend Cover/Klingelbilder per WLAN oder Bluetooth kommen (s. components/online_image).
-    components: [ili9341_i80, tca8418, max17048, lis3dh, espidf_ble_keyboard, atv_voice, ft63x6, sd_card, tasten_konfig, menue, online_image]
+    components: [ili9341_i80, tca8418, max17048, lis3dh, espidf_ble_keyboard, atv_voice, ft63x6, sd_card, tasten_konfig, menue, online_image, dock_direkt]
 
 logger:
   level: DEBUG
@@ -538,7 +542,7 @@ api:
       then:
         - online_image.set_url:
             id: mp_cover_image
-            url: !lambda 'return id(cover_ganz_player) ? std::string("http://${ha_host}/local/esphomeremote_cover_player_ganz.jpg") : std::string("http://${ha_host}/local/esphomeremote_cover_player_voll.jpg");'
+            url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_voll.jpg");'
         - lambda: 'id(cover_title) = id(adb_title).state;'
         - lvgl.widget.show: media_cover
         # home_cover_image wird jetzt NICHT mehr parallel hier angestossen,
@@ -560,9 +564,9 @@ api:
         - if:
             condition: {lambda: "return door == 1;"}
             then:
-              - online_image.set_url: {id: db_haus_image, url: "http://${ha_host}/local/esphomeremote_doorbell_haus.jpg"}
+              - online_image.set_url: {id: db_haus_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_doorbell_haus.jpg";'}
             else:
-              - online_image.set_url: {id: db_wohn_image, url: "http://${ha_host}/local/esphomeremote_doorbell_wohnung.jpg"}
+              - online_image.set_url: {id: db_wohn_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_doorbell_wohnung.jpg";'}
     # Menue-Seite als Popup zeigen / schliessen (z. B. Kamera-Popup, s. packages/esphomeremote_kamera_tv.yaml)
     - service: menue_popup
       variables: {seite: string}
@@ -581,6 +585,14 @@ api:
       then:
         - script.execute: {id: ir_lern_fenster, sekunden: !lambda 'return sekunden;'}
     # IR-Befehl testen (Konfigurator, 2026-10-11): ein IR-Schritt als JSON, Sendeweg Remote/Dock wie eingestellt
+    # Konfig-Modus (HTTP, SD-Karte im Browser / Bildschirmfoto) an/aus - ersetzt den Schalter in HA (2026-10-18)
+    - service: konfig_http
+      variables: {an: bool}
+      then:
+        - if:
+            condition: {lambda: 'return an;'}
+            then: [{switch.turn_on: konfig_http_sw}]
+            else: [{switch.turn_off: konfig_http_sw}]
     - service: ir_test
       variables: {schritt: string}
       then:
@@ -725,6 +737,17 @@ font:
     size: 13
     bpp: 4
     glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  # Menue-Schriftgroessen "sehr klein" / "sehr gross" (Konfigurator > Aussehen > Groesse, 2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a11
+    size: 11
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a24
+    size: 24
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
   - file: 'fonts/Audiowide-Regular.ttf'
     id: a15
     size: 15
@@ -764,9 +787,9 @@ font:
     id: mdi_klein
     size: 18
     bpp: 4
-    glyphs: ["\U000F050F", "\U000F058E", "\U000F12A6", "\U000F12A3", "\U000F01BE", "\U000F0E79", "\U000F1D08", "\U000F1D0B", "\U000F097B", "\U000F0279", "\U000F037D"]
+    glyphs: ["\U000F050F", "\U000F058E", "\U000F12A6", "\U000F12A3", "\U000F01BE", "\U000F0E79", "\U000F1D08", "\U000F1D0B", "\U000F097B", "\U000F0279", "\U000F037D", "\U000F03A0"]   # F03A0 numeric: Umschalter Ziffern (2026-10-18)
   # Sanduhr (mdi:timer-sand) fuer die Countdown-Anzeige neben der Uhr, wenn
-  # ${ent_timer} laeuft (Nutzerwunsch 2026-09-17).
+  # der gewaehlte Timer (Verknuepfung "timer") laeuft (Nutzerwunsch 2026-09-17).
   - file: 'fonts/mdi-subset.ttf'
     id: ico_timer
     size: 15
@@ -900,7 +923,7 @@ globals:
   - {id: show_assi_icon, type: bool,      restore_value: true,  initial_value: "true"}
   - {id: show_motion,    type: bool,      restore_value: true,  initial_value: "true"}   # Bewegungs-Symbol neben der Uhr
   - {id: show_ha,        type: bool,      restore_value: true,  initial_value: "true"}   # HA-Symbol hinter den Balken (2026-10-10)
-  # Countdown fuer ${ent_timer} neben der Uhr (Nutzerwunsch 2026-09-17).
+  # Countdown fuer der gewaehlte Timer (Verknuepfung "timer") neben der Uhr (Nutzerwunsch 2026-09-17).
   # remaining wird lokal in echten Sekunden runtergezaehlt statt bei jedem
   # HA-Update neu geparst - HA aktualisiert das "remaining"-Attribut nur bei
   # Start/Pause/Ende, nicht jede Sekunde.
@@ -941,7 +964,7 @@ globals:
   # Versorgung, weil die zusaetzlich dem Display folgt.
   # Feld, das nach einem D-Pad-Druck kurz blau bleiben soll.
   - {id: flash_obj,      type: "lv_obj_t *", restore_value: false, initial_value: "nullptr"}
-  # Laeuft der Fernseher? Kommt aus HA (${ent_tv}): Energie-Zeiten "bei TV an", Media-Seite.
+  # Laeuft der Fernseher? Kommt aus HA (Verknuepfung "tv"): Energie-Zeiten "bei TV an", Media-Seite.
   - {id: tv_on, type: bool, restore_value: false, initial_value: "false"}
 
   # Laeuft gerade eine Aufnahme, die der Fernseher angefordert hat? Getrennt
@@ -1032,7 +1055,7 @@ globals:
   # -1 = Unendlich, bleibt offen bis man selbst zurueckgeht.
   - {id: menu_close_s,   type: int,       restore_value: true,  initial_value: "20"}
   # Cover-Darstellung, getrennt fuer Media-Seite und Startseite: AN = GANZ (ganzes Bild, ggf. Balken), AUS = VOLL
-  # (randlos zugeschnitten). HA legt immer alle vier Varianten ab (smarttube_cover_resize.py), die Remote waehlt nur
+  # (randlos zugeschnitten). HA legt immer alle vier Varianten je Remote ab (esphomeremote_konfig/cover.py), die Remote waehlt nur
   # die URL. Reinigungsmodus (Einstellungen): Display + Tasten clean_s Sekunden gesperrt.
   - {id: clean_mode,        type: bool,   restore_value: false, initial_value: "false"}
   - {id: clean_left,        type: int,    restore_value: false, initial_value: "0"}
@@ -1104,6 +1127,10 @@ globals:
   - {id: dock_disp,      type: int,       restore_value: true,  initial_value: "2"}
   - {id: dock_von,       type: int,       restore_value: true,  initial_value: "7"}
   - {id: dock_bis,       type: int,       restore_value: true,  initial_value: "23"}
+  # Musik-Anzeige (2026-10-18, open-remote-musik.h): musik_dock = im Dock statt Smart Display, solange Musik laeuft;
+  # musik_player = nur zuhoeren, wenn der "Jetzt laeuft"-Player spielt
+  - {id: musik_dock,     type: bool,      restore_value: true,  initial_value: "true"}
+  - {id: musik_player,   type: bool,      restore_value: true,  initial_value: "true"}
   # Touchpad (open-remote-maus.h): Bit je Bluetooth-Platz - maus_slots = Maus melden, voll_slots = volle Tastatur
   # trotz kb_ziffern; maus_tempo = Zeigertempo in %
   - {id: maus_slots,     type: int,       restore_value: true,  initial_value: "0"}
@@ -1191,6 +1218,14 @@ tasten_konfig:
   transfer: tk_transfer
   keyboard: kb
   transmitter: ir_tx
+  direkt: direkt
+
+# Direkter Funkweg zum Dock (2026-10-18): Infrarot/433 MHz ueber "Dock" gehen per ESP-NOW direkt ans Dock, ohne HA.
+# Nur wenn das Dock nicht bestaetigt: ueber HA, sonst sendet die Remote selbst. Adressen der Docks kommen aus der
+# Tasten-Konfiguration ("dmac"). Beschreibung: components/dock_direkt/dock_direkt.h
+dock_direkt:
+  id: direkt
+  schluessel: !secret direkt_schluessel
 
 # Konfigurierbares Menue (2026-10-03): Seiten/Eintraege aus derselben HA-Konfiguration, Raster 6x40 px.
 # Anzeige auf page_konfig (Seite 98). Ohne Konfiguration gibt es kein Menue.
@@ -1231,14 +1266,14 @@ image:
       - delay: 1500ms
       - online_image.set_url:
           id: home_cover_image
-          url: !lambda 'return id(cover_ganz_home) ? std::string("http://${ha_host}/local/esphomeremote_cover_home_ganz.jpg") : std::string("http://${ha_host}/local/esphomeremote_cover_home_voll.jpg");'
+          url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_voll.jpg");'
     on_error:
       - lvgl.widget.hide: media_cover
       - script.execute: sd_logo_pruefen
       - delay: 1500ms
       - online_image.set_url:
           id: home_cover_image
-          url: !lambda 'return id(cover_ganz_home) ? std::string("http://${ha_host}/local/esphomeremote_cover_home_ganz.jpg") : std::string("http://${ha_host}/local/esphomeremote_cover_home_voll.jpg");'
+          url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_voll.jpg");'
   # Cover der Startseiten-Karte (216x172, in HA zugeschnitten), geladen nach mp_cover_image.
   - platform: online_image
     id: home_cover_image
@@ -2153,7 +2188,7 @@ script:
             - lvgl.widget.show: media_cover
             - online_image.set_url:
                 id: mp_cover_image
-                url: !lambda 'return id(cover_ganz_player) ? std::string("http://${ha_host}/local/esphomeremote_cover_player_ganz.jpg") : std::string("http://${ha_host}/local/esphomeremote_cover_player_voll.jpg");'
+                url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_voll.jpg");'
 
   # Wiedergabestatus als Farbe des Play/Pause-Symbols (Nutzerwunsch 2026-09-20):
   # aus = rot, spielt = gruen, pausiert = blau, alles andere = weiss.
@@ -2382,7 +2417,7 @@ script:
                   - lambda: |-
                       id(live_busy) = true;
                       id(live_req_ms) = millis();
-                  - online_image.set_url: {id: cam_fast_image, url: "http://${ha_host}/local/esphomeremote_live.jpg"}
+                  - online_image.set_url: {id: cam_fast_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_live.jpg";'}
             - delay: 100ms
       - lambda: |-
           if (id(cur_page) == 38) lv_label_set_text(id(cf_state), "Beendet - Neu starten drücken");
@@ -2399,7 +2434,7 @@ script:
       - if:
           condition: {lambda: "return id(cur_page) == 37;"}
           then:
-            - online_image.set_url: {id: cam_live_image, url: "http://${ha_host}/local/esphomeremote_cam.jpg"}
+            - online_image.set_url: {id: cam_live_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cam.jpg";'}
 
   - id: apply_low_bat
     then:
@@ -2640,7 +2675,7 @@ script:
   - id: sd_strom_an
     mode: queued
     then:
-      - lambda: 'id(voice)->set_mic_blocked(true);'   # I2S-Treiber stoppen: gibt GPIO15/17/7 frei
+      - lambda: 'musik::sd_kommt(); id(voice)->set_mic_blocked(true);'   # I2S-Treiber stoppen: gibt GPIO15/17/7 frei
       - script.execute: refresh_mic_icon
       - wait_until:
           condition: {lambda: "return id(remote_mic).is_stopped();"}
@@ -2724,7 +2759,8 @@ script:
           }
       - lambda: |-
           const std::string cov = id(mp_cover_url).state;
-          const bool ohne = cov.find("esphomeremote_netflix_n.png") != std::string::npos ||
+          // Ohne eigenes Bild (leer bzw. Platzhalter der Streamer-Funktion): Logo der App von der SD-Karte
+          const bool ohne = cov.empty() || cov.find("esphomeremote_netflix_n.png") != std::string::npos ||
                             cov.find("esphomeremote_cover_leer.png") != std::string::npos;
           const std::string s = sdbilder::slug(id(mp_app_name).state);
           id(logo_slug) = (id(sd_logos) && ohne && !s.empty()) ? s : std::string();
@@ -3431,6 +3467,8 @@ script:
               row(id(dock_disp_btn),     nullptr, nullptr);
               row(id(dock_von_sld),      nullptr, nullptr);
               row(id(dock_bis_sld),      nullptr, nullptr);
+              row(id(musik_dock_btn),    nullptr, nullptr);
+              row(id(musik_player_btn),  nullptr, nullptr);
               row(id(back_extras),       nullptr, nullptr);
               break;
             case 23: // Anzeige
@@ -4333,14 +4371,17 @@ script:
           if (p == 41 && (keycode == 14 || keycode == 35 || keycode == 15 || keycode == 32 || keycode == 34)) {
             const auto &L = eingabe::layout(id(kbd_mode), id(kbd_shift));
             lv_obj_t *m = id(kbd_matrix)->obj;
-            // Kopfzeile (2026-10-17): aus der obersten Reihe "hoch" -> Zurueck / Maus; links/rechts wechselt,
-            // OK drueckt, "runter" zurueck in die Tasten
-            lv_obj_t *kopf[2] = {id(back_keyboard), id(kbd_maus_btn)};
+            // Kopfzeile: aus der obersten Reihe "hoch" -> Zurueck und Umschalter Maus | Tastatur | Ziffern
+            // (2026-10-18); links/rechts wechselt, OK drueckt, "runter" zurueck in die Tasten
+            const auto &W = eingabewahl::kbd();
+            lv_obj_t *kopf[4] = {id(back_keyboard), W.kn[0], W.kn[1], W.kn[2]};
+            const int nk = eingabewahl::kbd_umschalter_da() ? 4 : 1;
             if (id(kbd_kopf) >= 0) {
-              if (keycode == 15 || keycode == 32) id(kbd_kopf) = 1 - id(kbd_kopf);
+              if (keycode == 15) id(kbd_kopf) = (id(kbd_kopf) + nk - 1) % nk;
+              else if (keycode == 32) id(kbd_kopf) = (id(kbd_kopf) + 1) % nk;
               else if (keycode == 34) { lv_obj_send_event(kopf[id(kbd_kopf)], LV_EVENT_CLICKED, nullptr); return; }
               else if (keycode == 35) id(kbd_kopf) = -1;
-              for (int i = 0; i < 2; i++) {
+              for (int i = 0; i < nk; i++) {
                 if (i == id(kbd_kopf)) lv_obj_add_state(kopf[i], LV_STATE_FOCUSED);
                 else lv_obj_remove_state(kopf[i], LV_STATE_FOCUSED);
               }
@@ -4676,11 +4717,16 @@ script:
     max_runs: 30
     parameters: {cmd: string}
     then:
-      - homeassistant.action:
-          action: androidtv.adb_command
-          data:
-            entity_id: "${ent_adb}"
-            command: !lambda 'return cmd;'
+      - if:
+          condition: {lambda: 'return id(tk_cfg).ent("adb").empty();'}
+          then:
+            - lambda: 'ESP_LOGW("adb", "Kein Streamer gewaehlt (Konfigurator > Verknuepfungen)");'
+          else:
+            - homeassistant.action:
+                action: androidtv.adb_command
+                data:
+                  entity_id: !lambda 'return id(tk_cfg).ent("adb");'
+                  command: !lambda 'return cmd;'
 
   - id: gesture_single
     mode: restart
@@ -4802,7 +4848,7 @@ script:
     then:
       - if:
           condition:
-            lambda: 'return id(mp_quelle).state == "multiroom";'
+            lambda: 'return id(mp_quelle).state == "multiroom" && !id(tk_cfg).ent("multiroom").empty();'
           then:
             - homeassistant.service:
                 service: !lambda |-
@@ -4810,7 +4856,7 @@ script:
                     "media_player.media_previous_track", "media_player.volume_up", "media_player.volume_down"};
                   return std::string(S[was < 0 || was > 4 ? 0 : was]);
                 data:
-                  entity_id: "${ent_multiroom}"
+                  entity_id: !lambda 'return id(tk_cfg).ent("multiroom");'
           else:
             - lambda: |-
                 static const char *const C[] = {"consumer:0x00CD", "consumer:0x00B5", "consumer:0x00B6", "consumer:0x00E9", "consumer:0x00EA"};
@@ -4924,7 +4970,66 @@ script:
 # GPIO45 = MIC_VDD (active-high, gegen das Rev6-PCB verifiziert: U7 Pad 26).
 # GPIO16 = SD_EN (active-low, HIGH = Karte aus, gibt die geteilten I2S-Pins frei).
 # GPIO18 = SD_CS, von der Firmware vor jeder Mic-Nutzung auf HIGH gezogen.
+# Bedienung aus Home Assistant (2026-10-18, Nutzerwunsch): Helligkeiten als Regler. Wirken wie die Regler auf der
+# Remote; der Lichtsensor (Konfigurator > Licht) stellt sie spaeter wieder nach, wenn er eingeschaltet ist.
+number:
+  - platform: template
+    name: "Display-Helligkeit"
+    icon: "mdi:brightness-6"
+    unit_of_measurement: "%"
+    min_value: 5
+    max_value: 100
+    step: 5
+    mode: slider
+    update_interval: 5s
+    lambda: 'return id(disp_bri);'
+    set_action:
+      - lambda: 'id(disp_bri) = (int) x;'
+      - script.execute: apply_brightness
+  - platform: template
+    name: "Tastenbeleuchtung Helligkeit"
+    icon: "mdi:keyboard-settings"
+    unit_of_measurement: "%"
+    min_value: 5
+    max_value: 100
+    step: 5
+    mode: slider
+    update_interval: 5s
+    lambda: 'return id(kbd_bri);'
+    set_action:
+      - lambda: 'id(kbd_bri) = (int) x;'
+      - script.execute: apply_brightness
+
 switch:
+  # Aus Home Assistant schaltbar (2026-10-18): Tastenbeleuchtung, Display, Smart Display im Dock
+  - platform: template
+    name: "Tastenbeleuchtung"
+    icon: "mdi:keyboard-variant"
+    restore_mode: DISABLED
+    lambda: 'return id(kbd_light_on);'
+    turn_on_action:
+      - if: {condition: {lambda: 'return !id(kbd_light_on);'}, then: [{script.execute: toggle_kbd_light}]}
+    turn_off_action:
+      - if: {condition: {lambda: 'return id(kbd_light_on);'}, then: [{script.execute: toggle_kbd_light}]}
+  - platform: template
+    name: "Display"
+    icon: "mdi:tablet-cellphone"
+    restore_mode: DISABLED
+    lambda: 'return !id(disp_off);'
+    turn_on_action:
+      - script.execute: wake_backlight
+    turn_off_action:
+      - lambda: 'id(sofort_aus) = true;'
+      - script.execute: backlight_idle_timeout
+  - platform: template
+    name: "Smart Display im Dock"
+    icon: "mdi:tablet-dashboard"
+    restore_mode: DISABLED
+    lambda: 'return id(dock_an);'
+    turn_on_action:
+      - lambda: 'id(dock_an) = true; extras::auffrischen();'
+    turn_off_action:
+      - lambda: 'id(dock_an) = false; extras::auffrischen();'
   - platform: gpio
     id: mic_power
     # Nicht mehr direkt in Home Assistant - stattdessen der verstaendliche
@@ -4949,18 +5054,17 @@ switch:
   # Konfig-Modus: startet fuer 10 Minuten einen HTTP-Endpunkt (/sd/api/...) zum Hoch-/Runterladen von
   # Dateien auf der SD-Karte (z. B. App-Logos, tools/sd_upload.py). KEIN Dauer-Webserver (Strom). Waehrend des Fensters kein
   # Tiefschlaf (ota_aktiv). Der Schalter spiegelt den echten Zustand.
+  # Seit 2026-10-18 ohne Entitaet in HA (Nutzerwunsch) - geschaltet ueber den Dienst konfig_http (sd_upload.py, Fotos)
   - platform: template
-    name: "Konfig-Modus (HTTP)"
-    icon: "mdi:cloud-upload"
-    entity_category: config
+    id: konfig_http_sw
+    internal: true
     lambda: 'return id(sdkarte)->http_active();'
     turn_on_action:  [{script.execute: sd_konfig_start}]
     turn_off_action: [{script.stop: sd_konfig_start}, {script.execute: sd_konfig_stop}]
   # IR-Empfaenger-Versorgung (Rev6): GPIO6 = IR_VCC speist U6 (TSSP77038) direkt. Nur zum IR-Lernen an.
   - platform: gpio
     id: ir_rx_power
-    name: "IR-Empfaenger Strom"
-    icon: "mdi:remote"
+    internal: true   # schaltet die Remote beim IR-Lernen selbst (seit 2026-10-18 nicht mehr in HA)
     pin: GPIO6
     restore_mode: RESTORE_DEFAULT_OFF
     # RMT-Empfangskanal nur mit Strom am Empfaenger (IR-Lernen) - s. open-remote-rmt.h
@@ -5172,16 +5276,16 @@ voice_assistant:
     - lambda: 'ESP_LOGI("assi", "Antwort: %s", x.c_str());'
     - lvgl.label.update: {id: voice_answer, text: !lambda 'return x;'}
     - lambda: 'lv_obj_scroll_to_y(id(voice_box), 0, LV_ANIM_OFF);'
-  # on_tts_end liefert die Adresse der fertigen Sprachdatei: auf dem Lautsprecher ${ent_tts} abspielen,
+  # on_tts_end liefert die Adresse der fertigen Sprachdatei: auf dem gewaehlten Lautsprecher (Verknuepfung "tts") abspielen,
   # waehrend die Fernbedienung den Text zeigt (Einstellung "Antwort hoerbar").
   on_tts_end:
     - if:
-        condition: {lambda: "return id(tts_speaker);"}
+        condition: {lambda: 'return id(tts_speaker) && !id(tk_cfg).ent("tts").empty();'}
         then:
           - homeassistant.service:
               service: media_player.play_media
               data:
-                entity_id: "${ent_tts}"
+                entity_id: !lambda 'return id(tk_cfg).ent("tts");'
                 media_content_type: "music"
               data_template:
                 media_content_id: "{{ url }}"
@@ -5525,11 +5629,11 @@ sensor:
     update_interval: never   # Debug-Modus: Intervall "diagnose_60s"
     lambda: 'return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024.0f;'
   # Position/Dauer der Wiedergabe (SmartTube, Netflix, Cast, Fernseher - alles, was
-  # ${ent_jetzt} zusammenfasst). Die Attribute kommen nur, solange
+  # dem gewaehlten "Jetzt laeuft"-Player (Verknuepfung "jetzt") zusammenfasst). Die Attribute kommen nur, solange
   # eine Position bekannt ist; sonst bleibt die Anzeige aus.
   - platform: homeassistant
     id: mp_pos
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     attribute: media_position
     internal: true
     on_value:
@@ -5539,14 +5643,14 @@ sensor:
       - script.execute: update_media_pos
   - platform: homeassistant
     id: mp_tempo
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     attribute: tempo
     internal: true
     on_value:
       - lambda: 'id(media_tempo) = (std::isnan(x) || x <= 0) ? 1.0f : x;'
   - platform: homeassistant
     id: mp_dur
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     attribute: media_duration
     internal: true
     on_value:
@@ -5660,6 +5764,17 @@ text_sensor:
     internal: true
     on_value:
       - lambda: 'id(tk_cfg).angekuendigt(x);'
+  # Adresse von Home Assistant (Attribut "basis", 2026-10-19): Bilder und Konfiguration kommen von dort
+  - platform: homeassistant
+    id: ha_basis
+    entity_id: sensor.esphomeremote_konfig_${ha_name}
+    attribute: basis
+    internal: true
+    on_value:
+      - lambda: |-
+          if (x.empty() || ${ha_ueber_tunnel} || x == id(tk_cfg).host()) return;
+          ESP_LOGI("konfig", "HA-Adresse: %s (vorher %s)", x.c_str(), id(tk_cfg).host().c_str());
+          id(tk_cfg).set_host(x);
 
   # SD-Test-Ausgaben
   - platform: template
@@ -5667,16 +5782,18 @@ text_sensor:
     name: "SD Status"
     entity_category: diagnostic
     update_interval: never
-  # Welche App laeuft und welches Cover Home Assistant dafuer hat (Ausloeser fuer die Logos von der SD-Karte)
+  # Welche App laeuft und welches Bild der "Jetzt laeuft"-Player hat (Ausloeser fuer die Logos von der SD-Karte)
   - platform: homeassistant
     id: mp_app_name
-    entity_id: sensor.esphomeremote_medien_app
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
+    attribute: app_name
     internal: true
     on_value:
       - script.execute: sd_logo_pruefen
   - platform: homeassistant
     id: mp_cover_url
-    entity_id: sensor.esphomeremote_medien_cover
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
+    attribute: entity_picture
     internal: true
     on_value:
       - script.execute: sd_logo_pruefen
@@ -5695,10 +5812,10 @@ text_sensor:
       return std::string("Platz ") + std::to_string(id(kb).active_host_slot() + 1);
 
   # ---- "Jetzt laeuft": eine HA-Entitaet fasst Streamer, Multiroom, Chromecast und Fernseher zusammen
-  # (custom_components/esphomeremote_now_playing, ${ent_jetzt}). Andere Dashboards koennen sie genauso nutzen.
+  # (custom_components/esphomeremote_now_playing, dem gewaehlten "Jetzt laeuft"-Player (Verknuepfung "jetzt")). Andere Dashboards koennen sie genauso nutzen.
   - platform: homeassistant
     id: mp_state
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     internal: true
     on_value:
       - script.execute: update_media_state
@@ -5706,7 +5823,7 @@ text_sensor:
 
   - platform: homeassistant
     id: mp_title
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     attribute: media_title
     internal: true
     on_value:
@@ -5721,7 +5838,7 @@ text_sensor:
 
   - platform: homeassistant
     id: mp_artist
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     attribute: media_artist
     internal: true
     on_value:
@@ -5733,12 +5850,12 @@ text_sensor:
   # die Knoepfe der Media-Player-Seite an Music Assistant statt per Bluetooth an den Streamer.
   - platform: homeassistant
     id: mp_quelle
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     attribute: quelle
     internal: true
   - platform: homeassistant
     id: mp_app
-    entity_id: ${ent_jetzt}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
     attribute: app_name
     internal: true
     on_value:
@@ -5750,7 +5867,8 @@ text_sensor:
   # Roher SmartTube-Titel: wird er leer, das Cover der Media-Seite ausblenden (Nachladen: Dienst refresh_cover).
   - platform: homeassistant
     id: adb_title
-    entity_id: sensor.esphomeremote_smarttube_titel
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
+    attribute: media_title
     internal: true
     on_value:
       - if:
@@ -5770,7 +5888,7 @@ text_sensor:
   # sekundengenau tickt statt nur bei HA-Updates zu springen.
   - platform: homeassistant
     id: timer_wohnung_state
-    entity_id: ${ent_timer}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_timer
     internal: true
     on_value:
       - lambda: |-
@@ -5788,7 +5906,7 @@ text_sensor:
   # selbst runterzaehlt.
   - platform: homeassistant
     id: timer_wohnung_remaining_attr
-    entity_id: ${ent_timer}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_timer
     attribute: remaining
     internal: true
     on_value:
@@ -5802,7 +5920,7 @@ text_sensor:
   # Neustart der Remote.
   - platform: homeassistant
     id: timer_wohnung_end_attr
-    entity_id: ${ent_timer}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_timer
     attribute: finishes_at
     internal: true
     on_value:
@@ -5831,14 +5949,14 @@ text_sensor:
 
   - platform: homeassistant
     id: tv_state
-    entity_id: ${ent_tv}
+    entity_id: sensor.esphomeremote_spiegel_${ha_name}_tv
     internal: true
     on_value:
       - lambda: |-
           // Alles ausser "off"/"unavailable" heisst: der Fernseher laeuft.
           id(tv_on) = !(x == "off" || x == "unavailable" || x == "unknown" || x.empty());
           // Media-Player-Seite: Knopf "Fernseher einschalten" nur, solange er aus ist
-          if (id(tv_on)) lv_obj_add_flag(id(m_tv_on), LV_OBJ_FLAG_HIDDEN);
+          if (id(tv_on) || id(tk_cfg).ent("tv").empty()) lv_obj_add_flag(id(m_tv_on), LV_OBJ_FLAG_HIDDEN);
           else           lv_obj_clear_flag(id(m_tv_on), LV_OBJ_FLAG_HIDDEN);
           id(update_media_state)->execute();
           id(media_layout)->execute();
@@ -6046,7 +6164,7 @@ lvgl:
                   widgets:
                     # Uhr UND Sanduhr+Countdown nebeneinander (Nutzerwunsch
                     # 2026-09-17: "neben der Uhr, nicht statt der Uhr") -
-                    # Icon+Label nur sichtbar, waehrend ${ent_timer}
+                    # Icon+Label nur sichtbar, waehrend der gewaehlte Timer (Verknuepfung "timer")
                     # laeuft. home_status_btn daneben ist dafuer von 132 auf
                     # 108 geschrumpft (passt dort weiterhin locker).
                     - label: {id: idle_clock, text: "--:--", styles: [st_muted], text_font: a15}
@@ -6858,9 +6976,9 @@ lvgl:
                   focused: {border_color: 0xF1F3F5}
                   on_click: [{script.execute: nav_back}]
                   widgets: [{label: {align: CENTER, text: "<", text_font: a15}}]
-              # Interpret hellblau, Titel darunter weiss (2026-10-13: zwei Farben). Passt er nicht in
+              # Interpret als normale Ueberschrift wie in allen Menues (2026-10-18, vorher hellblau). Passt er nicht in
               # a18, schaltet media_layout auf a15 - immer einzeilig.
-              - label: {id: media_artist, text: "Media Player", styles: [st_title, st_grow], pad_bottom: 0, height: 22, long_mode: DOT, text_color: 0x93C5FD}
+              - label: {id: media_artist, text: "Media Player", styles: [st_title, st_grow], pad_bottom: 0, height: 22, long_mode: DOT}
         - obj:
             id: media_head_col
             align: TOP_MID
@@ -6906,7 +7024,7 @@ lvgl:
                   on_click:
                     - homeassistant.service:
                         service: media_player.turn_on
-                        data: {entity_id: "${ent_tv}"}
+                        data: {entity_id: !lambda 'return id(tk_cfg).ent("tv");'}
                   widgets: [{label: {align: CENTER, text: "Fernseher einschalten", text_font: a13}}]
         # Bedienleiste ganz am unteren Bildschirmrand, EINE Zeile (Stand
         # 2026-09-16, Nutzerwunsch: Lauter/Leiser sollen weniger vom Cover
@@ -8123,7 +8241,7 @@ lvgl:
               # Andere Datei sofort laden (liegt in HA schon fertig); laedt danach auch die Startseite.
               - if:
                   condition: {lambda: "return !id(cover_title).empty();"}
-                  then: [{online_image.set_url: {id: mp_cover_image, url: !lambda 'return id(cover_ganz_player) ? std::string("http://${ha_host}/local/esphomeremote_cover_player_ganz.jpg") : std::string("http://${ha_host}/local/esphomeremote_cover_player_voll.jpg");'}}]
+                  then: [{online_image.set_url: {id: mp_cover_image, url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_voll.jpg");'}}]
             widgets:
               - label: {text: "Cover Player", text_font: a13, styles: [st_grow]}
               - label: {id: cover_player_lbl, text: "GANZ", text_font: a13, text_color: 0xF1F3F5}
@@ -8140,7 +8258,7 @@ lvgl:
                   text: !lambda 'return id(cover_ganz_home) ? std::string("GANZ") : std::string("VOLL");'
               - if:
                   condition: {lambda: "return !id(cover_title).empty();"}
-                  then: [{online_image.set_url: {id: home_cover_image, url: !lambda 'return id(cover_ganz_home) ? std::string("http://${ha_host}/local/esphomeremote_cover_home_ganz.jpg") : std::string("http://${ha_host}/local/esphomeremote_cover_home_voll.jpg");'}}]
+                  then: [{online_image.set_url: {id: home_cover_image, url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_voll.jpg");'}}]
             widgets:
               - label: {text: "Cover Startseite", text_font: a13, styles: [st_grow]}
               - label: {id: cover_home_lbl, text: "GANZ", text_font: a13, text_color: 0xF1F3F5}
@@ -8352,6 +8470,29 @@ lvgl:
             value: 0
             on_value:
               - lambda: 'id(dock_bis) = stufen::wert(extras::BIS, (int) x); extras::auffrischen();'
+        - label: {text: "MUSIK-ANZEIGE", text_font: a13, text_color: 0x3B82F6, pad_top: 6}
+        - button:
+            id: musik_dock_btn
+            width: 100%
+            height: 44
+            styles: [st_ctrlbtn, st_fx_r10]
+            on_click:
+              - lambda: 'id(musik_dock) = !id(musik_dock); extras::auffrischen();'
+            widgets:
+              - label: {text: "Im Dock bei Musik", text_font: a15, styles: [st_grow]}
+              - label: {id: musik_dock_lbl, text: "AN", text_font: a13, text_color: 0x22C55E}
+        - label: {id: h_musik_dock, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
+        - button:
+            id: musik_player_btn
+            width: 100%
+            height: 44
+            styles: [st_ctrlbtn, st_fx_r10]
+            on_click:
+              - lambda: 'id(musik_player) = !id(musik_player); extras::auffrischen();'
+            widgets:
+              - label: {text: "Nur wenn Player spielt", text_font: a15, styles: [st_grow]}
+              - label: {id: musik_player_lbl, text: "AN", text_font: a13, text_color: 0x22C55E}
+        - label: {id: h_musik_player, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. open-remote-wlan.h
     - id: page_service
       styles: [st_screen, st_fx_c10]
@@ -8692,7 +8833,7 @@ lvgl:
       pad_bottom: 4
       layout: {type: flex, flex_flow: column, flex_align_cross: start, pad_row: 8}
       on_load:
-        - lambda: 'id(cur_page) = 41; id(frow) = 0; id(fcol) = 0; id(kbd_shift) = false; id(kbd_sel) = -1; id(kbd_kopf) = -1; lv_obj_remove_state(id(kbd_maus_btn), LV_STATE_FOCUSED);'
+        - lambda: 'id(cur_page) = 41; id(frow) = 0; id(fcol) = 0; id(kbd_shift) = false; id(kbd_sel) = -1; id(kbd_kopf) = -1; eingabewahl::kbd_einrichten();'
         - script.execute: popup_kopf
         - lvgl.label.update: {id: kbd_title, text: !lambda 'return std::string(id(kbd_mode) == 0 ? "Ziffern" : "Tastatur");'}
         - lambda: 'if (gestenseite::z().eingabe) { id(kbd_shift) = gestenseite::z().text.empty(); gestenseite::kbd_titel(); }'
@@ -8725,16 +8866,7 @@ lvgl:
                         then: [{script.execute: nav_back}]
                   widgets: [{label: {id: back_kbd_lbl, align: CENTER, text: "<", text_font: a15}}]
               - label: {id: kbd_title, text: "Tastatur", styles: [st_title, st_grow], pad_bottom: 0, height: 22, long_mode: DOT}
-              # Schnell zur Maus (2026-10-17): Touchpad als Popup, die Tastatur liegt dann weggelegt bereit
-              - button:
-                  id: kbd_maus_btn
-                  width: 46
-                  height: 30
-                  styles: [st_back]
-                  focused: {border_color: 0xF1F3F5}
-                  on_click:
-                    - lambda: 'touchpad::oeffnen();'
-                  widgets: [{label: {align: CENTER, text: "\U000F037D", text_font: mdi_klein}}]
+              # Rechts: Umschalter Maus | Tastatur | Ziffern (open-remote-maus.h, eingabewahl - wird beim Laden angehaengt)
         - buttonmatrix:
             id: kbd_matrix
             width: 100%
@@ -8822,6 +8954,29 @@ lvgl:
             clickable: true
             on_click:
               - lambda: 'dockanz::beruehrt();'
+
+    # ================================================ 52: MUSIK-ANZEIGE (open-remote-musik.h)
+    - id: page_musik
+      styles: [st_screen]
+      scrollbar_mode: "off"
+      scrollable: false
+      pad_all: 0
+      on_load:
+        - lambda: 'id(cur_page) = 52; musik::geladen();'
+      widgets:
+        - obj:
+            id: musik_root
+            x: 0
+            y: 0
+            width: 240
+            height: 320
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            clickable: true
+            on_click:
+              - lambda: 'musik::beruehrt();'
 
     # ================================================ 51: TOUCHPAD (open-remote-maus.h)
     - id: page_maus

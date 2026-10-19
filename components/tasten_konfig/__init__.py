@@ -16,6 +16,7 @@ kb_ns = cg.esphome_ns.namespace("espidf_ble_keyboard")
 EspidfBleKeyboard = kb_ns.class_("EspidfBleKeyboard", cg.Component)
 rt_ns = cg.esphome_ns.namespace("remote_transmitter")
 RemoteTransmitter = rt_ns.class_("RemoteTransmitterComponent", cg.Component)
+DockDirekt = cg.esphome_ns.namespace("dock_direkt").class_("DockDirekt", cg.Component)
 TastenKonfig = tk_ns.class_("TastenKonfig", cg.Component)
 
 CONFIG_SCHEMA = cv.All(cv.Schema(
@@ -29,6 +30,8 @@ CONFIG_SCHEMA = cv.All(cv.Schema(
         cv.Optional("transfer"): cv.use_id(text_sensor.TextSensor),
         cv.Required("keyboard"): cv.use_id(EspidfBleKeyboard),
         cv.Optional("transmitter"): cv.use_id(RemoteTransmitter),
+        # Direkter Funkweg zum Dock (components/dock_direkt, 2026-10-18)
+        cv.Optional("direkt"): cv.use_id(DockDirekt),
     }
 ).extend(cv.COMPONENT_SCHEMA),
     # Eigener HTTP-Download (esp_http_client) + Reserve fuer online_image/http_request, die
@@ -50,6 +53,9 @@ async def to_code(config):
         tx = await cg.get_variable(config["transmitter"])
         cg.add(var.set_transmitter(tx))
         cg.add_define("TK_USE_IR")
+    if "direkt" in config:
+        cg.add(var.set_direkt(await cg.get_variable(config["direkt"])))
+        cg.add_define("TK_USE_DIREKT")
     if "transfer" in config:
         tt = await cg.get_variable(config["transfer"])
         cg.add(var.set_transfer(tt))

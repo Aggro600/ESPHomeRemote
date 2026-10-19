@@ -9,33 +9,17 @@
 # Dann secrets.yaml.example -> secrets.yaml ausfuellen und flashen.
 #
 # Die eigentliche Firmware + die eigenen Komponenten werden ueber die Pakete
-# unten direkt aus GitHub gezogen. Zum Anpassen an dein Zuhause: die
-# substitutions hier ueberschreiben, Details in ANPASSEN / README.
+# unten direkt aus GitHub gezogen. Anpassen an dein Zuhause: im Konfigurator
+# in Home Assistant, nicht hier.
 # =============================================================================
 
 substitutions:
   device_name:    "open-remote"
   friendly_name:  "Open Remote"
-
-  # Home-Assistant-Entitaeten (auf deine aendern) - siehe README "An dein
-  # Zuhause anpassen". Nicht gesetzte zeigen im Menue nur "nicht verfuegbar".
-  ent_media:      "media_player.wohnzimmer"
-  ent_streamer:   "remote.wohnzimmer_streamer"
-  ent_adb:        "media_player.android_tv"
-  ent_wz_light:   "light.wohnzimmer"
-  ent_wz_cover:   "cover.wohnzimmer"
-  ent_sz_light:   "light.schlafzimmer"
-  ent_sz_cover:   "cover.schlafzimmer"
-  ent_ku_cover:   "cover.kueche"
-  ent_doorbell:   "input_boolean.klingel"
-  ent_door_lock:  "lock.haustuer"
-  ent_sh_test:    "input_boolean.beispielschalter"
-  ent_doorbell2:  "input_boolean.klingel_2"
-  ent_door_lock2: "lock.wohnungstuer"
-  ent_open_ok1:   "input_boolean.tuer_1_oeffnen_erlauben"
-  ent_open_ok2:   "input_boolean.tuer_2_oeffnen_erlauben"
-  ent_sleeptimer: "timer.sleeptimer"
-  ent_sleep_flag: "input_boolean.sleeptimer_laeuft"
+  ha_name:        "open_remote"     # = device_name mit _ statt - (so heissen die Entitaeten in Home Assistant)
+  # Alles andere (Media Player, Fernseher, Lautsprecher, Timer, Kameras, Klingel, Streamer) stellst du im
+  # Konfigurator ein (Seitenleiste "Fernbedienung") - ohne neue Firmware. Die Adresse von Home Assistant
+  # findet die Fernbedienung selbst.
 
 dashboard_import:
   package_import_url: github://Aggro600/ESPHomeRemote/open-remote.yaml@master

@@ -1,9 +1,0 @@
-# "Jetzt laeuft"-Player fuer die Wiedergabe-Karte der Remote (substitution ent_jetzt in open-remote.yaml).
-# Quellen nach Bedarf eintragen, leer = nicht benutzt.
-media_player:
-  - platform: esphomeremote_now_playing
-    name: "Jetzt läuft"
-    cast: ""            # z. B. media_player.wohnzimmer_chromecast
-    multiroom: ""       # z. B. media_player.multiroom (Music Assistant)
-    tv: ""              # z. B. media_player.fernseher
-    ha_url: http://<HA-IP>:8123

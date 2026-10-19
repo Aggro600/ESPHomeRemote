@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bedienung_info">Meldet Home Assistant, welche App vorne ist und ob die Bildschirmtastatur offen ist (für die ESPHome-Fernbedienungen).</string>
+</resources>

@@ -277,8 +277,29 @@ async def _dash_job(hass: HomeAssistant, j: dict, cmd: str, args: dict) -> bool:
 
 
 async def _folgen(hass: HomeAssistant, j: dict, djid: str, status: str | None) -> bool:
+    """Auftrag bis zum Ende verfolgen. Reisst die Verbindung zum Device Builder ab (Volllast beim Kompilieren,
+    Add-on-Neustart), laeuft der Auftrag dort weiter - dann neu verbinden und weiterlesen statt aufzugeben (2026-10-18:
+    der Einrichtungs-Assistent blieb sonst ohne Ende und ohne Knopf stehen)."""
+    abbrueche, mitlesen = 0, True
+    while status not in _DASH_ENDE:
+        try:
+            status = await _folgen_verbindung(hass, j, djid, status, mitlesen)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001 - Verbindung weg: der Auftrag laeuft im Add-on weiter
+            abbrueche += 1
+            if abbrueche > 30:
+                j["fehler"] = f"Verbindung zum ESPHome-Add-on verloren ({err})"
+                return False
+            _log(j, f"Verbindung zum ESPHome-Add-on unterbrochen - lese weiter ({abbrueche}) ...")
+            mitlesen = False   # die Ausgabe nicht doppelt holen, nur noch den Stand abfragen
+            await asyncio.sleep(5)
+    return status == "completed"
+
+
+async def _folgen_verbindung(hass: HomeAssistant, j: dict, djid: str, status: str | None, mitlesen: bool) -> str | None:
     async with Dash(hass) as d:
-        folge = await d.senden("firmware/follow_job", {"job_id": djid})
+        folge = await d.senden("firmware/follow_job", {"job_id": djid}) if mitlesen else None
         abfrage, naechste = None, 0.0
         while status not in _DASH_ENDE:
             if abfrage is None and time.monotonic() >= naechste:
@@ -289,7 +310,7 @@ async def _folgen(hass: HomeAssistant, j: dict, djid: str, status: str | None) -
             except asyncio.TimeoutError:
                 continue
             mid = m.get("message_id")
-            if mid == folge and m.get("event") == "output":
+            if folge and mid == folge and m.get("event") == "output":
                 data = m.get("data")
                 for z in (data if isinstance(data, list) else [data]):
                     _log(j, z)
@@ -301,7 +322,10 @@ async def _folgen(hass: HomeAssistant, j: dict, djid: str, status: str | None) -
                     j["progress"] = g["progress"]
                 if status in _DASH_ENDE and status != "completed":
                     j["fehler"] = g.get("failure_reason") or g.get("error") or f"Exit {g.get('exit_code')}"
-        return status == "completed"
+                    if not mitlesen:   # Ende der Ausgabe nachtragen (fuer die Fehlersuche und den 2. Versuch)
+                        for z in (g.get("output") or [])[-40:]:
+                            _log(j, z)
+        return status
 
 
 async def _mit_versuch(hass: HomeAssistant, j: dict, name: str, text: str, cmd: str, args: dict) -> bool:
@@ -313,6 +337,13 @@ async def _mit_versuch(hass: HomeAssistant, j: dict, name: str, text: str, cmd: 
         rest = "\n".join(list(j["log"])[-40:])
         if versuch == 1 and re.search(r"No such file or directory|Exit 2\b|exit code 2|MDNSComponent", rest + j["fehler"]):
             _log(j, "Bau-Aussetzer - zweiter Versuch")
+            if "MDNSComponent" in rest and args.get("configuration"):
+                # Veralteter Build-Stand nach einer YAML-Aenderung (mDNS aus): nur Aufraeumen hilft (2026-10-18)
+                try:
+                    await dash(hass, "firmware/clean", {"configuration": args["configuration"]})
+                    _log(j, "Build-Ordner aufgeraeumt")
+                except Exception as err:  # noqa: BLE001
+                    _log(j, f"Aufraeumen fehlgeschlagen: {err}")
             j["fehler"] = ""
             continue
         return False
@@ -453,6 +484,10 @@ async def liste(hass: HomeAssistant) -> dict:
             b = hass.data.get("esphomeremote_konfig_bruecke")
             x["bruecke"] = b.info().get(dev_name) if b else None
             x["wlan"] = bool(wlan and wlan.state == "on")
+            # "online" (per WLAN erreichbar) sagt die Remote selbst, wenn sie mit HA verbunden ist: der Ping-Stand des
+            # Add-ons hing nach "Nur Bluetooth" minutenlang auf "online" (2026-10-18), obwohl die IP nicht antwortete.
+            if wlan and wlan.state in ("on", "off"):
+                x["online"] = x["wlan"]
         out.append(x)
     laufend = [{k: v for k, v in j.items() if k in ("job_id", "titel", "dateien", "port")}
                for j in _jobs.values() if not j["fertig"]]

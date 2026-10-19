@@ -17,6 +17,10 @@
 #ifdef TK_USE_IR
 #include "esphome/components/remote_transmitter/remote_transmitter.h"
 #endif
+#ifdef TK_USE_DIREKT
+#include "esphome/components/dock_direkt/dock_direkt.h"
+#endif
+#include <memory>
 
 namespace esphome {
 namespace tasten_konfig {
@@ -398,9 +402,16 @@ void TastenKonfig::modus_starten(const char *id) {
   ESP_LOGW(TAG, "Folgemodus '%s' nicht in der Konfiguration", id);
 }
 
-void TastenKonfig::modus_verlaengern_() {
-  modus_bis_ = millis() + modus_ms_;
-  if (modus_anzeige) modus_anzeige((*doc_)["modi"][modus_]["name"] | "", modus_ms_);
+void TastenKonfig::modus_verlaengern_(int taste) {
+  uint32_t ms = modus_ms_;
+  if (taste >= 0) {   // eigene Zeit dieser Taste (Konfigurator, 2026-10-18)
+    char k[6];
+    snprintf(k, sizeof(k), "%d", taste);
+    const uint32_t s = modus_keys_()[k]["s"] | 0u;
+    if (s > 0) ms = s * 1000u;
+  }
+  modus_bis_ = millis() + ms;
+  if (modus_anzeige) modus_anzeige((*doc_)["modi"][modus_]["name"] | "", ms);
 }
 
 void TastenKonfig::modus_beenden() {
@@ -457,8 +468,9 @@ void TastenKonfig::ha_(JsonObjectConst s) {
 // IR-Schritt (2026-10-11): {"t":"ir", "proto":"NEC","addr":..,"cmd":..} oder {"t":"ir","raw":[9000,-4500,..],"f":38000}.
 // Sendeweg aus der Konfiguration ("ir": {"route": 0..3, "docks": ["dock_wz"]}) wie beim OpenRemote-Original:
 //   0 = nur Remote, 1 = Remote und Dock, 2 = nur Dock, 3 = Remote, danach Dock (zwei saubere Frames nacheinander).
-// Das Dock bekommt die fertigen Zeiten ueber HA (Aktion esphome.<dock>_ir_roh). Ist HA gerade nicht verbunden
-// (oder kein Dock eingetragen), sendet die Remote selbst - eine Vorliebe fuer den Sender, kein "dann gar nicht".
+// Das Dock bekommt die fertigen Zeiten direkt per Funk (dock_direkt, ESP-NOW, 2026-10-18) und nur, wenn es das nicht
+// bestaetigt, ueber HA (Aktion esphome.<dock>_ir_roh). Geht beides nicht (oder ist kein Dock eingetragen), sendet
+// die Remote selbst - eine Vorliebe fuer den Sender, kein "dann gar nicht".
 void TastenKonfig::ir_(JsonObjectConst s) {
   IrTimings t;
   uint32_t f = 38000;
@@ -482,44 +494,73 @@ void TastenKonfig::ir_(JsonObjectConst s) {
   int route = doc_ != nullptr ? ((*doc_)["ir"]["route"] | 0) : 0;
   if (!s["r"].isNull()) route = s["r"] | 0;   // eigener Sendeweg dieses Schritts (2026-10-11)
   const std::vector<std::string> docks = docks_(s);
-  const bool dock_geht = route != 0 && !docks.empty() && api_ok_();
-  if (route == 2 && !dock_geht) ESP_LOGI(TAG, "IR: nur Dock gewaehlt, aber %s - sende selbst", docks.empty() ? "kein Dock eingetragen" : "HA nicht verbunden");
-  const bool lokal = !dock_geht || route != 2;
-
-  auto ueber_dock = [&]() {
-    const std::string code = zeiten_text(t), tr = std::to_string(f);
-    for (const auto &dock : docks) {
-      std::map<std::string, std::string> d;
-      d["code"] = code;
-      d["traeger"] = tr;
-      ha_senden("esphome." + dock + "_ir_roh", std::move(d));
-    }
-  };
-  auto selbst = [&]() {
-#ifdef TK_USE_IR
-    if (tx_ == nullptr) return;
-    auto call = tx_->transmit();
-    auto *d = call.get_data();
-    d->set_carrier_frequency(f);
-    d->reserve(t.size());
-    for (int32_t v : t) { if (v > 0) d->mark(v); else d->space(-v); }
-    call.perform();   // blockiert bis der Frame draussen ist -> bei "nacheinander" folgt das Dock danach
-#else
-    ESP_LOGW(TAG, "IR-Sender nicht eingebaut");
-#endif
-  };
-
-  if (dock_geht && route == 1) {   // gleichzeitig: Dock zuerst anstossen (Weg ueber HA dauert), dann selbst
-    ueber_dock();
-    selbst();
+  if (route == 0 || docks.empty()) {
+    if (route == 2) ESP_LOGI(TAG, "IR: nur Dock gewaehlt, aber kein Dock eingetragen - sende selbst");
+    ir_selbst_(t, f);
     return;
   }
-  if (lokal) selbst();
-  if (dock_geht) ueber_dock();
+  // Je Dock: direkt per Funk (2026-10-18), sonst ueber HA; ist auch HA nicht da und sollte nur das Dock senden,
+  // sendet die Remote selbst (einmal, auch bei mehreren Docks).
+  auto selbst_gemacht = std::make_shared<bool>(false);
+  const bool nur_dock = route == 2;
+  auto ueber_dock = [&]() {
+    for (const auto &dock : docks) {
+      an_dock_(dock, 1, f, t, [this, dock, t, f, nur_dock, selbst_gemacht]() {
+        if (api_ok_()) {
+          std::map<std::string, std::string> d;
+          d["code"] = zeiten_text(t);
+          d["traeger"] = std::to_string(f);
+          ha_senden("esphome." + dock + "_ir_roh", std::move(d));
+        } else if (nur_dock && !*selbst_gemacht) {
+          *selbst_gemacht = true;
+          ESP_LOGI(TAG, "IR: Dock weder direkt noch ueber HA erreichbar - sende selbst");
+          ir_selbst_(t, f);
+        }
+      });
+    }
+  };
+  if (route == 1) {   // gleichzeitig: Dock zuerst anstossen, dann selbst
+    ueber_dock();
+    ir_selbst_(t, f);
+  } else if (route == 3) {   // selbst, danach das Dock
+    ir_selbst_(t, f);
+    ueber_dock();
+  } else {
+    ueber_dock();
+  }
+}
+
+void TastenKonfig::ir_selbst_(const IrTimings &t, uint32_t f) {
+#ifdef TK_USE_IR
+  if (tx_ == nullptr) return;
+  auto call = tx_->transmit();
+  auto *d = call.get_data();
+  d->set_carrier_frequency(f);
+  d->reserve(t.size());
+  for (int32_t v : t) { if (v > 0) d->mark(v); else d->space(-v); }
+  call.perform();   // blockiert bis der Frame draussen ist
+#else
+  ESP_LOGW(TAG, "IR-Sender nicht eingebaut");
+#endif
+}
+
+void TastenKonfig::an_dock_(const std::string &dock, int typ, uint32_t param, const IrTimings &t, std::function<void()> &&sonst) {
+#ifdef TK_USE_DIREKT
+  // Funk-Adressen der Docks liefert HA in der Konfiguration ("dmac": {"dock_wz": "AC:27:..."}) - bleibt im NVS,
+  // also auch ohne HA bekannt.
+  uint8_t mac[6];
+  if (direkt_ != nullptr && doc_ != nullptr) {
+    if (!dock_direkt::DockDirekt::mac_lesen((*doc_)["dmac"][dock] | "", mac))
+      ESP_LOGI(TAG, "%s: Funk-Adresse unbekannt - ueber HA", dock.c_str());
+    else if (direkt_->senden(mac, (dock_direkt::Typ) typ, param, t, std::move(sonst)))
+      return;
+  }
+#endif
+  if (sonst) sonst();
 }
 
 // 433-MHz-Schritt (2026-10-11): {"t":"rf","raw":[350,-1050,..],"wdh":5}. Senden kann nur das Dock (CC1101) -
-// ueber HA (Aktion esphome.<dock>_rf_roh). Ohne HA-Verbindung wartet der Aufruf kurz in der Warteschlange.
+// direkt per Funk (dock_direkt, 2026-10-18) oder ueber HA (Aktion esphome.<dock>_rf_roh, wartet ohne Verbindung kurz).
 // Docks eines Schritts: eigene Liste "d" oder die Vorgabe "ir.docks".
 std::vector<std::string> TastenKonfig::docks_(JsonObjectConst s) const {
   std::vector<std::string> v;
@@ -541,6 +582,7 @@ std::string TastenKonfig::slot_name(int i) const {
 int TastenKonfig::kameras() const { return doc_ != nullptr ? (int) (*doc_)["kameras"].size() : 0; }
 std::string TastenKonfig::kamera_name(int i) const { return doc_ != nullptr ? std::string((*doc_)["kameras"][i]["n"] | "") : ""; }
 std::string TastenKonfig::kamera_entitaet(int i) const { return doc_ != nullptr ? std::string((*doc_)["kameras"][i]["e"] | "") : ""; }
+std::string TastenKonfig::ent(const char *rolle) const { return doc_ != nullptr ? std::string((*doc_)["ents"][rolle] | "") : ""; }
 
 void TastenKonfig::rf_(JsonObjectConst s) {
   const std::vector<std::string> docks = docks_(s);
@@ -552,13 +594,15 @@ void TastenKonfig::rf_(JsonObjectConst s) {
   for (JsonVariantConst v : s["raw"].as<JsonArrayConst>())
     if (v.as<int32_t>() != 0) t.push_back(v.as<int32_t>());
   if (t.empty()) return;
-  const std::string code = zeiten_text(t);
-  const std::string wdh = std::to_string((int) (s["wdh"] | 5));
+  const int wdh = s["wdh"] | 5;
   for (const auto &dock : docks) {
-    std::map<std::string, std::string> d;
-    d["code"] = code;
-    d["wiederholen"] = wdh;
-    ha_senden("esphome." + dock + "_rf_roh", std::move(d));
+    // direkt per Funk, sonst ueber HA (wartet bis 10 s auf die Verbindung)
+    an_dock_(dock, 2, (uint32_t) wdh, t, [this, dock, t, wdh]() {
+      std::map<std::string, std::string> d;
+      d["code"] = zeiten_text(t);
+      d["wiederholen"] = std::to_string(wdh);
+      ha_senden("esphome." + dock + "_rf_roh", std::move(d));
+    });
   }
 }
 
@@ -584,18 +628,29 @@ JsonObjectConst TastenKonfig::taste_cfg_(int aktivitaet, int taste) {
   return acts[aktivitaet]["keys"][k];
 }
 
-static bool hat(JsonObjectConst kc, const char *g) {
-  JsonArrayConst a = kc[g];
-  return !a.isNull() && a.size() > 0;
+static const char *gname(Geste g) { return g == KURZ ? "short" : g == DOPPELT ? "double" : "long"; }
+static const char *gname_offline(Geste g) { return g == KURZ ? "short_offline" : g == DOPPELT ? "double_offline" : "long_offline"; }
+
+// Schritte einer Geste. Ohne HA-Verbindung (weder WLAN noch Bluetooth-Bruecke) gilt "<geste>_offline", wenn belegt
+// (Konfigurator: "Ohne Home Assistant", 2026-10-18) - sonst die normalen Schritte (HA-Aufrufe warten dann kurz).
+JsonArrayConst TastenKonfig::steps_(JsonObjectConst kc, Geste g) const {
+  if (!api_ok_()) {
+    JsonArrayConst o = kc[gname_offline(g)];
+    if (!o.isNull() && o.size() > 0) return o;
+  }
+  return kc[gname(g)];
 }
 
-static const char *gname(Geste g) { return g == KURZ ? "short" : g == DOPPELT ? "double" : "long"; }
+bool TastenKonfig::hat_(JsonObjectConst kc, Geste g) const {
+  JsonArrayConst a = steps_(kc, g);
+  return !a.isNull() && a.size() > 0;
+}
 
 bool TastenKonfig::weckt(int taste, int aktivitaet) {
   if (!aktiv()) return false;
   JsonObjectConst kc = taste_cfg_(aktivitaet, taste);
   if (kc.isNull()) return false;
-  for (const char *g : {"short", "double", "long"}) {
+  for (const char *g : {"short", "double", "long", "short_offline", "double_offline", "long_offline"}) {
     for (JsonObjectConst s : kc[g].as<JsonArrayConst>()) {
       const char *t = s["t"] | "";
       const char *fn = s["fn"] | "";
@@ -608,11 +663,12 @@ bool TastenKonfig::weckt(int taste, int aktivitaet) {
 }
 
 void TastenKonfig::ausfuehren_(int aktivitaet, int taste, Geste g, bool dunkel) {
-  if (modus_taste(taste)) modus_verlaengern_();
+  if (modus_taste(taste)) modus_verlaengern_(taste);
   JsonObjectConst kc = taste_cfg_(aktivitaet, taste);
-  JsonArrayConst steps = kc[gname(g)];
-  ESP_LOGD(TAG, "Taste %d %s (Aktivitaet %d, %u Schritte)", taste,
-           g == KURZ ? "KURZ" : g == DOPPELT ? "DOPPELT" : "LANG", aktivitaet, (unsigned) steps.size());
+  JsonArrayConst steps = steps_(kc, g);
+  ESP_LOGD(TAG, "Taste %d %s (Aktivitaet %d, %u Schritte%s)", taste,
+           g == KURZ ? "KURZ" : g == DOPPELT ? "DOPPELT" : "LANG", aktivitaet, (unsigned) steps.size(),
+           api_ok_() ? "" : ", ohne HA");
   folge_(steps, Ctx{taste, g, dunkel, aktivitaet}, 0, gen_);
 }
 
@@ -667,7 +723,7 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
     if (z.lang_fertig) {
       z.lang_fertig = false;
       // Push-to-Talk: Loslassen beendet die Aufnahme
-      for (JsonObjectConst s : kc["long"].as<JsonArrayConst>())
+      for (JsonObjectConst s : steps_(kc, LANG))
         if (strcmp(s["t"] | "", "int") == 0 && strcmp(s["fn"] | "", "voice_ptt") == 0 && intern)
           intern("voice_ptt_ende", 0, LANG, z.dunkel);
       return true;
@@ -678,7 +734,7 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
       ausfuehren_(a, taste, DOPPELT, z.dunkel);
       return true;
     }
-    if (hat(kc, "double")) {
+    if (hat_(kc, DOPPELT)) {
       z.los_ms = millis();
       z.wartet = true;
       const bool d = z.dunkel;
@@ -694,7 +750,7 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
 
   // ---- gedrueckt
   if (!aktiv() || !darf_neu) return false;
-  if (modus_taste(taste)) modus_verlaengern_();   // bis zum Loslassen/Doppel-Fenster sicher im Modus
+  if (modus_taste(taste)) modus_verlaengern_(taste);   // bis zum Loslassen/Doppel-Fenster sicher im Modus
   JsonObjectConst kc = taste_cfg_(aktivitaet, taste);
   z.eigen = true;
   z.unten = true;
@@ -704,7 +760,7 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
     ESP_LOGI(TAG, "Taste %d hat in Aktivitaet %d keine Belegung", taste, aktivitaet);
     return true;
   }
-  const bool h_s = hat(kc, "short"), h_d = hat(kc, "double"), h_l = hat(kc, "long");
+  const bool h_s = hat_(kc, KURZ), h_d = hat_(kc, DOPPELT), h_l = hat_(kc, LANG);
   // "Beim Gedrueckthalten: Kurz wiederholen" (2026-10-04): sofort einmal, nach long_ms im Takt `repeat` ms,
   // solange gehalten. Doppelt/Lang werden dabei nicht ausgewertet.
   const uint32_t wdh_ms = kc["repeat"] | 0;
@@ -718,7 +774,7 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
     // Halten wie eine echte Fernbedienung: Host wiederholt selbst, Loslassen gibt frei.
     z.haelt = true;
     const Ctx c{taste, KURZ, dunkel, aktivitaet};
-    for (JsonObjectConst s : kc["short"].as<JsonArrayConst>()) schritt_(s, c, true);
+    for (JsonObjectConst s : steps_(kc, KURZ)) schritt_(s, c, true);
     return true;
   }
   // Zweiter Druck im Doppel-Fenster?

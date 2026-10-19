@@ -1,63 +1,22 @@
-"""ESPHomeRemote: universeller "Jetzt laeuft"-Player.
+"""Zusammengefasster "Jetzt laeuft"-Player (2026-10-19, vorher custom_components/esphomeremote_now_playing).
 
-Fasst vier Quellen zu EINER media_player-Entitaet zusammen (Rangfolge bei _recompute):
-  - Streamer: jede App mit Medien-Sitzung (SmartTube, Netflix, Disney+ ...), aus den Sensoren des Pakets
-    esphomeremote_smarttube.yaml (Streamer-App per Webhook) - mit Position und Dauer.
-  - Multiroom (Music Assistant, Option "multiroom").
-  - Chromecast-Integration (Option "cast"): echte Cast-Sitzung.
-  - Fernseher selbst (Option "tv"): Sender bzw. TV-App, oder der HDMI-Eingang.
-Die Fernbedienung zeigt diese eine Entitaet; andere Dashboards koennen sie genauso nutzen.
-
-    media_player:
-      - platform: esphomeremote_now_playing
-        name: "Wohnzimmer Jetzt läuft"
-        cast: media_player.tv_wohnzimmer     # leer = nicht benutzt
-        multiroom: media_player.multiroom_audio
-        tv: media_player.tv_wz
-        tv_app: media_player.tv_wohnzimmer_androidsony   # Android-TV-Remote des Fernsehers: laufende App
-        tv_cast: media_player.tv_wohnzimmer_sony_chromecast   # Chromecast des Fernsehers: Titel/Cover der App
-        ha_url: http://homeassistant.local:8123   # Praefix fuer Bild-URLs (leer = interne HA-Adresse)
-
-Eigene Komponente statt template: - die Template-Integration kennt media_player nicht als Plattform.
+Fasst Fernseher, Streamer, Multiroom (Music Assistant) und Chromecast zu EINER media_player-Entitaet zusammen, die
+die Fernbedienungen fuer Wiedergabe-Karte, Media-Seite und Musik-Anzeige nutzen (Konfigurator > Verknuepfungen).
+Angelegt und eingestellt im Konfigurator (Seite "Wiedergabe", kd.data["jetzt"]); jede Quelle ist optional.
+Rangfolge siehe _recompute.
 """
 
 from __future__ import annotations
 
+import re
+
 import voluptuous as vol
 
-from homeassistant.components.media_player import (
-    PLATFORM_SCHEMA as MEDIA_PLAYER_PLATFORM_SCHEMA,
-    MediaPlayerEntity,
-    MediaPlayerEntityFeature,
-    MediaPlayerState,
-)
-from homeassistant.const import CONF_NAME, CONF_UNIQUE_ID
-from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.components.media_player import MediaPlayerEntity, MediaPlayerEntityFeature, MediaPlayerState
+from homeassistant.core import Event, EventStateChangedData, callback
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.network import NoURLAvailableError, get_url
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import dt as dt_util
 
-SMARTTUBE_TITLE = "sensor.esphomeremote_smarttube_titel"
-SMARTTUBE_ARTIST = "sensor.esphomeremote_smarttube_interpret"
-SMARTTUBE_STATE = "sensor.esphomeremote_smarttube_wiedergabestatus"
-# Position der aktiven ADB-Quelle (SmartTube ODER Netflix) in Sekunden, -1 = keine
-# (packages/esphomeremote_smarttube.yaml, Stand 2026-09-21).
-MEDIEN_POSITION = "sensor.esphomeremote_medien_position"
-MEDIEN_APP = "sensor.esphomeremote_medien_app"
-MEDIEN_DAUER = "sensor.esphomeremote_medien_dauer"
-MEDIEN_COVER = "sensor.esphomeremote_medien_cover"
-# Standardwerte der drei Quellen (in der YAML ueberschreibbar: cast, multiroom, tv, ha_url)
-CAST_ENTITY = "media_player.tv_wohnzimmer"
-# Multiroom-Musik ueber Music Assistant (packages/multiroom_audio.yaml, Stand 2026-10-12).
-MA_ENTITY = "media_player.multiroom_audio"
-TV_ENTITY = "media_player.tv_wz"
-# Apps auf dem Fernseher selbst (2026-10-15): die Bravia-Entitaet kennt nur Tuner/HDMI, die App
-# kommt von der Android-TV-Remote-Entitaet (app_id), Titel/Cover vom eingebauten Chromecast.
-TV_APP_ENTITY = "media_player.tv_wohnzimmer_androidsony"
-TV_CAST_ENTITY = "media_player.tv_wohnzimmer_sony_chromecast"
 # Pakete, die keine "App" sind: Tuner/HDMI-Anzeige und Startbildschirme
 TV_KEINE_APP = ("com.sony.dtv.tvx", "com.google.android.tvlauncher", "com.google.android.apps.tv.launcherx",
                 "com.sony.dtv.sonysystemservice", "com.android.tv.settings")
@@ -70,42 +29,30 @@ APP_NAMEN = {
     "de.zdf.mediathek": "ZDF", "com.zdf.android.mediathek": "ZDF", "de.swr.avp.ard.tv": "ARD Mediathek",
     "de.prosiebensat1digital.seventv": "Joyn", "org.jellyfin.androidtv": "Jellyfin",
 }
-SMARTTUBE_COVER = "/local/esphomeremote_smarttube_cover.jpg"
-CONF_CAST, CONF_MA, CONF_TV, CONF_HA_URL = "cast", "multiroom", "tv", "ha_url"
-CONF_TV_APP, CONF_TV_CAST = "tv_app", "tv_cast"
-
 EMPTY_STATES = ("", "unknown", "unavailable")
-
-PLATFORM_SCHEMA = MEDIA_PLAYER_PLATFORM_SCHEMA.extend(
-    {
-        vol.Optional(CONF_NAME, default="Wohnzimmer Jetzt läuft"): cv.string,
-        vol.Optional(
-            CONF_UNIQUE_ID, default="esphomeremote_now_playing"
-        ): cv.string,
-        # Quellen (leer = nicht benutzt) und die HA-Adresse fuer absolute Bild-URLs (die Remote laedt sie direkt)
-        vol.Optional(CONF_CAST, default=CAST_ENTITY): cv.string,
-        vol.Optional(CONF_MA, default=MA_ENTITY): cv.string,
-        vol.Optional(CONF_TV, default=TV_ENTITY): cv.string,
-        vol.Optional(CONF_TV_APP, default=TV_APP_ENTITY): cv.string,
-        vol.Optional(CONF_TV_CAST, default=TV_CAST_ENTITY): cv.string,
-        vol.Optional(CONF_HA_URL, default=""): cv.string,
-    }
-)
+DOMAIN = "esphomeremote_konfig"
+QUELLEN = ("tv", "tv_app", "tv_cast", "cast", "multiroom")
 
 
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> None:
-    if not config[CONF_HA_URL]:
-        # Die Remote laedt Bilder direkt, braucht also eine im LAN erreichbare Adresse
-        try:
-            config = {**config, CONF_HA_URL: get_url(hass, allow_external=False)}
-        except NoURLAvailableError:
-            config = {**config, CONF_HA_URL: "http://homeassistant.local:8123"}
-    async_add_entities([NowPlayingMediaPlayer(config)])
+def validate_jetzt(liste) -> list[dict]:
+    if not isinstance(liste, list):
+        raise vol.Invalid("Wiedergabe: Liste erwartet")
+    out, ids = [], set()
+    for j in liste[:8]:
+        jid = str(j.get("id") or "").strip()
+        if not re.fullmatch(r"[a-z0-9_]{1,24}", jid) or jid in ids:
+            raise vol.Invalid(f"Wiedergabe: Kennung '{jid}' ungültig oder doppelt")
+        ids.add(jid)
+        st = j.get("streamer")
+        st = "" if st in (None, False, True) else str(st)[:24]   # Kennung eines Streamers (streamer.py), "" = keiner
+        o = {"id": jid, "name": str(j.get("name") or "Jetzt läuft")[:40], "streamer": st}
+        for q in QUELLEN:
+            e = str(j.get(q) or "").strip()
+            if e and not re.fullmatch(r"media_player\.[a-z0-9_]+", e):
+                raise vol.Invalid(f"Wiedergabe {o['name']}: '{e}' ist kein Media Player")
+            o[q] = e
+        out.append(o)
+    return out
 
 
 def _absolute_url(url: str | None, basis: str) -> str | None:
@@ -118,20 +65,23 @@ def _absolute_url(url: str | None, basis: str) -> str | None:
     return basis.rstrip("/") + url
 
 
-class NowPlayingMediaPlayer(MediaPlayerEntity):
-    """Fuehrt SmartTube/Cast/TV zu einer Entitaet zusammen."""
+class JetztPlayer(MediaPlayerEntity):
+    """Fuehrt Streamer/Multiroom/Cast/TV zu einer Entitaet zusammen."""
 
     _attr_should_poll = False
     _attr_supported_features = MediaPlayerEntityFeature(0)
     _attr_icon = "mdi:cast-connected"
     _attr_media_image_remotely_accessible = True
 
-    def __init__(self, config: ConfigType) -> None:
-        self._attr_name = config[CONF_NAME]
-        self._attr_unique_id = config[CONF_UNIQUE_ID]
-        self._cast, self._ma, self._tv = config[CONF_CAST], config[CONF_MA], config[CONF_TV]
-        self._tv_app, self._tv_cast = config[CONF_TV_APP], config[CONF_TV_CAST]
-        self._ha_url = config[CONF_HA_URL]
+    def __init__(self, kd, j: dict) -> None:
+        self._kd = kd
+        self._attr_name = j["name"]
+        self._attr_unique_id = f"jetzt_{j['id']}"
+        self._cast, self._ma, self._tv = j["cast"], j["multiroom"], j["tv"]
+        self._tv_app, self._tv_cast = j["tv_app"], j["tv_cast"]
+        self._streamer_id = j["streamer"]
+        self._streamer = None
+        self._ha_url = ""
         self._attr_state = MediaPlayerState.OFF
         self._tempo = 1.0
         self._quelle = "aus"
@@ -140,34 +90,39 @@ class NowPlayingMediaPlayer(MediaPlayerEntity):
     def extra_state_attributes(self) -> dict[str, float | str]:
         # Wiedergabetempo, mit dem die Fernbedienungen die Position selbst weiterzaehlen.
         # quelle: streamer/multiroom/cast/tv/aus - die Fernbedienung schickt Play/Pause/Weiter
-        # bei "multiroom" an Music Assistant statt per Bluetooth an den Streamer.
+        # bei "multiroom" an den Multiroom-Player statt per Bluetooth an den Streamer.
         return {"tempo": self._tempo, "quelle": self._quelle}
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        # Die Remote laedt Bilder direkt, braucht also eine im LAN erreichbare Adresse
+        self._ha_url = "http://" + (self._kd.basis() or "homeassistant.local:8123")
 
         @callback
         def _on_change(_event: Event[EventStateChangedData]) -> None:
             self._recompute()
             self.async_write_ha_state()
 
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass,
-                [
-                    SMARTTUBE_TITLE,
-                    SMARTTUBE_ARTIST,
-                    SMARTTUBE_STATE,
-                    MEDIEN_POSITION,
-                    MEDIEN_APP,
-                    MEDIEN_DAUER,
-                    MEDIEN_COVER,
-                    *[e for e in (self._cast, self._ma, self._tv, self._tv_app, self._tv_cast) if e],
-                ],
-                _on_change,
-            )
-        )
+        quellen = [e for e in (self._cast, self._ma, self._tv, self._tv_app, self._tv_cast) if e]
+        if quellen:
+            self.async_on_remove(async_track_state_change_event(self.hass, quellen, _on_change))
+        alle = self.hass.data.get(DOMAIN + "_streamer")
+        st = alle.alle.get(self._streamer_id) if (alle and self._streamer_id) else None
+        self._streamer = st
+        if st is not None:
+            @callback
+            def _streamer_neu() -> None:
+                self._recompute()
+                self.async_write_ha_state()
+            self.async_on_remove(st.abonnieren(_streamer_neu))
         self._recompute()
+
+    def _st(self, k: str) -> str | None:
+        """Daten des Streamers (streamer.py) als Text wie frueher die Sensoren; None = kein Streamer/keine Daten."""
+        if self._streamer is None or not self._streamer.daten:
+            return None
+        v = self._streamer.daten.get(k)
+        return None if v is None else str(v)
 
     def _state_of(self, entity_id: str) -> str | None:
         st = self.hass.states.get(entity_id) if entity_id else None
@@ -222,18 +177,19 @@ class NowPlayingMediaPlayer(MediaPlayerEntity):
         self._tempo = 1.0
 
     def _fill_streamer(self, playback: str | None) -> None:
-        """Google Streamer: JEDE App mit Medien-Sitzung (SmartTube, Netflix, Disney+ ...)."""
-        title = self._state_of(SMARTTUBE_TITLE) or ""
-        artist = self._state_of(SMARTTUBE_ARTIST) or ""
-        app = self._state_of(MEDIEN_APP) or ""
-        cover = self._state_of(MEDIEN_COVER) or ""
+        """Streamer: JEDE App mit Medien-Sitzung (SmartTube, Netflix, Disney+ ...)."""
+        title = self._st("titel") or ""
+        artist = self._st("interpret") or ""
+        app = self._st("app") or ""
+        cover = self._st("cover") or ""
         # app_name ist immer die echte App (Nutzerwunsch 2026-10-14). Liefert die App keinen Titel
-        # (Titel = App-Name, z. B. Netflix), steht die Quelle "Google Streamer" als Titel.
-        self._attr_media_title = "Google Streamer" if (not title or title == app) else title
+        # (Titel = App-Name, z. B. Netflix), steht der Name des Streamers (Konfigurator) als Titel.
+        quelle = self._streamer.cfg["name"] if self._streamer is not None else "Streamer"
+        self._attr_media_title = quelle if (not title or title == app) else title
         self._attr_media_artist = artist
-        self._attr_app_name = app or "Google Streamer"
-        self._attr_media_image_url = _absolute_url(SMARTTUBE_COVER, self._ha_url) if cover else None
-        pos = self._state_of(MEDIEN_POSITION)
+        self._attr_app_name = app or quelle
+        self._attr_media_image_url = _absolute_url(cover, self._ha_url) if cover not in EMPTY_STATES else None
+        pos = self._st("position")
         try:
             if pos not in EMPTY_STATES and int(float(pos)) >= 0:
                 self._attr_media_position = int(float(pos))
@@ -241,10 +197,10 @@ class NowPlayingMediaPlayer(MediaPlayerEntity):
         except (TypeError, ValueError):
             pass
         try:
-            self._tempo = float(self._attr_of(MEDIEN_POSITION, "tempo") or 1.0)
+            self._tempo = float(self._st("tempo") or 1.0)
         except (TypeError, ValueError):
             self._tempo = 1.0
-        dauer = self._state_of(MEDIEN_DAUER)
+        dauer = self._st("dauer")
         try:
             if dauer not in EMPTY_STATES and int(float(dauer)) > 0:
                 self._attr_media_duration = int(float(dauer))
@@ -336,8 +292,8 @@ class NowPlayingMediaPlayer(MediaPlayerEntity):
         7. sonst: aus
         """
         self._clear()
-        streamer_title = self._state_of(SMARTTUBE_TITLE) or ""
-        streamer = self._state_of(SMARTTUBE_STATE)
+        streamer_title = self._st("titel") or ""
+        streamer = self._st("status")
         streamer_aktiv = streamer_title not in EMPTY_STATES and streamer in ("playing", "paused")
         cast_state = self._state_of(self._cast)
         tv_state = self._state_of(self._tv)
@@ -378,3 +334,32 @@ class NowPlayingMediaPlayer(MediaPlayerEntity):
         else:
             self._attr_state = MediaPlayerState.OFF
             self._quelle = "aus"
+
+
+# ---------------------------------------------------------------------------------------------- Websocket
+from homeassistant.components import websocket_api  # noqa: E402
+
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/jetzt_get"})
+@callback
+def ws_jetzt_get(hass, connection, msg) -> None:
+    v = hass.data[DOMAIN + "_dock"]
+    liste = v.kd.data.get("jetzt") or []
+    ents = {j["id"]: getattr(v.ents.get(f"jetzt_{j['id']}"), "entity_id", None) for j in liste}
+    connection.send_result(msg["id"], {"jetzt": liste, "entitaeten": ents,
+                                       "streamer": [{"id": x["id"], "name": x["name"]} for x in v.kd.data.get("streamer") or []]})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/jetzt_save", vol.Required("jetzt"): list})
+@websocket_api.async_response
+async def ws_jetzt_save(hass, connection, msg) -> None:
+    v = hass.data[DOMAIN + "_dock"]
+    try:
+        v.kd.data["jetzt"] = validate_jetzt(msg["jetzt"])
+    except vol.Invalid as e:
+        connection.send_error(msg["id"], "ungueltig", str(e))
+        return
+    await v.kd.store.async_save(v.kd.data)
+    await v.sync()
+    ws_jetzt_get(hass, connection, msg)

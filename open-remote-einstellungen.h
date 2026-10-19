@@ -139,6 +139,10 @@ inline esphome::menue::EinstRef finden(const std::string &k) {
     {"h_dock_disp", 'i', nullptr, h_dock_disp, 6},   // extras: Hinweis
     {"dock_von_sld", 's', dock_von_sld, dock_von_lbl, 6},   // extras: an ab
     {"dock_bis_sld", 's', dock_bis_sld, dock_bis_lbl, 6},   // extras: an bis
+    {"musik_dock_btn", 'b', musik_dock_btn, musik_dock_lbl, 6},   // extras: Im Dock bei Musik
+    {"h_musik_dock", 'i', nullptr, h_musik_dock, 6},   // extras: Hinweis
+    {"musik_player_btn", 'b', musik_player_btn, musik_player_lbl, 6},   // extras: Nur wenn Player spielt
+    {"h_musik_player", 'i', nullptr, h_musik_player, 6},   // extras: Hinweis
     {"tile_touchtest", 'b', tile_touchtest, nullptr, 7},   // service: Touch-Test
     {"h_touch", 'i', nullptr, h_touch, 7},   // service: Hinweis
     {"tile_button_test", 'b', tile_button_test, nullptr, 7},   // service: Tasten-Test

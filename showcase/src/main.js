@@ -1,7 +1,7 @@
 // OpenRemote Rev6 - 3D-Showcase. Einstieg: Szene, Modelle, Display, Andocken, Bedienung.
 import * as THREE from "three";
 import { szeneBauen } from "./scene.js";
-import { modelleLaden, explosionSetzen, dockFarbe, remoteFarbe } from "./models.js";
+import { modelleLaden, explosionSetzen, TEILE, PALETTE, farbeSetzen, fuzzySetzen } from "./models.js";
 import { Display, schriftenLaden } from "./display.js";
 import { Docking } from "./docking.js";
 import { Kamera } from "./camera.js";
@@ -75,12 +75,39 @@ async function start() {
   schalter("drehen", (an) => (controls.autoRotate = an));
   schalter("punkte", (an) => $("hotspots").classList.toggle("aus", !an));
 
-  for (const [attr, setzen] of [["dock", dockFarbe], ["remote", remoteFarbe]]) {
-    const knoepfe = document.querySelectorAll(`[data-${attr}]`);
-    knoepfe.forEach((b) => (b.onclick = () => {
-      knoepfe.forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-      setzen(teile, b.dataset[attr]);
-    }));
+  // Farben je Teil: Palette + freie Farbe, Fuzzy Skin fuer Rueckseite, Frontcover und Dock. Gemerkt im Browser.
+  const farbStand = (() => { try { return JSON.parse(localStorage.getItem("showcase_farben") || "{}"); } catch { return {}; } })();
+  const merken = () => { try { localStorage.setItem("showcase_farben", JSON.stringify(farbStand)); } catch { /* egal */ } };
+  const tafel = $("farbTafel");
+  tafel.innerHTML = Object.entries(TEILE).map(([k, t]) => `<div class="farbteil" data-teil="${k}">
+      <div class="farbkopf"><span>${t.name}</span>
+        ${t.fuzzy ? `<button class="pille klein" data-fuzzy="${k}" aria-pressed="false" title="Strukturierte Oberfläche wie mit der Slicer-Option Fuzzy Skin (nur Außenwände)">Fuzzy Skin</button>` : ""}
+        <label class="frei" title="Eigene Farbe"><input type="color" data-frei="${k}" value="${t.farbe}"></label></div>
+      <div class="farben">${PALETTE.map(([n, h]) => `<button class="farbe" data-teil="${k}" data-hex="${h}" aria-label="${n}" title="${n}" style="--f:${h}"></button>`).join("")}</div>
+    </div>`).join("");
+  const farbe = (k, hex) => {
+    farbeSetzen(teile, k, hex);
+    (farbStand[k] ||= {}).farbe = hex;
+    tafel.querySelectorAll(`.farbe[data-teil="${k}"]`).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.hex.toLowerCase() === hex.toLowerCase())));
+    tafel.querySelector(`[data-frei="${k}"]`).value = hex;
+    tafel.querySelector(`[data-teil="${k}"] .frei`).style.setProperty("--f", hex);
+  };
+  const fuzzy = (k, an) => {
+    fuzzySetzen(teile, k, an);
+    (farbStand[k] ||= {}).fuzzy = an;
+    tafel.querySelector(`[data-fuzzy="${k}"]`)?.setAttribute("aria-pressed", String(an));
+  };
+  tafel.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.hex) farbe(b.dataset.teil, b.dataset.hex);
+    else if (b.dataset.fuzzy) fuzzy(b.dataset.fuzzy, b.getAttribute("aria-pressed") !== "true");
+    merken();
+  });
+  tafel.addEventListener("input", (e) => { if (e.target.dataset.frei) { farbe(e.target.dataset.frei, e.target.value); merken(); } });
+  for (const [k, t] of Object.entries(TEILE)) {
+    farbe(k, farbStand[k]?.farbe || t.farbe);
+    if (t.fuzzy) fuzzy(k, !!farbStand[k]?.fuzzy);
   }
 
   function zuruecksetzen() {

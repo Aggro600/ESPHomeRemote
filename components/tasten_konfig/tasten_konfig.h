@@ -21,6 +21,7 @@
 namespace esphome {
 namespace espidf_ble_keyboard { class EspidfBleKeyboard; }
 namespace remote_transmitter { class RemoteTransmitterComponent; }
+namespace dock_direkt { class DockDirekt; }
 namespace tasten_konfig {
 
 enum Geste : uint8_t { KURZ = 0, DOPPELT = 1, LANG = 2 };
@@ -47,6 +48,7 @@ class TastenKonfig : public Component {
 
   void set_keyboard(espidf_ble_keyboard::EspidfBleKeyboard *kb) { kb_ = kb; }
   void set_transmitter(remote_transmitter::RemoteTransmitterComponent *tx) { tx_ = tx; }
+  void set_direkt(dock_direkt::DockDirekt *d) { direkt_ = d; }
 
   // ---- Hooks (gesetzt in open-remote-tasten.h, bewusst OHNE JSON-Typen: alles mit
   // ArduinoJson bleibt in dieser Uebersetzungseinheit, main.cpp ist an der l32r-Grenze) ----
@@ -110,6 +112,9 @@ class TastenKonfig : public Component {
   int kameras() const;
   std::string kamera_name(int i) const;
   std::string kamera_entitaet(int i) const;
+  // Verknuepfungen aus dem Konfigurator (cfg.ents, 2026-10-19): HA-Entitaet einer Rolle ("tv", "tts", "adb",
+  // "multiroom" ...), leer = nicht gewaehlt
+  std::string ent(const char *rolle) const;
 
   // HA-Aufruf mit kurzer Warteschlange (WLAN/API kann nach dem Aufwachen noch fehlen).
   void ha_senden(const std::string &svc, std::map<std::string, std::string> d);
@@ -126,18 +131,25 @@ class TastenKonfig : public Component {
 
  protected:
   JsonObjectConst taste_cfg_(int aktivitaet, int taste);
+  JsonArrayConst steps_(JsonObjectConst kc, Geste g) const;   // mit Ersatz "<geste>_offline" ohne HA
+  bool hat_(JsonObjectConst kc, Geste g) const;
   JsonObjectConst modus_keys_() const;
-  void modus_verlaengern_();
+  void modus_verlaengern_(int taste = -1);   // taste: eigene Zeit der Modus-Taste ("s"), sonst die des Modus
   void schritt_(JsonObjectConst s, const Ctx &c, bool halten);
   void ble_(JsonObjectConst s, bool halten);
   void ha_(JsonObjectConst s);
   void ir_(JsonObjectConst s);
+  void ir_selbst_(const std::vector<int32_t> &t, uint32_t f);
+  // An ein Dock: zuerst direkt per Funk (dock_direkt), sonst `sonst` (ueber HA bzw. selbst) - auch spaeter,
+  // wenn das Dock den direkten Weg nicht bestaetigt.
+  void an_dock_(const std::string &dock, int typ, uint32_t param, const std::vector<int32_t> &t, std::function<void()> &&sonst);
   void rf_(JsonObjectConst s);
   std::vector<std::string> docks_(JsonObjectConst s) const;
   bool api_ok_() const;
   bool haelt_irgendwas_() const;
   espidf_ble_keyboard::EspidfBleKeyboard *kb_{nullptr};
   remote_transmitter::RemoteTransmitterComponent *tx_{nullptr};
+  dock_direkt::DockDirekt *direkt_{nullptr};
   void ausfuehren_(int aktivitaet, int taste, Geste g, bool dunkel);
   void folge_(JsonArrayConst steps, Ctx c, size_t ab, uint32_t gen);
   void wiederholen_(int taste, uint32_t ms);

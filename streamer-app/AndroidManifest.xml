@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ESPHomeRemote Streamer-Helfer (2026-10-07): meldet Medien-Sitzungen, vorderste App und Bildschirmtastatur
+     des Google Streamers per Webhook an Home Assistant - nur bei Aenderungen, statt der ADB-Abfrage alle 2 s. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="de.esphomeremote.streamer">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Liste der TV-Apps und ihre Banner fuer die Cover der Fernbedienung (/apps, /icon/, Version 4) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <application
+        android:label="ESPHomeRemote Streamer"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+        <!-- Medien-Sitzungen (Titel, Cover, Wiedergabe): nur als Benachrichtigungs-Zuhoerer erlaubt -->
+        <service
+            android:name=".Medien"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- Vorderste App und Bildschirmtastatur (Fensterwechsel, ohne Inhalte mitzulesen) -->
+        <service
+            android:name=".Bedienung"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/bedienung" />
+        </service>
+    </application>
+</manifest>

@@ -5,14 +5,128 @@
 //   Wischen = Zeiger bewegen wie am Laptop: der Finger wird live verfolgt, Verstaerkung nach Fingertempo
 //   (langsam = genau, schnell = weit; Grundtempo maus_tempo %), gesendet gesammelt alle 15 ms. Tippen = Linksklick,
 //   Doppeltippen + Halten = Ziehen, lange druecken = Rechtsklick, Streifen rechts = Scrollrad.
-//   Unten: Links/Rechts-Taste, Tastatur, Makros & Zwischenablage (Makros im Konfigurator).
+//   Oben: X, Geraetename, Umschalter Maus | Tastatur | Ziffern. Unten: Links/Rechts-Taste, Makros & Zwischenablage.
 //   Steuerkreuz (maus_dpad, 2026-10-17): Pfeile = Zeiger (halten = schneller, Tempo maus_dpad_tempo %), OK = Klick,
 //   OK lang = Rechtsklick, OK halten + Pfeile = Ziehen, Kanal +/- = Scrollen, Zurueck je nach maus_zurueck.
-//   Zurueck lang (0,6 s) = Knopf-Modus: Pfeile waehlen X / Klicktasten / Tastatur / Makros, OK drueckt,
+//   Zurueck lang (0,6 s) = Knopf-Modus: Pfeile waehlen X / Umschalter / Klicktasten / Makros, OK drueckt,
 //   Zurueck (kurz oder lang) wieder Maus.
-//   Das Touchpad ist ein Popup wie die Tastatur: Menuetaste legt es weg und holt es zurueck, X schliesst;
-//   Tastatur <-> Maus per Knopf oben (beide Seiten) oder Funktion "maus_tastatur" auf einer Taste.
+//   Touchpad, Tastatur und Ziffern sind EIN Popup (eingabewahl): Menuetaste legt es weg und holt es zurueck,
+//   X schliesst die ganze Gruppe; Umschalter oben rechts oder Funktion "maus_tastatur" auf einer Taste.
 // Text tippen braucht die volle Tastatur fuer den Platz; ohne sie tippt HA per ADB am Streamer (wie die Tastatur-Seite).
+
+// ---------------------------------------------------------------- Eingabe-Umschalter (2026-10-18)
+// Touchpad (Seite 51), Tastatur und Ziffernblock (Seite 41) sind EIN Popup mit drei Ansichten: gleiche Kopfzeile
+// wie das Menue (blaues X-Feld links, tasten::kopf_linie) und rechts der Umschalter Maus | Tastatur | Ziffern.
+// Umschalten behaelt die Herkunft der Gruppe - einmal X/Zurueck fuehrt dorthin zurueck (vorher musste man jede
+// Ansicht einzeln schliessen, weil sich das Touchpad die Tastatur als Herkunft gemerkt hatte).
+namespace gestenseite { inline bool namen_eingabe(); }   // open-remote-gestenseite.h (kommt danach)
+
+namespace eingabewahl {
+
+enum { MAUS = 0, TASTATUR = 1, ZIFFERN = 2 };
+static const uint32_t ICON[3] = {0xF037D, 0xF097B, 0xF03A0};   // mouse, keyboard-outline, numeric
+
+struct Wahl { lv_obj_t *box{nullptr}; lv_obj_t *kn[3]{}; };
+inline Wahl &kbd() { static Wahl w; return w; }    // Kopfzeile der Tastatur-Seite
+inline Wahl &maus() { static Wahl w; return w; }   // Kopfzeile des Touchpads
+
+inline void wechseln(int ziel);
+
+inline std::string utf8(uint32_t cp) {
+  std::string s;
+  s += (char) (0xF0 | (cp >> 18)); s += (char) (0x80 | ((cp >> 12) & 0x3F));
+  s += (char) (0x80 | ((cp >> 6) & 0x3F)); s += (char) (0x80 | (cp & 0x3F));
+  return s;
+}
+
+// Drei Knoepfe nebeneinander am Ende einer Kopfzeile (Flex-Reihe)
+inline void aufbauen(lv_obj_t *kopf, Wahl &w) {
+  if (w.box != nullptr) return;
+  w.box = lv_obj_create(kopf);
+  lv_obj_remove_style_all(w.box);
+  lv_obj_set_size(w.box, LV_SIZE_CONTENT, 30);
+  lv_obj_set_flex_flow(w.box, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(w.box, 3, 0);
+  lv_obj_remove_flag(w.box, LV_OBJ_FLAG_SCROLLABLE);
+  for (int i = 0; i < 3; i++) {
+    lv_obj_t *b = lv_button_create(w.box);
+    lv_obj_set_size(b, 32, 30);
+    lv_obj_set_style_radius(b, 10, 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_set_style_pad_all(b, 0, 0);
+    lv_obj_set_style_border_width(b, 2, 0);
+    lv_obj_set_style_border_color(b, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
+    lv_obj_t *l = lv_label_create(b);
+    lv_obj_set_style_text_font(l, mdi_klein->get_lv_font(), 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xF1F3F5), 0);
+    lv_label_set_text(l, utf8(ICON[i]).c_str());
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, [](lv_event_t *e) {
+      last_input_ms->value() = millis();
+      wechseln((int) (intptr_t) lv_event_get_user_data(e));
+    }, LV_EVENT_CLICKED, (void *) (intptr_t) i);
+    w.kn[i] = b;
+  }
+}
+
+// Aktive Ansicht blau, die anderen dunkel (Rahmen in Feldfarbe, Fokus = weisser Rahmen)
+inline void markieren(Wahl &w, int aktiv) {
+  for (int i = 0; i < 3; i++) {
+    if (w.kn[i] == nullptr) continue;
+    const uint32_t f = i == aktiv ? 0x3B82F6 : 0x232A35;
+    lv_obj_set_style_bg_color(w.kn[i], lv_color_hex(f), 0);
+    lv_obj_set_style_border_color(w.kn[i], lv_color_hex(f), 0);
+    lv_obj_remove_state(w.kn[i], LV_STATE_FOCUSED);
+  }
+}
+
+// Tastatur-Seite: Umschalter in die YAML-Kopfzeile (Eltern von back_keyboard). Beim Namen-Eintippen der
+// Gesten-Seite ausgeblendet - dort soll man nicht umschalten.
+inline void kbd_einrichten() {
+  Wahl &w = kbd();
+  aufbauen(lv_obj_get_parent(back_keyboard), w);
+  markieren(w, kbd_mode->value() == 0 ? ZIFFERN : TASTATUR);
+  if (gestenseite::namen_eingabe()) lv_obj_add_flag(w.box, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_remove_flag(w.box, LV_OBJ_FLAG_HIDDEN);
+}
+inline bool kbd_umschalter_da() { return kbd().box != nullptr && !lv_obj_has_flag(kbd().box, LV_OBJ_FLAG_HIDDEN); }
+
+// Ansicht wechseln: 0 Maus, 1 Tastatur, 2 Ziffern. Von ausserhalb der Gruppe: oeffnet als Popup.
+inline void wechseln(int ziel) {
+  const int p = cur_page->value();
+  const bool gruppe = p == 41 || p == 51;
+  // Herkunft der Gruppe: offenes Popup -> seine Herkunft; Tastatur als Menue-Seite -> das Menue; sonst diese Seite
+  int von = p;
+  if (gruppe) von = (popup_seite->value() == p) ? popup_von->value() : 98;
+  if (ziel == MAUS) {
+    if (p == 51) return;
+    kbd_popup->value() = false;
+    if (gruppe) { popup_von->value() = von; popup_seite->value() = 51; popup_min->value() = -1; }
+    else popup_oeffnet(51);   // von aussen wie jedes Popup (aus dem Menue: Stand fuer die Rueckkehr merken)
+    wake_backlight->execute();
+    tasten::seite_zeigen(page_maus, gruppe ? LV_SCR_LOAD_ANIM_FADE_IN : LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    return;
+  }
+  const int modus = ziel == ZIFFERN ? 0 : 1;
+  if (p == 41) {   // schon auf der Tastatur-Seite: nur die Belegung tauschen
+    if (kbd_mode->value() == modus) return;
+    kbd_mode->value() = modus;
+    kbd_popup_mode->value() = modus;
+    kbd_shift->value() = false;
+    kbd_sel->value() = -1;
+    kbd_setup->execute();
+    lv_label_set_text(kbd_title, modus == 0 ? "Ziffern" : "Tastatur");
+    markieren(kbd(), ziel);
+    return;
+  }
+  kbd_popup_mode->value() = modus;
+  kbd_popup_zu->value() = false;
+  kbd_popup_zeigen->execute();   // popup_oeffnet(41) - die Herkunft gleich danach auf die der Gruppe setzen
+  popup_von->value() = von;
+  popup_seite->value() = 41;
+}
+
+}  // namespace eingabewahl
 
 namespace touchpad {
 
@@ -44,7 +158,7 @@ struct Zustand {
   // Knopf-Modus (Steuerkreuz waehlt die Knoepfe statt den Zeiger zu bewegen)
   bool knopfmodus{false};
   int kfi{0};
-  std::vector<lv_obj_t *> kn;   // 0 = X, 1 Links, 2 Rechts, 3 Tastatur, 4 Makros
+  std::vector<lv_obj_t *> kn;   // Kopf: 0 X, 1 Maus, 2 Tastatur, 3 Ziffern - unten: 4 Links, 5 Rechts, 6 Makros
   bool zurueck_unten{false};
   uint32_t zurueck_ms{0};
 };
@@ -81,13 +195,8 @@ inline void tippen(const std::string &t) {
 inline void makros_zeigen(bool an);
 inline void timer_an();
 
-// Als Popup oeffnen (auch aus der Tastatur heraus: die Herkunft bleibt die der Tastatur)
-inline void oeffnen() {
-  if (cur_page->value() == 41) { kbd_popup->value() = false; }
-  popup_oeffnet(51);
-  wake_backlight->execute();
-  tasten::seite_zeigen(page_maus, LV_SCR_LOAD_ANIM_MOVE_LEFT);
-}
+// Als Popup oeffnen (aus der Tastatur heraus: gleiche Gruppe, Herkunft bleibt - s. eingabewahl)
+inline void oeffnen() { eingabewahl::wechseln(eingabewahl::MAUS); }
 inline void schliessen() {
   if (popup_seite->value() == 51 && cur_page->value() == 51) popup_schliessen->execute();
   else go_home->execute();
@@ -114,6 +223,8 @@ inline lv_obj_t *knopf(lv_obj_t *p, int x, int y, int w, int h, const char *txt,
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B82F6), LV_STATE_PRESSED);
   lv_obj_set_style_radius(b, 10, 0);
   lv_obj_set_style_shadow_width(b, 0, 0);
+  lv_obj_set_style_border_width(b, 2, LV_STATE_FOCUSED);
+  lv_obj_set_style_border_color(b, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
   lv_obj_t *l = lv_label_create(b);
   lv_obj_set_style_text_font(l, f, 0);
   lv_obj_set_style_text_color(l, lv_color_hex(0xF1F3F5), 0);
@@ -128,8 +239,8 @@ inline void makros_zeigen(bool an) {
   if (s.makro_box) { lv_obj_delete(s.makro_box); s.makro_box = nullptr; }
   if (!an) return;
   s.makro_box = lv_obj_create(maus_root);
-  lv_obj_set_pos(s.makro_box, 6, 40);
-  lv_obj_set_size(s.makro_box, 228, 222);
+  lv_obj_set_pos(s.makro_box, 6, 46);
+  lv_obj_set_size(s.makro_box, 228, 216);
   lv_obj_set_style_bg_color(s.makro_box, lv_color_hex(0x0E1116), 0);
   lv_obj_set_style_border_color(s.makro_box, lv_color_hex(0x3B82F6), 0);
   lv_obj_set_style_border_width(s.makro_box, 2, 0);
@@ -228,7 +339,7 @@ inline void hinweis_setzen() {
   const int slot = kb->active_host_slot();
   std::string name = tk_cfg->slot_name(slot);
   if (name.empty()) name = "Platz " + std::to_string(slot + 1);
-  lv_label_set_text(s.titel, ("Touchpad · " + name).c_str());
+  lv_label_set_text(s.titel, name.c_str());
   if (kb->maus_aktiv()) lv_obj_add_flag(s.hinweis, LV_OBJ_FLAG_HIDDEN);
   else {
     lv_label_set_text(s.hinweis, kb->is_connected()
@@ -289,17 +400,16 @@ inline void hinweis_setzen();
 inline void knopf_fokus() {
   auto &s = z();
   for (size_t i = 0; i < s.kn.size(); i++) {
-    const bool f = s.knopfmodus && (int) i == s.kfi;
-    lv_obj_set_style_border_width(s.kn[i], f ? 2 : 0, 0);
-    lv_obj_set_style_border_color(s.kn[i], lv_color_hex(0xF1F3F5), 0);
+    if ((int) i == s.kfi && s.knopfmodus) lv_obj_add_state(s.kn[i], LV_STATE_FOCUSED);
+    else lv_obj_remove_state(s.kn[i], LV_STATE_FOCUSED);
   }
-  if (s.knopfmodus) lv_label_set_text(s.titel, "Knöpfe: Pfeile + OK");
+  if (s.knopfmodus) lv_label_set_text(s.titel, "Knöpfe");
   else hinweis_setzen();
 }
 inline void knopfmodus(bool an) {
   auto &s = z();
   s.knopfmodus = an;
-  s.kfi = an ? 3 : 0;   // Start auf "Tastatur" - der haeufigste Wechsel
+  s.kfi = an ? 2 : 0;   // Start auf "Tastatur" - der haeufigste Wechsel
   knopf_fokus();
 }
 
@@ -323,15 +433,16 @@ inline bool taste(int k, bool gedrueckt) {
   if (s.knopfmodus) {
     if (!gedrueckt) return k == 14 || k == 35 || k == 15 || k == 32 || k == 34;
     const int n = s.kn.size();
+    const bool oben = s.kfi <= 3;   // Kopf: X, Maus, Tastatur, Ziffern - unten: Links, Rechts, Makros
     switch (k) {
-      case 15: s.kfi = s.kfi == 0 ? 0 : (s.kfi == 1 ? 4 : s.kfi - 1); break;
-      case 32: s.kfi = s.kfi == 0 ? 0 : (s.kfi == 4 ? 1 : s.kfi + 1); break;
-      case 14: s.kfi = 0; break;
-      case 35: if (s.kfi == 0) s.kfi = 3; break;
+      case 15: s.kfi = oben ? (s.kfi + 3) % 4 : 4 + (s.kfi - 4 + 2) % 3; break;
+      case 32: s.kfi = oben ? (s.kfi + 1) % 4 : 4 + (s.kfi - 4 + 1) % 3; break;
+      case 14: if (!oben) s.kfi = 2; break;
+      case 35: if (oben) s.kfi = 4; break;
       case 34: {
         if (s.kfi < 0 || s.kfi >= n) return true;
         lv_obj_t *b = s.kn[s.kfi];
-        const bool ende = s.kfi == 0 || s.kfi == 3;   // X / Tastatur verlassen die Seite
+        const bool ende = s.kfi == 0 || s.kfi == 2 || s.kfi == 3;   // X / Tastatur / Ziffern verlassen die Seite
         if (ende) s.knopfmodus = false;
         lv_obj_send_event(b, LV_EVENT_PRESSED, nullptr);
         lv_obj_send_event(b, LV_EVENT_RELEASED, nullptr);
@@ -377,20 +488,50 @@ inline void aufbauen() {
   lv_obj_t *r = maus_root;
   lv_obj_clean(r);
   s.kn.clear();
-  s.kn.push_back(knopf(r, 6, 6, 46, 30, "X", a15->get_lv_font(), [](lv_event_t *e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) { makros_zeigen(false); schliessen(); }
-  }, nullptr));
-  s.titel = lv_label_create(r);
-  lv_obj_set_style_text_font(s.titel, a13->get_lv_font(), 0);
+  // Kopfzeile wie im Menue (2026-10-18): X im blauen Feld, Titel, rechts der Umschalter Maus | Tastatur | Ziffern
+  lv_obj_t *hd = lv_obj_create(r);
+  lv_obj_remove_style_all(hd);
+  lv_obj_set_pos(hd, 0, 0);
+  lv_obj_set_size(hd, 240, 40);
+  lv_obj_set_style_bg_color(hd, lv_color_hex(0x0E1116), 0);
+  lv_obj_set_style_bg_opa(hd, LV_OPA_COVER, 0);
+  lv_obj_set_style_pad_left(hd, 6, 0);
+  lv_obj_set_style_pad_right(hd, 6, 0);
+  lv_obj_set_style_pad_top(hd, 6, 0);
+  lv_obj_set_style_pad_bottom(hd, 4, 0);
+  lv_obj_set_flex_flow(hd, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(hd, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(hd, 8, 0);
+  lv_obj_remove_flag(hd, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *x = lv_button_create(hd);
+  lv_obj_set_size(x, 46, 30);
+  lv_obj_set_style_bg_color(x, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_radius(x, 10, 0);
+  lv_obj_set_style_shadow_width(x, 0, 0);
+  lv_obj_set_style_border_width(x, 2, 0);
+  lv_obj_set_style_border_color(x, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_color(x, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
+  lv_obj_t *xl = lv_label_create(x);
+  lv_obj_set_style_text_font(xl, a15->get_lv_font(), 0);
+  lv_obj_set_style_text_color(xl, lv_color_hex(0xF1F3F5), 0);
+  lv_label_set_text(xl, "X");
+  lv_obj_center(xl);
+  lv_obj_add_event_cb(x, [](lv_event_t *e) { makros_zeigen(false); schliessen(); }, LV_EVENT_CLICKED, nullptr);
+  s.titel = lv_label_create(hd);
+  lv_obj_set_style_text_font(s.titel, a15->get_lv_font(), 0);
   lv_obj_set_style_text_color(s.titel, lv_color_hex(0xF1F3F5), 0);
-  lv_obj_set_pos(s.titel, 58, 14);
-  lv_obj_set_width(s.titel, 176);
-  lv_obj_set_height(s.titel, 18);
+  lv_obj_set_height(s.titel, 22);
+  lv_obj_set_width(s.titel, 10);
+  lv_obj_set_flex_grow(s.titel, 1);
   lv_label_set_long_mode(s.titel, LV_LABEL_LONG_DOT);
+  eingabewahl::aufbauen(hd, eingabewahl::maus());
+  s.kn.push_back(x);
+  for (lv_obj_t *b : eingabewahl::maus().kn) s.kn.push_back(b);
+  tasten::kopf_linie(hd, x);
   // Flaeche
   s.pad = lv_obj_create(r);
-  lv_obj_set_pos(s.pad, 6, 40);
-  lv_obj_set_size(s.pad, 196, 222);
+  lv_obj_set_pos(s.pad, 6, 46);
+  lv_obj_set_size(s.pad, 196, 216);
   lv_obj_set_style_bg_color(s.pad, lv_color_hex(0x1A1F27), 0);
   lv_obj_set_style_border_color(s.pad, lv_color_hex(0x2A3240), 0);
   lv_obj_set_style_border_width(s.pad, 1, 0);
@@ -411,8 +552,8 @@ inline void aufbauen() {
   lv_obj_align(s.hinweis, LV_ALIGN_TOP_MID, 0, 0);
   // Scroll-Streifen
   s.streifen = lv_obj_create(r);
-  lv_obj_set_pos(s.streifen, 206, 40);
-  lv_obj_set_size(s.streifen, 28, 222);
+  lv_obj_set_pos(s.streifen, 206, 46);
+  lv_obj_set_size(s.streifen, 28, 216);
   lv_obj_set_style_bg_color(s.streifen, lv_color_hex(0x232A35), 0);
   lv_obj_set_style_border_width(s.streifen, 0, 0);
   lv_obj_set_style_radius(s.streifen, 10, 0);
@@ -432,12 +573,10 @@ inline void aufbauen() {
     if (c == LV_EVENT_PRESSED) { schnell(); s.knoepfe |= b; senden(0, 0, 0); }
     else if (c == LV_EVENT_RELEASED || c == LV_EVENT_PRESS_LOST) { s.knoepfe &= ~b; senden(0, 0, 0); }
   };
-  s.kn.push_back(knopf(r, 6, 268, 54, 46, utf8(0xF1D08).c_str(), mdi_klein->get_lv_font(), taste, (void *) (intptr_t) 0x01));
-  s.kn.push_back(knopf(r, 64, 268, 54, 46, utf8(0xF1D0B).c_str(), mdi_klein->get_lv_font(), taste, (void *) (intptr_t) 0x02));
-  s.kn.push_back(knopf(r, 122, 268, 54, 46, utf8(0xF097B).c_str(), mdi_klein->get_lv_font(), [](lv_event_t *e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) { makros_zeigen(false); kbd_popup_mode->value() = 1; kbd_popup_zeigen->execute(); }
-  }, nullptr));
-  s.kn.push_back(knopf(r, 180, 268, 54, 46, utf8(0xF0279).c_str(), mdi_klein->get_lv_font(), [](lv_event_t *e) {
+  // Untere Reihe: Links-, Rechtsklick, Makros (Tastatur/Ziffern stehen jetzt oben im Umschalter)
+  s.kn.push_back(knopf(r, 6, 268, 73, 46, utf8(0xF1D08).c_str(), mdi_klein->get_lv_font(), taste, (void *) (intptr_t) 0x01));
+  s.kn.push_back(knopf(r, 83, 268, 74, 46, utf8(0xF1D0B).c_str(), mdi_klein->get_lv_font(), taste, (void *) (intptr_t) 0x02));
+  s.kn.push_back(knopf(r, 161, 268, 73, 46, utf8(0xF0279).c_str(), mdi_klein->get_lv_font(), [](lv_event_t *e) {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED) makros_zeigen(z().makro_box == nullptr);
   }, nullptr));
 }
@@ -445,6 +584,7 @@ inline void aufbauen() {
 // on_load der Seite
 inline void geladen() {
   aufbauen();
+  eingabewahl::markieren(eingabewahl::maus(), eingabewahl::MAUS);
   z().knopfmodus = false;
   z().zurueck_unten = false;
   knopf_fokus();

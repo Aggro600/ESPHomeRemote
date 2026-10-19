@@ -21,7 +21,8 @@ def _remote_name(dev: str) -> str:
     return " ".join(w.upper() if len(w) <= 2 else w.capitalize() for w in dev.split("-"))
 
 
-class AktSchalter(SwitchEntity):
+class AktBasis:
+    """Gemeinsam fuer Schalter und Auswahl (select.py): Zustand lesen, Aktivitaet setzen/zustellen."""
     _attr_should_poll = False
     _attr_icon = "mdi:remote-tv"
 
@@ -77,13 +78,6 @@ class AktSchalter(SwitchEntity):
         self.async_on_remove(self.hass.bus.async_listen("state_changed", neu, event_filter=passt))
 
     @property
-    def is_on(self) -> bool | None:
-        if self._wunsch is not None:
-            return self._wunsch == self.i
-        a = self._laufend()
-        return None if a is None else a == self.i
-
-    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"remote": self.dev, "aktivitaet": self._akt, "nr": self.i,
                 "wartet_auf_remote": self._wunsch is not None}
@@ -110,6 +104,16 @@ class AktSchalter(SwitchEntity):
             self.async_write_ha_state()   # Remote schlaeft: beim naechsten Verbinden
             return
         await self._zustellen()
+
+
+
+class AktSchalter(AktBasis, SwitchEntity):
+    @property
+    def is_on(self) -> bool | None:
+        if self._wunsch is not None:
+            return self._wunsch == self.i
+        a = self._laufend()
+        return None if a is None else a == self.i
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self._setzen(self.i)

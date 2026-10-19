@@ -11,7 +11,7 @@ const MM = 0.001;
 // umfaerbbar (FARBEN_REMOTE, FARBEN_DOCK).
 const MATERIAL = {
   gehaeuse: { color: 0x0b0c0e, roughness: 0.62, clearcoat: 0.15, clearcoatRoughness: 0.6 },
-  abdeckung: { color: 0x5d6067, roughness: 0.78, metalness: 0.1 },
+  abdeckung: { color: 0x5d6067, roughness: 0.7, metalness: 0.05 },
   tasten: { color: 0x101114, roughness: 0.5, clearcoat: 0.25, clearcoatRoughness: 0.45 },
   tasten_symbole: { color: 0xf2f4f7, roughness: 0.45, emissive: 0xffffff, emissiveIntensity: 0.12 },
   taste_rot: { color: 0xb3120f, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3 },
@@ -25,7 +25,7 @@ const MATERIAL = {
   platine_glas: { color: 0x05070a, roughness: 0.03, transparent: true, opacity: 0.16, depthWrite: false, clearcoat: 1, clearcoatRoughness: 0.02 },
   platine_led: { color: 0xe8e6da, roughness: 0.3, emissive: 0x6aa8ff, emissiveIntensity: 0 },
   platine_ir: { color: 0x3a3548, roughness: 0.15, transmission: 0, emissive: 0x9b5cff, emissiveIntensity: 0 },
-  dock: { color: 0x101114, roughness: 0.38, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.12 },
+  dock: { color: 0x101114, roughness: 0.45, metalness: 0.1, clearcoat: 0.6, clearcoatRoughness: 0.3 },
   dock_boden: { color: 0x141518, roughness: 0.7 },
   dock_taste: { color: 0xd8dade, roughness: 0.18, metalness: 1 },
   dock_platine_platine: { color: 0x0a0b0d, roughness: 0.42, clearcoat: 0.5, clearcoatRoughness: 0.25 },
@@ -34,21 +34,71 @@ const MATERIAL = {
   dock_platine_led: { color: 0x9ae6b4, roughness: 0.3, emissive: 0x22c55e, emissiveIntensity: 0 },
   dock_platine_ir: { color: 0xd9dbe0, roughness: 0.1, metalness: 0.9, emissive: 0x9b5cff, emissiveIntensity: 0 },
 };
-// Farbwahl in der Tafel (index.html, data-dock / data-remote). Erster Eintrag = Standard.
-export const FARBEN_DOCK = {
-  schwarz: { dock: 0x101114, metall: 0.2 },
-  graphit: { dock: 0x1d2026, metall: 0.15 },
-  rot: { dock: 0x7a0f0d, metall: 0.35 },
-  blau: { dock: 0x0f2f6e, metall: 0.3 },
-  weiss: { dock: 0xd9dbdf, metall: 0.0 },
+// Einfaerbbare Teile (Tafel "Farben", main.js): Name, Teile, Standardfarbe, Fuzzy Skin moeglich
+export const TEILE = {
+  rueckseite: { name: "Rückseite", teile: ["remote_gehaeuse"], farbe: "#0b0c0e", fuzzy: true },
+  front: { name: "Frontcover", teile: ["remote_abdeckung"], farbe: "#5d6067", fuzzy: true },
+  tasten: { name: "Tasten", teile: ["remote_tasten"], farbe: "#101114" },
+  symbole: { name: "Symbole", teile: ["remote_tasten_symbole", "remote_taste_aus_symbol"], farbe: "#f2f4f7" },
+  dock: { name: "Dock", teile: ["dock_schale"], farbe: "#101114", fuzzy: true },
 };
-export const FARBEN_REMOTE = {
-  standard: { gehaeuse: 0x0b0c0e, abdeckung: 0x5d6067 },   // schwarz mit grauer Abdeckplatte
-  schwarz: { gehaeuse: 0x0b0c0e, abdeckung: 0x151619 },
-  weiss: { gehaeuse: 0xdfe1e5, abdeckung: 0xb9bcc2 },
-  rot: { gehaeuse: 0x7a0f0d, abdeckung: 0x2a2c31 },
-  blau: { gehaeuse: 0x0f2f6e, abdeckung: 0x5d6067 },
-};
+export const PALETTE = [
+  ["Schwarz", "#101114"], ["Anthrazit", "#2c3038"], ["Grau", "#5d6067"], ["Silber", "#b9bcc2"], ["Weiß", "#eceef1"],
+  ["Rot", "#a3120f"], ["Orange", "#e8590c"], ["Gelb", "#f2c40f"], ["Grün", "#1f9d55"], ["Petrol", "#0f766e"],
+  ["Blau", "#1d4ed8"], ["Marine", "#0f2f6e"], ["Lila", "#7c3aed"], ["Pink", "#db2777"], ["Holz", "#8b5a2b"], ["Gold", "#c9a227"],
+];
+
+// Fuzzy Skin als Oberflaechenstruktur: nur wo das Modell es erlaubt (Attribut _fuzzy aus tools/build-models.mjs:
+// Aussenwaende, nicht in Loechern, an der USB-Buchse und in der Aufnahme des Docks). Feine Hoecker entlang der
+// Druckschichten (0,2 mm), etwas matter.
+const FUZZY_GLSL = `
+float fzHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float fzNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(fzHash(i), fzHash(i + vec3(1,0,0)), f.x), mix(fzHash(i + vec3(0,1,0)), fzHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(fzHash(i + vec3(0,0,1)), fzHash(i + vec3(1,0,1)), f.x), mix(fzHash(i + vec3(0,1,1)), fzHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+float fzH(vec3 a) { return fzNoise(a * 1.3) * 0.7 + fzNoise(a * 2.7 + 11.0) * 0.3; }
+vec3 fzNormal(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDirection) {
+  vec3 vSigmaX = dFdx(surf_pos), vSigmaY = dFdy(surf_pos), vN = surf_norm;
+  vec3 R1 = cross(vSigmaY, vN), R2 = cross(vN, vSigmaX);
+  float fDet = dot(vSigmaX, R1) * faceDirection;
+  vec3 vGrad = sign(fDet) * (dHdxy.x * R1 + dHdxy.y * R2);
+  return normalize(abs(fDet) * surf_norm - vGrad);
+}`;
+
+function fuzzyEinbauen(m, mesh, achse) {
+  // ?maske=1: Bereiche mit Fuzzy Skin rot zeigen (Pruefansicht)
+  const maske = new URLSearchParams(location.search).get("maske") === "1" ? 1 : 0;
+  const u = { uFuzzy: { value: 0 }, uAchse: { value: new THREE.Vector3(...achse) }, uSkala: { value: mesh.scale.clone() }, uMaske: { value: maske } };
+  m.userData.fuzzy = u.uFuzzy;
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute float _fuzzy; varying float vFuzzy; varying vec3 vObj; uniform vec3 uSkala;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFuzzy = _fuzzy; vObj = position * uSkala;");
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vFuzzy; varying vec3 vObj; uniform float uFuzzy; uniform vec3 uAchse; uniform float uMaske; uniform vec3 uSkala; uniform mat3 normalMatrix;" + FUZZY_GLSL)
+      .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.05, 0.05), uMaske * vFuzzy);")
+      .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = min(1.0, roughnessFactor + 0.3 * uFuzzy * vFuzzy);")
+      .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>
+      if (uFuzzy > 0.0 && vFuzzy > 0.01) {
+        vec3 q = vObj * 1000.0;                       // Millimeter
+        // Hoecker im Abstand von rund 0,8 mm (wie die Zitterpunkte des Slicers), quer zur Druckrichtung gestreckt.
+        // Neigung direkt aus dem Rauschen (Differenzen), in Kamerarichtung gedreht: normalMatrix * Skala
+        vec3 a = q - uAchse * dot(q, uAchse) * 0.5;
+        const float e = 0.12;
+        vec3 g = vec3(fzH(a + vec3(e, 0, 0)) - fzH(a - vec3(e, 0, 0)), fzH(a + vec3(0, e, 0)) - fzH(a - vec3(0, e, 0)),
+                      fzH(a + vec3(0, 0, e)) - fzH(a - vec3(0, 0, e))) / (2.0 * e);
+        vec3 gv = normalMatrix * (g * uSkala);
+        gv = normalize(gv + 1e-6) * length(g);
+        float pix = length(fwidth(q));                // mm je Bildpunkt: weit weg ausblenden statt flimmern
+        float k = uFuzzy * vFuzzy * clamp(1.5 - pix * 1.5, 0.0, 1.0) * 0.45;
+        normal = normalize(normal - k * (gv - normal * dot(gv, normal)));
+      }`);
+  };
+  m.customProgramCacheKey = () => "fuzzy";
+}
 
 // Explosionsansicht: Versatz je Teil (mm) im eigenen Koordinatensystem.
 // Remote: X Breite, Y Laenge, Z Dicke (vorn +).  Dock: X Breite, Y Hoehe, Z Tiefe (vorn +).
@@ -87,6 +137,7 @@ export async function modelleLaden(basis, display, fortschritt) {
       o.receiveShadow = true;
       o.userData.ruhe = o.position.clone();
       o.userData.explosion = new THREE.Vector3(...(EXPLOSION[name] || [0, 0, 0])).multiplyScalar(MM);
+      if (o.geometry.attributes._fuzzy) fuzzyEinbauen(m, o, name.startsWith("dock") ? [0, 1, 0] : [0, 0, 1]);
       teile[name] = o;
     });
   };
@@ -122,14 +173,10 @@ export function explosionSetzen(teile, e) {
   }
 }
 
-export function dockFarbe(teile, art) {
-  const f = FARBEN_DOCK[art] || FARBEN_DOCK.schwarz, m = teile.dock_schale.material;
-  m.color.setHex(f.dock);
-  m.metalness = f.metall;
+export function farbeSetzen(teile, teil, hex) {
+  for (const n of TEILE[teil].teile) teile[n]?.material.color.set(hex);
 }
 
-export function remoteFarbe(teile, art) {
-  const f = FARBEN_REMOTE[art] || FARBEN_REMOTE.standard;
-  teile.remote_gehaeuse.material.color.setHex(f.gehaeuse);
-  teile.remote_abdeckung.material.color.setHex(f.abdeckung);
+export function fuzzySetzen(teile, teil, an) {
+  for (const n of TEILE[teil].teile) { const f = teile[n]?.material.userData.fuzzy; if (f) f.value = an ? 1 : 0; }
 }

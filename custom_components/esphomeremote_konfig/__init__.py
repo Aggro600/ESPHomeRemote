@@ -36,6 +36,7 @@ from homeassistant.util import dt as dt_util
 
 from .defaults import default_config, default_menu
 from .einstellungen import EINST_SEITEN
+from .spiegel import Spiegel, validate_ents
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,12 +44,15 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "63"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "74"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
             900, 901}   # 900/901: keine Tasten - Schritte beim Starten/Beenden der Aktivitaet
 GESTURES = ("short", "double", "long")
+# Ersatz ohne HA-Verbindung (2026-10-18): "<geste>_offline" laeuft statt "<geste>", solange die Remote weder per WLAN
+# noch ueber die Bluetooth-Bruecke mit HA verbunden ist (tasten_konfig: api_ok_()). Leer = normale Schritte.
+OFFLINE = tuple(f"{g}_offline" for g in GESTURES)
 STEP_TYPES = {"ble", "ha", "int", "ir", "rf", "wait", "modus"}
 
 CONFIG_SCHEMA = vol.Schema(
@@ -57,7 +61,7 @@ CONFIG_SCHEMA = vol.Schema(
         vol.Optional(DOMAIN): vol.Schema(
             {
                 vol.Required("key"): cv.string,
-                vol.Optional("devices", default=["open-remote"]): vol.All(
+                vol.Optional("devices", default=[]): vol.All(
                     cv.ensure_list, [cv.string]
                 ),
             }
@@ -134,6 +138,8 @@ def validate_config(cfg: dict) -> dict:
         out["gesten"] = validate_gesten(cfg["gesten"])
     if isinstance(cfg.get("makros"), list):
         out["makros"] = validate_makros(cfg["makros"])
+    if isinstance(cfg.get("ents"), dict) and (ents := validate_ents(cfg["ents"])):
+        out["ents"] = ents   # Verknuepfungen (spiegel.py)
     return out
 
 
@@ -187,25 +193,29 @@ def validate_makros(m: list) -> list:
     return out
 
 
-def validate_keys(keys: dict, wo: str) -> dict:
+def validate_keys(keys: dict, wo: str, modus: bool = False) -> dict:
     """Tastenbelegung {keycode: {short/double/long: [...], hold, repeat}} einer Aktivitaet oder eines Modus."""
     keys_out = {}
     for k, kv in keys.items():
         if int(k) not in KEYCODES:
             raise vol.Invalid(f"{wo}Unbekannte Taste {k}")
         ko = {}
-        for g in GESTURES:
+        for g in GESTURES + OFFLINE:
             clean = validate_steps(kv.get(g) or [], f"{wo}Taste {k}/{g}")
             if clean:
                 ko[g] = clean
-        if kv.get("hold") and ko.get("short") and not ko.get("double") and not ko.get("long"):
+        hat = lambda g: bool(ko.get(g) or ko.get(f"{g}_offline"))  # noqa: E731
+        if kv.get("hold") and hat("short") and not hat("double") and not hat("long"):
             ko["hold"] = True
         # "Beim Gedrueckthalten: Kurz wiederholen" (ms) - schliesst Halten am Geraet aus
-        if kv.get("repeat") and ko.get("short") and not ko.get("hold"):
+        if kv.get("repeat") and hat("short") and not ko.get("hold"):
             ko["repeat"] = max(50, min(2000, int(kv["repeat"])))
         # "Lang wiederholen" (ms, 2026-10-15): Lang loest nach der Haltezeit aus und wiederholt im Takt
-        if kv.get("lrepeat") and ko.get("long") and not ko.get("hold") and not ko.get("repeat"):
+        if kv.get("lrepeat") and hat("long") and not ko.get("hold") and not ko.get("repeat"):
             ko["lrepeat"] = max(100, min(2000, int(kv["lrepeat"])))
+        # Folgemodus: eigene Zeit nach dem Druck dieser Taste (s), sonst die Dauer des Modus (2026-10-18)
+        if modus and kv.get("s") and ko:
+            ko["s"] = max(1, min(60, int(kv["s"])))
         if ko:
             keys_out[str(int(k))] = ko
     return keys_out
@@ -225,7 +235,7 @@ def validate_modi(modi: list) -> list:
         ids.add(mid)
         name = str(m.get("name") or mid)[:24]
         out.append({"id": mid, "name": name, "s": max(2, min(60, int(m.get("s") or 7))),
-                    "keys": validate_keys(m.get("keys") or {}, f"Modus {name}: ")})
+                    "keys": validate_keys(m.get("keys") or {}, f"Modus {name}: ", modus=True)})
     return out
 
 
@@ -378,13 +388,16 @@ def validate_menu(m: dict) -> dict:
                     # ("... Halbie", 2026-10-11)
                     o[k] = str(it[k])[:400 if (k == "label" and t == "text") else 120]
             # Aussehen (2026-10-05): Farben "#rrggbb", Ausrichtung l/c/r, Schriftgroesse s/m/l
-            for k in ("bg", "fg", "fc"):   # fc = Rahmenfarbe bei Markierung (2026-10-13)
+            # fc = Rahmenfarbe bei Markierung (2026-10-13), ic = Farbe des Symbols (2026-10-18)
+            for k in ("bg", "fg", "fc", "ic"):
                 if isinstance(it.get(k), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", it[k]):
                     o[k] = it[k].lower()
             if it.get("align") in ("l", "c", "r"):
                 o["align"] = it["align"]
-            if it.get("size") in ("s", "m", "l"):
+            if it.get("size") in ("xs", "s", "m", "l", "xl"):   # xs/xl seit 2026-10-18 (11 / 24 px)
                 o["size"] = it["size"]
+            if it.get("ia") in ("l", "c", "r"):   # Ausrichtung des Symbols (2026-10-18)
+                o["ia"] = it["ia"]
             if "x" in it:
                 o["x"] = max(0, min(5, int(it["x"])))
             if "y" in it:
@@ -454,7 +467,11 @@ def validate_menu(m: dict) -> dict:
             if it["t"] == "page" and it.get("target") not in ids:
                 raise vol.Invalid(f"Seite {p['id']}: Ziel '{it.get('target')}' gibt es nicht")
     start = str(m.get("start") or (out_pages[0]["id"] if out_pages else ""))
-    return {"start": start if start in ids else (out_pages[0]["id"] if out_pages else ""), "pages": out_pages}
+    out = {"start": start if start in ids else (out_pages[0]["id"] if out_pages else ""), "pages": out_pages}
+    # Hervorhebung (Rahmen der Markierung, Regler, Zurueck-Knopf) fuer das ganze Menue, 2026-10-18
+    if isinstance(m.get("hl"), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", m["hl"]):
+        out["hl"] = m["hl"].lower()
+    return out
 
 
 def device_payload(cfg: dict) -> bytes:
@@ -469,6 +486,7 @@ class KonfigData:
         self.devices = list(devices)
         self.store = Store(hass, STORE_VERSION, DOMAIN)
         self.data: dict = {"devices": {}}
+        self.spiegel = Spiegel(hass)
 
     async def load(self) -> None:
         self.data = await self.store.async_load() or {"devices": {}}
@@ -546,6 +564,7 @@ class KonfigData:
         self.data["devices"].pop(dev, None)
         await self.store.async_save(self.data)
         self.hass.states.async_remove(f"sensor.esphomeremote_konfig_{dev_slug(dev)}")
+        self.spiegel.weg(dev_slug(dev))
 
     def entry(self, dev: str) -> dict:
         return self.data["devices"][dev]
@@ -557,7 +576,19 @@ class KonfigData:
         cfg["on"] = bool(e.get("enabled"))
         if e.get("einst"):
             cfg["einst"] = e["einst"]
+        if dmac := self.dock_macs():
+            cfg["dmac"] = dmac
         return device_payload(cfg)
+
+    def dock_macs(self) -> dict:
+        """WLAN-MAC je Dock ({"dock_wz_couchtisch": "AC:27:..."}) fuer den direkten Funkweg Remote -> Dock
+        (components/dock_direkt, 2026-10-18). Die ESPHome-Integration fuehrt die MAC als unique_id."""
+        out = {}
+        for ce in self.hass.config_entries.async_entries("esphome"):
+            name, mac = ce.data.get("device_name") or "", ce.unique_id or ""
+            if name.startswith("dock-") and re.fullmatch(r"[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}", mac):
+                out[name.replace("-", "_")] = mac.upper()
+        return dict(sorted(out.items()))
 
     # ---- Geraete-Einstellungen (2026-10-16) ----
     # e["einst"]     = {name: [wert, rev]}  Soll aus dem Konfigurator; die Remote uebernimmt nur Werte mit neuer rev
@@ -620,10 +651,23 @@ class KonfigData:
         self.store.async_delay_save(lambda: self.data, 5)
         self.hass.bus.async_fire(DOMAIN + "_einst", {"device": dev})
 
+    def basis(self) -> str:
+        """HA-Adresse fuer die Remote ("IP:Port" im Heimnetz): Bilder und Konfiguration holt sie per HTTP von dort."""
+        from homeassistant.helpers.network import NoURLAvailableError, get_url
+        from yarl import URL
+        try:
+            u = URL(get_url(self.hass, allow_external=False, allow_cloud=False, prefer_external=False))
+        except NoURLAvailableError:
+            return ""
+        return f"{u.host}:{u.port}" if u.scheme == "http" and u.host else ""
+
     @callback
     def announce(self, dev: str) -> None:
         body = self.payload(dev)
         e = self.entry(dev)
+        self.spiegel.setzen(dev_slug(dev), e["config"].get("ents") or {})
+        if (c := self.hass.data.get(DOMAIN + "_cover")) is not None and dev_slug(dev) not in c.slugs:
+            c.starten()   # neue Remote: ihr Cover mitverfolgen
         self.hass.states.async_set(
             f"sensor.esphomeremote_konfig_{dev_slug(dev)}",
             fnv1a(body),
@@ -634,6 +678,7 @@ class KonfigData:
                 "enabled": bool(e.get("enabled")),
                 "saved_by": e.get("saved_by"),
                 "saved_at": e.get("saved_at"),
+                "basis": self.basis(),
             },
         )
 
@@ -754,6 +799,17 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     await kd.load()
     hass.data[DOMAIN] = kd
 
+    # Neues/entferntes Dock: Remotes bekommen die Funk-Adressen (dmac) mit der naechsten Konfiguration
+    @callback
+    def _eintrag_geaendert(_aenderung, eintrag) -> None:
+        if eintrag.domain == "esphome" and str(eintrag.data.get("device_name") or "").startswith("dock-"):
+            for dev in kd.devices:
+                kd.announce(dev)
+
+    from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+    async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, _eintrag_geaendert)
+
     hass.http.register_view(CfgView(kd))
     hass.http.register_view(StatesView(kd))
     await hass.http.async_register_static_paths(
@@ -795,6 +851,17 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .einrichten import registrieren
 
     registrieren(hass, kd)
+
+    from .klingel import einrichten as klingel_einrichten
+
+    klingel_einrichten(hass, kd)   # Klingel-, Kamera- und Live-Bilder (2026-10-19)
+    from .streamer import einrichten as streamer_einrichten
+
+    streamer_einrichten(hass, kd)   # Streamer-App per Webhook (vor dem Dock: die "Jetzt laeuft"-Player brauchen sie)
+    from .cover import Cover
+
+    hass.data[DOMAIN + "_cover"] = cover = Cover(hass, kd)   # Cover je Remote aus ihrem "Jetzt laeuft"-Player
+    cover.starten()
 
     from .regeln import registrieren as regeln_registrieren
 

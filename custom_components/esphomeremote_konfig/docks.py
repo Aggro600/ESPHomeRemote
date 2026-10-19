@@ -13,7 +13,9 @@ Ablauf im Panel (Firmware & Geraete -> Docks):
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import re
+import shutil
 import time
 
 import voluptuous as vol
@@ -120,6 +122,42 @@ async def ws_einbinden(hass: HomeAssistant, connection: websocket_api.ActiveConn
                                            + ("Ist das Dock geflasht und im WLAN?" if f.get("art") == "dock" else "Ist die Platine geflasht und im WLAN?")})
 
 
+def _wegraeumen(datei: str) -> str:
+    """Dock-Datei nicht loeschen, sondern nach esphome/archive/geloescht/ verschieben (wiederherstellbar)."""
+    ziel = Path(ESPHOME_DIR) / "archive" / "geloescht"
+    ziel.mkdir(parents=True, exist_ok=True)
+    neu = ziel / f"{Path(datei).stem}-{time.strftime('%Y%m%d-%H%M%S')}.yaml"
+    shutil.move(os.path.join(ESPHOME_DIR, datei), neu)
+    return str(neu.relative_to(ESPHOME_DIR))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/docks_entfernen", vol.Required("datei"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_entfernen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Dock entfernen (2026-10-18): ESPHome-Eintrag in HA, Build-Ordner im Add-on, Datei ins Archiv."""
+    from .einrichten import bau_aufraeumen
+
+    datei = msg["datei"]
+    f = next((x for x in await hass.async_add_executor_job(dock_dateien) if x["datei"] == datei), None)
+    if f is None:
+        connection.send_error(msg["id"], "datei", f"{datei} ist kein Dock")
+        return
+    weg = []
+    for e in hass.config_entries.async_entries("esphome"):
+        if e.data.get("device_name") == f["name"] or str(e.data.get("host", "")) in (f["name"], f"{f['name']}.local"):
+            await hass.config_entries.async_remove(e.entry_id)
+            weg.append("HA-Eintrag")
+    await bau_aufraeumen(hass, [datei])
+    try:
+        archiv = await hass.async_add_executor_job(_wegraeumen, datei)
+    except OSError as err:
+        connection.send_error(msg["id"], "datei", str(err))
+        return
+    weg.append(f"Datei (liegt jetzt in esphome/{archiv})")
+    connection.send_result(msg["id"], {"entfernt": weg})
+
+
 def registrieren(hass: HomeAssistant) -> None:
-    for fn in (ws_anlegen, ws_einbinden):
+    for fn in (ws_anlegen, ws_einbinden, ws_entfernen):
         websocket_api.async_register_command(hass, fn)

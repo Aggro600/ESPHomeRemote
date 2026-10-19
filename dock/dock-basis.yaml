@@ -410,6 +410,20 @@ bluetooth_proxy:
   active: true
   cache_services: true
 
+# ---------------------------------------------------------------- Direkt von der Remote
+# Infrarot/433 MHz kommen von den Remotes per ESP-NOW direkt hierher, ohne HA dazwischen (2026-10-18) - geht auch,
+# wenn HA gerade nicht laeuft. Beschreibung: components/dock_direkt/dock_direkt.h
+external_components:
+  - source: {type: local, path: components}
+    components: [dock_direkt]
+
+dock_direkt:
+  schluessel: !secret direkt_schluessel
+  ir_sender: ir_tx
+  rf_sender: rf_tx
+  on_senden:
+    - script.execute: {id: led_sendet}
+
 # ---------------------------------------------------------------- IR
 remote_transmitter:
   - id: ir_tx

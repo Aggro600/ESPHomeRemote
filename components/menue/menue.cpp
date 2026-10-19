@@ -29,6 +29,9 @@ static const int SPALTEN = 6, ZEILE = 40, RAND = 6, LUECKE = 4, MAX_ZEILEN = 256
 // die Karten stehen auf dem Display an derselben Stelle wie vorher, alle 7 Reihen passen weiter.
 static const int RAND_O = 2;
 static const uint32_t C_KARTE = 0x1A1F27, C_FOKUS = 0x2A3340, C_RAHMEN_F = 0x3B82F6;
+static int32_t farbe_von(const char *s);
+// Hervorhebung des geladenen Menues (menu.hl) - auch fuer die freien Hilfsfunktionen unten (Regler)
+static uint32_t g_hl = C_RAHMEN_F;
 static const uint32_t C_TEXT = 0xF1F3F5, C_GRAU = 0x8B94A3, C_AN = 0x22C55E;
 
 // LVGL 9.5: jedes Label mit neuem Text haengt einen Rueckruf ans Display (LV_EVENT_UPDATE_LAYOUT_COMPLETED),
@@ -125,6 +128,10 @@ void Menue::laden_() {
     if (*id) seiten_.push_back(Seite{PStr(id), p});
   }
   start_ = m["start"] | (seiten_.empty() ? "" : seiten_[0].id.c_str());
+  {
+    const int32_t hl = farbe_von(m["hl"] | "");
+    hl_ = g_hl = hl >= 0 ? (uint32_t) hl : C_RAHMEN_F;
+  }
   if (seite_index_(start_) < 0 && !seiten_.empty()) start_ = seiten_[0].id.c_str();
   // Zustaende der Popup-Ausloeser abonnieren (die Kacheln holen ihre Zustaende per HTTP, solange die Seite offen
   // ist - abfrage_*). Neue Entitaeten bekommen ihren Zustand erst beim naechsten Verbinden mit HA: die Abo-Liste
@@ -803,7 +810,7 @@ void Menue::bauen_(bool alles) {
     zurueck_x_ = !strcmp(bs, "x") || (!*bs && stapel_.size() <= 1);
     if (zurueck_lbl_ != nullptr) lv_label_set_text(zurueck_lbl_, zurueck_x_ ? "X" : "<");
     const int32_t bc = farbe_von(s.j["bc"] | "");
-    zurueck_bg_ = bc >= 0 ? (uint32_t) bc : C_RAHMEN_F;
+    zurueck_bg_ = bc >= 0 ? (uint32_t) bc : hl_;
     if (zurueck_btn_ != nullptr && fokus_ != FOKUS_ZURUECK) {
       lv_obj_set_style_bg_color(zurueck_btn_, lv_color_hex(zurueck_bg_), 0);
       lv_obj_set_style_border_color(zurueck_btn_, lv_color_hex(zurueck_bg_), 0);
@@ -997,9 +1004,31 @@ void Menue::gestalten_(Item &it) {
     lv_obj_set_style_border_color(it.obj, lv_color_hex(bg), 0);
     if (it.typ == T_TEXT) { lv_obj_set_style_radius(it.obj, 8, 0); lv_obj_set_style_pad_hor(it.obj, 6, 0); }
   }
+  // Symbol: Farbe "ic", Ausrichtung "ia" (l/c/r; 2026-10-18). In Zeilen steht es links vor dem Namen - rechts
+  // heisst dort: ans Ende der Zeile, der Name rueckt nach links.
+  if (it.ico != nullptr) {
+    const int32_t ic = farbe_von(it.j["ic"] | "");
+    if (ic >= 0) lv_obj_set_style_text_color(it.ico, lv_color_hex(ic), 0);
+    const char ia = *(it.j["ia"] | "");
+    if (ia == 'c' || ia == 'r' || ia == 'l') {
+      const bool kachel = lv_obj_get_style_align(it.ico, LV_PART_MAIN) == LV_ALIGN_TOP_MID;
+      if (kachel) {
+        lv_obj_align(it.ico, ia == 'l' ? LV_ALIGN_TOP_LEFT : ia == 'r' ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_MID, 0, 2);
+      } else if (ia == 'r' && lv_obj_get_style_layout(it.obj, LV_PART_MAIN) == LV_LAYOUT_FLEX) {
+        lv_obj_move_to_index(it.ico, -1);
+      } else if (ia == 'r' && it.name != nullptr) {
+        const int pfeil = (it.typ == T_PAGE || it.typ == T_SPECIAL) ? 14 : 0;
+        lv_obj_align(it.ico, LV_ALIGN_RIGHT_MID, -pfeil, 0);
+        lv_obj_set_x(it.name, std::max<int32_t>(0, lv_obj_get_x_aligned(it.name) - 26));
+      } else if (ia == 'c' && it.name == nullptr) {
+        lv_obj_center(it.ico);
+      }
+    }
+  }
   if (it.name == nullptr) return;
   if (*gr) {
-    const lv_font_t *f = *gr == 's' ? f_klein_ : *gr == 'l' && f_gross_ ? f_gross_ : f_text_;
+    const lv_font_t *f = !strcmp(gr, "xs") && f_xs_ ? f_xs_ : !strcmp(gr, "xl") && f_xl_ ? f_xl_
+                       : *gr == 's' ? f_klein_ : *gr == 'l' && f_gross_ ? f_gross_ : f_text_;
     if (f) lv_obj_set_style_text_font(it.name, f, 0);
   }
   if (fg >= 0 && !it.name_wert) lv_obj_set_style_text_color(it.name, lv_color_hex(fg), 0);
@@ -1061,7 +1090,7 @@ static lv_obj_t *regler_(lv_obj_t *k, int32_t min, int32_t max) {
     lv_obj_set_height(sl, 8);
     lv_obj_align(sl, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_obj_set_style_bg_color(sl, lv_color_hex(0x4B5563), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sl, lv_color_hex(C_RAHMEN_F), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(g_hl), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(sl, lv_color_hex(C_TEXT), LV_PART_KNOB);
   return sl;
 }
@@ -1149,7 +1178,7 @@ void Menue::karte_(Item &it) {
     lv_obj_set_pos(li, 0, 0);
     lv_obj_set_size(li, cw, gh);
     lv_obj_set_style_line_width(li, 2, 0);
-    lv_obj_set_style_line_color(li, lv_color_hex(C_RAHMEN_F), 0);
+    lv_obj_set_style_line_color(li, lv_color_hex(hl_), 0);
     lv_obj_set_style_line_rounded(li, true, 0);
     it.regler = li;
     lv_obj_align(text_(k, "vor 24 h", f_klein_, C_GRAU), LV_ALIGN_BOTTOM_LEFT, 0, 0);
@@ -1211,7 +1240,7 @@ void Menue::karte_(Item &it) {
         lv_obj_remove_style_all(b);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x232A35), 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(C_RAHMEN_F), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(b, lv_color_hex(hl_), LV_STATE_PRESSED);
         lv_obj_set_style_radius(b, 8, 0);
         lv_obj_set_size(b, LV_PCT(31), 26);
         lv_obj_align(b, d == 0 ? LV_ALIGN_BOTTOM_LEFT : d == 1 ? LV_ALIGN_BOTTOM_MID : LV_ALIGN_BOTTOM_RIGHT, 0, -2);
@@ -1233,7 +1262,8 @@ void Menue::karte_(Item &it) {
     const int pfeil = (it.typ == T_PAGE || it.typ == T_SPECIAL) ? 14 : 0;
     int x = 0;
     if (ic && f_icon_) {
-      lv_obj_align(text_(k, ic, f_icon_, C_TEXT), LV_ALIGN_LEFT_MID, 0, 0);
+      it.ico = text_(k, ic, f_icon_, C_TEXT);
+      lv_obj_align(it.ico, LV_ALIGN_LEFT_MID, 0, 0);
       x = 26;
     }
     const int frei = (int) (it.w * zelle_) - LUECKE - 20 - x - pfeil;
@@ -1261,7 +1291,7 @@ void Menue::karte_(Item &it) {
   if (hoch || klein) {
     // Kachel: Icon oben, Name darunter, Wert ganz unten (zentriert)
     lv_obj_t *ico = nullptr;
-    if (ic && f_icon_) { ico = text_(k, ic, f_icon_, C_TEXT); }
+    if (ic && f_icon_) { ico = it.ico = text_(k, ic, f_icon_, C_TEXT); }
     lv_obj_t *l = text_(k, label, f, C_TEXT);
     it.name = l;
     lv_label_set_long_mode(l, hoch ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_DOT);
@@ -1289,7 +1319,7 @@ void Menue::karte_(Item &it) {
     } else if (ico && !mit_wert && !label[0]) {
       lv_obj_center(ico);
     } else {
-      if (ico) lv_obj_delete(ico);
+      if (ico) { lv_obj_delete(ico); it.ico = nullptr; }
       lv_obj_align(l, LV_ALIGN_CENTER, 0, (mit_wert && hoch) ? -6 : 0);
     }
     if (mit_wert && !hoch) {  // klein & einzeilig: Zustand nur als Farbe des Namens
@@ -1303,7 +1333,7 @@ void Menue::karte_(Item &it) {
   // Listenzeile: [Icon] Name ............ Wert / >
   int x = 0;
   if (ic && f_icon_) {
-    lv_obj_t *ico = text_(k, ic, f_icon_, C_TEXT);
+    lv_obj_t *ico = it.ico = text_(k, ic, f_icon_, C_TEXT);
     lv_obj_align(ico, LV_ALIGN_LEFT_MID, 0, 0);
     x = 26;
   }
@@ -1767,7 +1797,7 @@ void Menue::fokus_setzen_(int idx) {
   // (2026-10-13, vorher farbige Knoepfe weiss); "fc" (Konfigurator "Markierung") gibt die Rahmenfarbe vor.
   if (items_[idx].bg == C_KARTE) lv_obj_set_style_bg_color(o, lv_color_hex(C_FOKUS), 0);
   const int32_t fc = farbe_von(items_[idx].j["fc"] | "");
-  lv_obj_set_style_border_color(o, lv_color_hex(fc >= 0 ? (uint32_t) fc : C_RAHMEN_F), 0);
+  lv_obj_set_style_border_color(o, lv_color_hex(fc >= 0 ? (uint32_t) fc : hl_), 0);
   lv_obj_scroll_to_view(o, LV_ANIM_ON);
 }
 

@@ -36,7 +36,14 @@ Fusion-Baugruppe exportiert, oder ein Export der ganzen Baugruppe als STEP („O
 
 Die Farben sind gewählt, weil die Teile gedruckt werden: Gehäuse schwarz, Abdeckplatte grau, Tasten schwarz mit weißen
 Symbolen (die Gravur aus dem Tasten-STL wird beim Modellbau als eigenes Teil abgetrennt), Aus-Taste rot, Dock schwarz.
-Remote und Dock lassen sich in der Tafel umfärben. Die Inhalte auf dem Display sind Beispieldaten; im Gerät kommen sie aus Home Assistant.
+Rückseite, Frontcover, Tasten, Symbole und Dock lassen sich in der Tafel umfärben (Palette oder freie Farbe, im
+Browser gemerkt).
+
+**Fuzzy Skin** (Rückseite, Frontcover, Dock): Struktur wie mit der Slicer-Option „nur Außenwände“. Wo sie liegen darf,
+berechnet `tools/build-models.mjs` aus den Originaldateien und speichert es als Attribut `_FUZZY` je Ecke: Wände quer zur
+Druckrichtung, von denen aus man 10 mm entlang der Normalen kein Material trifft. Schraub- und Tastenlöcher bleiben so
+glatt; zusätzlich ausgenommen sind die USB-Buchse der Remote und alles, was der eingesetzten Remote im Dock näher als
+5 mm kommt. `?maske=1` zeigt die Bereiche rot. Die Inhalte auf dem Display sind Beispieldaten; im Gerät kommen sie aus Home Assistant.
 
 ## Entwickeln
 

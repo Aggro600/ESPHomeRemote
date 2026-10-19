@@ -32,12 +32,27 @@ const AKT_EVENTS = [[900, "Beim Starten", "mdi:play-circle-outline"], [901, "Bei
 // Diese Tasten gehoeren im Menue der Remote der Navigation (Konfiguration gilt nur auf der Startseite).
 const NAV_KEYS = new Set([14, 35, 15, 32, 34, 13]);
 
-const GNAME = { short: "Kurz", double: "Doppelt", long: "Lang" };
+// "Schrittweise regeln" (2026-10-18): eigener Schritt im Editor, gespeichert als HA-Schritt mit dem Dienst
+// esphomeremote_konfig.regeln (regeln.py rechnet den neuen Wert aus dem aktuellen Zustand aus).
+const REGELN_SVC = "esphomeremote_konfig.regeln";
+const istRegeln = (s) => s?.t === "ha" && s.svc === REGELN_SVC;
+// [art, Text, Domain, Standardschritt, Einheit, Hinweis]
+const REGELN_ARTEN = [
+  ["helligkeit", "Helligkeit ändern", "light", 10, "%", "Plus = heller, Minus = dunkler. Ist das Licht aus, schaltet Plus es ein."],
+  ["farbtemperatur", "Farbtemperatur ändern", "light", -400, "K", "Plus = kälter (mehr Kelvin), Minus = wärmer. Nur wenn das Licht an ist."],
+  ["stufe", "Stufe ändern", "fan", 1, "Stufen", "Plus = schneller, Minus = langsamer."],
+  ["drehung", "Drehung an/aus", "fan", 0, "", "Schaltet das Schwenken des Ventilators um."],
+];
+const GNAME = { short: "Kurz", double: "Doppelt", long: "Lang", short_offline: "Kurz ohne HA", double_offline: "Doppelt ohne HA", long_offline: "Lang ohne HA" };
 const GESTURES = [
   ["short", "Kurz", "mdi:gesture-tap"],
   ["double", "Doppelt", "mdi:gesture-double-tap"],
   ["long", "Lang", "mdi:gesture-tap-hold"],
 ];
+// Ersatz ohne HA-Verbindung (2026-10-18): "<geste>_offline" laeuft auf der Remote statt "<geste>", solange sie
+// weder per WLAN noch ueber die Bluetooth-Bruecke mit HA verbunden ist. Leer = normale Schritte.
+const OFFLINE = GESTURES.map(([g, l, i]) => [g + "_offline", l, i]);
+const hatG = (kc, g) => !!(kc[g]?.length || kc[g + "_offline"]?.length);
 
 // Bluetooth-Befehle. kind: consumer (Medien/System-Usage), key (Tastatur-Usage), button (HID-Button 1..8)
 const BLE_GROUPS = [
@@ -92,6 +107,7 @@ const INT_FNS = [
   ["touchpad", "Touchpad zeigen (Maus für PC/Tablet)"],
   ["maus_tastatur", "Maus ↔ Tastatur umschalten (sonst Touchpad zeigen)"],
   ["dock_anzeige", "Smart Display zeigen (Uhr, Wetter, Termine)"],
+  ["musik_anzeige", "Musik-Anzeige zeigen (Spektrum übers Mikrofon)"],
 ];
 const INT_LABEL = Object.fromEntries(INT_FNS);
 const MENU_FNS = new Set(["menu_smart", "menu_open", "menu_top"]);
@@ -248,6 +264,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
 
   // ----------------------------------------------------------------- Daten
   async _load() {
+    this._klingelLaden();
     try {
       const r = await this._hass.callWS({ type: "esphomeremote_konfig/get" });
       this.s.order = r.order;
@@ -289,10 +306,11 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   }
   setKeyCfg(k, v) {
     const clean = {};
-    for (const [g] of GESTURES) if (v[g] && v[g].length) clean[g] = v[g];
-    if (v.hold && clean.short && !clean.double && !clean.long) clean.hold = true;
-    if (v.repeat && clean.short && !clean.hold) clean.repeat = v.repeat;
-    if (v.lrepeat && clean.long && !clean.hold && !clean.repeat) clean.lrepeat = v.lrepeat;
+    for (const [g] of [...GESTURES, ...OFFLINE]) if (v[g] && v[g].length) clean[g] = v[g];
+    if (v.hold && hatG(clean, "short") && !hatG(clean, "double") && !hatG(clean, "long")) clean.hold = true;
+    if (v.repeat && hatG(clean, "short") && !clean.hold) clean.repeat = v.repeat;
+    if (v.lrepeat && hatG(clean, "long") && !clean.hold && !clean.repeat) clean.lrepeat = v.lrepeat;
+    if (this.s.modus != null && v.s && Object.keys(clean).length) clean.s = v.s;   // Folgemodus: eigene Zeit
     if (Object.keys(clean).length) this.activity.keys[String(k)] = clean;
     else delete this.activity.keys[String(k)];
     this._touch();
@@ -361,6 +379,22 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       GESTURES.some(([g]) => (kc[g] || []).some((s) => s.t === "int" && MENU_FNS.has(s.fn))));
   }
 
+  // Wovon wird der Folgemodus gestartet? Schritte "Folgemodus starten" in allen Aktivitaeten und Menue-Eintraege
+  // mit "Danach Folgemodus" - als Spruenge zur Stelle (2026-10-18, vorher nirgends sichtbar).
+  _modStarter(mo) {
+    const L = [];
+    (this.cfg.activities || []).forEach((a, ai) => {
+      for (const [k, kc] of Object.entries(a.keys || {}))
+        for (const [g, gl] of [...GESTURES, ...OFFLINE])
+          if ((kc[g] || []).some((st) => st.t === "modus" && st.id === mo.id))
+            L.push({ t: `${a.name} · ${KEYNAME[k] || k} ${GNAME[g] || gl}`, a: `data-a="modgeh" data-ai="${ai}" data-k="${k}"` });
+    });
+    for (const pg of this.cfg.menu?.pages || [])
+      (pg.items || []).forEach((it, j) => { if (it.modus === mo.id) L.push({ t: `Menü „${pg.title}“ · ${this._mItemText(it) || it.t}`, a: `data-a="modgehm" data-p="${esc(pg.id)}" data-j="${j}"` }); });
+    return `<div class="modstart"><b><ha-icon icon="mdi:play-circle-outline"></ha-icon>Gestartet von</b>
+      ${L.map((x) => `<button class="chip" ${x.a}>${esc(x.t)}</button>`).join("") || `<span class="note">noch nichts – bei einer Taste den Schritt „Folgemodus starten“ einfügen oder bei einem Menü-Eintrag „Danach Folgemodus“ wählen.</span>`}</div>`;
+  }
+
   // Vorlagen fuer Folgemodi: Kanal + / Kanal - (42 / 22) ueber den Dienst esphomeremote_konfig.regeln
   _modVorlage(art, e) {
     const mo = this.cfg.modi[this.s.modus];
@@ -390,6 +424,11 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       case "ha": {
         const st = s.entity && this._hass.states[s.entity];
         const name = st ? st.attributes.friendly_name || s.entity : s.entity || "";
+        if (istRegeln(s)) {
+          const a = REGELN_ARTEN.find(([x]) => x === s.data?.art);
+          const n = Number(s.data?.schritt) || 0;
+          return `${name ? name + ": " : ""}${a ? a[1] : "regeln"}${a && a[0] !== "drehung" ? ` ${n > 0 ? "+" : ""}${n} ${a[4]}` : ""}`;
+        }
         const [, svc] = s.svc.split(".");
         return `${name ? name + ": " : ""}${SVC_DE[svc] || s.svc}`;
       }
@@ -478,7 +517,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         : `<span class="logo"><ha-icon icon="mdi:remote-tv"></ha-icon></span><span class="spin"></span>`}</div>`;
       return;
     }
-    if (!["start", "remote", "dock", "fw", "werk"].includes(s.bereich)) s.bereich = "start";
+    if (!["start", "remote", ...SEITEN_SYSTEM.map(([k]) => k)].includes(s.bereich)) s.bereich = "start";
     if (!SEITEN_REMOTE.some(([m]) => m === s.mode)) s.mode = "keys";
     const alsSeite = this._modalAlsSeite();
     root.innerHTML = `${css}<div class="huelle"><div class="app ${s.nav ? "navauf" : ""}">
@@ -525,10 +564,12 @@ class EsphomeremoteKonfigurator extends HTMLElement {
 
   _keyBtn([k, label, icon]) {
     const kc = this.keyCfg(k);
-    const dots = GESTURES.map(([g]) => (kc[g] && kc[g].length ? `<b class="dot ${g}"></b>` : "")).join("");
+    const dots = GESTURES.map(([g]) => (kc[g] && kc[g].length ? `<b class="dot ${g}"></b>` : "")).join("")
+      + (OFFLINE.some(([g]) => kc[g]?.length) ? `<ha-icon class="offl" icon="mdi:cloud-off-outline" title="eigene Belegung ohne Home Assistant"></ha-icon>` : "");
     const menu = GESTURES.some(([g]) => (kc[g] || []).some((s) => s.t === "int" && MENU_FNS.has(s.fn)));
     const col = COLOR_KEYS[k];
-    const sub = kc.short?.[0] ? this.stepText(kc.short[0]) : kc.long?.[0] ? "lang: " + this.stepText(kc.long[0]) : kc.double?.[0] ? "2×: " + this.stepText(kc.double[0]) : "frei";
+    const sub = kc.short?.[0] ? this.stepText(kc.short[0]) : kc.long?.[0] ? "lang: " + this.stepText(kc.long[0]) : kc.double?.[0] ? "2×: " + this.stepText(kc.double[0])
+      : kc.short_offline?.[0] ? "ohne HA: " + this.stepText(kc.short_offline[0]) : "frei";
     return `<button class="key ${this.s.key === k ? "sel" : ""} ${k === 34 ? "ok" : ""} ${col ? "color" : ""} ${menu ? "menukey" : ""}" data-a="key" data-k="${k}" title="${esc(KEYNAME[k])}">
       ${col ? `<span class="cdot" style="background:${col}"></span>` : icon ? `<ha-icon icon="${icon}"></ha-icon>` : `<span class="okt">${label}</span>`}
       <span class="kl">${esc(sub)}</span><span class="dots">${dots}</span>
@@ -563,21 +604,40 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         : modus === "repeat" ? "Löst „Kurz“ sofort aus, nach 0,4 s wiederholt es im eingestellten Takt, bis du loslässt – auch für HA-Aktionen (z. B. dimmen). „Doppelt“ und „Lang“ werden dann nicht ausgewertet."
         : "Wie eine echte Fernbedienung: die Taste bleibt am Gerät gedrückt, bis du loslässt (z. B. Lautstärke, Pfeile). „Doppelt“ und „Lang“ werden dann nicht ausgewertet."}</small></div>`;
     const virt = k >= 900;
-    const sections = (virt ? [["short", "Schritte", "mdi:format-list-numbered"]] : GESTURES).map(([g, label, icon]) => {
-      const aus = g !== "short" && modus !== "long" && modus !== "lrepeat";
+    const mo = this.s.modus != null ? this.cfg.modi?.[this.s.modus] : null;
+    const modusZeit = mo && !virt ? `<div class="haltmodus"><b><ha-icon icon="mdi:timer-outline"></ha-icon>Zeit nach dem Drücken</b>
+      <select data-a="modzeit">${[0, 2, 3, 4, 5, 7, 10, 15, 20, 30, 45, 60].map((n) => `<option value="${n}" ${(kc.s || 0) === n ? "selected" : ""}>${n ? `${n} s` : `Standard des Modus (${mo.s || 7} s)`}</option>`).join("")}</select>
+      <small class="note">So lange bleibt der Folgemodus nach einem Druck auf diese Taste noch aktiv. Standard ist die Dauer des Modus (oben neben dem Namen).</small></div>` : "";
+    const abschnitt = ([g, label, icon]) => {
+      const basis = g.replace("_offline", ""), off = g !== basis;
+      const aus = basis !== "short" && modus !== "long" && modus !== "lrepeat";
       const steps = kc[g] || [];
       const list = steps.map((st, i) => this._stepHtml(g, i, st, steps.length)).join("");
       let note = "";
       if (g === "short" && kc.double?.length) note = `<small class="note">Reagiert 160 ms verzögert, weil „Doppelt“ belegt ist.</small>`;
       if (g === "double" && !steps.length) note = `<small class="note">Leer lassen = kurz reagiert sofort.</small>`;
-      return `<section class="gest ${aus ? "aus" : ""}">
+      if (off && !steps.length) note = `<small class="note">Leer = wie oben (${(kc[basis] || []).length ? esc(this.stepText(kc[basis][0])) : "nichts"}).</small>`;
+      if (off && steps.some((st) => st.t === "ha" || st.t === "rf")) note += `<small class="note warn">Home-Assistant- und 433-MHz-Schritte brauchen die Verbindung zu HA – hier kommen sie nicht an.</small>`;
+      return `<section class="gest ${aus ? "aus" : ""} ${off ? "off" : ""}">
         <h3><ha-icon icon="${icon}"></ha-icon>${label}${aus ? ' <small class="note">(wird beim Gedrückthalten-Modus nicht ausgewertet)</small>' : ""}<span class="grow"></span>
           <button class="icon sm" data-a="copyg" data-g="${g}" title="${label} kopieren" ${steps.length ? "" : "disabled"}><ha-icon icon="mdi:content-copy"></ha-icon></button>
           ${this.s.clip ? `<button class="icon sm" data-a="pasteg" data-g="${g}" title="Hier einfügen: ${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon></button>` : ""}
           <button class="btn small" data-a="add" data-g="${g}"><ha-icon icon="mdi:plus"></ha-icon>Aktion</button></h3>
         ${list || `<div class="none">nichts</div>`}${note}
       </section>`;
-    }).join("");
+    };
+    const ges = virt ? [["short", "Schritte", "mdi:format-list-numbered"]] : GESTURES;
+    const sections = ges.map(abschnitt).join("");
+    const offBelegt = OFFLINE.some(([g]) => kc[g]?.length);
+    const offAuf = offBelegt || this.s.offline;
+    const ohneHa = `<div class="ohneha"><button class="ohkopf" data-a="offline_auf" ${offBelegt ? "disabled" : ""}>
+        <ha-icon icon="mdi:cloud-off-outline"></ha-icon><b>Ohne Home Assistant</b>
+        <span class="note">${offBelegt ? "eigene Belegung" : "wie oben"}</span><span class="grow"></span>
+        ${offBelegt ? "" : `<ha-icon icon="mdi:chevron-${offAuf ? "up" : "down"}"></ha-icon>`}</button>
+      ${offAuf ? `<small class="note">Gilt, solange die Remote keine Verbindung zu Home Assistant hat (weder WLAN noch Bluetooth-Brücke).
+        Dann laufen diese Schritte statt der normalen – z. B. Infrarot direkt von der Remote, ein Bluetooth-Befehl oder eine Funktion der Remote.
+        Leer = die normalen Schritte (Home-Assistant-Aktionen darin warten bis zu 10 s auf die Verbindung und verfallen dann).</small>
+        ${(virt ? [["short_offline", "Schritte", "mdi:format-list-numbered"]] : OFFLINE).map(abschnitt).join("")}` : ""}</div>`;
     return `<div class="edhead">
         <button class="icon back" data-a="close"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
         <div><h2>${esc(KEYNAME[k])}</h2><small>${virt ? "keine Taste – läuft beim Wechsel der Aktivität (Leiste, Taste, HA-Schalter)" : `Taste ${k}`} · Aktivität „${esc(this.activity.name)}“${NAV_KEYS.has(k) ? " · im Menü: Navigation" : ""}</small></div>
@@ -586,18 +646,18 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         <button class="btn ${this.s.clip ? "primary" : "ghost"}" data-a="paste" ${this.s.clip ? "" : "disabled"} title="${this.s.clip ? "Einfügen: " + esc(this.s.clip.label) + " (Strg+V)" : "Erst eine Taste kopieren"}"><ha-icon icon="mdi:content-paste"></ha-icon><span class="wide">Einfügen</span></button>
         <button class="btn ghost" data-a="copykey" title="Auf andere Aktivitäten übertragen"><ha-icon icon="mdi:content-duplicate"></ha-icon><span class="wide">Übertragen</span></button>
         <button class="btn ghost" data-a="clearkey" title="Taste leeren"><ha-icon icon="mdi:eraser"></ha-icon></button>
-      </div>${virt ? "" : halten + `
+      </div>${modusZeit}${virt ? "" : halten + `
       <div class="swaps"><span>Tauschen:</span>
         <button class="chip" data-a="swap" data-x="short" data-y="double">Kurz ⇄ Doppelt</button>
         <button class="chip" data-a="swap" data-x="double" data-y="long">Doppelt ⇄ Lang</button>
-        <button class="chip" data-a="swap" data-x="short" data-y="long">Kurz ⇄ Lang</button></div>`}${sections}`;
+        <button class="chip" data-a="swap" data-x="short" data-y="long">Kurz ⇄ Lang</button></div>`}${sections}${ohneHa}`;
   }
 
   _stepHtml(g, i, st, n) {
     const id = `data-g="${g}" data-i="${i}"`;
     const typeSel = `<select data-f="t" ${id}>
-      ${[["ble", "Bluetooth-Gerät"], ["ha", "Home Assistant"], ["int", "Funktion der Remote"], ["ir", "Infrarot"], ["rf", "433 MHz (Dock)"], ["wait", "Warten"], ["modus", "Folgemodus starten"]]
-        .map(([v, l]) => `<option value="${v}" ${st.t === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+      ${[["ble", "Bluetooth-Gerät"], ["ha", "Home Assistant"], ["regeln", "Schrittweise regeln (Licht / Ventilator)"], ["int", "Funktion der Remote"], ["ir", "Infrarot"], ["rf", "433 MHz (Dock)"], ["wait", "Warten"], ["modus", "Folgemodus starten"]]
+        .map(([v, l]) => `<option value="${v}" ${istRegeln(st) ? (v === "regeln" ? "selected" : "") : st.t === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
     let body = "";
     if (st.t === "ble") {
       const devSel = `<select data-f="dev" ${id}><option value="-1">Gerät der Aktivität (${esc(this.slotName(this.activity.slot))})</option>
@@ -610,6 +670,16 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         ${known ? "" : `<div class="inl"><select data-f="kind" ${id}>${["consumer", "key", "button"].map((x) => `<option ${st.kind === x ? "selected" : ""}>${x}</option>`).join("")}</select>
           <input data-f="code" ${id} value="${st.kind === "button" ? st.code : hex(st.code, 3)}" placeholder="0x00E9"></div>`}
         ${st.dev != null && st.dev >= 0 && st.dev !== this.activity.slot ? `<small class="note">Kommt nur an, wenn das Gerät gerade verbunden oder im Hintergrund gekoppelt ist („parallel verbunden“).</small>` : ""}`;
+    } else if (istRegeln(st)) {
+      const ent = st.entity ? this._hass.states[st.entity] : null;
+      const dom = st.entity ? st.entity.split(".")[0] : "";
+      const arten = REGELN_ARTEN.filter(([, , d]) => !dom || d === dom);
+      const art = REGELN_ARTEN.find(([a]) => a === st.data?.art) || arten[0];
+      body = `<button class="entity" data-a="pick" ${id}>${ent ? `<ha-icon icon="${esc(ent.attributes.icon || "mdi:shape")}"></ha-icon><span><b>${esc(ent.attributes.friendly_name || st.entity)}</b><small>${esc(st.entity)}</small></span>`
+        : `<ha-icon icon="mdi:magnify"></ha-icon><span><b>Licht oder Ventilator wählen …</b></span>`}</button>
+        <div class="inl"><select data-f="rg_art" ${id}>${arten.map(([a, l]) => `<option value="${a}" ${art?.[0] === a ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+        ${art && art[0] !== "drehung" ? `<input type="number" data-f="rg_schritt" ${id} value="${esc(st.data?.schritt ?? art[3])}" style="width:6em"><span>${art[4]}</span>` : ""}</div>
+        <small class="note">${art?.[5] || ""}</small>`;
     } else if (st.t === "ha") {
       const ent = st.entity ? this._hass.states[st.entity] : null;
       const domain = st.entity ? st.entity.split(".")[0] : st.svc.split(".")[0];
@@ -775,6 +845,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (await this._lichtClick(a, t)) { this._render(); return; }
     if (await this._gestenClick(a, t)) { this._render(); return; }
     if (await this._dockClick(a, t)) { this._render(); return; }
+    if (await this._jetztClick(a, t)) { this._render(); return; }
+    if (await this._klingelClick(a, t)) { this._render(); return; }
     if (await this._irClick(a, t)) { this._render(); return; }
     if (await this._btClick(a, t)) { this._render(); return; }
     if (await this._lernClick(a, t)) { this._render(); return; }
@@ -799,6 +871,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       case "pasteg": this._paste(g); break;
       case "clipx": this._setClip(null); break;
       case "swap": this._swap(t.dataset.x, t.dataset.y); break;
+      case "offline_auf": s.offline = !s.offline; break;
       case "undo": {
         const u = s.undo;
         if (u && u.dev !== s.dev) s.dev = u.dev;
@@ -825,6 +898,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         s.modus = null; s.key = null; this._touch();
         break;
       }
+      case "modgeh": s.modus = null; s.act = Number(t.dataset.ai); s.key = Number(t.dataset.k); break;
+      case "modgehm": this._geh("remote", "menu"); s.mpage = t.dataset.p; s.mitem = Number(t.dataset.j); break;
       case "modvor": s.modal = { type: "pick", g: "modvor", i: -1, domain: t.dataset.p === "licht" ? "light" : "fan", domains: [t.dataset.p === "licht" ? "light" : "fan"], q: "", modvor: t.dataset.p }; break;
       case "actadd": {
         const acts = this.cfg.activities;
@@ -934,7 +1009,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       }
       case "add": {
         const kc = this._steps(g);
-        kc[g].push(g === "long" && s.key === 45 ? { t: "int", fn: "voice_ptt" } : { t: "ha", svc: "script.turn_on", entity: "", data: {} });
+        kc[g].push(g === "long" && s.key === 45 ? { t: "int", fn: "voice_ptt" }
+          : g.endsWith("_offline") ? { t: "ir", proto: "NEC", addr: 0, cmd: 0 } : { t: "ha", svc: "script.turn_on", entity: "", data: {} });
         this._commit(kc);
         if (kc[g][kc[g].length - 1].t === "ha") s.modal = { type: "pick", g, i: kc[g].length - 1, domain: "", q: "" };
         break;
@@ -945,7 +1021,11 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         if (!confirm(`„${KEYNAME[s.key]}“ in dieser Aktivität komplett leeren?`)) return;
         this.setKeyCfg(s.key, {});
         break;
-      case "pick": s.modal = { type: "pick", g, i, domain: "", q: "" }; break;
+      case "pick": {
+        const st0 = this._steps(g)[g]?.[i];
+        s.modal = { type: "pick", g, i, domain: "", q: "", ...(istRegeln(st0) ? { domains: ["light", "fan"] } : {}) };
+        break;
+      }
       case "dom": s.modal.domain = t.dataset.d; break;
       case "pickent": {
         const e = t.dataset.e, d = e.split(".")[0];
@@ -957,6 +1037,11 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         const kc = this._steps(s.modal.g);
         const st = kc[s.modal.g][s.modal.i];
         st.entity = e;
+        if (st.svc === REGELN_SVC) {   // Schrittweise regeln: Dienst bleibt, Art passend zum Geraet
+          const arten = REGELN_ARTEN.filter(([, , dom]) => dom === d);
+          if (arten.length && !arten.some(([a]) => a === st.data?.art)) st.data = { art: arten[0][0], schritt: String(arten[0][3]) };
+          this._commit(kc); s.modal = null; break;
+        }
         const svcs = Object.keys(this._hass.services[d] || {});
         const pref = d === "script" ? "turn_on" : d === "scene" ? "turn_on" : ["button", "input_button"].includes(d) ? "press"
           : d === "automation" ? "trigger" : d === "media_player" ? "media_play_pause" : "toggle";
@@ -1002,6 +1087,25 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   _change(ev) {
     const t = ev.target;
     const s = this.s;
+    if (t.dataset.kl) {
+      const k = s.klingel.klingel[Number(t.dataset.ki)];
+      k[t.dataset.kl] = t.dataset.kl === "warten" ? Math.max(0, Math.min(30, Number(t.value) || 0)) : t.value;
+      this._klingelSpeichern(); return;
+    }
+    if (t.dataset.st) {
+      s.strm.streamer[Number(t.dataset.si)][t.dataset.st] = t.value;
+      this._strmSpeichern(); return;
+    }
+    if (t.dataset.jz) {
+      const j = s.jetzt.jetzt[Number(t.dataset.ji)];
+      j[t.dataset.jz] = t.type === "checkbox" ? t.checked : t.value;
+      this._jetztSpeichern(); return;
+    }
+    if (t.dataset.ent) {
+      const ents = (this.cfg.ents ||= {});
+      if (t.value) ents[t.dataset.ent] = t.value; else delete ents[t.dataset.ent];
+      this._touch(); return this._render();
+    }
     if (t.id === "enabled") { s.enabled[s.dev] = t.checked; s.dirty[s.dev] = true; return this._render(); }
     if (t.dataset.mod) {
       const mo = this.cfg.modi[s.modus];
@@ -1025,6 +1129,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       if (t.value === "lrepeat") { kc.lrepeat = 500; if (!kc.long?.length) this.s.msg = { text: "Jetzt unter „Lang“ eine Aktion eintragen – sie wird beim Halten wiederholt." }; }
       this.setKeyCfg(s.key, kc); return this._render();
     }
+    if (t.dataset.a === "modzeit") { const kc = clone(this.keyCfg()); if (Number(t.value)) kc.s = Number(t.value); else delete kc.s; this.setKeyCfg(s.key, kc); return this._render(); }
     if (t.dataset.a === "wdhms") { const kc = clone(this.keyCfg()); kc[kc.lrepeat ? "lrepeat" : "repeat"] = Number(t.value); this.setKeyCfg(s.key, kc); return this._render(); }
     if (t.name === "src") { s.modal.src = t.value; return; }
     if (t.dataset.bk) { s.modal.ziel[t.dataset.bk] = t.value; return; }
@@ -1048,7 +1153,10 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     let st = kc[g][i];
     const v = t.value;
     switch (f) {
+      case "rg_art": { const a = REGELN_ARTEN.find(([x]) => x === v); st.data = { art: v, schritt: String(a ? a[3] : 0) }; break; }
+      case "rg_schritt": st.data = { ...(st.data || {}), schritt: String(Number(v) || 0) }; break;
       case "t":
+        if (v === "regeln") { st = { t: "ha", svc: REGELN_SVC, entity: "", data: { art: "helligkeit", schritt: "10" } }; kc[g][i] = st; s.modal = { type: "pick", g, i, domain: "", q: "", domains: ["light", "fan"] }; break; }
         st = { ble: { t: "ble", kind: "consumer", code: 0xCD, dev: -1 }, ha: { t: "ha", svc: "script.turn_on", entity: "", data: {} },
           int: { t: "int", fn: g === "long" && s.key === 45 ? "voice_ptt" : "menu_smart" }, ir: { t: "ir", proto: "NEC", addr: 0, cmd: 0 }, rf: { t: "rf", raw: [], wdh: 5 }, wait: { t: "wait", ms: 300 }, modus: { t: "modus", id: this.cfg.modi?.[0]?.id || "" } }[v];
         kc[g][i] = st;
@@ -1111,9 +1219,10 @@ const M_TYPES = [
 ];
 // Einstellungen der Remote (generiert aus den eingebauten Seiten: esphome/tools/einst_gen.py)
 // [Widget-ID, Art (b Schalter/Knopf, s Regler, i Anzeige), Name, Seite]
-const M_EINST = [["disp_bri_sld", "s", "Display", "Bildschirm"], ["h_bri", "i", "Hinweis (h_bri)", "Bildschirm"], ["kbd_light_btn", "b", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdon", "i", "Hinweis (h_kbdon)", "Bildschirm"], ["kbd_bri_sld", "s", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdbri", "i", "Hinweis (h_kbdbri)", "Bildschirm"], ["to_sld", "s", "Display aus nach", "Bildschirm"], ["h_to", "i", "Hinweis (h_to)", "Bildschirm"], ["ps_dim_sld", "s", "Abdunkeln nach", "Bildschirm"], ["ps_h_dim", "i", "Hinweis (ps_h_dim)", "Bildschirm"], ["ps_dimp_sld", "s", "Abdunkeln auf", "Bildschirm"], ["ps_h_dimp", "i", "Hinweis (ps_h_dimp)", "Bildschirm"], ["show_ble_btn", "b", "Bluetooth-Symbol", "Anzeige"], ["h_sh_ble", "i", "Hinweis (h_sh_ble)", "Anzeige"], ["show_wifi_btn", "b", "WLAN-Symbol", "Anzeige"], ["h_sh_wifi", "i", "Hinweis (h_sh_wifi)", "Anzeige"], ["show_batt_btn", "b", "Akkustand", "Anzeige"], ["h_sh_batt", "i", "Hinweis (h_sh_batt)", "Anzeige"], ["show_clock_btn", "b", "Uhrzeit", "Anzeige"], ["h_sh_clock", "i", "Hinweis (h_sh_clock)", "Anzeige"], ["show_assi_btn", "b", "Assistenten-Symbol", "Anzeige"], ["h_sh_assi", "i", "Hinweis (h_sh_assi)", "Anzeige"], ["show_motion_btn", "b", "Bewegungs-Symbol", "Anzeige"], ["show_ha_btn", "b", "Home-Assistant-Symbol", "Anzeige"], ["h_sh_ha", "i", "Hinweis (h_sh_ha)", "Anzeige"], ["cover_player_btn", "b", "Cover Player", "Anzeige"], ["h_cov_p", "i", "Hinweis (h_cov_p)", "Anzeige"], ["cover_home_btn", "b", "Cover Startseite", "Anzeige"], ["h_cov_h", "i", "Hinweis (h_cov_h)", "Anzeige"], ["mem_sld", "s", "Menü merken für", "Anzeige"], ["ps_h_mem", "i", "Hinweis (ps_h_mem)", "Anzeige"], ["menu_close_sld", "s", "Menü schließen nach", "Anzeige"], ["h_menu_close", "i", "Hinweis (h_menu_close)", "Anzeige"], ["sd_logos_btn", "b", "Logos von SD-Karte", "Anzeige"], ["h_sd_logos", "i", "Hinweis (h_sd_logos)", "Anzeige"], ["ps_wifi_btn", "b", "WLAN-Sparmodus", "Energie & Wecken"], ["ps_h_wifi", "i", "Hinweis (ps_h_wifi)", "Energie & Wecken"], ["ps_wifimax_btn", "b", "Sparmodus stark (Ruhe)", "Energie & Wecken"], ["ps_h_wifimax", "i", "Hinweis (ps_h_wifimax)", "Energie & Wecken"], ["ps_wifi_off_btn", "b", "WLAN aus im Ruhezustand", "Energie & Wecken"], ["ps_h_off", "i", "Hinweis (ps_h_off)", "Energie & Wecken"], ["ps_wifis_sld", "s", "WLAN aus nach", "Energie & Wecken"], ["ps_h_offs", "i", "Hinweis (ps_h_offs)", "Energie & Wecken"], ["ps_wifitv_sld", "s", "WLAN aus bei TV an", "Energie & Wecken"], ["ps_h_wifitv", "i", "Hinweis (ps_h_wifitv)", "Energie & Wecken"], ["ps_cpu_sld", "s", "Prozessor drosseln", "Energie & Wecken"], ["ps_h_cpu", "i", "Hinweis (ps_h_cpu)", "Energie & Wecken"], ["ps_light_btn", "b", "Leichtschlaf", "Energie & Wecken"], ["ps_wfest_btn", "b", "WLAN-Schnellstart", "Energie & Wecken"], ["ps_wfrueh_btn", "b", "WLAN früh einschalten", "Energie & Wecken"], ["ps_nurble_btn", "b", "Nur Bluetooth", "Energie & Wecken"], ["ps_nurble_h", "i", "WLAN bleibt aus, Home Assistant, Bilder und Sprache laufen über Bluetooth. Für Updates schaltet das Wartungsfenster das WLAN kurz ein.", "Energie & Wecken"], ["ps_bleidle_btn", "b", "BLE-Verbindung langsam", "Energie & Wecken"], ["ps_h_ble", "i", "Hinweis (ps_h_ble)", "Energie & Wecken"], ["ps_bles_sld", "s", "BLE langsam nach", "Energie & Wecken"], ["ps_h_bles", "i", "Hinweis (ps_h_bles)", "Energie & Wecken"], ["motion_mode_lbl", "i", "Aufwecken bei", "Energie & Wecken"], ["mm_0", "b", "Aus", "Energie & Wecken"], ["mm_1", "b", "Bewegung", "Energie & Wecken"], ["mm_2", "b", "Hochheben", "Energie & Wecken"], ["h_motion", "i", "Hinweis (h_motion)", "Energie & Wecken"], ["ms_sld", "s", "Empfindlichkeit", "Energie & Wecken"], ["h_sens", "i", "Hinweis (h_sens)", "Energie & Wecken"], ["keys_wake_btn", "b", "Tasten wecken", "Energie & Wecken"], ["h_keys", "i", "Hinweis (h_keys)", "Energie & Wecken"], ["menue_weckt_btn", "b", "Menütaste bei dunklem Display", "Energie & Wecken"], ["h_menue_weckt", "i", "Hinweis (h_menue_weckt)", "Energie & Wecken"], ["dim_wake_btn", "b", "Aufhellen bei Bewegung", "Energie & Wecken"], ["h_dim_wake", "i", "Hinweis (h_dim_wake)", "Energie & Wecken"], ["dim_hold_btn", "b", "Nicht abdunkeln bei Bewegung", "Energie & Wecken"], ["h_dim_hold", "i", "Hinweis (h_dim_hold)", "Energie & Wecken"], ["ds_sld", "s", "Empfindlichkeit (beide oben)", "Energie & Wecken"], ["h_dim_sens", "i", "Hinweis (h_dim_sens)", "Energie & Wecken"], ["klopf_btn", "b", "Doppelt klopfen weckt", "Energie & Wecken"], ["kl_sld", "s", "Klopf-Empfindlichkeit", "Energie & Wecken"], ["h_klopf", "i", "Hinweis (h_klopf)", "Energie & Wecken"], ["ps_touch_btn", "b", "Touch weckt", "Energie & Wecken"], ["ps_h_touch", "i", "Hinweis (ps_h_touch)", "Energie & Wecken"], ["ps_touchms_sld", "s", "Touch-Abfrage", "Energie & Wecken"], ["ps_h_touchms", "i", "Hinweis (ps_h_touchms)", "Energie & Wecken"], ["ps_deep_btn", "b", "Tiefschlaf im Ruhezustand", "Energie & Wecken"], ["ps_h_deep", "i", "Hinweis (ps_h_deep)", "Energie & Wecken"], ["ps_deepble_btn", "b", "Nur ohne Bluetooth", "Energie & Wecken"], ["ps_deeps_sld", "s", "Tiefschlaf nach", "Energie & Wecken"], ["ps_h_deeps", "i", "Hinweis (ps_h_deeps)", "Energie & Wecken"], ["ps_deeptv_sld", "s", "Tiefschlaf bei TV an", "Energie & Wecken"], ["ps_h_deeptv", "i", "Hinweis (ps_h_deeptv)", "Energie & Wecken"], ["ps_low_sld", "s", "Sparmodus bei Akku unter", "Energie & Wecken"], ["ps_h_low", "i", "Hinweis (ps_h_low)", "Energie & Wecken"], ["tile_assi", "b", "Assistent", "Sprache"], ["h_assi", "i", "Hinweis (h_assi)", "Sprache"], ["tile_google_mode", "b", "Google-Modus", "Sprache"], ["h_google_mode", "i", "Hinweis (h_google_mode)", "Sprache"], ["tile_tts", "b", "Antwort hörbar", "Sprache"], ["h_tts", "i", "Hinweis (h_tts)", "Sprache"], ["tile_mic", "b", "Mikrofon", "Sprache"], ["tile_mic_warm", "b", "Mikrofon vorwärmen", "Sprache"], ["h_mic_warm", "i", "Hinweis (h_mic_warm)", "Sprache"], ["ble_state_lbl", "i", "Nicht verbunden", "Bluetooth"], ["ble_slot0", "b", "Platz 1", "Bluetooth"], ["ble_slot1", "b", "Platz 2", "Bluetooth"], ["ble_slot2", "b", "Platz 3", "Bluetooth"], ["ble_slot3", "b", "Platz 4", "Bluetooth"], ["ble_target_lbl", "i", "Platz 1", "Bluetooth"], ["ble_connect", "b", "Verbinden", "Bluetooth"], ["ble_pair", "b", "Koppeln", "Bluetooth"], ["ble_forget", "b", "Löschen", "Bluetooth"], ["ble_eingabe_btn", "b", "Eingabe", "Bluetooth"], ["h_plaetze", "i", "Hinweis (h_plaetze)", "Bluetooth"], ["ble_par_btn", "b", "Parallel verbunden", "Bluetooth"], ["maus_tempo_sld", "s", "Zeigertempo", "Bluetooth"], ["maus_dpad_btn", "b", "Steuerkreuz als Maus", "Bluetooth"], ["maus_dpad_sld", "s", "Tempo Steuerkreuz", "Bluetooth"], ["maus_zurueck_btn", "b", "Zurück-Taste", "Bluetooth"], ["h_maus_dpad", "i", "Hinweis (h_maus_dpad)", "Bluetooth"], ["ak_status", "i", "Status", "Akku"], ["ak_pct", "i", "Akkustand", "Akku"], ["ak_volt", "i", "Spannung", "Akku"], ["ak_rate", "i", "Rate jetzt (Chip)", "Akku"], ["ak_r1", "i", "Letzte Stunde", "Akku"], ["ak_r24", "i", "Letzte 24 h", "Akku"], ["ak_rest", "i", "Restlaufzeit", "Akku"], ["ak_geladen", "i", "Zuletzt geladen", "Akku"], ["ak_geladen2", "i", "ak_geladen2", "Akku"], ["ak_schlaf", "i", "Tiefschlaf seit Ladung", "Akku"], ["dock_an_btn", "b", "Smart Display im Dock", "Smart Display"], ["h_dock_an", "i", "Hinweis (h_dock_an)", "Smart Display"], ["dock_disp_btn", "b", "Display im Dock", "Smart Display"], ["h_dock_disp", "i", "Hinweis (h_dock_disp)", "Smart Display"], ["dock_von_sld", "s", "an ab", "Smart Display"], ["dock_bis_sld", "s", "an bis", "Smart Display"], ["tile_touchtest", "b", "Touch-Test", "Wartung & Tests"], ["h_touch", "i", "Hinweis (h_touch)", "Wartung & Tests"], ["tile_button_test", "b", "Tasten-Test", "Wartung & Tests"], ["h_btn", "i", "Hinweis (h_btn)", "Wartung & Tests"], ["clean_dur_sld", "s", "Reinigungsdauer", "Wartung & Tests"], ["h_cleandur", "i", "Hinweis (h_cleandur)", "Wartung & Tests"], ["tile_clean", "b", "Reinigungsmodus", "Wartung & Tests"], ["h_clean", "i", "Hinweis (h_clean)", "Wartung & Tests"], ["tile_sd", "b", "SD-Karte", "Wartung & Tests"], ["h_sd_tile", "i", "Hinweis (h_sd_tile)", "Wartung & Tests"], ["ps_log_btn", "b", "Debug-Modus", "Wartung & Tests"], ["ps_h_log", "i", "Hinweis (ps_h_log)", "Wartung & Tests"], ["testmod_btn", "b", "Testmodus (immer online)", "Wartung & Tests"], ["ps_h_test", "i", "Hinweis (ps_h_test)", "Wartung & Tests"], ["tile_update", "b", "Firmware aktualisieren", "Wartung & Tests"], ["h_update", "i", "Hinweis (h_update)", "Wartung & Tests"], ["tile_shutdown", "b", "Gerät herunterfahren", "Wartung & Tests"], ["tile_restart", "b", "Gerät neu starten", "Wartung & Tests"], ["h_restart", "i", "Hinweis (h_restart)", "Wartung & Tests"], ["ak_graph", "g", "Verlauf 24 h", "Akku"]];
+const M_EINST = [["disp_bri_sld", "s", "Display", "Bildschirm"], ["h_bri", "i", "Hinweis (h_bri)", "Bildschirm"], ["kbd_light_btn", "b", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdon", "i", "Hinweis (h_kbdon)", "Bildschirm"], ["kbd_bri_sld", "s", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdbri", "i", "Hinweis (h_kbdbri)", "Bildschirm"], ["to_sld", "s", "Display aus nach", "Bildschirm"], ["h_to", "i", "Hinweis (h_to)", "Bildschirm"], ["ps_dim_sld", "s", "Abdunkeln nach", "Bildschirm"], ["ps_h_dim", "i", "Hinweis (ps_h_dim)", "Bildschirm"], ["ps_dimp_sld", "s", "Abdunkeln auf", "Bildschirm"], ["ps_h_dimp", "i", "Hinweis (ps_h_dimp)", "Bildschirm"], ["show_ble_btn", "b", "Bluetooth-Symbol", "Anzeige"], ["h_sh_ble", "i", "Hinweis (h_sh_ble)", "Anzeige"], ["show_wifi_btn", "b", "WLAN-Symbol", "Anzeige"], ["h_sh_wifi", "i", "Hinweis (h_sh_wifi)", "Anzeige"], ["show_batt_btn", "b", "Akkustand", "Anzeige"], ["h_sh_batt", "i", "Hinweis (h_sh_batt)", "Anzeige"], ["show_clock_btn", "b", "Uhrzeit", "Anzeige"], ["h_sh_clock", "i", "Hinweis (h_sh_clock)", "Anzeige"], ["show_assi_btn", "b", "Assistenten-Symbol", "Anzeige"], ["h_sh_assi", "i", "Hinweis (h_sh_assi)", "Anzeige"], ["show_motion_btn", "b", "Bewegungs-Symbol", "Anzeige"], ["show_ha_btn", "b", "Home-Assistant-Symbol", "Anzeige"], ["h_sh_ha", "i", "Hinweis (h_sh_ha)", "Anzeige"], ["cover_player_btn", "b", "Cover Player", "Anzeige"], ["h_cov_p", "i", "Hinweis (h_cov_p)", "Anzeige"], ["cover_home_btn", "b", "Cover Startseite", "Anzeige"], ["h_cov_h", "i", "Hinweis (h_cov_h)", "Anzeige"], ["mem_sld", "s", "Menü merken für", "Anzeige"], ["ps_h_mem", "i", "Hinweis (ps_h_mem)", "Anzeige"], ["menu_close_sld", "s", "Menü schließen nach", "Anzeige"], ["h_menu_close", "i", "Hinweis (h_menu_close)", "Anzeige"], ["sd_logos_btn", "b", "Logos von SD-Karte", "Anzeige"], ["h_sd_logos", "i", "Hinweis (h_sd_logos)", "Anzeige"], ["ps_wifi_btn", "b", "WLAN-Sparmodus", "Energie & Wecken"], ["ps_h_wifi", "i", "Hinweis (ps_h_wifi)", "Energie & Wecken"], ["ps_wifimax_btn", "b", "Sparmodus stark (Ruhe)", "Energie & Wecken"], ["ps_h_wifimax", "i", "Hinweis (ps_h_wifimax)", "Energie & Wecken"], ["ps_wifi_off_btn", "b", "WLAN aus im Ruhezustand", "Energie & Wecken"], ["ps_h_off", "i", "Hinweis (ps_h_off)", "Energie & Wecken"], ["ps_wifis_sld", "s", "WLAN aus nach", "Energie & Wecken"], ["ps_h_offs", "i", "Hinweis (ps_h_offs)", "Energie & Wecken"], ["ps_wifitv_sld", "s", "WLAN aus bei TV an", "Energie & Wecken"], ["ps_h_wifitv", "i", "Hinweis (ps_h_wifitv)", "Energie & Wecken"], ["ps_cpu_sld", "s", "Prozessor drosseln", "Energie & Wecken"], ["ps_h_cpu", "i", "Hinweis (ps_h_cpu)", "Energie & Wecken"], ["ps_light_btn", "b", "Leichtschlaf", "Energie & Wecken"], ["ps_wfest_btn", "b", "WLAN-Schnellstart", "Energie & Wecken"], ["ps_wfrueh_btn", "b", "WLAN früh einschalten", "Energie & Wecken"], ["ps_nurble_btn", "b", "Nur Bluetooth", "Energie & Wecken"], ["ps_nurble_h", "i", "WLAN bleibt aus, Home Assistant, Bilder und Sprache laufen über Bluetooth. Für Updates schaltet das Wartungsfenster das WLAN kurz ein.", "Energie & Wecken"], ["ps_bleidle_btn", "b", "BLE-Verbindung langsam", "Energie & Wecken"], ["ps_h_ble", "i", "Hinweis (ps_h_ble)", "Energie & Wecken"], ["ps_bles_sld", "s", "BLE langsam nach", "Energie & Wecken"], ["ps_h_bles", "i", "Hinweis (ps_h_bles)", "Energie & Wecken"], ["motion_mode_lbl", "i", "Aufwecken bei", "Energie & Wecken"], ["mm_0", "b", "Aus", "Energie & Wecken"], ["mm_1", "b", "Bewegung", "Energie & Wecken"], ["mm_2", "b", "Hochheben", "Energie & Wecken"], ["h_motion", "i", "Hinweis (h_motion)", "Energie & Wecken"], ["ms_sld", "s", "Empfindlichkeit", "Energie & Wecken"], ["h_sens", "i", "Hinweis (h_sens)", "Energie & Wecken"], ["keys_wake_btn", "b", "Tasten wecken", "Energie & Wecken"], ["h_keys", "i", "Hinweis (h_keys)", "Energie & Wecken"], ["menue_weckt_btn", "b", "Menütaste bei dunklem Display", "Energie & Wecken"], ["h_menue_weckt", "i", "Hinweis (h_menue_weckt)", "Energie & Wecken"], ["dim_wake_btn", "b", "Aufhellen bei Bewegung", "Energie & Wecken"], ["h_dim_wake", "i", "Hinweis (h_dim_wake)", "Energie & Wecken"], ["dim_hold_btn", "b", "Nicht abdunkeln bei Bewegung", "Energie & Wecken"], ["h_dim_hold", "i", "Hinweis (h_dim_hold)", "Energie & Wecken"], ["ds_sld", "s", "Empfindlichkeit (beide oben)", "Energie & Wecken"], ["h_dim_sens", "i", "Hinweis (h_dim_sens)", "Energie & Wecken"], ["klopf_btn", "b", "Doppelt klopfen weckt", "Energie & Wecken"], ["kl_sld", "s", "Klopf-Empfindlichkeit", "Energie & Wecken"], ["h_klopf", "i", "Hinweis (h_klopf)", "Energie & Wecken"], ["ps_touch_btn", "b", "Touch weckt", "Energie & Wecken"], ["ps_h_touch", "i", "Hinweis (ps_h_touch)", "Energie & Wecken"], ["ps_touchms_sld", "s", "Touch-Abfrage", "Energie & Wecken"], ["ps_h_touchms", "i", "Hinweis (ps_h_touchms)", "Energie & Wecken"], ["ps_deep_btn", "b", "Tiefschlaf im Ruhezustand", "Energie & Wecken"], ["ps_h_deep", "i", "Hinweis (ps_h_deep)", "Energie & Wecken"], ["ps_deepble_btn", "b", "Nur ohne Bluetooth", "Energie & Wecken"], ["ps_deeps_sld", "s", "Tiefschlaf nach", "Energie & Wecken"], ["ps_h_deeps", "i", "Hinweis (ps_h_deeps)", "Energie & Wecken"], ["ps_deeptv_sld", "s", "Tiefschlaf bei TV an", "Energie & Wecken"], ["ps_h_deeptv", "i", "Hinweis (ps_h_deeptv)", "Energie & Wecken"], ["ps_low_sld", "s", "Sparmodus bei Akku unter", "Energie & Wecken"], ["ps_h_low", "i", "Hinweis (ps_h_low)", "Energie & Wecken"], ["tile_assi", "b", "Assistent", "Sprache"], ["h_assi", "i", "Hinweis (h_assi)", "Sprache"], ["tile_google_mode", "b", "Google-Modus", "Sprache"], ["h_google_mode", "i", "Hinweis (h_google_mode)", "Sprache"], ["tile_tts", "b", "Antwort hörbar", "Sprache"], ["h_tts", "i", "Hinweis (h_tts)", "Sprache"], ["tile_mic", "b", "Mikrofon", "Sprache"], ["tile_mic_warm", "b", "Mikrofon vorwärmen", "Sprache"], ["h_mic_warm", "i", "Hinweis (h_mic_warm)", "Sprache"], ["ble_state_lbl", "i", "Nicht verbunden", "Bluetooth"], ["ble_slot0", "b", "Platz 1", "Bluetooth"], ["ble_slot1", "b", "Platz 2", "Bluetooth"], ["ble_slot2", "b", "Platz 3", "Bluetooth"], ["ble_slot3", "b", "Platz 4", "Bluetooth"], ["ble_target_lbl", "i", "Platz 1", "Bluetooth"], ["ble_connect", "b", "Verbinden", "Bluetooth"], ["ble_pair", "b", "Koppeln", "Bluetooth"], ["ble_forget", "b", "Löschen", "Bluetooth"], ["ble_eingabe_btn", "b", "Eingabe", "Bluetooth"], ["h_plaetze", "i", "Hinweis (h_plaetze)", "Bluetooth"], ["ble_par_btn", "b", "Parallel verbunden", "Bluetooth"], ["maus_tempo_sld", "s", "Zeigertempo", "Bluetooth"], ["maus_dpad_btn", "b", "Steuerkreuz als Maus", "Bluetooth"], ["maus_dpad_sld", "s", "Tempo Steuerkreuz", "Bluetooth"], ["maus_zurueck_btn", "b", "Zurück-Taste", "Bluetooth"], ["h_maus_dpad", "i", "Hinweis (h_maus_dpad)", "Bluetooth"], ["ak_status", "i", "Status", "Akku"], ["ak_pct", "i", "Akkustand", "Akku"], ["ak_volt", "i", "Spannung", "Akku"], ["ak_rate", "i", "Rate jetzt (Chip)", "Akku"], ["ak_r1", "i", "Letzte Stunde", "Akku"], ["ak_r24", "i", "Letzte 24 h", "Akku"], ["ak_rest", "i", "Restlaufzeit", "Akku"], ["ak_geladen", "i", "Zuletzt geladen", "Akku"], ["ak_geladen2", "i", "ak_geladen2", "Akku"], ["ak_schlaf", "i", "Tiefschlaf seit Ladung", "Akku"], ["dock_an_btn", "b", "Smart Display im Dock", "Smart Display"], ["h_dock_an", "i", "Hinweis (h_dock_an)", "Smart Display"], ["dock_disp_btn", "b", "Display im Dock", "Smart Display"], ["h_dock_disp", "i", "Hinweis (h_dock_disp)", "Smart Display"], ["dock_von_sld", "s", "an ab", "Smart Display"], ["dock_bis_sld", "s", "an bis", "Smart Display"], ["musik_dock_btn", "b", "Im Dock bei Musik", "Smart Display"], ["h_musik_dock", "i", "Hinweis (h_musik_dock)", "Smart Display"], ["musik_player_btn", "b", "Nur wenn Player spielt", "Smart Display"], ["h_musik_player", "i", "Hinweis (h_musik_player)", "Smart Display"], ["tile_touchtest", "b", "Touch-Test", "Wartung & Tests"], ["h_touch", "i", "Hinweis (h_touch)", "Wartung & Tests"], ["tile_button_test", "b", "Tasten-Test", "Wartung & Tests"], ["h_btn", "i", "Hinweis (h_btn)", "Wartung & Tests"], ["clean_dur_sld", "s", "Reinigungsdauer", "Wartung & Tests"], ["h_cleandur", "i", "Hinweis (h_cleandur)", "Wartung & Tests"], ["tile_clean", "b", "Reinigungsmodus", "Wartung & Tests"], ["h_clean", "i", "Hinweis (h_clean)", "Wartung & Tests"], ["tile_sd", "b", "SD-Karte", "Wartung & Tests"], ["h_sd_tile", "i", "Hinweis (h_sd_tile)", "Wartung & Tests"], ["ps_log_btn", "b", "Debug-Modus", "Wartung & Tests"], ["ps_h_log", "i", "Hinweis (ps_h_log)", "Wartung & Tests"], ["testmod_btn", "b", "Testmodus (immer online)", "Wartung & Tests"], ["ps_h_test", "i", "Hinweis (ps_h_test)", "Wartung & Tests"], ["tile_update", "b", "Firmware aktualisieren", "Wartung & Tests"], ["h_update", "i", "Hinweis (h_update)", "Wartung & Tests"], ["tile_shutdown", "b", "Gerät herunterfahren", "Wartung & Tests"], ["tile_restart", "b", "Gerät neu starten", "Wartung & Tests"], ["h_restart", "i", "Hinweis (h_restart)", "Wartung & Tests"], ["ak_graph", "g", "Verlauf 24 h", "Akku"]];
 const M_EINST_K = Object.fromEntries(M_EINST.map((e) => [e[0], e]));
-const M_KAMERAS = [["klingel_haus", "Klingel Haustür"], ["klingel_wohnung", "Klingel Wohnungstür"]];
+// Bildquellen fuer Menue-Eintraege "Kamerabild": die beiden Klingel-Plaetze; Namen aus der Seite "Klingel" (_klingelLaden)
+const M_KAMERAS = [["klingel_haus", "Klingel 1"], ["klingel_wohnung", "Klingel 2"]];
 const M_TYPE = Object.fromEntries(M_TYPES.map(([k, l, i]) => [k, { l, i }]));
 // Nur Funktionsseiten der Remote - die Navigationsseiten des alten Menues gibt es seit 2026-10-06 nicht mehr.
 const M_SPECIAL = [
@@ -1121,7 +1230,7 @@ const M_SPECIAL = [
   ["cam_view", "Kamerabild auf der Remote"], ["cam_live", "Live-Bild auf der Remote"],
   ["ble", "Bluetooth"], ["voice_set", "Sprache"], ["bright", "Bildschirm"], ["show", "Anzeige"],
   ["power", "Energie & Wecken"], ["akku", "Akku"], ["service", "Wartung & Tests"], ["sd", "SD-Karte"],
-  ["touchpad", "Touchpad (Maus)"], ["dock", "Smart Display"], ["extras", "Smart Display (Einstellungen)"], ["gesten", "Gesten (Seite der Remote)"],
+  ["touchpad", "Touchpad (Maus)"], ["dock", "Smart Display"], ["musik", "Musik-Anzeige"], ["extras", "Smart Display (Einstellungen)"], ["gesten", "Gesten (Seite der Remote)"],
 ];
 const M_SPECIAL_L = Object.fromEntries(M_SPECIAL);
 const M_DOMAINS = { toggle: ["switch", "input_boolean", "light", "fan", "automation", "script", "media_player", "climate", "siren", "lock"],
@@ -1140,7 +1249,8 @@ function mStil(it) {
   if (it.bg) s += `background:${it.bg};border-color:${it.bg};`;
   if (it.fg) s += `--fg:${it.fg};`;
   if (it.align) s += `--al:${{ l: "left", c: "center", r: "right" }[it.align]};--jc:${{ l: "flex-start", c: "center", r: "flex-end" }[it.align]};`;
-  if (it.size) s += `--fs:${{ s: "11px", m: "13px", l: "16px" }[it.size]};`;
+  if (it.size) s += `--fs:${{ xs: "9px", s: "11px", m: "13px", l: "16px", xl: "20px" }[it.size]};`;
+  if (it.ic) s += `--ic:${it.ic};`;
   return s;
 }
 
@@ -1239,6 +1349,8 @@ const MenuEditor = {
           <ha-icon class="pic" icon="${pg.popup ? "mdi:message-badge-outline" : "mdi:card-outline"}"></ha-icon><span><b>${esc(pg.title || pg.id)}</b><small>${pg.popup ? ((pg.popup.open || []).length ? `${pg.popup.open.length} Auslöser` : "ohne Auslöser") : "ohne Auslöser – nur per HA-Dienst"} · ${(pg.items || []).length} Einträge</small></span></button></div>`).join("");
     return `<div class="mbar">
         <label class="inl2">Startseite <select data-mf="start">${m.pages.map((pg) => `<option value="${esc(pg.id)}" ${pg.id === m.start ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}</select></label>
+        <label class="inl2" title="Rahmen der Markierung, Regler und Zurück-Knopf im ganzen Menü">Hervorhebung
+          <select data-mf="hl">${M_FOKUSFARBEN.map(([v, n]) => `<option value="${v}" ${(m.hl || "") === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
       </div>
       <div class="mmain ${s.mitem != null ? "editing" : ""}">
         <div class="mpages"><h3>Seiten<span class="grow"></span><button class="btn small" data-a="maddpage"><ha-icon icon="mdi:plus"></ha-icon>Seite</button></h3>${pages}</div>
@@ -1430,7 +1542,10 @@ const MenuEditor = {
         ${["text", "sensor"].includes(it.t) ? "" : `<label class="col">Markierung (Rahmen bei Auswahl per Steuerkreuz)${sw("fc", M_FOKUSFARBEN)}</label>
         <small class="note">Standard: blauer Rahmen – auch bei Knöpfen mit eigener Hintergrundfarbe.</small>`}
         <div class="inl"><label class="col">Ausrichtung${seg("align", [["", "Standard"], ["l", "Links"], ["c", "Mitte"], ["r", "Rechts"]])}</label>
-          <label class="col">Größe${seg("size", [["", "Standard"], ["s", "Klein"], ["m", "Normal"], ["l", "Groß"]])}</label></div>
+          <label class="col">Größe${seg("size", [["", "Standard"], ["xs", "Sehr klein"], ["s", "Klein"], ["m", "Normal"], ["l", "Groß"], ["xl", "Sehr groß"]])}</label></div>
+        ${it.icon ? `<label class="col">Farbe des Symbols${sw("ic", M_TEXTFARBEN)}</label>
+        <label class="col">Symbol${seg("ia", [["", "Standard"], ["l", "Links"], ["c", "Mitte"], ["r", "Rechts"]])}</label>
+        <small class="note">Kacheln: Symbol oben links, mittig oder rechts. Zeilen: links vor dem Namen oder rechts am Ende.</small>` : ""}
       </section>` : "";
     const L = mLayout(p)[i];
     return `<div class="edhead"><button class="icon back" data-a="mclose"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
@@ -1611,6 +1726,7 @@ const MenuEditor = {
     const s = this.s, m = this.menu, p = this.mpage;
     if (t.dataset.mf) {
       if (t.dataset.mf === "start") m.start = t.value;
+      if (t.dataset.mf === "hl") { if (t.value) m.hl = t.value; else delete m.hl; }
       this._touch(); return true;
     }
     if (t.dataset.mp) {
@@ -1810,7 +1926,7 @@ code { font-size:12px; background:rgba(127,127,127,.15); padding:1px 4px; border
 .pi.tile { flex-direction:column; justify-content:center; padding:2px; text-align:center; }
 .pi b { font-weight:400; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .pi.tile b { font-size:11px; white-space:normal; line-height:1.15; }
 .pi i { font-style:normal; color:#8b94a3; font-size:11px; white-space:nowrap; } .pi.is-on i { color:#22c55e; } .pi.is-on.tile b { color:#22c55e; }
-.pi ha-icon { --mdc-icon-size:16px; } .pi.t-text { background:transparent; border-color:transparent; align-items:flex-end; padding:0 2px 2px; }
+.pi ha-icon { --mdc-icon-size:16px; color:var(--ic, inherit); } .pi.t-text { background:transparent; border-color:transparent; align-items:flex-end; padding:0 2px 2px; }
 .pi b, .pi .tx { color:var(--fg, inherit); text-align:var(--al, inherit); } .pi.row b { flex:1 1 auto; }
 .pi b { font-size:var(--fs, 13px); } .pi.tile b { font-size:var(--fs, 11px); }
 .swatches { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
@@ -2104,7 +2220,14 @@ ha-icon { --mdc-icon-size:20px; }
 .cdot { width:22px; height:10px; border-radius:5px; }
 .row.power .key { background:#5a2a2a; }
 .dot { display:inline-block; width:6px; height:6px; border-radius:50%; vertical-align:middle; }
+.modstart { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:6px 0 2px; } .modstart b { display:flex; align-items:center; gap:6px; margin-right:4px; }
 .dot.short { background:#4fc3f7; } .dot.double { background:#ffb74d; } .dot.long { background:#ba68c8; }
+.key .offl { --mdc-icon-size:11px; color:#90a4ae; }
+.ohneha { margin-top:14px; border:1px dashed var(--divider-color,#555); border-radius:12px; padding:4px 10px 8px; }
+.ohneha .ohkopf { all:unset; display:flex; align-items:center; gap:8px; width:100%; padding:8px 0; cursor:pointer; }
+.ohneha .ohkopf[disabled] { cursor:default; }
+.ohneha .note.warn { color:var(--warning-color,#ffa000); display:block; }
+.gest.off h3 { opacity:.9; }
 .hint { font-size:12px; color:var(--sec); text-align:center; line-height:1.6; max-width:360px; margin:10px auto 0; }
 .hint ha-icon.sm { --mdc-icon-size:13px; }
 .editor { background:var(--card); border-radius:12px; border:1px solid var(--div); padding:4px 16px 16px; min-height:300px; }
@@ -2277,7 +2400,7 @@ const NeuEditor = {
   async _neuClick(a, t) {
     const s = this.s, m = s.modal;
     if (a === "entfernen") {
-      const dev = s.dev;
+      const dev = t?.dataset?.dev || s.dev;
       if (!confirm(`${devName(dev)} wirklich entfernen?\n\nWeg sind danach: Belegung und Menü, die YAML-Datei im ESPHome-Add-on, die feste IP und der ESPHome-Eintrag in Home Assistant. Die Remote selbst behält ihre Firmware, bis sie neu geflasht wird.`)) return true;
       try {
         const r = await this._hass.callWS({ type: "esphomeremote_konfig/entfernen", device: dev });
@@ -2290,11 +2413,23 @@ const NeuEditor = {
       s.modal = { type: "neu", schritt: 0, name: "", ip: "", vorlage: s.dev, job: null };
       return true;
     }
+    if (a === "neu_fortsetzen") {   // angelegt, aber noch nicht fertig eingerichtet (Fenster zu, HA neu gestartet ...)
+      const dev = t.dataset.dev;
+      s.modal = { type: "neu", schritt: 1, dev, name: devName(dev), ip: "", job: null };
+      try { s.modal.job = await this._hass.callWS({ type: "esphomeremote_konfig/job", device: dev }); } catch (e) { s.modal.fehler = e.message; }
+      const j = s.modal.job;
+      if (j?.phase === "einbinden") s.modal.schritt = 3;
+      else if (j?.phase === "upload") { s.modal.schritt = 2; await this._neuFlashInfo(); }
+      else if (j?.phase === "compile" && !j.running && j.exit === 0) { s.modal.schritt = 2; await this._neuFlashInfo(); }
+      if (j?.running) this._neuPoll();
+      return true;
+    }
     if (!m || m.type !== "neu" || !a.startsWith("neu_")) return false;
     const R = this.shadowRoot;
     try {
       if (a === "neu_anlegen") {
-        m.name = R.querySelector('[data-neu="name"]').value.trim();
+        // "Remote" steckt schon im Geraetenamen (Remote WZ <Name>) - sonst entsteht remote-wz-remote...
+        m.name = R.querySelector('[data-neu="name"]').value.trim().replace(/^remote\s+/i, "");
         m.ip = R.querySelector('[data-neu="ip"]').value.trim();
         m.vorlage = R.querySelector('[data-neu="vorlage"]').value;
         if (!m.name) { m.fehler = "Bitte einen Namen eingeben."; return true; }
@@ -2305,6 +2440,7 @@ const NeuEditor = {
       } else if (a === "neu_bauen") await this._neuJob("compile");
       else if (a === "neu_usb") { m.port = R.querySelector('[data-neu="port"]')?.value || m.port; await this._neuJob("usb", { port: m.port }); }
       else if (a === "neu_weiter") { m.schritt = 3; await this._neuJob("einbinden"); }
+      else if (a === "neu_zumflashen") { m.schritt = 2; await this._neuFlashInfo(); }
       else if (a === "neu_einbinden") await this._neuJob("einbinden");
       else if (a === "neu_fertig") {
         const dev = m.dev; s.modal = null;
@@ -2323,6 +2459,10 @@ const NeuEditor = {
     if (m.schritt === 1 || start === "compile") m.schritt = 1;
     this._neuPoll();
   },
+  async _neuFlashInfo() {
+    const m = this.s.modal;
+    try { const f = await this._hass.callWS({ type: "esphomeremote_konfig/flash_info", device: m.dev }); m.manifest = f.manifest; m.ports = f.ports || []; } catch (e) { m.fehler = e.message; }
+  },
   _neuPoll() {
     clearTimeout(this._neuT);
     const m = this.s.modal;
@@ -2334,16 +2474,41 @@ const NeuEditor = {
       const j = mm.job;
       if (j && !j.running && j.exit === 0 && j.phase === "compile" && mm.schritt === 1) {
         mm.schritt = 2;
-        try { const f = await this._hass.callWS({ type: "esphomeremote_konfig/flash_info", device: mm.dev }); mm.manifest = f.manifest; mm.ports = f.ports || []; } catch (e) { mm.fehler = e.message; }
-      }
-      this._render();
+        await this._neuFlashInfo();
+        this._render();   // neuer Schritt: ganzes Fenster neu
+      } else this._neuTeilweise();
       if (j && j.running) this._neuPoll();
     }, 2000);
   },
+  // Waehrend ein Auftrag laeuft, nur Protokoll und Knoepfe des Fensters erneuern - nicht die ganze Seite
+  // (2026-10-18: alle 2 s neu aufgebaut, das Fenster "zuckte"; der USB-Knopf im Browser waere dabei neu entstanden).
+  _neuTeilweise() {
+    const R = this.shadowRoot, dlg = R.querySelector(".dlg.neu");
+    if (!dlg) { this._render(); return; }
+    const tmp = document.createElement("div");
+    tmp.innerHTML = this._neuHtml();
+    const neuLog = tmp.querySelector(".neulog"), altLog = dlg.querySelector(".neulog");
+    if (neuLog && altLog) {
+      const st = altLog.querySelector(".neust"), nst = neuLog.querySelector(".neust");
+      if (st && nst && st.innerHTML !== nst.innerHTML) st.innerHTML = nst.innerHTML;
+      const pre = altLog.querySelector("pre"), npre = neuLog.querySelector("pre");
+      if (npre && !pre) altLog.appendChild(npre);
+      else if (pre && npre && pre.textContent !== npre.textContent) {
+        const unten = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+        pre.textContent = npre.textContent;
+        if (unten) pre.scrollTop = pre.scrollHeight;
+      }
+    } else if (neuLog || altLog) { this._render(); return; }
+    const fuss = dlg.querySelector(".dfoot"), nfuss = tmp.querySelector(".dfoot");
+    if (fuss && nfuss && fuss.innerHTML !== nfuss.innerHTML) fuss.innerHTML = nfuss.innerHTML;
+    const fehler = tmp.querySelector(".neubody > .msg.err"), afehler = dlg.querySelector(".neubody > .msg.err");
+    if (!!fehler !== !!afehler) this._render();
+  },
   _neuLog(j) {
     if (!j) return "";
-    const l = (j.lines || []).slice(-14).map(esc).join("\n");
-    const stand = j.running ? `<span class="spin"></span> läuft …` : j.exit === 0 ? '<b class="ok">fertig</b>' : j.exit != null ? '<b class="err">fehlgeschlagen</b>' : "";
+    const l = (j.lines || []).slice(-40).map(esc).join("\n");
+    const pct = typeof j.progress === "number" ? ` ${Math.round(j.progress)} %` : "";
+    const stand = j.running ? `<span class="spin"></span> ${esc(j.schritt || "läuft")}${pct} …` : j.exit === 0 ? '<b class="ok">fertig</b>' : j.exit != null ? '<b class="err">fehlgeschlagen</b>' : "";
     return `<div class="neulog"><div class="neust">${stand} ${esc(j.msg || "")}</div>${l ? `<pre>${l}</pre>` : ""}</div>`;
   },
   _neuHtml() {
@@ -2352,15 +2517,19 @@ const NeuEditor = {
     let body = "", fuss = "";
     if (m.schritt === 0) {
       body = `<p>Die neue Remote bekommt dieselbe Firmware wie die anderen. Nur der Name ist anders („Hallo …“, Gerätename, Bluetooth-Name).</p>
-        <label class="col">Name (bis 14 Zeichen)<input data-neu="name" maxlength="14" value="${esc(m.name)}" placeholder="z. B. Gast"></label>
+        <label class="col">Name (bis 14 Zeichen, ohne „Remote“ davor)<input data-neu="name" maxlength="14" value="${esc(m.name)}" placeholder="z. B. Gast"></label>
         <label class="col">IP-Adresse im WLAN (leer lassen = automatisch)<input data-neu="ip" value="${esc(m.ip)}" placeholder="automatisch vom Router"></label>
         <small class="note">Leer: Die Remote holt sich beim ersten Start eine IP vom Router. Ich lese sie aus, mache sie zur festen IP und spiele das per WLAN auf. Im Router kannst du sie danach reservieren.</small>
         <label class="col">Belegung und Menü übernehmen von<select data-neu="vorlage">${this.s.order.map((d) => `<option value="${esc(d)}" ${d === m.vorlage ? "selected" : ""}>${esc(devName(d))}</option>`).join("")}<option value="" ${m.vorlage === "" ? "selected" : ""}>Standard (wie neu)</option></select></label>
-        <small class="note">Gerätename wird <code>remote-wz-${esc((m.name || "name").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]/g, ""))}</code>. Das Bauen dauert beim ersten Mal etwa 10 Minuten.</small>`;
+        <small class="note">Gerätename wird <code>remote-wz-${esc((m.name || "name").replace(/^remote\s+/i, "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]/g, ""))}</code>. Das Bauen dauert beim ersten Mal etwa 10 Minuten.</small>`;
       fuss = `<button class="btn primary" data-a="neu_anlegen" ${m.busy ? "disabled" : ""}><ha-icon icon="mdi:hammer-wrench"></ha-icon>Anlegen und Firmware bauen</button>`;
     } else if (m.schritt === 1) {
-      body = `<p>Die Firmware für <b>${esc(devName(m.dev))}</b> wird im ESPHome-Add-on gebaut. Du kannst das Fenster offen lassen.</p>${this._neuLog(j)}`;
-      fuss = j && !j.running && j.exit ? `<button class="btn primary" data-a="neu_bauen"><ha-icon icon="mdi:refresh"></ha-icon>Nochmal bauen</button>` : "";
+      const neuStart = !j || (!j.running && j.exit == null);   // z. B. nach einem Neustart von Home Assistant
+      body = `<p>Die Firmware für <b>${esc(devName(m.dev))}</b> wird im ESPHome-Add-on gebaut (beim ersten Mal etwa 10 Minuten).
+        Du kannst das Fenster auch schließen – weiter geht es dann unter Firmware &amp; Geräte › „Einrichten fortsetzen“.</p>${neuStart ? "" : this._neuLog(j)}`;
+      fuss = j && j.running ? ""
+        : j && j.exit === 0 ? `<button class="btn primary" data-a="neu_zumflashen"><ha-icon icon="mdi:arrow-right"></ha-icon>Weiter zum Flashen</button>`
+        : `<button class="btn primary" data-a="neu_bauen"><ha-icon icon="mdi:${neuStart ? "hammer-wrench" : "refresh"}"></ha-icon>${neuStart ? "Firmware bauen" : "Nochmal bauen"}</button>`;
     } else if (m.schritt === 2) {
       const web = "serial" in navigator && window.isSecureContext;
       const extern = this._hass.config?.external_url;
@@ -2381,8 +2550,8 @@ const NeuEditor = {
       fuss = `<button class="btn primary" data-a="neu_weiter" ${j && j.running ? "disabled" : ""}><ha-icon icon="mdi:arrow-right"></ha-icon>Geflasht – weiter</button>`;
     } else {
       body = `<p>Die Remote startet und verbindet sich mit dem WLAN. Danach lege ich sie in Home Assistant an (ESPHome-Integration mit Schlüssel)${m.ip ? "" : ", mache die IP vom Router fest und spiele das per WLAN auf – die Remote dafür bitte wach halten (z. B. ans Ladekabel)"}.</p>${this._neuLog(j)}`;
-      fuss = j && !j.running ? (j.exit === 0 ? `<button class="btn primary" data-a="neu_fertig"><ha-icon icon="mdi:check"></ha-icon>Fertig</button>`
-        : `<button class="btn" data-a="neu_einbinden"><ha-icon icon="mdi:refresh"></ha-icon>Nochmal versuchen</button>`) : "";
+      fuss = j && j.running ? "" : j && j.exit === 0 ? `<button class="btn primary" data-a="neu_fertig"><ha-icon icon="mdi:check"></ha-icon>Fertig</button>`
+        : `<button class="btn" data-a="neu_einbinden"><ha-icon icon="mdi:refresh"></ha-icon>${j && j.exit != null ? "Nochmal versuchen" : "In Home Assistant einbinden"}</button>`;
     }
     return `<div class="modal"><div class="dlg neu">
       <div class="dh"><h2>Neue Fernbedienung</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
@@ -2400,7 +2569,7 @@ Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnProper
 const IR_ROUTES = [
   [0, "Nur Remote", "Die Remote sendet selbst."],
   [1, "Remote und Dock", "Beide senden. Deckt den Raum aus zwei Richtungen ab."],
-  [2, "Nur Dock", "Das Dock sendet. Ist HA gerade nicht verbunden, sendet die Remote selbst."],
+  [2, "Nur Dock", "Das Dock sendet. Erreicht die Remote das Dock weder direkt noch über HA, sendet sie selbst."],
   [3, "Remote, dann Dock (nacheinander)", "Zwei saubere Signale hintereinander, keine Überlagerung. Jeder Befehl kommt doppelt an – nicht für Umschalt-Befehle wie Power (an/aus) verwenden."],
 ];
 const IrEditor = {
@@ -2577,7 +2746,8 @@ const IrEditor = {
             <select data-ir="route">${IR_ROUTES.map(([v, l]) => `<option value="${v}" ${(ir.route || 0) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
           <small class="note">${esc(IR_ROUTES[ir.route || 0][2])}</small>
           <h3>Docks</h3>
-          <small class="note">Über diese Docks gehen IR- und 433-MHz-Befehle, wenn ein Befehl nichts Eigenes eingestellt hat. Mehrere Docks senden alle.</small>
+          <small class="note">Über diese Docks gehen IR- und 433-MHz-Befehle, wenn ein Befehl nichts Eigenes eingestellt hat. Mehrere Docks senden alle.
+            Die Remote funkt die Befehle direkt ans Dock (ESP-NOW, ohne Home Assistant) – das geht auch, wenn HA gerade nicht läuft. Nur wenn das Dock nicht antwortet, nimmt sie den Weg über HA.</small>
           ${docks.map((d) => `<label class="opt"><input type="checkbox" data-ir="dock" value="${esc(d)}" ${gew.includes(d) ? "checked" : ""}><span><b>${esc(this._dockLabel(d))}</b><small>${esc(d)} · ${this._irDocks().includes(d) ? "ESPHome-Dock" : "nicht in Home Assistant gefunden"}</small></span></label>`).join("")}
           ${(ir.route || 0) && !gew.length ? `<div class="msg err">Kein Dock gewählt – die Remote sendet selbst.</div>` : ""}
           ${!docks.length ? `<small class="note">Kein Dock in Home Assistant gefunden (Dock-Firmware flashen und in Home Assistant einbinden).</small>` : ""}
@@ -3259,6 +3429,7 @@ const FW_CSS = `
 .hw select { font-size:14px; padding:6px 8px; border-radius:8px; border:1px solid var(--div); background:var(--primary-background-color); color:var(--primary-text-color); max-width:100%; }
 .hw .ents { font-size:12px; color:var(--secondary-text-color); }
 .badge { font-size:11px; padding:1px 6px; border-radius:8px; background:var(--div); white-space:nowrap; }
+.icon.rot:hover { color:var(--fehler, #dc2626); }
 .badge.ok { background:#16a34a; color:#fff; } .badge.warn { background:#d97706; color:#fff; } .badge.blau { background:#2563eb; color:#fff; } .badge.rot { background:#b91c1c; color:#fff; }
 .joblog { font-family:monospace; font-size:11px; white-space:pre-wrap; max-height:240px; overflow:auto; background:var(--primary-background-color);
   border:1px solid var(--div); border-radius:8px; padding:6px 8px; margin-top:6px; }
@@ -3271,6 +3442,21 @@ ol.schritte { margin:6px 0 0 18px; padding:0; font-size:13px; color:var(--second
 .fw h3 { margin:18px 0 4px; }
 `;
 const usbGeht = () => !!(window.isSecureContext && navigator.serial);
+// Offene Ports dieses Tabs. esptool-js disconnect() laesst den Port nach einem Fehler offen (Reader bleibt gesperrt),
+// der naechste Versuch scheitert dann mit "The port is already open" (2026-10-18). Deshalb selbst schliessen.
+const USB_OFFEN = new WeakMap();
+async function portZu(port) {
+  const t = USB_OFFEN.get(port);
+  try { await t?.reader?.cancel(); } catch (e) { /* */ }
+  try { t?.reader?.releaseLock(); } catch (e) { /* */ }
+  if (t) t.reader = undefined;
+  try { await Promise.race([port.close(), new Promise((_, n) => setTimeout(() => n(new Error("Zeit")), 3000))]); } catch (e) { /* schon zu */ }
+  if (!port.readable && !port.writable) USB_OFFEN.delete(port);
+}
+async function portFrei(port) {
+  if (port.readable || port.writable) await portZu(port);
+  if (port.readable || port.writable) throw new Error("Der Anschluss ist in diesem Tab noch belegt (z. B. vom „Verbinden & flashen“-Fenster). Seite neu laden (F5) und nochmal versuchen.");
+}
 const FirmwareTab = {
   async _fwLaden() {
     const fw = this.s.fw || (this.s.fw = { weg: {}, job: null, usb: null });
@@ -3330,12 +3516,20 @@ const FirmwareTab = {
         <span class="grow"></span>
         <button class="btn small" data-a="fw_usblog" data-datei="${esc(g.datei)}" ${usbGeht() && !beschaeftigt ? "" : "disabled"} title="Startmeldungen über USB mitlesen (Gerät wird dabei neu gestartet)"><ha-icon icon="mdi:console"></ha-icon>USB-Protokoll</button>
         <button class="icon sm" data-a="fw_sperre" data-datei="${esc(g.datei)}" title="${g.gesperrt ? "Entsperren" : "Sperren (z. B. Platine defekt) – wird dann nie geflasht"}"><ha-icon icon="mdi:${g.gesperrt ? "lock" : "lock-open-variant-outline"}"></ha-icon></button>
+        ${this._fwLoeschbar(g) ? `<button class="icon sm rot" data-a="fw_loeschen" data-datei="${esc(g.datei)}" title="${g.art === "dock" ? "Dock" : "Remote"} löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>` : ""}
       </div>
+      ${g.art === "remote" && !g.geflasht && this.s.order.includes(g.name) ? `<div class="zeile" style="margin-top:6px"><small class="note grow">Noch nicht eingerichtet: bauen, flashen, in Home Assistant einbinden.</small>
+        <button class="btn small primary" data-a="neu_fortsetzen" data-dev="${esc(g.name)}"><ha-icon icon="mdi:play"></ha-icon>Einrichten fortsetzen</button></div>` : ""}
       ${g.art === "remote" && g.vorgemerkt ? `<small class="note">Vorgemerkt: Sobald die Remote online ist, baut Home Assistant die Firmware und spielt sie per WLAN auf. Auf der Remote selbst geht es jederzeit über Einstellungen › Wartung & Tests › Firmware aktualisieren.</small>` : ""}
       ${weg === "usb" ? `<small class="note">Gerät per USB an diesen Computer stecken. Nach dem Bauen fragt der Browser nach dem Anschluss (z. B. „USB JTAG/serial debug unit“, „CP2102“ oder „USB Serial“).${g.art === "dock" ? " Klappt das Verbinden nicht: am Super Mini BOOT halten, RESET tippen, BOOT loslassen." : ""}</small>` : ""}
       ${weg === "" ? `<small class="note">Die Datei (…factory.bin) lässt sich z. B. auf <a href="https://web.esphome.io" target="_blank" rel="noopener">web.esphome.io</a> installieren.</small>` : ""}
       ${meins ? this._fwJobHtml() : ""}
     </div>`;
+  },
+  // Remotes: nur die im Konfigurator angelegten (die aus der YAML-Konfiguration nicht). Docks: alle.
+  _fwLoeschbar(g) {
+    if (g.art === "dock") return true;
+    return g.art === "remote" && !!this.s.meta?.[g.name]?.entfernbar;
   },
   _fwJobHtml() {
     const { job: j, usb: u } = this.s.fw;
@@ -3413,7 +3607,9 @@ const FirmwareTab = {
       const daten = await this._fwHolen(g.datei);
       u.text = "Verbinde mit dem Gerät …"; this._render();
       const { ESPLoader, Transport } = await import(ESPTOOL_URL);
+      await portFrei(port);
       transport = new Transport(port, false);
+      USB_OFFEN.set(port, transport);
       const loader = new ESPLoader({ transport, baudrate: 460800, romBaudrate: 115200,
         terminal: { clean() {}, writeLine: log, write: log } });
       const chip = await loader.main();
@@ -3443,10 +3639,11 @@ const FirmwareTab = {
     } catch (e) {
       u.fehler = e.message || String(e);
       u.text = "abgebrochen";
-      if (/open|Failed to open|in use|busy/i.test(u.fehler)) u.fehler += " – ist der Anschluss noch in einem anderen Programm/Tab offen?";
+      if (/already open/i.test(u.fehler)) u.fehler += " – Seite neu laden (F5) und nochmal versuchen.";
+      else if (/open|Failed to open|in use|busy/i.test(u.fehler) && !/F5/.test(u.fehler)) u.fehler += " – ist der Anschluss noch in einem anderen Programm/Tab offen?";
     } finally {
       u.fertig = true;
-      try { await transport?.disconnect(); } catch (e) { /* schon zu */ }
+      if (transport) await portZu(port);
       this._render();
     }
   },
@@ -3460,6 +3657,7 @@ const FirmwareTab = {
     this._render();
     let reader;
     try {
+      await portFrei(port);
       await port.open({ baudRate: 115200 });
       // Neustart in den normalen Start: IO0 (DTR) loslassen, EN (RTS) kurz ziehen
       await port.setSignals({ dataTerminalReady: false, requestToSend: true });
@@ -3610,6 +3808,16 @@ const FirmwareTab = {
           await this._hass.callWS({ type: "esphomeremote_konfig/fw_vormerken", datei, an: !g.vorgemerkt });
         } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
         await this._fwLaden(); return true;
+      case "fw_loeschen": {
+        if (g.art === "remote") { await this._neuClick("entfernen", { dataset: { dev: g.name } }); await this._fwLaden(); return true; }
+        if (!confirm(`${g.friendly || datei} wirklich löschen?\n\nWeg sind danach: der ESPHome-Eintrag in Home Assistant und der Build-Ordner im ESPHome-Add-on. Die Datei ${datei} kommt nach esphome/archive/geloescht/ (wiederherstellbar). Das Dock selbst behält seine Firmware.`)) return true;
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/docks_entfernen", datei });
+          this.s.msg = { text: `${g.friendly || datei} gelöscht: ${r.entfernt.join(", ")}.` };
+        } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        await this._fwLaden();
+        return true;
+      }
       case "fw_sperre":
         await this._hass.callWS({ type: "esphomeremote_konfig/fw_sperren", datei, gesperrt: !g.gesperrt });
         await this._fwLaden(); return true;
@@ -3725,6 +3933,8 @@ const EINST_GRUPPEN = [
     ["dock_disp", "Display im Dock", [[0, "Geht aus wie sonst"], [1, "Bleibt an"], [2, "Bleibt an im Zeitfenster"]]],
     ["dock_von", "Zeitfenster ab", STUFEN([0, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18], (v) => `${v} Uhr`)],
     ["dock_bis", "Zeitfenster bis", STUFEN([12, 16, 18, 19, 20, 21, 22, 23, 24], (v) => `${v} Uhr`)],
+    ["musik_dock", "Musik-Anzeige im Dock (solange Musik läuft)"],
+    ["musik_player", "Musik-Anzeige nur, wenn der Player spielt"],
   ]],
   ["Gesten", "mdi:gesture", [
     ["gesten_an", "Bewegungsgesten"],
@@ -3736,8 +3946,36 @@ const EINST_GRUPPEN = [
     ["ps_log_debug", "Debug-Modus (ausführliches Log)"],
   ]],
 ];
+// Energiesparmodus (2026-10-18): ein Knopf setzt alle Spar-Einstellungen auf einmal. "mittel" = die Einstellungen,
+// mit denen Remote Remote 2 im Alltag laeuft (Stand 2026-10-18); leicht/stark davon abgeleitet.
+const ENERGIE_MODI = [
+  ["leicht", "Leicht", "mdi:leaf", "Bequem: WLAN bleibt lange an, Display 30 s, Touch weckt, Mikrofon vorgewärmt. Tiefschlaf erst nach 30 min und nur ohne Bluetooth-Gerät.",
+    { nur_ble: false, ps_wifi: true, ps_wifi_max: false, ps_wifi_off: true, ps_wifi_off_s: 1800, ps_wifi_off_tv_s: -1, wlan_frueh: true,
+      ps_cpu: true, ps_cpu_s: 30, ps_light: true, ps_bleidle: true, ps_ble_s: 30, ps_low_pct: 15,
+      ps_deep: true, deep_ohne_ble: true, ps_deep_s: 1800, ps_deep_tv_s: -1,
+      disp_timeout_s: 30, ps_dim_s: 15, ps_dim_pct: 30, ps_touch_wake: true, ps_touch_ms: 100, mic_vorwaermen: true }],
+  ["mittel", "Mittel", "mdi:leaf-circle-outline", "Alltag: nur Bluetooth, WLAN aus nach 5 min, Tiefschlaf nach 5 min, Display 16 s. Empfohlen.",
+    { nur_ble: true, ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 300, ps_wifi_off_tv_s: 7200, wlan_frueh: true,
+      ps_cpu: true, ps_cpu_s: 5, ps_light: true, ps_bleidle: true, ps_ble_s: 5, ps_low_pct: 5,
+      ps_deep: true, deep_ohne_ble: false, ps_deep_s: 300, ps_deep_tv_s: 7200,
+      disp_timeout_s: 16, ps_dim_s: 5, ps_dim_pct: 20, ps_touch_wake: false, ps_touch_ms: 75, mic_vorwaermen: false }],
+  ["stark", "Stark", "mdi:battery-heart-variant", "Maximale Laufzeit: WLAN nach 1 min aus, Tiefschlaf nach 90 s, Display 10 s und dunkel, Sparmodus schon ab 25 % Akku.",
+    { nur_ble: true, ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 60, ps_wifi_off_tv_s: 600, wlan_frueh: false,
+      ps_cpu: true, ps_cpu_s: 0, ps_light: true, ps_bleidle: true, ps_ble_s: 5, ps_low_pct: 25,
+      ps_deep: true, deep_ohne_ble: false, ps_deep_s: 90, ps_deep_tv_s: 600,
+      disp_timeout_s: 10, ps_dim_s: 4, ps_dim_pct: 10, ps_touch_wake: false, ps_touch_ms: 150, mic_vorwaermen: false }],
+];
 const EINST_CSS = `
+.einst .emodi { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px; margin:4px 0 12px; }
+.einst .emodus { all:unset; cursor:pointer; border:2px solid var(--div); background:var(--card); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; gap:4px; }
+.einst .emodus b { display:flex; align-items:center; gap:6px; font-size:15px; } .einst .emodus small { color:var(--sec); line-height:1.35; }
+.einst .emodus.on { border-color:var(--acc); } .einst .emodus.on b::after { content:"aktiv"; margin-left:auto; font-size:11px; color:var(--acc); }
 .einst { padding:8px 16px 40px; max-width:1100px; }
+.verkn .karte { display:flex; flex-direction:column; gap:6px; } .einst.verkn select { max-width:100%; width:100%; }
+.verkn .vtext { margin:0; color:var(--sec); font-size:13px; line-height:1.4; } .verkn .ez small.vtext { display:block; font-size:12px; }
+.verkn h3 input { font:inherit; }
+.einst.jz .egrid { grid-template-columns:repeat(auto-fill, minmax(min(100%, 440px), 1fr)); }
+.jz .ez:not(.quer) { flex-direction:column; align-items:stretch; gap:4px; padding:6px 0; } .jz .ez:not(.quer) select { max-width:100%; width:100%; }
 .einst .egrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px; }
 .einst .karte { border:1px solid var(--div); background:var(--card); border-radius:12px; padding:10px 12px; }
 .einst h3 { display:flex; align-items:center; gap:6px; margin:2px 0 8px; font-size:15px; }
@@ -3750,6 +3988,180 @@ const EINST_CSS = `
 .einst .estat { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 10px; }
 `;
 const EinstTab = {
+  // Seite "Wiedergabe" (jetzt.py): zusammengefasste "Jetzt laeuft"-Player, Aenderungen gelten sofort
+  async _jetztLaden() {
+    if (this._jzLaedt) return;
+    this._jzLaedt = true;
+    try {
+      this.s.jetzt = await this._hass.callWS({ type: "esphomeremote_konfig/jetzt_get" });
+      this.s.strm = await this._hass.callWS({ type: "esphomeremote_konfig/streamer_get" });
+    } catch (e) { this.s.jetzt = { fehler: e.message || String(e) }; }
+    this._jzLaedt = false; this._render();
+  },
+  async _jetztSpeichern() {
+    const s = this.s;
+    try { s.jetzt = await this._hass.callWS({ type: "esphomeremote_konfig/jetzt_save", jetzt: s.jetzt.jetzt }); s.msg = { text: "Wiedergabe gespeichert." }; }
+    catch (e) { s.msg = { err: true, text: "Wiedergabe: " + (e.message || e) }; await this._jetztLaden(); }
+    this._render();
+  },
+  async _strmSpeichern() {
+    const s = this.s;
+    try { s.strm = await this._hass.callWS({ type: "esphomeremote_konfig/streamer_save", streamer: s.strm.streamer }); s.msg = { text: "Streamer gespeichert." };
+      s.jetzt = await this._hass.callWS({ type: "esphomeremote_konfig/jetzt_get" }); }
+    catch (e) { s.msg = { err: true, text: "Streamer: " + (e.message || e) }; }
+    this._render();
+  },
+  async _jetztClick(a, t) {
+    const s = this.s;
+    if (a === "st_add") {
+      const ids = new Set(s.strm.streamer.map((x) => x.id));
+      let n = 1; while (ids.has(`streamer_${n}`)) n++;
+      s.strm.streamer.push({ id: `streamer_${n}`, name: "Streamer", adb: "", webhook: "" });
+      await this._strmSpeichern(); return true;
+    }
+    if (a === "st_del") {
+      const x = s.strm.streamer[Number(t.dataset.si)];
+      if (!confirm(`Streamer „${x.name}“ löschen?`)) return true;
+      s.strm.streamer.splice(Number(t.dataset.si), 1); await this._strmSpeichern(); return true;
+    }
+    if (a === "st_eintragen") {
+      const x = s.strm.streamer[Number(t.dataset.si)];
+      try { const r = await this._hass.callWS({ type: "esphomeremote_konfig/streamer_eintragen", streamer: x.id }); s.msg = { text: `Am Streamer eingetragen: ${r.url}` }; }
+      catch (e) { s.msg = { err: true, text: "Eintragen: " + (e.message || e) }; }
+      return true;
+    }
+    if (a === "jz_add") {
+      const ids = new Set(s.jetzt.jetzt.map((j) => j.id));
+      let n = 1; while (ids.has(`player_${n}`)) n++;
+      s.jetzt.jetzt.push({ id: `player_${n}`, name: s.jetzt.jetzt.length ? `Jetzt läuft ${n}` : "Jetzt läuft", streamer: false, tv: "", tv_app: "", tv_cast: "", cast: "", multiroom: "" });
+      await this._jetztSpeichern(); return true;
+    }
+    if (a === "jz_del") {
+      const j = s.jetzt.jetzt[Number(t.dataset.ji)];
+      if (!confirm(`„${j.name}“ löschen? Remotes, die ihn nutzen, zeigen dann nichts mehr an.`)) return true;
+      s.jetzt.jetzt.splice(Number(t.dataset.ji), 1);
+      await this._jetztSpeichern(); return true;
+    }
+    return false;
+  },
+  _jetztHtml() {
+    const d = this.s.jetzt, st = this._hass.states;
+    if (!d) { this._jetztLaden(); return `<div class="einst">Lade …</div>`; }
+    if (d.fehler) return `<div class="einst"><div class="msg err">${esc(d.fehler)}</div></div>`;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const mps = Object.keys(st).filter((x) => x.startsWith("media_player.") && !Object.values(d.entitaeten || {}).includes(x))
+      .sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const wahl = (ji, j, k, titel, text) => `<div class="ez"><span>${titel}<small class="vtext">${text}</small></span>
+      <select data-jz="${k}" data-ji="${ji}"><option value="">— keine —</option>${[...new Set([...(j[k] ? [j[k]] : []), ...mps])].map((x) => `<option value="${esc(x)}" ${x === j[k] ? "selected" : ""}>${esc(name(x))}</option>`).join("")}</select></div>`;
+    const karten = d.jetzt.map((j, ji) => {
+      const e = d.entitaeten?.[j.id], z = e && st[e];
+      return `<div class="karte">
+      <h3><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon><input data-jz="name" data-ji="${ji}" value="${esc(j.name)}" maxlength="40" style="flex:1">
+        <button class="icon sm" data-a="jz_del" data-ji="${ji}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
+      <small>${e ? `<code>${esc(e)}</code> · ${z ? `${esc(z.state)}${z.attributes.media_title ? ` – ${esc(z.attributes.media_title)}` : ""}` : "wird angelegt …"}` : "wird angelegt …"}</small>
+      ${wahl(ji, j, "tv", "Fernseher", "Sender, Eingang oder TV-App")}
+      ${wahl(ji, j, "tv_app", "App-Erkennung am Fernseher", "Android-TV-Entität des Fernsehers (meldet die laufende App)")}
+      ${wahl(ji, j, "tv_cast", "Chromecast im Fernseher", "Titel und Cover von Apps auf dem Fernseher")}
+      ${wahl(ji, j, "multiroom", "Multiroom-Musik", "z. B. Music-Assistant-Gruppe")}
+      ${wahl(ji, j, "cast", "Chromecast / Lautsprecher", "weiterer Player, der Titel meldet")}
+      <div class="ez"><span>Streamer<small class="vtext">App, Titel, Cover und Position von der Streamer-App (unten anlegen)</small></span>
+        <select data-jz="streamer" data-ji="${ji}"><option value="">— keiner —</option>${(d.streamer || []).map((x) => `<option value="${esc(x.id)}" ${x.id === j.streamer ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+    </div>`;
+    }).join("");
+    return `<div class="einst verkn jz">
+      <p class="hint">Ein <b>„Jetzt läuft“-Player</b> fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu <b>einem</b> Media Player zusammen – er zeigt immer, was gerade läuft (Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher). Welche Remote welchen nutzt, stellst du unter <i>Verknüpfungen</i> ein. Jede Quelle ist optional; Änderungen gelten sofort.</p>
+      <div class="egrid">${karten}</div>
+      <p><button class="btn" data-a="jz_add"><ha-icon icon="mdi:plus"></ha-icon>„Jetzt läuft“-Player anlegen</button></p>
+      ${this._strmHtml(name)}</div>`;
+  },
+  _strmHtml(name) {
+    const d = this.s.strm, st = this._hass.states;
+    if (!d) return "";
+    const mps = Object.keys(st).filter((x) => x.startsWith("media_player.")).sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const karten = d.streamer.map((x, si) => {
+      const zul = d.zuletzt?.[x.id];
+      return `<div class="karte">
+      <h3><ha-icon icon="mdi:cast-variant"></ha-icon><input data-st="name" data-si="${si}" value="${esc(x.name)}" maxlength="32" style="flex:1">
+        <button class="icon sm" data-a="st_del" data-si="${si}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
+      <small>${zul ? `Zuletzt gemeldet: ${new Date(zul).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${d.app?.[x.id] ? ` · ${esc(d.app[x.id])}` : ""}` : "Noch nichts empfangen – Streamer-App installieren und Adresse eintragen."}</small>
+      <div class="ez"><span>ADB-Gerät<small class="vtext">Android-TV-Integration des Streamers: Adresse eintragen, App beenden, Neustart, „am Fernseher sichtbar“</small></span>
+        <select data-st="adb" data-si="${si}"><option value="">— keins —</option>${[...new Set([...(x.adb ? [x.adb] : []), ...mps])].map((e) => `<option value="${esc(e)}" ${e === x.adb ? "selected" : ""}>${esc(name(e))}</option>`).join("")}</select></div>
+      <div class="ez"><span>Adresse für die Streamer-App<small class="vtext">Ziel der Meldungen (Webhook)</small></span>
+        <code style="word-break:break-all">http://${esc(d.basis || "<HA-IP>:8123")}/api/webhook/${esc(x.webhook)}</code></div>
+      <p><button class="btn small" data-a="st_eintragen" data-si="${si}" ${x.adb ? "" : "disabled"} title="Per ADB am Streamer eintragen"><ha-icon icon="mdi:upload-network-outline"></ha-icon>Am Streamer eintragen</button></p>
+    </div>`;
+    }).join("");
+    return `<h3 style="margin-top:24px"><ha-icon icon="mdi:cast-variant"></ha-icon>Streamer</h3>
+      <p class="hint">Android-TV-Streamer mit der App „ESPHomeRemote Streamer“ melden, was läuft (jede App mit Medien-Sitzung, Titel, Cover, Position) und ob die Bildschirmtastatur offen ist. Pro Streamer gibt es Sensoren (z. B. <code>…_tastatur</code> als Popup-Auslöser) und Knöpfe „App beenden“ / „neu starten“.</p>
+      <div class="egrid">${karten}</div>
+      ${d.streamer.length < 4 ? `<p><button class="btn" data-a="st_add"><ha-icon icon="mdi:plus"></ha-icon>Streamer anlegen</button></p>` : ""}`;
+  },
+  // Seite "Klingel" (klingel.py): zwei Plaetze der Firmware, je Ausloeser + Kamera; Aenderungen gelten sofort
+  async _klingelLaden() {
+    try { this.s.klingel = await this._hass.callWS({ type: "esphomeremote_konfig/klingel_get" }); }
+    catch (e) { this.s.klingel = { fehler: e.message || String(e) }; }
+    (this.s.klingel.klingel || []).forEach((k, i) => { if (M_KAMERAS[i]) M_KAMERAS[i][1] = `Klingel: ${k.name}`; });
+    this._render();
+  },
+  async _klingelSpeichern() {
+    const s = this.s;
+    try { s.klingel = await this._hass.callWS({ type: "esphomeremote_konfig/klingel_save", klingel: s.klingel.klingel }); s.msg = { text: "Klingel gespeichert." }; }
+    catch (e) { s.msg = { err: true, text: "Klingel: " + (e.message || e) }; }
+    s.klingel.klingel?.forEach((k, i) => { if (M_KAMERAS[i]) M_KAMERAS[i][1] = `Klingel: ${k.name}`; });
+    this._render();
+  },
+  async _klingelClick(a, t) {
+    const s = this.s;
+    if (a === "kl_add") { s.klingel.klingel.push({ name: s.klingel.klingel.length ? "Wohnungstür" : "Haustür", ausloeser: "", kamera: "", warten: 2 }); await this._klingelSpeichern(); return true; }
+    if (a === "kl_del") { s.klingel.klingel.splice(Number(t.dataset.ki), 1); await this._klingelSpeichern(); return true; }
+    if (a === "kl_test") {
+      s.msg = { text: "Klingel-Bild wird geholt und an die Remotes geschickt …" }; this._render();
+      try { await this._hass.callWS({ type: "esphomeremote_konfig/klingel_test", platz: Number(t.dataset.ki) }); s.msg = { text: "Klingel-Bild verschickt – wache Remotes laden es jetzt." }; }
+      catch (e) { s.msg = { err: true, text: "Test: " + (e.message || e) }; }
+      return true;
+    }
+    return false;
+  },
+  _klingelHtml() {
+    const d = this.s.klingel, st = this._hass.states;
+    if (!d) { this._klingelLaden(); return `<div class="einst">Lade …</div>`; }
+    if (d.fehler) return `<div class="einst"><div class="msg err">${esc(d.fehler)}</div></div>`;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const liste = (doms, wert) => { const l = Object.keys(st).filter((x) => doms.includes(x.split(".")[0])).sort((a, b) => name(a).localeCompare(name(b), "de"));
+      if (wert && !l.includes(wert)) l.unshift(wert); return l; };
+    const opts = (l, wert) => `<option value="">— keine —</option>` + l.map((x) => `<option value="${esc(x)}" ${x === wert ? "selected" : ""}>${esc(name(x))} · ${esc(x)}</option>`).join("");
+    const karten = d.klingel.map((k, ki) => `<div class="karte">
+      <h3><ha-icon icon="mdi:doorbell-video"></ha-icon><input data-kl="name" data-ki="${ki}" value="${esc(k.name)}" maxlength="24" style="flex:1">
+        <button class="icon sm" data-a="kl_del" data-ki="${ki}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
+      <div class="ez"><span>Auslöser<small class="vtext">Geht beim Klingeln auf „an“ (Taster, Schalter, Helfer) – oder Knopf/Ereignis</small></span>
+        <select data-kl="ausloeser" data-ki="${ki}">${opts(liste(["binary_sensor", "input_boolean", "switch", "button", "input_button", "event"], k.ausloeser), k.ausloeser)}</select></div>
+      <div class="ez"><span>Kamera<small class="vtext">Ihr Bild erscheint auf der Remote (Klingel-Seite bzw. Menü-Eintrag „Kamerabild“)</small></span>
+        <select data-kl="kamera" data-ki="${ki}">${opts(liste(["camera"], k.kamera), k.kamera)}</select></div>
+      <div class="ez quer"><span>Warten vor dem Foto</span><input type="number" data-kl="warten" data-ki="${ki}" min="0" max="30" value="${k.warten}"> s</div>
+      <p><button class="btn small" data-a="kl_test" data-ki="${ki}" ${k.kamera ? "" : "disabled"}><ha-icon icon="mdi:bell-ring-outline"></ha-icon>Testen</button></p>
+    </div>`).join("");
+    return `<div class="einst verkn jz">
+      <p class="hint">Beim Klingeln holt Home Assistant das Bild der Kamera, verkleinert es und schickt es an alle wachen Remotes. Im Menü zeigt ein Eintrag „Kamerabild“ mit der Bildquelle der Klingel es an; ein Popup dazu öffnest du über einen Auslöser im Menü-Editor (z. B. derselbe Auslöser auf „an“). Die Kameras für „Kamerabild“ und „Live-Bild“ stellst du je Remote im Menü-Editor ein.</p>
+      <div class="egrid">${karten}</div>
+      ${d.klingel.length < 2 ? `<p><button class="btn" data-a="kl_add"><ha-icon icon="mdi:plus"></ha-icon>Klingel anlegen</button> <small>(bis zu zwei)</small></p>` : ""}</div>`;
+  },
+  _verknHtml() {
+    const ents = this.cfg.ents || {}, st = this._hass.states;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const karten = VERKN.map(([k, titel, icon, doms, text]) => {
+      const e = ents[k] || "";
+      const alle = Object.keys(st).filter((x) => doms.includes(x.split(".")[0])).sort((a, b) => name(a).localeCompare(name(b), "de"));
+      if (e && !alle.includes(e)) alle.unshift(e);
+      const zustand = e ? (st[e] ? `<small>Zustand: <b>${esc(st[e].state)}</b></small>` : `<small style="color:var(--error-color,#e5484d)">Entität gibt es nicht (mehr)</small>`) : `<small>Nicht gewählt – die Funktion ist aus.</small>`;
+      return `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>
+        <p class="vtext">${esc(text)}</p>
+        <select data-ent="${k}"><option value="">— keine —</option>${alle.map((x) => `<option value="${esc(x)}" ${x === e ? "selected" : ""}>${esc(name(x))} · ${esc(x)}</option>`).join("")}</select>
+        ${zustand}</div>`;
+    }).join("");
+    return `<div class="einst verkn">
+      <p class="hint">Welche Geräte aus Home Assistant die eingebauten Funktionen von ${esc(devName(this.s.dev))} nutzen. Wirksam nach „Speichern“ – ohne neue Firmware.</p>
+      <div class="egrid">${karten}</div></div>`;
+  },
   _einstHtml() {
     const s = this.s, m = s.meta[s.dev] || {};
     const w = m.einst || {}, offen = new Set(m.einst_offen || []), std = s.einstStandard || {};
@@ -3780,6 +4192,11 @@ const EinstTab = {
       <div class="estat"><small>Zuletzt von der Remote gemeldet: ${zeit}${offen.size ? ` · ${offen.size} Änderung(en) unterwegs` : ""}</small><span class="grow"></span>
         ${nAnders ? `<button class="btn small" data-a="einst_std_laden" title="Alle Einstellungen auf den Standard setzen"><ha-icon icon="mdi:backup-restore"></ha-icon>Auf Standard (${nAnders})</button>` : ""}
         <button class="btn small ghost" data-a="einst_std_merken" title="Die Einstellungen dieser Remote gelten künftig als Standard für neue Remotes"><ha-icon icon="mdi:star-outline"></ha-icon>Als Standard merken</button></div>
+      <h3><ha-icon icon="mdi:battery-charging-wireless-outline"></ha-icon>Energiesparmodus</h3>
+      <div class="emodi">${ENERGIE_MODI.map(([id, n, ic, text, werte]) => {
+        const on = Object.entries(werte).every(([k, v]) => !(k in w) || w[k] === v);
+        return `<button class="emodus ${on ? "on" : ""}" data-a="einst_modus" data-m="${id}"><b><ha-icon icon="${ic}"></ha-icon>${n}</b><small>${esc(text)}</small></button>`;
+      }).join("")}</div>
       ${this._lichtHtml()}
       <div class="egrid">${karten}</div></div>`;
   },
@@ -3801,8 +4218,15 @@ const EinstTab = {
     await this._einstSetzen({ werte: { [k]: v } });
     this._render();
   },
-  async _einstClick(a) {
+  async _einstClick(a, t) {
     const s = this.s;
+    if (a === "einst_modus") {
+      const m = ENERGIE_MODI.find(([id]) => id === t.dataset.m);
+      if (!m || !confirm(`Energiesparmodus „${m[1]}“ für ${devName(s.dev)} setzen?\n\n${m[3]}`)) return true;
+      const r = await this._einstSetzen({ werte: m[4] });
+      if (r) s.msg = { text: `Energiesparmodus „${m[1]}“: ${r.geaendert} Einstellung(en) geändert${r.einst_offen?.length ? " – gehen beim nächsten Aufwachen an die Remote" : ""}.` };
+      return true;
+    }
     if (a === "einst_std_merken") {
       if (!confirm(`Einstellungen von ${devName(s.dev)} als Standard für neue Remotes merken?`)) return true;
       const r = await this._hass.callWS({ type: "esphomeremote_konfig/einst_standard", device: s.dev });
@@ -4663,9 +5087,27 @@ const SEITEN_REMOTE = [
   ["gesten", "Gesten", "mdi:gesture"],
   ["bt", "Bluetooth", "mdi:bluetooth-settings"],
   ["ir", "Infrarot", "mdi:remote-tv"],
+  ["verkn", "Verknüpfungen", "mdi:link-variant"],
   ["einst", "Einstellungen", "mdi:tune-variant"],
 ];
+// Verknuepfungen je Remote (cfg.ents, spiegel.py): welche HA-Entitaeten die eingebauten Funktionen nutzen
+const VERKN = [
+  ["jetzt", "Wiedergabe („Jetzt läuft“)", "mdi:play-box-multiple-outline", ["media_player"],
+    "Wiedergabe-Karte der Startseite, Media-Seite und Musik-Anzeige zeigen Titel, Cover und Position dieses Players. Am besten ein „Jetzt läuft“-Player (Seite Wiedergabe), der Fernseher, Streamer und Musik zusammenfasst."],
+  ["tv", "Fernseher", "mdi:television", ["media_player"],
+    "Ob der Fernseher läuft: längere Energie-Zeiten bei laufendem TV, Knopf „Fernseher einschalten“ auf der Media-Seite."],
+  ["multiroom", "Multiroom-Musik", "mdi:speaker-multiple", ["media_player"],
+    "Zeigt der Wiedergabe-Player die Quelle „multiroom“, steuern Play/Vor/Zurück/Lautstärke diesen Player statt Bluetooth."],
+  ["tts", "Lautsprecher für den Assistenten", "mdi:account-voice", ["media_player"],
+    "Antworten des Sprachassistenten werden hier abgespielt (Einstellung „Antwort hörbar“)."],
+  ["adb", "Streamer (Texteingabe per ADB)", "mdi:cast", ["media_player", "remote"],
+    "Android-TV-/ADB-Entität: die Tastatur-Seite tippt Text darüber ein."],
+  ["timer", "Timer neben der Uhr", "mdi:timer-outline", ["timer"],
+    "Läuft dieser Timer, zeigt die Statusleiste den Countdown."],
+];
 const SEITEN_SYSTEM = [
+  ["jetzt", "Wiedergabe", "mdi:play-box-multiple-outline"],
+  ["klingel", "Klingel", "mdi:doorbell-video"],
   ["dock", "Dockingstation", "mdi:dock-window"],
   ["fw", "Firmware & Geräte", "mdi:chip"],
   ["werk", "Werkstatt", "mdi:toolbox-outline"],
@@ -4935,12 +5377,15 @@ const OberflaecheTab = {
     switch (s.bereich) {
       case "start": return (this._ueberAlt = this._uebersichtHtml());
       case "dock": return this._dockHtml();
+      case "jetzt": return this._jetztHtml();
+      case "klingel": return this._klingelHtml();
       case "fw": return this._fwHtml();
       case "werk": return this._werkHtml();
     }
     switch (s.mode) {
       case "gesten": return this._gestenHtml();
       case "einst": return this._einstHtml();
+      case "verkn": return this._verknHtml();
       case "home": return this._homeHtml();
       case "menu": return this._menuHtml();
       case "bt": case "ir": {
@@ -4978,12 +5423,13 @@ const OberflaecheTab = {
     const akt = this.activity, mo = s.modus != null ? modi[s.modus] : null;
     const zeile = tabelle ? "" : mo ? `<div class="aktset">
       <label class="inl2">Name <input data-mod="name" value="${esc(mo.name)}" maxlength="24"></label>
-      <label class="inl2">Dauer <input type="number" data-mod="s" min="2" max="60" value="${mo.s || 7}" style="width:4.5em"> s</label>
-      <span class="inl2">Vorlage <button class="btn small" data-a="modvor" data-p="licht"><ha-icon icon="mdi:lightbulb-outline"></ha-icon>Licht</button>
+      <label class="inl2" title="Gilt fuer alle Tasten des Modus ohne eigene Zeit">Standard-Dauer <input type="number" data-mod="s" min="2" max="60" value="${mo.s || 7}" style="width:4.5em"> s</label>
+      <span class="inl2" title="Belegt Kanal +/− mit „Schrittweise regeln“ – danach jede Taste frei änderbar">Vorlage einfügen <button class="btn small" data-a="modvor" data-p="licht"><ha-icon icon="mdi:lightbulb-outline"></ha-icon>Licht</button>
         <button class="btn small" data-a="modvor" data-p="luefter"><ha-icon icon="mdi:fan"></ha-icon>Ventilator</button></span>
       <span class="grow"></span>
       <button class="icon sm" data-a="moddel" title="Folgemodus löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
-      <p class="hint modhint">Gestartet von einem Schritt „Folgemodus starten“ (z. B. an Rot doppelt) oder einem Menü-Eintrag („Danach Folgemodus“). Dann gelten für ${mo.s || 7} s die Tasten unten statt der Aktivität; jeder Druck verlängert. Leere Tasten behalten ihre normale Belegung. Oben auf der Remote zeigt eine Leiste den Modus und die Restzeit.</p>`
+      ${this._modStarter(mo)}
+      <p class="hint modhint">Solange der Modus läuft, gelten die Tasten unten statt der Aktivität – jede Taste frei belegbar (Taste antippen). Jeder Druck verlängert um die Standard-Dauer (${mo.s || 7} s) oder die eigene Zeit der Taste. Leere Tasten behalten ihre normale Belegung. Oben auf der Remote zeigt eine Leiste den Modus und die Restzeit.</p>`
       : `<div class="aktset">
       <label class="inl2">Name <input data-akt="name" value="${esc(akt.name)}" maxlength="16"></label>
       <label class="inl2">Bluetooth-Gerät <select data-akt="slot">${[0, 1, 2, 3].map((d) => `<option value="${d}" ${akt.slot === d ? "selected" : ""}>${esc(this.slotName(d))}</option>`).join("")}</select></label>

@@ -126,6 +126,105 @@ function klasse(m, box) {
   return "bauteil";
 }
 
+// ---------------------------------------------------------------- Fuzzy Skin: wo duerfte ein Slicer ihn auftragen?
+// Ergebnis: Attribut _FUZZY je Ecke (0..1), die App blendet die Struktur nur dort ein. Nachgebildet wird die
+// Slicer-Option "nur Aussenwaende": Fuzzy Skin liegt auf den aeusseren Waenden jeder Schicht, nicht auf Ober- und
+// Unterseiten und nicht in Loechern. Pruefung je Ecke im voxelisierten Original (0,3 mm):
+//   - Wand: Normale fast quer zur Druckrichtung (achse)
+//   - aussen: von der Ecke aus 10 mm entlang der Normalen kein Material - in Schraubloechern, Tastenloechern,
+//     der Aufnahme des Docks usw. trifft der Blick die Gegenwand
+//   - ausgenommen: Kaesten in Original-Millimetern (z. B. die zur Seite offene USB-Buchse)
+const VOX = 0.3;
+function voxel(pos) {
+  let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], pos[i + k]); mx[k] = Math.max(mx[k], pos[i + k]); }
+  const RAND = 12;
+  mn = mn.map((v) => v - RAND); mx = mx.map((v) => v + RAND);
+  const [nx, ny, nz] = [0, 1, 2].map((k) => Math.ceil((mx[k] - mn[k]) / VOX));
+  // Spalten entlang z: Schnittpunkte je (x, y) sammeln, Paritaet fuellen (die CAD-Exporte sind geschlossen)
+  const spalten = new Map();
+  for (let t = 0; t < pos.length; t += 9) {
+    const P = [0, 1, 2].map((v) => [pos[t + v * 3], pos[t + v * 3 + 1], pos[t + v * 3 + 2]]);
+    const x0 = Math.max(0, Math.floor((Math.min(P[0][0], P[1][0], P[2][0]) - mn[0]) / VOX)), x1 = Math.min(nx - 1, Math.ceil((Math.max(P[0][0], P[1][0], P[2][0]) - mn[0]) / VOX));
+    const y0 = Math.max(0, Math.floor((Math.min(P[0][1], P[1][1], P[2][1]) - mn[1]) / VOX)), y1 = Math.min(ny - 1, Math.ceil((Math.max(P[0][1], P[1][1], P[2][1]) - mn[1]) / VOX));
+    const den = (P[1][1] - P[2][1]) * (P[0][0] - P[2][0]) + (P[2][0] - P[1][0]) * (P[0][1] - P[2][1]);
+    if (Math.abs(den) < 1e-12) continue;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const px = mn[0] + (x + 0.5) * VOX, py = mn[1] + (y + 0.5) * VOX;
+      const a = ((P[1][1] - P[2][1]) * (px - P[2][0]) + (P[2][0] - P[1][0]) * (py - P[2][1])) / den;
+      const b = ((P[2][1] - P[0][1]) * (px - P[2][0]) + (P[0][0] - P[2][0]) * (py - P[2][1])) / den;
+      const c = 1 - a - b;
+      if (a < 0 || b < 0 || c < 0) continue;
+      const k = y * nx + x;
+      let l = spalten.get(k);
+      if (!l) spalten.set(k, (l = []));
+      l.push(a * P[0][2] + b * P[1][2] + c * P[2][2]);
+    }
+  }
+  const voll = new Uint8Array(nx * ny * nz);
+  for (const [k, l] of spalten) {
+    l.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < l.length; i += 2) {
+      const z0 = Math.max(0, Math.ceil((l[i] - mn[2]) / VOX - 0.5)), z1 = Math.min(nz - 1, Math.floor((l[i + 1] - mn[2]) / VOX - 0.5));
+      for (let z = z0; z <= z1; z++) voll[z * nx * ny + k] = 1;
+    }
+  }
+  const fest = (x, y, z) => {
+    const i = Math.floor((x - mn[0]) / VOX), j = Math.floor((y - mn[1]) / VOX), k = Math.floor((z - mn[2]) / VOX);
+    return i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz && voll[k * nx * ny + j * nx + i] === 1;
+  };
+  return fest;
+}
+
+// Abstandstest zur eingesetzten Remote (Gehaeuse + Abdeckung, in Dock-Koordinaten, mm): Punkte in einem Raster
+function remoteNaehe(r) {
+  const pose = JSON.parse(fs.readFileSync(path.resolve("src/dock-pose.json"), "utf8"));
+  const S = "CAD/BuyDisplay LCD/STL/";
+  const m = new THREE.Matrix4().makeRotationX(THREE.MathUtils.degToRad(pose.drehungXGrad)).setPosition(...pose.versatzMm);
+  const zelle = new Map(), key = (i, j, k) => `${i},${j},${k}`, v = new THREE.Vector3();
+  for (const d of ["Case - Screws with Pogo Pins Rev6 v40.stl", "Cover Plate 5mm (+1mm) Rev6-v37.stl"]) {
+    const p = stl(S + d).attributes.position.array;
+    for (let t = 0; t < p.length; t += 9) for (let w = 0; w <= 3; w++) {   // Ecken + Schwerpunkt
+      if (w < 3) v.set(p[t + w * 3], p[t + w * 3 + 1], p[t + w * 3 + 2]);
+      else v.set((p[t] + p[t + 3] + p[t + 6]) / 3, (p[t + 1] + p[t + 4] + p[t + 7]) / 3, (p[t + 2] + p[t + 5] + p[t + 8]) / 3);
+      v.applyMatrix4(m);
+      const k = key(Math.floor(v.x / r), Math.floor(v.y / r), Math.floor(v.z / r));
+      let l = zelle.get(k); if (!l) zelle.set(k, (l = [])); l.push(v.x, v.y, v.z);
+    }
+  }
+  return (x, y, z) => {
+    const i = Math.floor(x / r), j = Math.floor(y / r), k = Math.floor(z / r);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+      const l = zelle.get(key(i + a, j + b, k + c));
+      if (l) for (let q = 0; q < l.length; q += 3) if ((l[q] - x) ** 2 + (l[q + 1] - y) ** 2 + (l[q + 2] - z) ** 2 < r * r) return true;
+    }
+    return false;
+  };
+}
+
+// stlPos: Original-Dreiecke (mm), g: fertige Geometrie (m, mit Normalen), achse: Druckrichtung 0/1/2
+function fuzzyMaske(stlPos, g, achse, ohne = [], weg = null) {
+  const fest = voxel(stlPos);
+  const p = g.attributes.position.array, n = g.attributes.normal.array, m = new Float32Array(p.length / 3);
+  let an = 0;
+  for (let i = 0; i < m.length; i++) {
+    const x = p[i * 3] / MM, y = p[i * 3 + 1] / MM, z = p[i * 3 + 2] / MM;
+    const N = [n[i * 3], n[i * 3 + 1], n[i * 3 + 2]];
+    const quer = Math.abs(N[achse]);
+    if (quer > 0.95) continue;
+    if (ohne.some(([a, b]) => x >= a[0] && x <= b[0] && y >= a[1] && y <= b[1] && z >= a[2] && z <= b[2])) continue;
+    if (weg && weg(x, y, z)) continue;
+    let frei = true;
+    for (let d = 0.6; d <= 10 && frei; d += VOX) if (fest(x + N[0] * d, y + N[1] * d, z + N[2] * d)) frei = false;
+    if (!frei) continue;
+    m[i] = Math.min(1, (0.95 - quer) / 0.15);   // weich auslaufen zu flachen Flaechen
+    an++;
+  }
+  console.log("  Fuzzy Skin:", an, "von", m.length, "Ecken");
+  g.setAttribute("fuzzy", new THREE.BufferAttribute(m, 1));
+  return g;
+}
+
 // ---------------------------------------------------------------- glTF schreiben
 function glb(datei, teile) {
   const doc = new Document();
@@ -139,6 +238,8 @@ function glb(datei, teile) {
       .setAttribute("POSITION", doc.createAccessor().setType("VEC3").setArray(g.attributes.position.array).setBuffer(buf))
       .setAttribute("NORMAL", doc.createAccessor().setType("VEC3").setArray(g.attributes.normal.array).setBuffer(buf))
       .setIndices(doc.createAccessor().setType("SCALAR").setArray(new Uint32Array(g.index.array)).setBuffer(buf))
+    if (g.attributes.fuzzy) prim.setAttribute("_FUZZY", doc.createAccessor().setType("SCALAR").setArray(g.attributes.fuzzy.array).setBuffer(buf));
+    prim
       .setMaterial(mat(t.material, t.farbe, t.rau ?? 0.6, t.metall ?? 0));
     const mesh = doc.createMesh(t.name).addPrimitive(prim);
     const node = doc.createNode(t.name).setMesh(mesh);
@@ -172,8 +273,16 @@ async function remote() {
   const S = "CAD/BuyDisplay LCD/STL/";
   const teile = [];
   const add = (name, g, material, farbe, extra = {}) => teile.push({ name, g: fertig(g), material, farbe, ...extra });
-  add("remote_gehaeuse", stl(S + "Case - Screws with Pogo Pins Rev6 v40.stl"), "gehaeuse", [0.05, 0.055, 0.06], { rau: 0.55 });
-  add("remote_abdeckung", stl(S + "Cover Plate 5mm (+1mm) Rev6-v37.stl"), "abdeckung", [0.62, 0.64, 0.67], { rau: 0.35, metall: 0.6 });
+  // Fuzzy Skin (Druckrichtung z): die USB-Buchse unten ist zur Seite offen - ihre Waende sehen ins Freie, deshalb als Kasten
+  // ausgenommen (Aussparung 14 x 6 mm in der Stirnwand, x -7..7, z -6..0)
+  const fz = (name, datei, achse, ohne) => { const roh = stl(datei); const pos = roh.attributes.position.array.slice();
+    return fuzzyMaske(pos, fertig(roh), achse, ohne); };
+  console.log("remote_gehaeuse");
+  teile.push({ name: "remote_gehaeuse", g: fz("remote_gehaeuse", S + "Case - Screws with Pogo Pins Rev6 v40.stl", 2, [[[-8.5, -116, -7.5], [8.5, -106, 1]]]),
+    material: "gehaeuse", farbe: [0.05, 0.055, 0.06], rau: 0.55 });
+  console.log("remote_abdeckung");
+  teile.push({ name: "remote_abdeckung", g: fz("remote_abdeckung", S + "Cover Plate 5mm (+1mm) Rev6-v37.stl", 2, []),
+    material: "abdeckung", farbe: [0.62, 0.64, 0.67], rau: 0.35, metall: 0.6 });
   // Die Symbole sind 0,05 mm tief in die Tastenoberseite (z 6,40) graviert: Boden flach bei z 6,35, Waende senkrecht
   // dazwischen. Sie werden als eigenes Teil abgetrennt, damit sie weiss erscheinen koennen (wie bedruckte Tasten).
   const gravur = (p, nz) => {
@@ -225,7 +334,13 @@ async function dock() {
   const S = "CAD/Dock/STL/";
   const teile = [];
   const add = (name, g, material, farbe, extra = {}) => teile.push({ name, g: fertig(g), material, farbe, ...extra });
-  add("dock_schale", stl(S + "Dock Rev6 v51.stl"), "dock", [0.05, 0.055, 0.06], { rau: 0.5 });
+  // Fuzzy Skin (gedruckt stehend, Druckrichtung y): die Aufnahme der Remote ist eine Mulde - dort trifft der Blick
+  // entlang der Normalen immer die Gegenwand, sie bleibt glatt
+  // Die Mulde ist breiter als der Blick-Test (10 mm) - deshalb zusaetzlich: alles, was der eingesetzten Remote
+  // (Lage aus src/dock-pose.json) naeher als 5 mm kommt, bleibt glatt.
+  console.log("dock_schale");
+  { const roh = stl(S + "Dock Rev6 v51.stl"); const pos = roh.attributes.position.array.slice();
+    teile.push({ name: "dock_schale", g: fuzzyMaske(pos, fertig(roh), 1, [], remoteNaehe(5)), material: "dock", farbe: [0.05, 0.055, 0.06], rau: 0.5 }); }
   add("dock_boden", stl(S + "Dock Base Lid Rev6 v51.stl"), "dock_boden", [0.04, 0.042, 0.045], { rau: 0.65 });
   add("dock_taste", stl(S + "Dock Menu Button Rev6-v47.stl"), "dock_taste", [0.6, 0.62, 0.65], { rau: 0.3, metall: 0.7 });
   // Platine mit Bauteilen: Transformation laut PCB/Dock Rev6/README.md ("Fusion 3D handoff")

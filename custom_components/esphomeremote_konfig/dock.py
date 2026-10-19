@@ -37,7 +37,7 @@ from .ir_kodierer import PROTOKOLLE, kodieren
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote_konfig"
-PLATTFORMEN = ("switch", "media_player", "remote", "button")
+PLATTFORMEN = ("switch", "media_player", "remote", "button", "select", "sensor")
 
 
 # ---------------------------------------------------------------------------------------------- Vorlagen
@@ -218,8 +218,10 @@ class Verwalter:
 
     def _soll(self) -> dict[str, tuple[str, str, Any]]:
         from .button import IrButton
+        from .jetzt import JetztPlayer
         from .media_player import IrMediaPlayer
         from .remote import IrRemote
+        from .select import AktAuswahl
         from .switch import AktSchalter
 
         soll: dict[str, tuple[str, str, Any]] = {}
@@ -229,6 +231,25 @@ class Verwalter:
                 uid = f"{dev}_akt_{i}"
                 soll[uid] = ("switch", a.get("name") or f"Aktivität {i + 1}",
                              lambda dev=dev, i=i, uid=uid: AktSchalter(self, uid, dev, i))
+            # Auswahl (Dropdown) mit allen Aktivitaeten; neu gebaut, wenn sich die Namen aendern (2026-10-18)
+            namen = [a.get("name") or f"Aktivität {i + 1}" for i, a in enumerate(acts)]
+            if namen:
+                soll[f"{dev}_akt_auswahl"] = ("select", "|".join(namen),
+                                              lambda dev=dev, namen=namen: AktAuswahl(self, f"{dev}_akt_auswahl", dev, namen))
+        # Streamer (streamer.py): Sensoren immer, Knoepfe nur mit ADB-Entitaet
+        from .streamer import SENSOREN, StreamerKnopf, StreamerSensor
+        for st in self.kd.data.get("streamer") or []:
+            sig = st["name"]
+            for k in SENSOREN:
+                if k != "am_tv" or st["adb"]:
+                    soll[f"streamer_{st['id']}_{k}"] = ("sensor", sig, lambda st=st, k=k: StreamerSensor(st, k))
+            if st["adb"]:
+                for k in ("app_beenden", "neustart"):
+                    soll[f"streamer_{st['id']}_{k}"] = ("button", sig, lambda st=st, k=k: StreamerKnopf(st, k))
+        # Zusammengefasste "Jetzt laeuft"-Player (jetzt.py, Konfigurator-Seite "Wiedergabe")
+        for j in self.kd.data.get("jetzt") or []:
+            sig = hashlib.sha1(json.dumps(j, sort_keys=True).encode()).hexdigest()[:12]
+            soll[f"jetzt_{j['id']}"] = ("media_player", sig, lambda j=j: JetztPlayer(self.kd, j))
         for g in self.geraete:
             sig = hashlib.sha1(json.dumps(g, sort_keys=True).encode()).hexdigest()[:12]
             gid = g["id"]
@@ -277,7 +298,8 @@ async def starten(hass: HomeAssistant, kd) -> Verwalter:
     hass.data[DOMAIN + "_dock"] = v
     for p in PLATTFORMEN:
         hass.async_create_task(discovery.async_load_platform(hass, p, DOMAIN, {}, {}))
-    for fn in (ws_dock_get, ws_dock_save, ws_dock_senden):
+    from .jetzt import ws_jetzt_get, ws_jetzt_save
+    for fn in (ws_dock_get, ws_dock_save, ws_dock_senden, ws_jetzt_get, ws_jetzt_save):
         websocket_api.async_register_command(hass, fn)
     return v
 

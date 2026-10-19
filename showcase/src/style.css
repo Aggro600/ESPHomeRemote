@@ -79,11 +79,17 @@ input[type="range"] { width: 100%; accent-color: var(--blau); height: 22px; }
 .schalter { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .pille { appearance: none; border: 1px solid var(--rand); background: transparent; border-radius: 999px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; color: var(--leise); transition: all 0.2s; }
 .pille[aria-pressed="true"] { color: var(--text); border-color: var(--blau); background: rgba(59, 130, 246, 0.16); }
-.farbzeile { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
-.farbzeile > span { font-size: 13px; color: var(--leise, #9aa3b2); }
-.farben { display: flex; gap: 8px; }
-.farbe.zwei { background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.45), transparent 45%), linear-gradient(135deg, var(--f) 50%, var(--g) 50%); }
-.farbe { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--rand); background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.45), transparent 45%), var(--f); cursor: pointer; }
+.farbteil { padding: 8px 0; border-top: 1px solid var(--rand); }
+.farbteil:first-child { border-top: 0; padding-top: 0; }
+.farbkopf { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.farbkopf > span { flex: 1; font-size: 13px; color: var(--text); }
+.pille.klein { padding: 3px 9px; font-size: 11px; }
+.frei { position: relative; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--rand); cursor: pointer; overflow: hidden;
+  background: conic-gradient(#f43f5e, #f59e0b, #84cc16, #06b6d4, #6366f1, #d946ef, #f43f5e); }
+.frei::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--f, #000); box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+.frei input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
+.farben { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.farbe { width: 100%; aspect-ratio: 1; border-radius: 50%; border: 2px solid var(--rand); background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.45), transparent 45%), var(--f); cursor: pointer; }
 .farbe[aria-pressed="true"] { border-color: var(--blau2); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3); }
 .hinweis { margin: 16px 0 0; color: var(--leise); font-size: 12px; }
 

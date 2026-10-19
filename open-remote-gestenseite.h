@@ -646,6 +646,9 @@ inline void kbd_titel() {
   lv_label_set_text(kbd_title, t.c_str());
 }
 
+// Laeuft gerade die Namenseingabe auf der Tastatur? (Tastatur-Seite blendet dann den Eingabe-Umschalter aus)
+inline bool namen_eingabe() { return z().eingabe; }
+
 // true = Taste gehoert der Namenseingabe
 inline bool kbd_taste(const std::string &k) {
   auto &s = z();

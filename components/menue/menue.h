@@ -69,6 +69,7 @@ struct Item {
   bool name_wert{false};      // kleine Kachel: Zustand = Farbe des Namens
   EinstRef einst;             // T_EINST: ferngesteuertes Widget
   lv_obj_t *name{nullptr};    // Beschriftung (Gestaltung: Farbe, Groesse, Ausrichtung)
+  lv_obj_t *ico{nullptr};     // Symbol (Gestaltung: Farbe "ic", Ausrichtung "ia")
   uint32_t bg{0x1A1F27};      // Kartenfarbe (eigene Farbe aus "bg", sonst Standard)
   // Anzeige-Zeile mit Namen (z. B. Akku: Spannung) bzw. Grafik: der Cursor faehrt auch darueber, damit man die
   // ganze Seite durchblaettern kann (2026-10-07). OK macht dort nichts.
@@ -101,8 +102,9 @@ class Menue : public Component {
   }
   // X/Zurueck per OK ausgeloest (wie Antippen des Knopfes).
   std::function<void()> zurueck_taste;
-  void set_fonts(const lv_font_t *text, const lv_font_t *klein, const lv_font_t *icons, const lv_font_t *gross = nullptr) {
-    f_text_ = text; f_klein_ = klein; f_icon_ = icons; f_gross_ = gross;
+  void set_fonts(const lv_font_t *text, const lv_font_t *klein, const lv_font_t *icons, const lv_font_t *gross = nullptr,
+                 const lv_font_t *sehr_klein = nullptr, const lv_font_t *sehr_gross = nullptr) {
+    f_text_ = text; f_klein_ = klein; f_icon_ = icons; f_gross_ = gross; f_xs_ = sehr_klein; f_xl_ = sehr_gross;
   }
   // Eingebaute Seite zeigen (open-remote-tasten.h). Rueckgabe: deren cur_page-Nummer, -1 = unbekannt.
   std::function<int(const std::string &name)> spezial;
@@ -239,7 +241,8 @@ class Menue : public Component {
  public:
   uint32_t zeitlupe{1};   // alle Animationen (Menue, Kopfzeile, Leiste) x-mal langsamer - nur fuer Bildschirmfotos
  private:
-  const lv_font_t *f_text_{nullptr}, *f_klein_{nullptr}, *f_icon_{nullptr}, *f_gross_{nullptr};
+  const lv_font_t *f_text_{nullptr}, *f_klein_{nullptr}, *f_icon_{nullptr}, *f_gross_{nullptr}, *f_xs_{nullptr}, *f_xl_{nullptr};
+  uint32_t hl_{0x3B82F6};   // Hervorhebung (menu.hl): Rahmen der Markierung, Regler, Zurueck-Knopf
 
   bool an_{false};
   std::string start_;

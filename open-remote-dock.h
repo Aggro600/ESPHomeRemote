@@ -12,6 +12,13 @@
 
 #include <esp_http_client.h>
 
+// Musik-Anzeige (open-remote-musik.h, danach eingebunden): im Dock statt des Smart Displays, solange Musik laeuft
+namespace musik {
+inline bool im_dock_zeigen();
+inline void zeigen(bool vom_dock);
+inline void dock_takt(bool im_dock);
+}
+
 namespace dockanz {
 
 struct Zustand {
@@ -292,6 +299,7 @@ inline bool display_soll_an() {
 }
 
 inline void zeigen() {
+  if (z().im_dock && musik::im_dock_zeigen()) { musik::zeigen(true); return; }
   aufbauen();
   uhr_zeigen(true);
   laden_zeigen();
@@ -328,6 +336,7 @@ inline void seite_takt();
 inline void takt() {
   seite_takt();
   dock_takt();
+  musik::dock_takt(z().im_dock);
 }
 
 inline void dock_takt() {

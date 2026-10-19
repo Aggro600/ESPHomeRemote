@@ -52,6 +52,14 @@ inline void auffrischen() {
   lv_label_set_text(h_dock_disp, d == 0 ? "Wie sonst: Das Display geht im Dock nach der normalen Zeit aus. Antippen oder eine Taste zeigt die Anzeige wieder."
                                : d == 1 ? "Bleibt an: Im Dock geht das Display nie aus (Helligkeit wie immer über den Lichtsensor)."
                                         : "Zeitfenster: Im Dock bleibt das Display in der Zeit unten an, sonst geht es wie gewohnt aus.");
+  an_aus(musik_dock_lbl, musik_dock->value());
+  an_aus(musik_player_lbl, musik_player->value());
+  lv_label_set_text(h_musik_dock, musik_dock->value()
+      ? "Spielt der Player, zeigt die Remote im Dock statt des Smart Displays die Musik als Spektrum (über das Mikrofon). Ist die Musik aus, kommt nach 8 s das Smart Display zurück."
+      : "AUS: Im Dock bleibt das Smart Display. Die Musik-Anzeige gibt es weiter über das Menü oder eine Taste.");
+  lv_label_set_text(h_musik_player, musik_player->value()
+      ? "Das Mikrofon hört nur zu, solange der Jetzt-läuft-Player spielt - sonst bleibt es aus."
+      : "AUS: Die Anzeige hört immer zu, auch bei Musik, die HA nicht kennt (Radio, Plattenspieler).");
 
   touchpad_auffrischen();
 }
@@ -74,7 +82,7 @@ inline void touchpad_auffrischen() {
   static const char *ZU[] = {"Schließt Touchpad", "Zurück am Gerät", "Rechtsklick"};
   wert(maus_zurueck_lbl, ZU[std::max(0, std::min(2, (int) maus_zurueck->value()))], true);
   lv_label_set_text(h_maus_dpad, maus_dpad->value()
-      ? "Im Touchpad bewegen die Pfeiltasten den Zeiger (halten = schneller), OK = Klick, OK lang = Rechtsklick, OK halten + Pfeile = Ziehen, Kanal +/- = Scrollen. Zurück lang = Knöpfe wählen (X, Klicktasten, Tastatur, Makros). Die Menütaste legt das Touchpad weg, nochmal Menütaste holt es zurück."
+      ? "Im Touchpad bewegen die Pfeiltasten den Zeiger (halten = schneller), OK = Klick, OK lang = Rechtsklick, OK halten + Pfeile = Ziehen, Kanal +/- = Scrollen. Zurück lang = Knöpfe wählen (X, Umschalter, Klicktasten, Makros). Die Menütaste legt das Touchpad weg, nochmal Menütaste holt es zurück."
       : "AUS: Im Touchpad steuern die Tasten wie auf der Startseite das Gerät der Aktivität - den Zeiger bewegt nur der Bildschirm.");
   lv_label_set_text(h_plaetze, "Platz antippen, dann Verbinden / Koppeln / Löschen. Eingabe: Nur Tasten (Fernseher), Maus (Touchpad), Tastatur (Buchstaben, Makros) oder beides - danach das Gerät einmal neu koppeln.");
 }

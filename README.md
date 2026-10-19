@@ -111,15 +111,15 @@ Im ESPHome-Add-on oben rechts auf **„Secrets“** klicken und diese Zeilen erg
 ```yaml
 ota_pw: "ein-passwort"
 ap_password: "noch-ein-passwort"
+direkt_schluessel: "…"             # 32 Hex-Zeichen, z. B. von  openssl rand -hex 16  (Funkweg zum Dock)
 esphomeremote_konfig_key: "…"      # die kopierte Zeile aus Schritt 2
 ```
 
 **Schritt 4 – Fernbedienung aufspielen**
 1. Im ESPHome-Add-on **„+ Neues Gerät“** → **„Überspringen“** (bzw. „Leer anlegen“).
-2. Den Inhalt von [`open-remote.yaml`](open-remote.yaml) in den Editor kopieren.
-3. Nur **eine Zeile** anpassen: `ha_host` = Adresse deines Home Assistant, z. B. `192.168.1.10:8123`
-   (steht unter *Einstellungen → System → Netzwerk*).
-4. **Speichern** → **Installieren** → *„An diesen Computer anschließen“* → Fernbedienung per USB-C
+2. Den Inhalt von [`open-remote.yaml`](open-remote.yaml) in den Editor kopieren – anpassen musst du nichts
+   (die Adresse von Home Assistant findet die Fernbedienung selbst).
+3. **Speichern** → **Installieren** → *„An diesen Computer anschließen“* → Fernbedienung per USB-C
    anstecken und auswählen. Das erste Mal dauert es etwa 10 Minuten.
 
 **Schritt 5 – In Home Assistant übernehmen**
@@ -142,7 +142,10 @@ darunter je Remote ihre Seiten:
 | **Menü** | Seiten, Unterseiten und Popups im Raster gestalten, mit Vorschau. |
 | **Gesten** | Schütteln, Kippen und eigene Gesten belegen; Touchpad-Makros. |
 | **Bluetooth / Infrarot** | Plätze koppeln, Eingabe je Gerät, IR-Sendeweg und IR-Datenbank. |
+| **Verknüpfungen** | Welche Geräte aus Home Assistant die Remote nutzt: Wiedergabe-Player (Startseite, Media-Seite, Musik-Anzeige), Fernseher, Multiroom, Lautsprecher für den Assistenten, Streamer für Texteingabe, Timer neben der Uhr. |
 | **Einstellungen** | Alle Einstellungen der Remote, sofort übertragen; Helligkeit nach Lichtsensor. |
+| **Wiedergabe** | „Jetzt läuft“-Player anlegen: fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu einem Media Player zusammen. Streamer mit der App „ESPHomeRemote Streamer“ (Titel, Cover, Position jeder App, Tastatur-Popup). |
+| **Klingel** | Bis zu zwei Klingeln: Auslöser und Kamera – beim Klingeln kommt das Bild auf die Remotes. |
 | **Dockingstation** | IR-Geräte, Dock-LED, Smart Display. |
 | **Firmware & Geräte** | Updates per WLAN oder USB, neue Docks anlegen und einbinden. |
 | **Werkstatt** | Neue Fernbedienung, alles kopieren, Sicherung, Platinen-Test, Entwicklermodus. |

@@ -1,4 +1,6 @@
 #pragma once
+// Musik-Anzeige (open-remote-musik.h, spaeter eingebunden)
+namespace musik { inline void zeigen(bool vom_dock); }
 #include <deque>
 // Tasten-Konfigurator (2026-10-03): Bindeglied zwischen der Komponente tasten_konfig
 // (Gesten, Laden aus HA, BLE/HA/IR) und den Funktionen der Remote (Skripte, Globals).
@@ -13,6 +15,7 @@
 //   text_sensor HA:  tk_cfg->angekuendigt(x);
 
 namespace touchpad { inline void oeffnen(); inline bool taste(int k, bool gedrueckt); }   // open-remote-maus.h
+namespace eingabewahl { inline void wechseln(int ziel); }   // open-remote-maus.h: 0 Maus, 1 Tastatur, 2 Ziffern
 
 // Popup geht auf (2026-10-03): Herkunft merken, damit Schliessen dorthin zurueckfuehrt.
 inline void popup_oeffnet(int seite) {
@@ -482,11 +485,10 @@ inline void intern(const char *fn, int arg, const Ctx &c) {
   else if (!strcmp(fn, "clean")) clean_run->execute();
   else if (!strcmp(fn, "power_off")) herunterfahren->execute();
   else if (!strcmp(fn, "touchpad")) touchpad::oeffnen();
-  else if (!strcmp(fn, "maus_tastatur")) {   // 2026-10-17: Touchpad <-> Tastatur, sonst das Touchpad
-    if (cur_page->value() == 51) { kbd_popup_mode->value() = 1; kbd_popup_zeigen->execute(); }
-    else touchpad::oeffnen();
-  }
+  else if (!strcmp(fn, "maus_tastatur"))   // Touchpad <-> Tastatur (gleiche Popup-Gruppe), sonst das Touchpad
+    eingabewahl::wechseln(cur_page->value() == 51 ? 1 : 0);
   else if (!strcmp(fn, "dock_anzeige")) { popup_seite->value() = -1; seite_zeigen(page_dock, LV_SCR_LOAD_ANIM_FADE_IN); }
+  else if (!strcmp(fn, "musik_anzeige")) musik::zeigen(false);
   else if (!strcmp(fn, "keymode")) { if (cur_page->value() == 98) mn->tastenmodus(-1); }
   else if (!strcmp(fn, "popup_close")) { if (popup_seite->value() >= 0 && popup_seite->value() == cur_page->value()) popup_schliessen->execute(); }
   else ESP_LOGW("tasten", "Unbekannte Funktion '%s'", fn);
@@ -502,7 +504,7 @@ inline const std::vector<Spezial> &spezial_tabelle() {
     {"bright", page_bright, 22}, {"show", page_show, 23}, {"power", page_power, 27}, {"cam_view", page_cam_view, 37},
     {"cam_live", page_cam_live, 38}, {"keyboard", page_keyboard, 41}, {"ziffern", page_keyboard, 41},
     {"tastatur", page_keyboard, 41}, {"sd", page_sd, 42}, {"akku", page_akku, 43},
-    {"dock", page_dock, 50}, {"touchpad", page_maus, 51}, {"extras", page_extras, 44}, {"gesten", page_gesten, 45},
+    {"dock", page_dock, 50}, {"touchpad", page_maus, 51}, {"musik", page_musik, 52}, {"extras", page_extras, 44}, {"gesten", page_gesten, 45},
   };
   return T;
 }
