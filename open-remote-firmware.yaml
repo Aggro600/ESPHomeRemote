@@ -2117,19 +2117,20 @@ script:
             - deep_sleep.enter:
                 id: nachtschlaf
 
-  # Stand beim Dock anfragen (nach dem Start): bis zu 8 Versuche im Abstand von 0,6 s, solange HA nicht verbunden ist
-  # und noch keine Antwort kam (dock_direkt on_zustand)
+  # Stand beim Dock anfragen (nach dem Start): erst schnell (0,4 s), dann jede Sekunde, bis zu ~15 s - solange HA nicht
+  # verbunden ist und noch keine Antwort kam (dock_direkt on_zustand). Laenger, weil ein gerade eingeschaltetes Dock
+  # (Steckdose) ein paar Sekunden braucht, bis es funkt und seinen Stand von HA hat.
   - id: zustand_holen
     mode: single
     then:
       - repeat:
-          count: 8
+          count: 18
           then:
             - if:
                 condition: {lambda: 'return !id(zustand_da) && !api::global_api_server->is_connected();'}
                 then:
                   - lambda: 'id(tk_cfg).zustand_anfragen();'
-                  - delay: 600ms
+                  - delay: !lambda 'return iteration < 4 ? 400 : 1000;'
 
   # HA-Link im Ruhezustand pausieren (Einstellung ha_link_ruhe): spart die zweite Bluetooth-Verbindung, solange niemand
   # die Remote benutzt. Nicht waehrend Sprache, Update oder Wartungsfenster.
