@@ -2,17 +2,28 @@
 // Bedingungen fuer den Tiefschlaf (Einstellungen > Energie & Wecken). Steht in esphome: includes: und damit in
 // main.cpp hinter allen Objekten - die YAML-ids sind hier als Zeiger sichtbar.
 
-// Darf die Remote jetzt in den Tiefschlaf? (Zeitablauf prueft deep_ruhe_timer selbst.)
+// Was haelt die Remote gerade vom Tiefschlaf ab? nullptr = nichts (Zeitablauf prueft deep_ruhe_timer selbst).
 // mit_ble: auch pruefen, ob ein Bluetooth-Geraet verbunden ist ("Tiefschlaf nur ohne Bluetooth").
-inline bool tiefschlaf_erlaubt(bool mit_ble = true) {
+// Gleichzeitig Diagnose-Text fuer den Sensor "Tiefschlaf-Status" (schlaf_status_melden, 2026-10-19).
+inline const char *tiefschlaf_sperre(bool mit_ble = true) {
   const bool low = low_bat->value();
-  if (!disp_off->value() || !(ps_deep->value() || low)) return false;
-  if (mit_ble && deep_ohne_ble->value() && ble_paired->state && !low) return false;
-  if (remote_strom::eff_deep_s(ps_deep_s->value(), ps_deep_tv_s->value(), tv_on->value(), low) < 0) return false;
-  return !testmodus->value() && !boot_grace->value() && api_ever->value() && !laedt->value() &&
-         !charger_present->state && !voice_active->value() && !host_mic->value() && !ota_aktiv->value() &&
-         (int32_t) (millis() - wartung_bis->value()) >= 0;
+  if (!disp_off->value()) return "Display an";
+  if (!(ps_deep->value() || low)) return "Tiefschlaf aus (Einstellung)";
+  if (mit_ble && deep_ohne_ble->value() && ble_paired->state && !low) return "Bluetooth-Geraet verbunden (Einstellung)";
+  if (remote_strom::eff_deep_s(ps_deep_s->value(), ps_deep_tv_s->value(), tv_on->value(), low) < 0) return "Fernseher an (Einstellung: nie)";
+  if (testmodus->value()) return "Testmodus";
+  if (boot_grace->value()) return "Schonfrist nach dem Start (10 min)";
+  if (!api_ever->value()) return "noch nicht mit Home Assistant verbunden";
+  if (laedt->value() || charger_present->state) return "laedt";
+  if (voice_active->value()) return "Sprachabfrage";
+  if (host_mic->value()) return "Mikrofon vom Bluetooth-Geraet offen";
+  if (ota_aktiv->value()) return "Update/Wartung";
+  if ((int32_t) (millis() - wartung_bis->value()) < 0) return "Wartungsfenster";
+  return nullptr;
 }
+
+// Darf die Remote jetzt in den Tiefschlaf? (Zeitablauf prueft deep_ruhe_timer selbst.)
+inline bool tiefschlaf_erlaubt(bool mit_ble = true) { return tiefschlaf_sperre(mit_ble) == nullptr; }
 
 // Letzte Messung aus dem FIFO (Bewegungsgesten, open-remote-gesten.h): Ist der FIFO an, liefern die Ausgangsregister
 // die aelteste Messung und jedes Lesen nimmt den Gesten eine weg - dann gilt diese hier.

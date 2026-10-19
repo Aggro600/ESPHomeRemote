@@ -1099,6 +1099,8 @@ globals:
   # Wurde die Home-Assistant-API seit dem Boot schon einmal verbunden? Nur dann
   # darf ueberhaupt in den Tiefschlaf gegangen werden.
   - {id: api_ever,       type: bool,      restore_value: false, initial_value: "false"}
+  # Displaycontroller im Schlafmodus (SLPIN), solange das Display aus ist (2026-10-19)
+  - {id: panel_schlaeft, type: bool,      restore_value: false, initial_value: "false"}
   - {id: tts_speaker,    type: bool,      restore_value: true,  initial_value: "false"}
   # Mikrofon bei Display an vorwaermen (2026-10-07): sonst fehlen nach dem Tastendruck ~1,5 s am Anfang.
   # Standard AUS (Nutzerwunsch) - einschalten unter Einstellungen > Sprache.
@@ -1537,6 +1539,9 @@ light:
     output: backlight_pwm
     default_transition_length: 120ms
     restore_mode: ALWAYS_ON
+    # Absicherung: geht die Beleuchtung an, waehrend der Controller schlaeft (Weg ohne wake_backlight), ihn wecken
+    on_turn_on:
+      - lambda: 'if (id(panel_schlaeft)) { id(main_display).exit_sleep(); id(panel_schlaeft) = false; }'
   - platform: monochromatic
     id: button_backlight
     output: button_backlight_pwm
@@ -1780,6 +1785,7 @@ interval:
               - lambda: 'return id(disp_timeout_s) > 0 && tiefschlaf_erlaubt(false);'
           then:
             - script.execute: deep_ruhe_timer
+      - script.execute: schlaf_status_melden
 
 script:
   # IR anlernen (Konfigurator, 2026-10-11): Empfaenger an, Fenster offen halten, danach wieder aus.
@@ -2040,6 +2046,7 @@ script:
     mode: restart
     then:
       - lambda: 'id(deep_t0) = millis();'
+      - script.execute: schlaf_status_melden
       - while:
           condition:
             lambda: |-
@@ -2057,6 +2064,8 @@ script:
               return lim < 0 || (millis() - t0) < (uint32_t) lim * 1000;
           then:
             - delay: 5s
+            - script.execute: schlaf_status_melden
+      - script.execute: schlaf_status_melden
       - if:
           condition:
             lambda: 'return tiefschlaf_erlaubt();'
@@ -2071,6 +2080,23 @@ script:
             - script.execute: deep_sleep_powerdown
             - deep_sleep.enter:
                 id: nachtschlaf
+
+  # Tiefschlaf-Status (Diagnose-Sensor) neu bewerten und nur bei Aenderung senden
+  - id: schlaf_status_melden
+    then:
+      - lambda: |-
+          std::string t;
+          if (const char *g = tiefschlaf_sperre()) {
+            t = g;
+          } else {
+            const bool low = id(low_bat);
+            const int lim = remote_strom::eff_deep_s(id(ps_deep_s), id(ps_deep_tv_s), id(tv_on), low);
+            char b[64];
+            snprintf(b, sizeof(b), "wartet: schlaeft %d min nach der letzten Bedienung%s", (lim + 59) / 60,
+                     low ? " (Akku-Sparmodus)" : (id(tv_on) && id(ps_deep_tv_s) > 0 ? " (Fernseher an)" : ""));
+            t = b;
+          }
+          if (!id(schlaf_status_txt).has_state() || id(schlaf_status_txt).state != t) id(schlaf_status_txt).publish_state(t);
 
   - id: backlight_idle_timeout
     mode: restart
@@ -2100,6 +2126,9 @@ script:
       - light.turn_off: display_backlight
       - light.turn_off: button_backlight
       - globals.set: {id: disp_off, value: "true"}
+      # Displaycontroller schlafen legen (~1-2 mA): nach dem Ausblenden der Beleuchtung (120 ms)
+      - delay: 150ms
+      - lambda: 'if (id(disp_off) && !id(panel_schlaeft)) { id(main_display).enter_sleep(); id(panel_schlaeft) = true; }'
       - globals.set: {id: lift_cnt, value: "0"}
       # Reine Anzeigewerte anhalten, solange niemand hinschaut. Der Akkustand
       # laeuft weiter (alle 20 s ein I2C-Read faellt nicht ins Gewicht).
@@ -2603,6 +2632,7 @@ script:
       - script.stop: ble_ruhe_timer
       - script.stop: deep_ruhe_timer
       - globals.set: {id: disp_off, value: "false"}
+      - script.execute: schlaf_status_melden
       # BLE-Verbindung wieder auf das schnelle HID-Profil, Takt zurueck auf voll.
       - lambda: 'id(kb).request_conn_profile(false);'
       - script.stop: cpu_ruhe_timer
@@ -2637,6 +2667,8 @@ script:
       - if:
           condition: {lambda: "return id(ps_wifi_off) && !wlan_zugriff::g_nur_ble;"}
           then: [{wifi.enable:}]
+      # Displaycontroller wecken, bevor LVGL zeichnet und die Beleuchtung angeht (SLPOUT braucht 120 ms)
+      - lambda: 'if (id(panel_schlaeft)) { id(main_display).exit_sleep(); id(panel_schlaeft) = false; }'
       - lvgl.resume:
       - lvgl.widget.redraw:
       - light.turn_on:
@@ -2901,17 +2933,20 @@ script:
   # Liest den tatsaechlichen Zustand der vier Host-Slots aus dem
   # BLE-Component (get_host_slot(n).occupied) - nicht nur, was zuletzt
   # angetippt wurde.
+  # Helligkeit uebernehmen. Bei ausgeschaltetem Display nur merken - sonst schaltete z. B. der Regler in HA die
+  # Beleuchtung ohne Abschalt-Timer ein und sie blieb auf Akku an (2026-10-19). Abgedunkelt: gedimmter Wert.
   - id: apply_brightness
     then:
-      - light.turn_on:
-          id: display_backlight
-          brightness: !lambda 'return id(disp_bri) / 100.0f;'
-      - if:
-          condition: {lambda: "return id(kbd_light_on);"}
-          then:
-            - light.turn_on:
-                id: button_backlight
-                brightness: !lambda 'return id(kbd_bri) / 100.0f;'
+      - lambda: |-
+          if (!id(disp_off)) {
+            float b = id(disp_bri) / 100.0f;
+            if (id(disp_dimmed)) b = fmaxf(0.03f, b * (id(ps_dim_pct) / 100.0f));
+            auto c = id(display_backlight).turn_on(); c.set_brightness(b); c.perform();
+            if (id(kbd_light_on)) { auto k = id(button_backlight).turn_on(); k.set_brightness(id(kbd_bri) / 100.0f); k.perform(); }
+          }
+          // HA-Regler nur bei Aenderung melden (vorher alle 5 s - weckte Funk und Prozessor)
+          if (!id(num_disp_bri).has_state() || (int) id(num_disp_bri).state != id(disp_bri)) id(num_disp_bri).publish_state(id(disp_bri));
+          if (!id(num_kbd_bri).has_state() || (int) id(num_kbd_bri).state != id(kbd_bri)) id(num_kbd_bri).publish_state(id(kbd_bri));
       - lvgl.label.update: {id: disp_bri_lbl, text: !lambda 'char b[8]; snprintf(b,sizeof(b),"%d%%", id(disp_bri)); return std::string(b);'}
       - lvgl.label.update: {id: kbd_bri_lbl,  text: !lambda 'char b[8]; snprintf(b,sizeof(b),"%d%%", id(kbd_bri));  return std::string(b);'}
       - lvgl.label.update: {id: qs_bri_pct,   text: !lambda 'char b[8]; snprintf(b,sizeof(b),"%d%%", id(disp_bri)); return std::string(b);'}
@@ -4982,6 +5017,7 @@ script:
 # Remote; der Lichtsensor (Konfigurator > Licht) stellt sie spaeter wieder nach, wenn er eingeschaltet ist.
 number:
   - platform: template
+    id: num_disp_bri
     name: "Display-Helligkeit"
     icon: "mdi:brightness-6"
     unit_of_measurement: "%"
@@ -4989,12 +5025,13 @@ number:
     max_value: 100
     step: 5
     mode: slider
-    update_interval: 5s
+    update_interval: never   # gemeldet von apply_brightness, nur bei Aenderung
     lambda: 'return id(disp_bri);'
     set_action:
       - lambda: 'id(disp_bri) = (int) x;'
       - script.execute: apply_brightness
   - platform: template
+    id: num_kbd_bri
     name: "Tastenbeleuchtung Helligkeit"
     icon: "mdi:keyboard-settings"
     unit_of_measurement: "%"
@@ -5002,7 +5039,7 @@ number:
     max_value: 100
     step: 5
     mode: slider
-    update_interval: 5s
+    update_interval: never
     lambda: 'return id(kbd_bri);'
     set_action:
       - lambda: 'id(kbd_bri) = (int) x;'
@@ -5978,6 +6015,14 @@ text_sensor:
     name: "Weckprotokoll"
     icon: "mdi:alarm-check"
     entity_category: diagnostic
+  # Diagnose (2026-10-19): warum die Remote gerade (noch) nicht im Tiefschlaf ist - "wartet ..." oder der Grund
+  # (Fernseher an, laedt, Sprachabfrage ...). Nur bei Aenderung gesendet (schlaf_status_melden), landet im Recorder.
+  - platform: template
+    id: schlaf_status_txt
+    name: "Tiefschlaf-Status"
+    icon: "mdi:sleep"
+    entity_category: diagnostic
+    update_interval: never
   # Diagnose (2026-09-29): Grund des letzten Neustarts - belegt Abstuerze eindeutig.
   - platform: template
     id: letzter_neustart

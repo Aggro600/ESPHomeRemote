@@ -23,6 +23,7 @@ namespace dockanz {
 
 struct Zustand {
   bool im_dock{false};
+  uint32_t ohne_strom_ms{0};   // seit wann im Dock ohne Ladestrom bei nicht vollem Akku (0 = nicht)
   float lx{0}, ly{0}, lz{0};
   bool lage_ok{false};
   int weg{0};
@@ -370,6 +371,16 @@ inline void dock_takt() {
     // ohne Lage (Sensor aus) und ohne Kabel: nicht laenger im Dock annehmen
     verlassen("kein Kabel");
     return;
+  }
+  // Dock ohne Strom (Smartplug aus, Stromausfall): die Lage bleibt, aber es laedt nicht. Bei vollem Akku meldet der
+  // Ladechip ebenfalls "laedt nicht" - er laedt aber unter ~4,05 V von selbst nach. Also: kein Kabel UND Zelle
+  // deutlich darunter, 2 min lang -> das Dock liefert nichts, Dock-Anzeige beenden (sonst haelt sie das Display auf
+  // Akku dauerhaft an und die Remote schlaeft nie, 2026-10-19).
+  if (!kabel && akku_spannung->has_state() && akku_spannung->state < 3.95f) {
+    if (s.ohne_strom_ms == 0) s.ohne_strom_ms = jetzt | 1;
+    else if (jetzt - s.ohne_strom_ms > 120000) { s.ohne_strom_ms = 0; verlassen("Dock ohne Strom"); return; }
+  } else {
+    s.ohne_strom_ms = 0;
   }
   // Display wach halten
   if (display_soll_an() && jetzt - s.wach_ms > 5000) {
