@@ -34,8 +34,9 @@ Die Originaldateien legen nicht fest, wie die Remote im Dock steht, denn die Fus
 Für eine vollständige Darstellung bräuchte es ein STEP-Modell der verwendeten Pogo-Pins mit ihrer Einbaulage, zum Beispiel aus der
 Fusion-Baugruppe exportiert, oder ein Export der ganzen Baugruppe als STEP („OpenRemote Dock Rev6“ mit eingesetzter Remote).
 
-Die Farben sind gewählt, weil die Teile gedruckt werden: Gehäuse schwarz, Abdeckplatte grau, Dock rot wie in der Broschüre,
-wahlweise graphit oder weiß. Die Inhalte auf dem Display sind Beispieldaten; im Gerät kommen sie aus Home Assistant.
+Die Farben sind gewählt, weil die Teile gedruckt werden: Gehäuse schwarz, Abdeckplatte grau, Tasten schwarz mit weißen
+Symbolen (die Gravur aus dem Tasten-STL wird beim Modellbau als eigenes Teil abgetrennt), Aus-Taste rot, Dock schwarz.
+Remote und Dock lassen sich in der Tafel umfärben. Die Inhalte auf dem Display sind Beispieldaten; im Gerät kommen sie aus Home Assistant.
 
 ## Entwickeln
 

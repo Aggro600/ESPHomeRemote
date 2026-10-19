@@ -79,8 +79,11 @@ input[type="range"] { width: 100%; accent-color: var(--blau); height: 22px; }
 .schalter { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .pille { appearance: none; border: 1px solid var(--rand); background: transparent; border-radius: 999px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; color: var(--leise); transition: all 0.2s; }
 .pille[aria-pressed="true"] { color: var(--text); border-color: var(--blau); background: rgba(59, 130, 246, 0.16); }
-.farben { display: flex; gap: 10px; }
-.farbe { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--rand); background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.45), transparent 45%), var(--f); cursor: pointer; }
+.farbzeile { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.farbzeile > span { font-size: 13px; color: var(--leise, #9aa3b2); }
+.farben { display: flex; gap: 8px; }
+.farbe.zwei { background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.45), transparent 45%), linear-gradient(135deg, var(--f) 50%, var(--g) 50%); }
+.farbe { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--rand); background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.45), transparent 45%), var(--f); cursor: pointer; }
 .farbe[aria-pressed="true"] { border-color: var(--blau2); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3); }
 .hinweis { margin: 16px 0 0; color: var(--leise); font-size: 12px; }
 

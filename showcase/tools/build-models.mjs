@@ -41,6 +41,18 @@ const stl = (rel) => {
   return g;
 };
 
+// Dreiecke nach einer Bedingung (Eckpunkte, Normale z) auf zwei Geometrien aufteilen: [passend, rest]
+function trennen(g, passt) {
+  const pos = g.attributes.position.array, ja = [], nein = [];
+  for (let i = 0; i < pos.length; i += 9) {
+    const p = pos.subarray(i, i + 9);
+    const a = [p[3] - p[0], p[4] - p[1], p[5] - p[2]], b = [p[6] - p[0], p[7] - p[1], p[8] - p[2]];
+    const c = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    (passt(p, c[2] / (Math.hypot(...c) || 1)) ? ja : nein).push(...p);
+  }
+  return [ja, nein].map((a) => new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(new Float32Array(a), 3)));
+}
+
 // Geometrie aufbereiten: Meter, Knick-Normalen, gleiche Punkte zusammenfassen
 const fertig = (g, matrix) => {
   if (matrix) g.applyMatrix4(matrix);
@@ -162,8 +174,18 @@ async function remote() {
   const add = (name, g, material, farbe, extra = {}) => teile.push({ name, g: fertig(g), material, farbe, ...extra });
   add("remote_gehaeuse", stl(S + "Case - Screws with Pogo Pins Rev6 v40.stl"), "gehaeuse", [0.05, 0.055, 0.06], { rau: 0.55 });
   add("remote_abdeckung", stl(S + "Cover Plate 5mm (+1mm) Rev6-v37.stl"), "abdeckung", [0.62, 0.64, 0.67], { rau: 0.35, metall: 0.6 });
-  add("remote_tasten", stl(S + "Button Grid BuyDisplay Rev6-v37.stl"), "tasten", [0.035, 0.037, 0.04], { rau: 0.7 });
-  add("remote_taste_aus", stl(S + "Off Button BuyDisplay Rev6-v37.stl"), "taste_rot", [0.75, 0.08, 0.07], { rau: 0.5 });
+  // Die Symbole sind 0,05 mm tief in die Tastenoberseite (z 6,40) graviert: Boden flach bei z 6,35, Waende senkrecht
+  // dazwischen. Sie werden als eigenes Teil abgetrennt, damit sie weiss erscheinen koennen (wie bedruckte Tasten).
+  const gravur = (p, nz) => {
+    const z = [p[2], p[5], p[8]], lo = Math.min(...z), hi = Math.max(...z);
+    return (nz > 0.9999 && Math.abs(lo - 6.35) < 0.004 && hi - lo < 0.004) || (Math.abs(nz) < 0.05 && lo > 6.346 && hi < 6.404);
+  };
+  const [symbole, tasten] = trennen(stl(S + "Button Grid BuyDisplay Rev6-v37.stl"), gravur);
+  add("remote_tasten", tasten, "tasten", [0.035, 0.037, 0.04], { rau: 0.7 });
+  add("remote_tasten_symbole", symbole, "tasten_symbole", [0.92, 0.93, 0.94], { rau: 0.45 });
+  const [ausSymbol, aus] = trennen(stl(S + "Off Button BuyDisplay Rev6-v37.stl"), gravur);
+  add("remote_taste_aus", aus, "taste_rot", [0.75, 0.08, 0.07], { rau: 0.5 });
+  add("remote_taste_aus_symbol", ausSymbol, "tasten_symbole", [0.92, 0.93, 0.94], { rau: 0.45 });
   // Farbtasten: ein Original-Teil, viermal in der Reihe (Positionen aus den Loechern der Abdeckplatte, s. FARBEN_X)
   const farben = [["rot", [0.85, 0.12, 0.1]], ["gruen", [0.1, 0.6, 0.22]], ["gelb", [0.95, 0.78, 0.1]], ["blau", [0.1, 0.35, 0.9]]];
   const fx = (process.env.FARBEN_X || "-16,-5.333,5.333,16").split(",").map(Number);

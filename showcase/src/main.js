@@ -1,7 +1,7 @@
 // OpenRemote Rev6 - 3D-Showcase. Einstieg: Szene, Modelle, Display, Andocken, Bedienung.
 import * as THREE from "three";
 import { szeneBauen } from "./scene.js";
-import { modelleLaden, explosionSetzen, oberflaecheSetzen } from "./models.js";
+import { modelleLaden, explosionSetzen, dockFarbe, remoteFarbe } from "./models.js";
 import { Display, schriftenLaden } from "./display.js";
 import { Docking } from "./docking.js";
 import { Kamera } from "./camera.js";
@@ -75,10 +75,13 @@ async function start() {
   schalter("drehen", (an) => (controls.autoRotate = an));
   schalter("punkte", (an) => $("hotspots").classList.toggle("aus", !an));
 
-  document.querySelectorAll("[data-farbe]").forEach((b) => (b.onclick = () => {
-    document.querySelectorAll("[data-farbe]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    oberflaecheSetzen(teile, b.dataset.farbe);
-  }));
+  for (const [attr, setzen] of [["dock", dockFarbe], ["remote", remoteFarbe]]) {
+    const knoepfe = document.querySelectorAll(`[data-${attr}]`);
+    knoepfe.forEach((b) => (b.onclick = () => {
+      knoepfe.forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      setzen(teile, b.dataset[attr]);
+    }));
+  }
 
   function zuruecksetzen() {
     tour.stopp();

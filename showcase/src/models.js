@@ -7,11 +7,13 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 const MM = 0.001;
 
 // Oberflaechen. Die Teile sind 3D-gedruckt; die Farben folgen den Bildern im Hardware-Repository
-// (Gehaeuse schwarz, Abdeckplatte grau, Tasten schwarz, Dock rot oder graphit).
+// (Gehaeuse schwarz, Abdeckplatte grau, Tasten schwarz mit weissen Symbolen, Dock schwarz). Remote und Dock sind
+// umfaerbbar (FARBEN_REMOTE, FARBEN_DOCK).
 const MATERIAL = {
   gehaeuse: { color: 0x0b0c0e, roughness: 0.62, clearcoat: 0.15, clearcoatRoughness: 0.6 },
   abdeckung: { color: 0x5d6067, roughness: 0.78, metalness: 0.1 },
   tasten: { color: 0x101114, roughness: 0.5, clearcoat: 0.25, clearcoatRoughness: 0.45 },
+  tasten_symbole: { color: 0xf2f4f7, roughness: 0.45, emissive: 0xffffff, emissiveIntensity: 0.12 },
   taste_rot: { color: 0xb3120f, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3 },
   taste_gruen: { color: 0x0f8a2e, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3 },
   taste_gelb: { color: 0xe8b80c, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3 },
@@ -23,7 +25,7 @@ const MATERIAL = {
   platine_glas: { color: 0x05070a, roughness: 0.03, transparent: true, opacity: 0.16, depthWrite: false, clearcoat: 1, clearcoatRoughness: 0.02 },
   platine_led: { color: 0xe8e6da, roughness: 0.3, emissive: 0x6aa8ff, emissiveIntensity: 0 },
   platine_ir: { color: 0x3a3548, roughness: 0.15, transmission: 0, emissive: 0x9b5cff, emissiveIntensity: 0 },
-  dock: { color: 0x7a0f0d, roughness: 0.38, metalness: 0.35, clearcoat: 1, clearcoatRoughness: 0.12 },
+  dock: { color: 0x101114, roughness: 0.38, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.12 },
   dock_boden: { color: 0x141518, roughness: 0.7 },
   dock_taste: { color: 0xd8dade, roughness: 0.18, metalness: 1 },
   dock_platine_platine: { color: 0x0a0b0d, roughness: 0.42, clearcoat: 0.5, clearcoatRoughness: 0.25 },
@@ -32,10 +34,20 @@ const MATERIAL = {
   dock_platine_led: { color: 0x9ae6b4, roughness: 0.3, emissive: 0x22c55e, emissiveIntensity: 0 },
   dock_platine_ir: { color: 0xd9dbe0, roughness: 0.1, metalness: 0.9, emissive: 0x9b5cff, emissiveIntensity: 0 },
 };
-export const OBERFLAECHEN = {
-  rot: { dock: 0x7a0f0d, dockMetall: 0.35 },
-  graphit: { dock: 0x1d2026, dockMetall: 0.15 },
-  weiss: { dock: 0xd9dbdf, dockMetall: 0.0 },
+// Farbwahl in der Tafel (index.html, data-dock / data-remote). Erster Eintrag = Standard.
+export const FARBEN_DOCK = {
+  schwarz: { dock: 0x101114, metall: 0.2 },
+  graphit: { dock: 0x1d2026, metall: 0.15 },
+  rot: { dock: 0x7a0f0d, metall: 0.35 },
+  blau: { dock: 0x0f2f6e, metall: 0.3 },
+  weiss: { dock: 0xd9dbdf, metall: 0.0 },
+};
+export const FARBEN_REMOTE = {
+  standard: { gehaeuse: 0x0b0c0e, abdeckung: 0x5d6067 },   // schwarz mit grauer Abdeckplatte
+  schwarz: { gehaeuse: 0x0b0c0e, abdeckung: 0x151619 },
+  weiss: { gehaeuse: 0xdfe1e5, abdeckung: 0xb9bcc2 },
+  rot: { gehaeuse: 0x7a0f0d, abdeckung: 0x2a2c31 },
+  blau: { gehaeuse: 0x0f2f6e, abdeckung: 0x5d6067 },
 };
 
 // Explosionsansicht: Versatz je Teil (mm) im eigenen Koordinatensystem.
@@ -110,9 +122,14 @@ export function explosionSetzen(teile, e) {
   }
 }
 
-export function oberflaecheSetzen(teile, art) {
-  const o = OBERFLAECHEN[art] || OBERFLAECHEN.rot;
-  const m = teile.dock_schale.material;
-  m.color.setHex(o.dock);
-  m.metalness = o.dockMetall;
+export function dockFarbe(teile, art) {
+  const f = FARBEN_DOCK[art] || FARBEN_DOCK.schwarz, m = teile.dock_schale.material;
+  m.color.setHex(f.dock);
+  m.metalness = f.metall;
+}
+
+export function remoteFarbe(teile, art) {
+  const f = FARBEN_REMOTE[art] || FARBEN_REMOTE.standard;
+  teile.remote_gehaeuse.material.color.setHex(f.gehaeuse);
+  teile.remote_abdeckung.material.color.setHex(f.abdeckung);
 }

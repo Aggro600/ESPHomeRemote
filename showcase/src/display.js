@@ -123,29 +123,30 @@ export class Display {
     const my = 22;
     const uhr = `${String(jetzt.getHours()).padStart(2, "0")}:${String(jetzt.getMinutes()).padStart(2, "0")}`;
     this.text(uhr, 6, my - 15 * 0.62, 15, F.muted);
-    // Rechte Gruppe (flex end, pad_column 3). Laut Firmware-Kommentar steht das ERSTE Widget ganz rechts:
-    // Assistent | BLE-Balken | WLAN-Balken | HA-Symbol | Ladeblitz | Akku-Prozent  (von rechts nach links)
+    // Rechte Gruppe (flex row, flex_align_main end, pad_column 3): die Reihenfolge der Liste bleibt erhalten,
+    // das letzte Widget steht ganz rechts. Von links nach rechts:
+    // Assistent | BLE-Balken | WLAN-Balken | HA-Symbol | Ladeblitz | Akku-Prozent
     // Farben nach refresh_wifi_bars: Bluetooth blau, WLAN gruen, HA ueber WLAN gruen
     let x = 234;
-    const assi = zeichen(MDI.assistent);
-    x -= this.breite(assi, 20, "MDI");
-    this.text(assi, x, my - 20 * 0.62, 20, F.gruen, "MDI");
-    for (const farbe of [F.blau, F.gruen]) {   // ble_bars, wifi_bars: 15 x 16, Balken 3 px breit, 6/11/15 hoch
-      x -= 3 + 15;
-      [6, 11, 15].forEach((h, i) => this.rechteck(x + i * 5, my + 8 - h, 3, h, 1, farbe));
-    }
-    const ha = zeichen(MDI.ha);
-    x -= 3 + this.breite(ha, 16, "MDI");
-    this.text(ha, x, my - 16 * 0.62, 16, F.gruen, "MDI");
+    const voll = !z.kabel && z.akku >= 100;
+    const pct = `${Math.min(Math.floor(z.akku), voll ? 100 : 99)}%`;   // akku_anzeige_pct: 100 nur bei vollem Akku
+    x -= this.breite(pct, 15);
+    this.text(pct, x, my - 15 * 0.62, 15, z.kabel || voll ? F.gruen : F.muted);
     if (z.kabel) {
       const b = zeichen(MDI.laden);
       x -= 3 + this.breite(b, 15, "MDI");
       this.text(b, x, my - 15 * 0.62, 15, F.gruen, "MDI");
     }
-    const voll = !z.kabel && z.akku >= 100;
-    const pct = `${Math.min(Math.floor(z.akku), voll ? 100 : 99)}%`;   // akku_anzeige_pct: 100 nur bei vollem Akku
-    x -= 3 + this.breite(pct, 15);
-    this.text(pct, x, my - 15 * 0.62, 15, z.kabel || voll ? F.gruen : F.muted);
+    const ha = zeichen(MDI.ha);
+    x -= 3 + this.breite(ha, 16, "MDI");
+    this.text(ha, x, my - 16 * 0.62, 16, F.gruen, "MDI");
+    for (const farbe of [F.gruen, F.blau]) {   // wifi_bars, ble_bars: 15 x 16, Balken 3 px breit, 6/11/15 hoch
+      x -= 3 + 15;
+      [6, 11, 15].forEach((h, i) => this.rechteck(x + i * 5, my + 8 - h, 3, h, 1, farbe));
+    }
+    const assi = zeichen(MDI.assistent);
+    x -= 3 + this.breite(assi, 20, "MDI");
+    this.text(assi, x, my - 20 * 0.62, 20, F.gruen, "MDI");
   }
 
   startseite() {
