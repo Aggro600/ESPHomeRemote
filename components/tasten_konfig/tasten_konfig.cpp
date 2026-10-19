@@ -129,7 +129,8 @@ bool TastenKonfig::anwenden_(const char *daten, size_t len, const std::string &h
   // Bluetooth-Proxys aus dem Konfigurator ("bt": {"proxies": ["AA:BB:..", ..]}) als HA-Link-Partner annehmen -
   // nur, wenn die Firmware den Link ueberhaupt hat (ha_tunnel mit festen proxy_macs), sonst bliebe er ohne Tunnel an.
   if (kb_ != nullptr && kb_->link_enabled()) {
-    for (JsonVariantConst m : (*doc_)["bt"]["proxies"].as<JsonArrayConst>()) {
+    const JsonArrayConst proxys = (*doc_)["bt"]["proxies"].as<JsonArrayConst>();
+    for (JsonVariantConst m : proxys) {
       const char *mac = m | "";
       if (strlen(mac) == 17) kb_->add_link_peer(mac);
     }
@@ -405,7 +406,7 @@ void TastenKonfig::modus_starten(const char *id) {
 void TastenKonfig::modus_verlaengern_(int taste) {
   uint32_t ms = modus_ms_;
   if (taste >= 0) {   // eigene Zeit dieser Taste (Konfigurator, 2026-10-18)
-    char k[6];
+    char k[12];
     snprintf(k, sizeof(k), "%d", taste);
     const uint32_t s = modus_keys_()[k]["s"] | 0u;
     if (s > 0) ms = s * 1000u;

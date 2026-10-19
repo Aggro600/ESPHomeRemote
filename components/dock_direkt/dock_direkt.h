@@ -13,7 +13,9 @@
 // notfalls alle Kanaele) und danach wieder aus.
 //
 // Schutz: HMAC-SHA256 (gekuerzt auf 8 Byte) mit gemeinsamem Schluessel aus secrets.yaml ueber Absender-MAC und
-// Inhalt; je Absender Sitzung + laufende Nummer gegen Wiederholung mitgeschnittener Pakete.
+// Inhalt; je Absender eine laufende Nummer gegen Wiederholung mitgeschnittener Pakete. Die Nummer zaehlt ueber
+// Neustarts weiter (NVS, in 1000er-Schritten vorausgespeichert) - das Dock nimmt nur steigende Nummern an
+// (2026-10-19; vorher je Sitzung neu ab 1, ein Paket aus einer alten Sitzung liess sich wiederholen).
 //
 // Paket: 'O' 'R' ver(1) typ(1) sitzung(4) nr(4) param(4) anzahl(2) zeiten(varint, zigzag) hmac(8)
 //   typ 1 = Infrarot (param = Traeger Hz), 2 = 433 MHz (param = Wiederholungen)
@@ -87,7 +89,8 @@ class DockDirekt : public Component {
   uint32_t funk_ab_ms_{0};         // geliehener Funk: erst ab dann senden
   uint32_t sitzung_{0}, nr_{0};
   uint8_t kanal_{0};               // zuletzt bekannter WLAN-Kanal (gespeichert)
-  ESPPreferenceObject kanal_pref_;
+  ESPPreferenceObject kanal_pref_, nr_pref_;
+  uint32_t nr_bis_{0};   // so weit ist die Nummer im NVS vorausgespeichert
   uint32_t kanal_pruef_ms_{0};
 
   // ---- Empfangen (Dock)

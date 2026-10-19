@@ -97,6 +97,14 @@ void DockDirekt::setup() {
   sitzung_ = esp_random();
   kanal_pref_ = global_preferences->make_preference<uint8_t>(0x44445201u);
   if (!kanal_pref_.load(&kanal_)) kanal_ = 0;
+#ifndef DD_EMPFANG
+  // Laufende Nummer: ab dem vorausgespeicherten Stand weiter, naechsten Block gleich sichern
+  nr_pref_ = global_preferences->make_preference<uint32_t>(0x44445202u);
+  if (!nr_pref_.load(&nr_)) nr_ = 0;
+  nr_bis_ = nr_ + 1000;
+  nr_pref_.save(&nr_bis_);
+  global_preferences->sync();   // sofort schreiben: nach einem Absturz duerfen keine Nummern doppelt vorkommen
+#endif
   bereit_();
 }
 
@@ -156,7 +164,12 @@ bool DockDirekt::senden(const uint8_t mac[6], Typ typ, uint32_t param, const std
   p.push_back(VER);
   p.push_back((uint8_t) typ);
   u32(p, sitzung_);
-  u32(p, ++nr_);
+  if (++nr_ >= nr_bis_) {   // Block aufgebraucht: naechsten sichern, bevor die Nummer benutzt wird
+    nr_bis_ = nr_ + 1000;
+    nr_pref_.save(&nr_bis_);
+    global_preferences->sync();
+  }
+  u32(p, nr_);
   u32(p, param);
   p.push_back((uint8_t) (zeiten.size() & 0xFF));
   p.push_back((uint8_t) (zeiten.size() >> 8));
@@ -316,7 +329,8 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
   const uint16_t anzahl = d[16] | (d[17] << 8);
   Absender *a = nullptr;
   for (auto &x : absender_) if (memcmp(x.mac, mac, 6) == 0) a = &x;
-  if (a != nullptr && a->sitzung == sitzung && nr <= a->nr) { ESP_LOGD(TAG, "%s: Nr. %u schon gehabt", von, (unsigned) nr); return; }
+  // Nur steigende Nummern (sie zaehlen ueber Neustarts der Remote weiter); nach einem Neustart des Docks gilt die erste
+  if (a != nullptr && nr <= a->nr) { ESP_LOGD(TAG, "%s: Nr. %u schon gehabt (zuletzt %u)", von, (unsigned) nr, (unsigned) a->nr); return; }
   if (a == nullptr) {
     if (absender_.size() >= 8) absender_.erase(absender_.begin());
     absender_.push_back(Absender{});

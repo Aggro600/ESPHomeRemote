@@ -142,8 +142,12 @@ class EspidfBleKeyboard : public Component
   // HALINK (2026-10-05): zweite, parallele BLE-Verbindung zu Home Assistant ueber einen
   // ESPHome-Bluetooth-Proxy (erkannt an dessen Adresse). Transportiert Rahmen fuer ha_tunnel:
   // HA -> Remote per Write auf RX, Remote -> HA per Notify auf TX. Ohne Peer ist alles aus.
-  bool link_enabled() const { return !link_peers_.empty(); }
+  // HA-Link vorhanden: ha_tunnel schaltet ihn ein (enable_link), die Proxys kommen aus dem Konfigurator (2026-10-19:
+  // vorher galt der Link nur mit festen proxy_macs als vorhanden - ohne sie blieb er ganz aus)
+  void enable_link() { link_on_ = true; link_peers_.reserve(16); }   // Platz vor dem Bluetooth-Start (Proxys kommen spaeter)
+  bool link_enabled() const { return link_on_ || !link_peers_.empty(); }
   void add_link_peer(const std::string &mac);
+  bool link_on_{false};
   void clear_link_peers() { link_peers_.clear(); }
   // Parallel-Modus: so viele Hosts duerfen im Hintergrund verbunden bleiben (Standard 1, s. switch_host)
   void set_max_parked(uint8_t n) { max_parked_ = n; }

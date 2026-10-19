@@ -752,6 +752,7 @@ inline void einrichten() {
     if (activity->value() >= aktivitaeten_anzahl()) activity->value() = 0;
     apply_activity->execute();
     apply_home_layout->execute();
+    tv_knopf_pruefen->execute();   // Verknuepfung "tv" kann sich geaendert haben
   });
   t->darf_laden = []() {
     if (voice_active->value()) return false;

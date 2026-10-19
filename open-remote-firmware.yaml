@@ -536,8 +536,8 @@ api:
         nr: int
       then:
         - lambda: 'if (nr < 0) tasten::aktivitaet_aus(); else tasten::aktivitaet_setzen(nr);'
-    # Cover neu laden: von der HA-Automation "SmartTube Cover neu laden", NACHDEM das Bild verkleinert abgelegt ist
-    # (smarttube_cover_resize.py) - sonst kam das Cover des vorherigen Titels.
+    # Cover neu laden: von der Integration (esphomeremote_konfig/cover.py), NACHDEM sie das Bild verkleinert abgelegt
+    # hat - sonst kam das Cover des vorherigen Titels.
     - service: refresh_cover
       then:
         - online_image.set_url:
@@ -3055,6 +3055,14 @@ script:
   # nur ein Teil von apply_mic_power, weil set_mic_blocked(true) dort bewusst OHNE
   # apply_mic_power aufgerufen wird (die SD-Skripte steuern MIC_VDD selbst, zeitkritisch) -
   # das Symbol muss trotzdem sofort umschalten (Nutzerwunsch 2026-09-24).
+  # Knopf "Fernseher einschalten" (Media-Seite): nur bei gewaehltem Fernseher (Verknuepfung "tv"), solange er aus ist.
+  # Auch nach jeder neuen Konfiguration (open-remote-tasten.h) - die Verknuepfung kann nach dem TV-Zustand kommen.
+  - id: tv_knopf_pruefen
+    then:
+      - lambda: |-
+          if (id(tv_on) || id(tk_cfg).ent("tv").empty()) lv_obj_add_flag(id(m_tv_on), LV_OBJ_FLAG_HIDDEN);
+          else lv_obj_clear_flag(id(m_tv_on), LV_OBJ_FLAG_HIDDEN);
+
   - id: refresh_mic_icon
     then:
       - lambda: |-
@@ -5812,7 +5820,8 @@ text_sensor:
       return std::string("Platz ") + std::to_string(id(kb).active_host_slot() + 1);
 
   # ---- "Jetzt laeuft": eine HA-Entitaet fasst Streamer, Multiroom, Chromecast und Fernseher zusammen
-  # (custom_components/esphomeremote_now_playing, dem gewaehlten "Jetzt laeuft"-Player (Verknuepfung "jetzt")). Andere Dashboards koennen sie genauso nutzen.
+  # (Konfigurator > Wiedergabe, esphomeremote_konfig/jetzt.py). Welche, waehlt die Verknuepfung "jetzt"; gelesen ueber den
+  # Spiegel sensor.esphomeremote_spiegel_<remote>_jetzt.
   - platform: homeassistant
     id: mp_state
     entity_id: sensor.esphomeremote_spiegel_${ha_name}_jetzt
@@ -5953,11 +5962,10 @@ text_sensor:
     internal: true
     on_value:
       - lambda: |-
-          // Alles ausser "off"/"unavailable" heisst: der Fernseher laeuft.
-          id(tv_on) = !(x == "off" || x == "unavailable" || x == "unknown" || x.empty());
-          // Media-Player-Seite: Knopf "Fernseher einschalten" nur, solange er aus ist
-          if (id(tv_on) || id(tk_cfg).ent("tv").empty()) lv_obj_add_flag(id(m_tv_on), LV_OBJ_FLAG_HIDDEN);
-          else           lv_obj_clear_flag(id(m_tv_on), LV_OBJ_FLAG_HIDDEN);
+          // Alles ausser aus/Bereitschaft/unbekannt heisst: der Fernseher laeuft.
+          id(tv_on) = !(x == "off" || x == "standby" || x == "unavailable" || x == "unknown" || x.empty());
+      - script.execute: tv_knopf_pruefen
+      - lambda: |-
           id(update_media_state)->execute();
           id(media_layout)->execute();
           // Der Knopf kommt und geht - steht man gerade auf der
@@ -6929,7 +6937,7 @@ lvgl:
         - script.execute: focus_apply
       widgets:
         # Cover als Vollbild-Hintergrund (240x320, s. adb_title oben und
-        # smarttube_cover_resize.py) - MUSS das erste Widget sein, damit es
+        # esphomeremote_konfig/cover.py) - MUSS das erste Widget sein, damit es
         # hinter allem anderen liegt (LVGL zeichnet in Listenreihenfolge).
         # Start versteckt - erst adb_title zeigt es, sonst haengt ein
         # leeres/kaputtes Bild rum, solange HA noch keine Cover-URL hat.
