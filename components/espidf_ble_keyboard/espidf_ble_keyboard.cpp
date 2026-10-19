@@ -259,7 +259,9 @@ static volatile uint8_t s_link_probe_fail = 0;
 // Proxy die Funkverbindung, obwohl HA sie verloren hat, antwortet RSSI weiter - nur so faellt der Link auf.
 static volatile uint32_t s_link_rx_ms = 0;
 static uint16_t s_link_tot_conn = 0xFFFF;   // fuer tot erklaerte Link-Verbindung: ihr spaetes DISCONNECT ignorieren
-static bool link_wants_adv() { return s_instance && s_instance->link_enabled() && !s_link_connected && !s_instance->funk_aus(); }
+static bool link_wants_adv() {
+    return s_instance && s_instance->link_enabled() && !s_instance->link_paused() && !s_link_connected && !s_instance->funk_aus();
+}
   static std::atomic<bool> s_directed_adv_active{false};
   static std::atomic<uint32_t> s_directed_adv_start_ms{0};
   static esp_bd_addr_t s_directed_addr = {};
@@ -595,7 +597,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                 static uint8_t adv[31];
                 size_t n = sizeof(raw_adv_data);
                 memcpy(adv, raw_adv_data, n);
-                if (s_instance && s_instance->link_enabled() && n + 10 <= sizeof(adv)) {
+                if (s_instance && s_instance->link_enabled() && !s_instance->link_paused() && n + 10 <= sizeof(adv)) {
                     uint32_t h = 2166136261u;
                     for (char ch : s_instance->device_name()) { h ^= (uint8_t) ch; h *= 16777619u; }
                     const uint8_t m[10] = {9, 0xFF, 0xFF, 0xFF, 'H', 'L', (uint8_t) h, (uint8_t) (h >> 8),
@@ -1153,6 +1155,13 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
         }
         case ESP_GATTS_CONNECT_EVT: {
             if (param->connect.conn_id == s_link_tot_conn) s_link_tot_conn = 0xFFFF;   // Nummer neu vergeben
+            if (s_instance && s_instance->is_link_peer(param->connect.remote_bda) && s_instance->link_paused()) {
+                // HA-Link pausiert: Proxy-Verbindung ablehnen (kein HID-Host!)
+                ESP_LOGI(TAG, "HALINK: pausiert - Proxy-Verbindung abgelehnt");
+                s_adv_running = false;
+                esp_ble_gap_disconnect(param->connect.remote_bda);
+                break;
+            }
             if (s_instance && s_instance->is_link_peer(param->connect.remote_bda)) {   // HALINK
                 s_adv_running = false;   // die Verbindung hat das Werbe-Set beendet
                 s_link_connected = true;
@@ -3015,7 +3024,7 @@ void EspidfBleKeyboard::loop() {
         static uint32_t probe_ms = 0, ohne_seit = 0, neu_ms = 0;
         static uint8_t runde = 0;
         const uint32_t jetzt = millis();
-        if (!link_enabled() || funk_aus_) {
+        if (!link_enabled() || funk_aus_ || link_paused()) {
             ohne_seit = 0;
         } else if (s_link_connected) {
             ohne_seit = 0;
@@ -3533,6 +3542,37 @@ bool EspidfBleKeyboard::is_link_peer(const uint8_t *bda) const {
     for (auto &a : link_peers_) if (memcmp(a.data(), bda, 6) == 0) return true;
     return false;
 }
+void EspidfBleKeyboard::set_link_pause(bool p) {
+    if (link_pause_.exchange(p) == p) return;
+    if (p) {
+        if (weck_log) weck_log("HA-Link pausiert (Ruhezustand)");
+        ESP_LOGI(TAG, "HALINK: pausiert (Ruhezustand)");
+        if (s_link_connected) {
+            s_link_probe_fail = 0;
+            s_link_probe_pending = false;
+            s_link_connected = false;
+            s_link_tot_conn = s_link_conn_id;
+            s_link_conn_id = 0xFFFF;
+            s_link_inflight = s_link_retry = false;
+            link_ccc_val = 0;
+            link_clear_();
+            esp_ble_gap_disconnect(s_link_bda);
+        }
+    } else {
+        if (weck_log) weck_log("HA-Link wieder an");
+        ESP_LOGI(TAG, "HALINK: wieder an");
+        s_link_lost_ms = millis();
+    }
+    // Werbung anpassen: pausiert und mit dem HID-Host verbunden -> gar nicht mehr werben (spart Strom); ohne Host
+    // weiter fuer Hosts werben, aber ohne Link-Kennung. Wieder an -> schnell mit Kennung werben.
+    if (p && is_connected_) {
+        if (s_adv_running) { s_restart_adv_pending = false; adv_stop_(); }
+        return;
+    }
+    if (!p) adv_fast_again();
+    do_start_advertising();
+}
+
 bool EspidfBleKeyboard::link_connected() const { return s_link_connected && (link_ccc_val & 0x0001); }
 uint16_t EspidfBleKeyboard::link_payload() const { return s_link_mtu > 3 ? s_link_mtu - 3 : 20; }
 bool EspidfBleKeyboard::link_congested() const { return s_link_congested; }

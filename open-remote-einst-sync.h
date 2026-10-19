@@ -33,7 +33,7 @@ inline void einrichten() {
   // Dock-Anzeige, Touchpad, Gesten (2026-10-17)
   EINST_B(dock_an); EINST_I(dock_disp); EINST_I(dock_von); EINST_I(dock_bis);
   EINST_B(musik_dock); EINST_B(musik_player);   // Musik-Anzeige (2026-10-18)
-  EINST_I(ha_dock);   // HA-Befehle ueber das Dock (2026-10-19)
+  EINST_I(ha_dock); EINST_I(ha_link_ruhe);   // HA-Befehle ueber das Dock, HA-Link im Ruhezustand (2026-10-19)
   EINST_I(maus_slots); EINST_I(voll_slots); EINST_I(maus_tempo);
   EINST_B(maus_dpad); EINST_I(maus_dpad_tempo); EINST_I(maus_zurueck);
   EINST_B(gesten_an); EINST_B(gesten_dunkel); EINST_I(gesten_sens);

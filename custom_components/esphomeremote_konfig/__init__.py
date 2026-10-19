@@ -44,7 +44,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "75"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "76"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,

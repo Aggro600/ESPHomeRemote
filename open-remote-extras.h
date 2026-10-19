@@ -58,6 +58,14 @@ inline void auffrischen() {
   lv_label_set_text(h_ha_dock, hd == 2 ? "Immer: HA-Befehle der Tasten und des Menüs gehen per Funk ans Dock - sofort, auch direkt nach dem Aufwachen. Antwortet kein Dock, wie bisher direkt an HA."
                              : hd == 1 ? "Ohne HA: Nur solange die Remote noch nicht mit HA verbunden ist (z. B. gleich nach dem Aufwachen), übers Dock."
                                        : "Aus: HA-Befehle gehen nur über die eigene Verbindung (Bluetooth/WLAN) und warten nach dem Aufwachen auf sie.");
+  {
+    const int m = ha_link_ruhe->value();
+    char hb[16];
+    if (m <= 0) snprintf(hb, sizeof(hb), "Immer"); else snprintf(hb, sizeof(hb), "%d min", m);
+    wert(ha_link_lbl, hb, m > 0);
+    lv_label_set_text(h_ha_link, m <= 0 ? "Immer: Die Remote bleibt auch mit dunklem Display mit HA verbunden (Bluetooth) - kostet im Ruhezustand am meisten Strom."
+        : "Trennt die Verbindung zu HA so lange nach dem Ausgehen des Displays (spart Strom). Befehle gehen solange über das Dock; beim Aufwecken verbindet sie sofort wieder.");
+  }
   an_aus(musik_dock_lbl, musik_dock->value());
   an_aus(musik_player_lbl, musik_player->value());
   lv_label_set_text(h_musik_dock, musik_dock->value()

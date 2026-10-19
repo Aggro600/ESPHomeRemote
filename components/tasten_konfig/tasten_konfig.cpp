@@ -371,6 +371,7 @@ void TastenKonfig::ha_senden(const std::string &svc, std::map<std::string, std::
   if (api_ok_()) { kb_->call_homeassistant_service(svc, d); return; }
   if (ha_q_.size() < 8) ha_q_.push_back({svc, std::move(d), millis()});
   ESP_LOGI(TAG, "HA-Aufruf %s wartet auf die Verbindung", svc.c_str());
+  if (ha_wecken) ha_wecken();
 }
 
 int TastenKonfig::aktivitaeten() const {

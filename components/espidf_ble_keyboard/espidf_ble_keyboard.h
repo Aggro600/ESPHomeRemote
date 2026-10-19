@@ -148,6 +148,7 @@ class EspidfBleKeyboard : public Component
   bool link_enabled() const { return link_on_ || !link_peers_.empty(); }
   void add_link_peer(const std::string &mac);
   bool link_on_{false};
+  std::atomic<bool> link_pause_{false};
   void clear_link_peers() { link_peers_.clear(); }
   // Parallel-Modus: so viele Hosts duerfen im Hintergrund verbunden bleiben (Standard 1, s. switch_host)
   void set_max_parked(uint8_t n) { max_parked_ = n; }
@@ -159,6 +160,10 @@ class EspidfBleKeyboard : public Component
   uint8_t max_parked_{1};   // Notaus: vor dem Bluetooth-Start aufrufen (on_boot)
   bool is_link_peer(const uint8_t *bda) const;
   bool link_connected() const;     // verbunden UND Notify abonniert
+  // HA-Link pausieren (2026-10-19, Einstellung "HA-Verbindung im Ruhezustand"): trennt den Link, wirbt nicht mehr
+  // dafuer und lehnt Proxy-Verbindungen ab. Die Verbindung zum HID-Host (Fernseher/Streamer) bleibt.
+  void set_link_pause(bool p);
+  bool link_paused() const { return link_pause_.load(); }
   uint16_t link_payload() const;   // max. Bytes pro Notify (MTU - 3)
   bool link_congested() const;
   bool link_send(const uint8_t *data, size_t len);   // ein Notify, false = spaeter nochmal
