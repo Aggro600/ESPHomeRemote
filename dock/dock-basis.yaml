@@ -157,6 +157,12 @@ api:
             repeat:
               times: !lambda "return wiederholen < 1 ? 5 : (wiederholen > 20 ? 20 : wiederholen);"
               wait_time: 10ms
+    # Stand einer Remote (Startseite, Fernseher, Timer) als JSON - von der Integration bei jeder Aenderung; die Remote
+    # holt ihn nach dem Tiefschlaf per Funk ab (dock_direkt typ 4/5), bevor ihre eigene HA-Verbindung steht
+    - action: zustand
+      variables: {remote: string, inhalt: string}
+      then:
+        - lambda: 'id(direkt).zustand_setzen(remote, inhalt);'
     - action: rf_lernen
       # Lernfenster (Sekunden, Standard 10). Das erste brauchbare Signal kommt als
       # Ereignis esphome.dock_rf_gelernt {code: "350,-1050,...", anzahl: N}
@@ -421,6 +427,7 @@ external_components:
     components: [dock_direkt]
 
 dock_direkt:
+  id: direkt
   schluessel: !secret direkt_schluessel
   # HA-Befehle der Remotes ausfuehren (Remote-Einstellung "HA-Befehle ueber das Dock")
   ha: true

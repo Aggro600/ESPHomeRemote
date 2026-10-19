@@ -40,15 +40,20 @@ static void gesendet_cb(const uint8_t *, esp_now_send_status_t st) {
   s_fertig = true;
 }
 
+// Empfangspuffer: der WLAN-Task schreibt, loop() liest. Dock: 3 Plaetze (Tastendruecke kommen nicht schneller),
+// Remote: 1 (sie empfaengt nur die Antwort auf ihre Zustands-Anfrage; spart internen RAM).
 #ifdef DD_EMPFANG
-// Empfangspuffer: der WLAN-Task schreibt, loop() liest. 3 Plaetze reichen (Tastendruecke kommen nicht schneller).
+static const int FAECHER = 3;
+#else
+static const int FAECHER = 1;
+#endif
 struct Fach {
   std::atomic<bool> voll{false};
   uint8_t mac[6];
   uint16_t len;
   uint8_t d[MAX_PAKET];
 };
-static Fach s_fach[3];
+static Fach s_fach[FAECHER];
 static std::atomic<uint32_t> s_verworfen{0}, s_fremd{0};
 
 static void empfangen_cb(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
@@ -63,7 +68,6 @@ static void empfangen_cb(const esp_now_recv_info_t *info, const uint8_t *data, i
   }
   s_verworfen++;
 }
-#endif
 
 static void varint(std::vector<uint8_t> &o, int32_t v) {
   uint32_t z = ((uint32_t) v << 1) ^ (uint32_t) (v >> 31);
@@ -97,14 +101,12 @@ void DockDirekt::setup() {
   sitzung_ = esp_random();
   kanal_pref_ = global_preferences->make_preference<uint8_t>(0x44445201u);
   if (!kanal_pref_.load(&kanal_)) kanal_ = 0;
-#ifndef DD_EMPFANG
-  // Laufende Nummer: ab dem vorausgespeicherten Stand weiter, naechsten Block gleich sichern
+  // Laufende Nummer (beide Seiten senden): ab dem vorausgespeicherten Stand weiter, naechsten Block gleich sichern
   nr_pref_ = global_preferences->make_preference<uint32_t>(0x44445202u);
   if (!nr_pref_.load(&nr_)) nr_ = 0;
   nr_bis_ = nr_ + 1000;
   nr_pref_.save(&nr_bis_);
   global_preferences->sync();   // sofort schreiben: nach einem Absturz duerfen keine Nummern doppelt vorkommen
-#endif
   bereit_();
 }
 
@@ -130,9 +132,7 @@ bool DockDirekt::bereit_() {
     return false;
   }
   esp_now_register_send_cb(gesendet_cb);
-#ifdef DD_EMPFANG
   esp_now_register_recv_cb(empfangen_cb);
-#endif
   uint32_t v = 0;
   esp_now_get_version(&v);
   ESP_LOGI(TAG, "ESP-NOW bereit (Version %u)", (unsigned) v);
@@ -163,6 +163,18 @@ bool DockDirekt::senden_ha(const uint8_t mac[6], const std::string &dienst,
   }
   if (inhalt.size() > 0xFFFF) return false;
   return einreihen_(mac, HA, 0, (uint16_t) inhalt.size(), inhalt, std::move(fehlschlag));
+}
+
+bool DockDirekt::zustand_anfragen(const uint8_t mac[6], const std::string &name, std::function<void()> &&fehlschlag) {
+  std::vector<uint8_t> inhalt(name.begin(), name.end());
+  return einreihen_(mac, ZUSTAND_FRAGE, 0, (uint16_t) inhalt.size(), inhalt, std::move(fehlschlag));
+}
+
+void DockDirekt::zustand_setzen(const std::string &remote, const std::string &text) {
+  if (text.size() + KOPF + HMAC_LEN > MAX_PAKET) { ESP_LOGW(TAG, "Stand fuer %s zu gross (%u Byte)", remote.c_str(), (unsigned) text.size()); return; }
+  if (zustaende_.size() >= 8 && zustaende_.find(remote) == zustaende_.end()) zustaende_.erase(zustaende_.begin());
+  zustaende_[remote] = text;
+  ESP_LOGD(TAG, "Stand fuer %s: %u Byte", remote.c_str(), (unsigned) text.size());
 }
 
 bool DockDirekt::einreihen_(const uint8_t mac[6], Typ typ, uint32_t param, uint16_t anzahl, const std::vector<uint8_t> &inhalt,
@@ -245,6 +257,7 @@ void DockDirekt::loop() {
   // Beim Start ist das WLAN oft noch nicht gestartet: bis ESP-NOW laeuft, alle 2 s neu versuchen
   // (ohne laeuft nichts - die WLAN-Hardware bestaetigt Pakete trotzdem, die Remote merkt es also nicht).
   if (!init_) bereit_();
+#endif
   for (auto &f : s_fach) {
     if (!f.voll) continue;
     verarbeiten_(f.mac, f.d, f.len);
@@ -252,7 +265,6 @@ void DockDirekt::loop() {
   }
   if (const uint32_t v = s_verworfen.exchange(0)) ESP_LOGW(TAG, "%u Pakete verworfen (Puffer voll)", (unsigned) v);
   if (const uint32_t v = s_fremd.exchange(0)) ESP_LOGD(TAG, "%u fremde ESP-NOW-Pakete ignoriert", (unsigned) v);
-#endif
 #ifdef DD_HA
   if (!ha_warte_.empty()) {
     const bool da = api::global_api_server != nullptr && api::global_api_server->is_connected();
@@ -293,6 +305,8 @@ void DockDirekt::loop() {
         }
         memcpy(ok_mac_, aktuell_.mac, 6);
         ok_gueltig_ = true;
+        // Zustands-Anfrage: Funk kurz offen halten, damit die Antwort des Docks ankommt
+        if (aktuell_.paket.size() > 3 && aktuell_.paket[3] == ZUSTAND_FRAGE) antwort_bis_ms_ = millis() + 400;
         unterwegs_ = false;
         aktuell_ = Auftrag{};
       } else {
@@ -305,7 +319,7 @@ void DockDirekt::loop() {
   }
 
   if (warte_.empty()) {
-    funk_zurueck_();
+    if ((int32_t) (millis() - antwort_bis_ms_) >= 0) funk_zurueck_();
     return;
   }
   if (w != nullptr && w->is_disabled() && !funk_geliehen_) {
@@ -350,7 +364,6 @@ void DockDirekt::loop() {
 // ------------------------------------------------------------------ Empfangen (Dock)
 
 void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) {
-#ifdef DD_EMPFANG
   char von[18];
   snprintf(von, sizeof(von), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   if (d[2] != VER) { ESP_LOGW(TAG, "%s: Version %u unbekannt", von, d[2]); return; }
@@ -376,6 +389,26 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
   a->nr = nr;
 
   const size_t ende = n - HMAC_LEN;
+  if (typ == ZUSTAND_FRAGE || typ == ZUSTAND) {
+    if (KOPF + anzahl != ende) { ESP_LOGW(TAG, "%s: Zustands-Paket kaputt", von); return; }
+    std::string text((const char *) d + KOPF, anzahl);
+#ifdef DD_EMPFANG
+    if (typ == ZUSTAND_FRAGE) {   // Dock: Remote fragt nach ihrem Stand (Inhalt = ihr Geraetename)
+      auto it = zustaende_.find(text);
+      if (it == zustaende_.end()) { ESP_LOGI(TAG, "%s (%s) fragt - noch kein Stand", von, text.c_str()); return; }
+      std::vector<uint8_t> inhalt(it->second.begin(), it->second.end());
+      if (einreihen_(mac, ZUSTAND, 0, (uint16_t) inhalt.size(), inhalt, {}))
+        ESP_LOGI(TAG, "%s (%s): Stand geschickt (%u Byte)", von, text.c_str(), (unsigned) inhalt.size());
+    }
+#else
+    if (typ == ZUSTAND) {   // Remote: Stand vom Dock
+      ESP_LOGI(TAG, "Stand vom Dock %s (%u Byte)", von, (unsigned) text.size());
+      antwort_bis_ms_ = 0;
+      for (auto &f : zustand_cbs_) f(text);
+    }
+#endif
+    return;
+  }
   if (typ == HA) {
 #ifdef DD_HA
     if (KOPF + anzahl != ende || anzahl == 0 || d[ende - 1] != 0) { ESP_LOGW(TAG, "%s: HA-Paket kaputt", von); return; }
@@ -394,6 +427,7 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
 #endif
     return;
   }
+#ifdef DD_EMPFANG
   std::vector<int32_t> t;
   t.reserve(anzahl);
   size_t i = KOPF;
@@ -426,6 +460,8 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
     call.set_send_wait(10000);
   }
   call.perform();
+#else
+  ESP_LOGW(TAG, "%s: Typ %u hier nicht moeglich", von, typ);
 #endif
 }
 

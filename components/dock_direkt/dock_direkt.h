@@ -22,6 +22,9 @@
 //   typ 3 = Home-Assistant-Aktion (2026-10-19): inhalt = anzahl Bytes "dienst\0schluessel\0wert\0..." - das Dock fuehrt
 //           sie ueber seine (immer bestehende) HA-Verbindung aus, wie in der Original-Firmware ("Home Assistant via
 //           dock"). Hat das Dock gerade keine HA-Verbindung, haelt es die Aktion bis zu 30 s.
+//   typ 4 = Zustands-Anfrage Remote -> Dock (inhalt = Geraetename), typ 5 = Zustand Dock -> Remote (inhalt = JSON,
+//           den HA dem Dock bei jeder Aenderung schickt: Startseite, Fernseher, Timer). So zeigt die Remote nach dem
+//           Tiefschlaf sofort den aktuellen Stand, bevor ihre eigene HA-Verbindung steht (2026-10-19).
 
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
@@ -36,13 +39,13 @@
 #endif
 #ifdef DD_HA
 #include "esphome/components/api/custom_api_device.h"
-#include <map>
 #endif
+#include <map>
 
 namespace esphome {
 namespace dock_direkt {
 
-enum Typ : uint8_t { IR = 1, RF = 2, HA = 3 };
+enum Typ : uint8_t { IR = 1, RF = 2, HA = 3, ZUSTAND_FRAGE = 4, ZUSTAND = 5 };
 
 class DockDirekt : public Component
 #ifdef DD_HA
@@ -70,6 +73,11 @@ class DockDirekt : public Component
   // Remote: Home-Assistant-Aktion ueber das Dock (typ 3). Rueckgabe/Fehlschlag wie senden().
   bool senden_ha(const uint8_t mac[6], const std::string &dienst, const std::vector<std::pair<std::string, std::string>> &daten,
                  std::function<void()> &&fehlschlag);
+  // Remote: Stand beim Dock anfragen; die Antwort kommt ueber on_zustand
+  bool zustand_anfragen(const uint8_t mac[6], const std::string &name, std::function<void()> &&fehlschlag);
+  void add_on_zustand(std::function<void(std::string)> &&f) { zustand_cbs_.push_back(std::move(f)); }
+  // Dock: Stand einer Remote ablegen (HA-Aktion esphome.<dock>_zustand)
+  void zustand_setzen(const std::string &remote, const std::string &text);
   // "AC:27:6E:76:BA:B0" -> 6 Byte
   static bool mac_lesen(const char *s, uint8_t out[6]);
 
@@ -120,11 +128,19 @@ class DockDirekt : public Component
 #endif
   struct Absender { uint8_t mac[6]; uint32_t sitzung, nr; };
   std::vector<Absender> absender_;
+  std::map<std::string, std::string> zustaende_;   // Dock: Geraetename -> Stand (JSON)
+  std::vector<std::function<void(std::string)>> zustand_cbs_;
+  uint32_t antwort_bis_ms_{0};   // Remote: Funk bis dahin offen halten (Antwort auf die Zustands-Anfrage)
 #ifdef DD_HA
   struct HaAuftrag { std::string dienst; std::map<std::string, std::string> daten; uint32_t t0; };
   std::vector<HaAuftrag> ha_warte_;   // HA gerade nicht verbunden: kurz halten
   void ha_ausfuehren_(HaAuftrag &a);
 #endif
+};
+
+class ZustandTrigger : public Trigger<std::string> {
+ public:
+  explicit ZustandTrigger(DockDirekt *p) { p->add_on_zustand([this](std::string t) { this->trigger(t); }); }
 };
 
 class SendenTrigger : public Trigger<int> {

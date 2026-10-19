@@ -13,6 +13,7 @@ DEPENDENCIES = ["wifi"]
 dd_ns = cg.esphome_ns.namespace("dock_direkt")
 DockDirekt = dd_ns.class_("DockDirekt", cg.Component)
 SendenTrigger = dd_ns.class_("SendenTrigger", automation.Trigger.template(cg.int_))
+ZustandTrigger = dd_ns.class_("ZustandTrigger", automation.Trigger.template(cg.std_string))
 rt_ns = cg.esphome_ns.namespace("remote_transmitter")
 RemoteTransmitter = rt_ns.class_("RemoteTransmitterComponent", cg.Component)
 
@@ -26,6 +27,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional("ha", default=False): cv.boolean,
         cv.Optional("on_senden"): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(SendenTrigger)}
+        ),
+        # Remote: Stand vom Dock (JSON) nach einer Zustands-Anfrage, Variable "text"
+        cv.Optional("on_zustand"): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ZustandTrigger)}
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -44,6 +49,9 @@ async def to_code(config):
     if config["ha"]:
         cg.add_define("DD_HA")
         cg.add_define("USE_API_HOMEASSISTANT_SERVICES")
+    for conf in config.get("on_zustand", []):
+        trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trig, [(cg.std_string, "text")], conf)
     for conf in config.get("on_senden", []):
         trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(trig, [(cg.int_, "typ")], conf)

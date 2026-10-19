@@ -253,6 +253,7 @@ esphome:
             }
     - priority: -100
       then:
+        - script.execute: zustand_holen
         - lambda: |-
             // IR-Kanaele nach dem Start abschalten (nur bei Bedarf an, s. open-remote-rmt.h)
             rmt_bedarf::sender(id(ir_tx), false);
@@ -1138,6 +1139,10 @@ globals:
   # HA-Verbindung (Bluetooth-Link) im Ruhezustand trennen: Minuten nach Display-Aus, 0 = immer verbunden (2026-10-19).
   # Wieder an beim Aufwecken oder wenn ein HA-Aufruf sie braucht. Befehle gehen solange uebers Dock (ha_dock).
   - {id: ha_link_ruhe,   type: int,       restore_value: true,  initial_value: "2"}
+  # Was nach ha_link_ruhe passiert: 0 nichts (normaler Ruhetakt), 1 langsam (Verbindung bleibt, HA erreicht die Remote
+  # in ~2 s - Klingel-Popups kommen weiter), 2 trennen (spart am meisten, HA erreicht die Remote erst nach dem Wecken)
+  - {id: ha_link_modus,  type: int,       restore_value: true,  initial_value: "1"}
+  - {id: zustand_da,     type: bool,      restore_value: false, initial_value: "false"}   # Stand vom Dock schon da
   - {id: musik_player,   type: bool,      restore_value: true,  initial_value: "true"}
   # Touchpad (open-remote-maus.h): Bit je Bluetooth-Platz - maus_slots = Maus melden, voll_slots = volle Tastatur
   # trotz kb_ziffern; maus_tempo = Zeigertempo in %
@@ -1234,6 +1239,30 @@ tasten_konfig:
 dock_direkt:
   id: direkt
   schluessel: !secret direkt_schluessel
+  # Stand vom Dock (2026-10-19): nach dem Start, bevor die eigene HA-Verbindung steht, sofort die richtigen Werte auf
+  # der Startseite (Wiedergabe, Fernseher, Timer). Kommt HA danach, gelten dessen Werte.
+  on_zustand:
+    - lambda: |-
+        if (api::global_api_server->is_connected()) return;
+        JsonDocument d;
+        if (deserializeJson(d, text) != DeserializationError::Ok) { ESP_LOGW("dock", "Stand vom Dock unlesbar"); return; }
+        id(zustand_da) = true;
+        auto t = [&](text_sensor::TextSensor *s, const char *k) { if (!d[k].isNull()) s->publish_state(d[k].as<std::string>()); };
+        auto z = [&](sensor::Sensor *s, const char *k) { if (!d[k].isNull()) s->publish_state(d[k].as<float>()); };
+        t(id(mp_title), "mp_title"); t(id(adb_title), "mp_title"); t(id(mp_artist), "mp_artist");
+        t(id(mp_app_name), "mp_app"); t(id(mp_app), "mp_app"); t(id(mp_cover_url), "mp_cover");
+        t(id(mp_quelle), "mp_quelle"); z(id(mp_tempo), "mp_tempo"); z(id(mp_dur), "mp_dur");
+        if (!d["mp_pos"].isNull()) {   // Position bis jetzt hochrechnen (Uhr laeuft im Tiefschlaf weiter)
+          float p = d["mp_pos"].as<float>();
+          const long ts = d["ts"] | 0L;
+          const time_t jetzt = ::time(nullptr);
+          if (d["mp_state"] == "playing" && ts > 0 && jetzt > 1700000000 && jetzt > ts) p += (jetzt - ts) * (d["mp_tempo"] | 1.0f);
+          id(mp_pos).publish_state(p);
+        }
+        t(id(mp_state), "mp_state");
+        t(id(tv_state), "tv");
+        t(id(timer_wohnung_remaining_attr), "tm_rest"); t(id(timer_wohnung_end_attr), "tm_ende"); t(id(timer_wohnung_state), "tm");
+        ESP_LOGI("dock", "Startseite vom Dock: %s", id(mp_title).state.c_str());
 
 # Konfigurierbares Menue (2026-10-03): Seiten/Eintraege aus derselben HA-Konfiguration, Raster 6x40 px.
 # Anzeige auf page_konfig (Seite 98). Ohne Konfiguration gibt es kein Menue.
@@ -2088,6 +2117,20 @@ script:
             - deep_sleep.enter:
                 id: nachtschlaf
 
+  # Stand beim Dock anfragen (nach dem Start): bis zu 8 Versuche im Abstand von 0,6 s, solange HA nicht verbunden ist
+  # und noch keine Antwort kam (dock_direkt on_zustand)
+  - id: zustand_holen
+    mode: single
+    then:
+      - repeat:
+          count: 8
+          then:
+            - if:
+                condition: {lambda: 'return !id(zustand_da) && !api::global_api_server->is_connected();'}
+                then:
+                  - lambda: 'id(tk_cfg).zustand_anfragen();'
+                  - delay: 600ms
+
   # HA-Link im Ruhezustand pausieren (Einstellung ha_link_ruhe): spart die zweite Bluetooth-Verbindung, solange niemand
   # die Remote benutzt. Nicht waehrend Sprache, Update oder Wartungsfenster.
   - id: ha_link_ruhe_timer
@@ -2096,9 +2139,11 @@ script:
       - delay: !lambda 'return (uint32_t) std::max(1, (int) id(ha_link_ruhe)) * 60000u;'
       - if:
           condition:
-            lambda: 'return id(ha_link_ruhe) > 0 && id(disp_off) && !id(voice_active) && !id(host_mic) && !id(ota_aktiv) && (int32_t) (millis() - id(wartung_bis)) >= 0;'
+            lambda: 'return id(ha_link_ruhe) > 0 && id(ha_link_modus) > 0 && id(disp_off) && !id(voice_active) && !id(host_mic) && !id(ota_aktiv) && (int32_t) (millis() - id(wartung_bis)) >= 0;'
           then:
-            - lambda: 'id(kb).set_link_pause(true);'
+            - lambda: |-
+                if (id(ha_link_modus) == 2) id(kb).set_link_pause(true);
+                else id(kb).set_link_schlummer(true);
 
   # Tiefschlaf-Status (Diagnose-Sensor) neu bewerten und nur bei Aenderung senden
   - id: schlaf_status_melden
@@ -2164,7 +2209,7 @@ script:
       - script.execute: ble_ruhe_timer
       - script.execute: deep_ruhe_timer
       - if:
-          condition: {lambda: 'return id(ha_link_ruhe) > 0;'}
+          condition: {lambda: 'return id(ha_link_ruhe) > 0 && id(ha_link_modus) > 0;'}
           then: [{script.execute: ha_link_ruhe_timer}]
       - script.execute: capture_baseline
       - script.execute: cpu_ruhe_timer
@@ -2654,7 +2699,7 @@ script:
       - script.stop: ble_ruhe_timer
       - script.stop: deep_ruhe_timer
       - script.stop: ha_link_ruhe_timer
-      - lambda: 'id(kb).set_link_pause(false);'   # HA-Link wieder an (falls im Ruhezustand pausiert)
+      - lambda: 'id(kb).set_link_pause(false); id(kb).set_link_schlummer(false);'   # HA-Link wieder normal
       - globals.set: {id: disp_off, value: "false"}
       - script.execute: schlaf_status_melden
       # BLE-Verbindung wieder auf das schnelle HID-Profil, Takt zurueck auf voll.
@@ -3538,6 +3583,7 @@ script:
               row(id(musik_player_btn),  nullptr, nullptr);
               row(id(ha_dock_btn),       nullptr, nullptr);
               row(id(ha_link_btn),       nullptr, nullptr);
+              row(id(ha_linkm_btn),      nullptr, nullptr);
               row(id(back_extras),       nullptr, nullptr);
               break;
             case 23: // Anzeige
@@ -8599,6 +8645,17 @@ lvgl:
               - label: {text: "HA-Verbindung in Ruhe", text_font: a15, styles: [st_grow]}
               - label: {id: ha_link_lbl, text: "2 min", text_font: a13, text_color: 0x22C55E}
         - label: {id: h_ha_link, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
+        - button:
+            id: ha_linkm_btn
+            width: 100%
+            height: 44
+            styles: [st_ctrlbtn, st_fx_r10]
+            on_click:
+              - lambda: 'id(ha_link_modus) = (id(ha_link_modus) + 1) % 3; extras::auffrischen();'
+            widgets:
+              - label: {text: "HA in Ruhe: Art", text_font: a15, styles: [st_grow]}
+              - label: {id: ha_linkm_lbl, text: "Langsam", text_font: a13, text_color: 0x22C55E}
+        - label: {id: h_ha_linkm, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. open-remote-wlan.h
     - id: page_service
       styles: [st_screen, st_fx_c10]

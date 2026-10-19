@@ -44,7 +44,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "76"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "77"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -668,6 +668,8 @@ class KonfigData:
         self.spiegel.setzen(dev_slug(dev), e["config"].get("ents") or {})
         if (c := self.hass.data.get(DOMAIN + "_cover")) is not None and dev_slug(dev) not in c.slugs:
             c.starten()   # neue Remote: ihr Cover mitverfolgen
+        if (ds := self.hass.data.get(DOMAIN + "_dockstand")) is not None and dev not in ds.devs:
+            ds.starten()   # neue Remote: ihren Stand an die Docks
         self.hass.states.async_set(
             f"sensor.esphomeremote_konfig_{dev_slug(dev)}",
             fnv1a(body),
@@ -880,6 +882,9 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
 
     hass.data[DOMAIN + "_cover"] = cover = Cover(hass, kd)   # Cover je Remote aus ihrem "Jetzt laeuft"-Player
     cover.starten()
+    from .zustand import einrichten as zustand_einrichten
+
+    zustand_einrichten(hass, kd)   # Stand je Remote an die Docks (Startseite sofort nach dem Tiefschlaf)
 
     from .regeln import registrieren as regeln_registrieren
 

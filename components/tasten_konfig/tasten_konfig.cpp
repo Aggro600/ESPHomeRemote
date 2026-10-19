@@ -351,6 +351,23 @@ void TastenKonfig::ha_aufruf(const std::string &svc, std::map<std::string, std::
   ha_senden(svc, std::move(d));
 }
 
+bool TastenKonfig::zustand_anfragen() {
+#ifdef TK_USE_DIREKT
+  if (direkt_ == nullptr || doc_ == nullptr) return false;
+  uint8_t mac[6];
+  if (!direkt_->letztes_ok(mac)) {   // nach dem Start unbekannt: bei jedem Versuch das naechste Dock
+    std::vector<std::string> macs;
+    for (JsonPairConst kv : (*doc_)["dmac"].as<JsonObjectConst>()) macs.push_back(kv.value() | "");
+    if (macs.empty()) return false;
+    static uint32_t versuch = 0;
+    if (!dock_direkt::DockDirekt::mac_lesen(macs[versuch++ % macs.size()].c_str(), mac)) return false;
+  }
+  return direkt_->zustand_anfragen(mac, App.get_name(), {});
+#else
+  return false;
+#endif
+}
+
 void TastenKonfig::ha_ueber_dock_(const std::string &svc, std::map<std::string, std::string> d, std::vector<std::string> macs, size_t i) {
 #ifdef TK_USE_DIREKT
   uint8_t mac[6];

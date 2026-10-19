@@ -63,8 +63,14 @@ inline void auffrischen() {
     char hb[16];
     if (m <= 0) snprintf(hb, sizeof(hb), "Immer"); else snprintf(hb, sizeof(hb), "%d min", m);
     wert(ha_link_lbl, hb, m > 0);
-    lv_label_set_text(h_ha_link, m <= 0 ? "Immer: Die Remote bleibt auch mit dunklem Display mit HA verbunden (Bluetooth) - kostet im Ruhezustand am meisten Strom."
-        : "Trennt die Verbindung zu HA so lange nach dem Ausgehen des Displays (spart Strom). Befehle gehen solange über das Dock; beim Aufwecken verbindet sie sofort wieder.");
+    lv_label_set_text(h_ha_link, m <= 0 ? "Aus: Die Verbindung zu HA bleibt bei dunklem Display im normalen Ruhetakt."
+        : "So lange nach dem Ausgehen des Displays greift die Art unten.");
+    static const char *ART[] = {"Normal", "Langsam", "Trennen"};
+    const int a = std::max(0, std::min(2, (int) ha_link_modus->value()));
+    wert(ha_linkm_lbl, ART[a], a != 0);
+    lv_label_set_text(h_ha_linkm, a == 1 ? "Langsam: Die Verbindung bleibt, meldet sich aber nur etwa jede Sekunde. HA erreicht die Remote weiter (Klingel-Popup nach ~2 s), beim Aufwecken ist alles sofort da."
+                               : a == 2 ? "Trennen: Spart am meisten. HA erreicht die Remote erst nach dem Wecken (auch kein Klingel-Popup); Befehle gehen solange über das Dock."
+                                        : "Normal: kein Unterschied zum sonstigen Ruhezustand.");
   }
   an_aus(musik_dock_lbl, musik_dock->value());
   an_aus(musik_player_lbl, musik_player->value());

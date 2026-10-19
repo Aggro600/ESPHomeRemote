@@ -122,7 +122,9 @@ class TastenKonfig : public Component {
   // HA-Verbindung, 2 immer zuerst) per Funk ans Dock, sonst/als Ausweg wie ha_senden (2026-10-19)
   void ha_aufruf(const std::string &svc, std::map<std::string, std::string> d);
   std::function<int()> ha_dock_modus;
-  std::function<void()> ha_wecken;   // HA-Aufruf wartet: pausierten HA-Link wieder einschalten
+  std::function<void()> ha_wecken;
+  // Stand (Startseite) beim Dock anfragen - Antwort ueber dock_direkt on_zustand (2026-10-19)
+  bool zustand_anfragen();   // HA-Aufruf wartet: pausierten HA-Link wieder einschalten
 
   // ---- Geraete-Einstellungen (2026-10-16): gepflegt im Konfigurator (cfg.einst = {"name": [wert, rev]}) ----
   // Die YAML meldet jede Einstellung an (Name = id des globals). Neue Konfiguration aus HA: Werte mit geaenderter
