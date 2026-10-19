@@ -118,6 +118,10 @@ class TastenKonfig : public Component {
 
   // HA-Aufruf mit kurzer Warteschlange (WLAN/API kann nach dem Aufwachen noch fehlen).
   void ha_senden(const std::string &svc, std::map<std::string, std::string> d);
+  // HA-Aktion eines Tastenschritts: je nach Einstellung "HA-Befehle ueber das Dock" (ha_dock_modus: 0 aus, 1 nur ohne
+  // HA-Verbindung, 2 immer zuerst) per Funk ans Dock, sonst/als Ausweg wie ha_senden (2026-10-19)
+  void ha_aufruf(const std::string &svc, std::map<std::string, std::string> d);
+  std::function<int()> ha_dock_modus;
 
   // ---- Geraete-Einstellungen (2026-10-16): gepflegt im Konfigurator (cfg.einst = {"name": [wert, rev]}) ----
   // Die YAML meldet jede Einstellung an (Name = id des globals). Neue Konfiguration aus HA: Werte mit geaenderter
@@ -142,6 +146,7 @@ class TastenKonfig : public Component {
   void ir_selbst_(const std::vector<int32_t> &t, uint32_t f);
   // An ein Dock: zuerst direkt per Funk (dock_direkt), sonst `sonst` (ueber HA bzw. selbst) - auch spaeter,
   // wenn das Dock den direkten Weg nicht bestaetigt.
+  void ha_ueber_dock_(const std::string &svc, std::map<std::string, std::string> d, std::vector<std::string> macs, size_t i);
   void an_dock_(const std::string &dock, int typ, uint32_t param, const std::vector<int32_t> &t, std::function<void()> &&sonst);
   void rf_(JsonObjectConst s);
   std::vector<std::string> docks_(JsonObjectConst s) const;
@@ -214,6 +219,7 @@ class TastenKonfig : public Component {
 
   struct HaJob { std::string svc; std::map<std::string, std::string> d; uint32_t t0; };
   std::vector<HaJob> ha_q_;
+  uint32_t api_da_ms_{0};   // zuletzt mit HA verbunden (fuer "Ohne HA"-Belegungen)
 };
 
 }  // namespace tasten_konfig

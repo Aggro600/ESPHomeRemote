@@ -44,7 +44,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "74"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "75"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -801,10 +801,28 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
 
     # Neues/entferntes Dock: Remotes bekommen die Funk-Adressen (dmac) mit der naechsten Konfiguration
     @callback
+    def _freigaben() -> None:
+        """Remotes und Docks muessen HA-Aktionen ausfuehren duerfen (Tasten, Menue, HA-Befehle ueber das Dock).
+        Beim Einbinden ueber den Konfigurator blieb die Option aus (Gast, 2026-10-19) - hier immer nachziehen."""
+        for e in hass.config_entries.async_entries("esphome"):
+            name = str(e.data.get("device_name") or "")
+            if (name.startswith("dock-") or name in kd.devices) and not e.options.get("allow_service_calls"):
+                _LOGGER.info("%s: erlaube HA-Aktionen", name)
+                hass.config_entries.async_update_entry(e, options={**e.options, "allow_service_calls": True})
+
+    @callback
     def _eintrag_geaendert(_aenderung, eintrag) -> None:
+        if eintrag.domain == "esphome":
+            hass.async_create_task(_freigaben_spaeter())
         if eintrag.domain == "esphome" and str(eintrag.data.get("device_name") or "").startswith("dock-"):
             for dev in kd.devices:
                 kd.announce(dev)
+
+    async def _freigaben_spaeter() -> None:
+        await asyncio.sleep(2)   # nicht mitten im Einrichten des Eintrags
+        _freigaben()
+
+    _freigaben()
 
     from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED
     from homeassistant.helpers.dispatcher import async_dispatcher_connect

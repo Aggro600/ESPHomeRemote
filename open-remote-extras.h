@@ -52,6 +52,12 @@ inline void auffrischen() {
   lv_label_set_text(h_dock_disp, d == 0 ? "Wie sonst: Das Display geht im Dock nach der normalen Zeit aus. Antippen oder eine Taste zeigt die Anzeige wieder."
                                : d == 1 ? "Bleibt an: Im Dock geht das Display nie aus (Helligkeit wie immer über den Lichtsensor)."
                                         : "Zeitfenster: Im Dock bleibt das Display in der Zeit unten an, sonst geht es wie gewohnt aus.");
+  static const char *HAD[] = {"Aus", "Ohne HA", "Immer"};
+  const int hd = std::max(0, std::min(2, (int) ha_dock->value()));
+  wert(ha_dock_lbl, HAD[hd], hd != 0);
+  lv_label_set_text(h_ha_dock, hd == 2 ? "Immer: HA-Befehle der Tasten und des Menüs gehen per Funk ans Dock - sofort, auch direkt nach dem Aufwachen. Antwortet kein Dock, wie bisher direkt an HA."
+                             : hd == 1 ? "Ohne HA: Nur solange die Remote noch nicht mit HA verbunden ist (z. B. gleich nach dem Aufwachen), übers Dock."
+                                       : "Aus: HA-Befehle gehen nur über die eigene Verbindung (Bluetooth/WLAN) und warten nach dem Aufwachen auf sie.");
   an_aus(musik_dock_lbl, musik_dock->value());
   an_aus(musik_player_lbl, musik_player->value());
   lv_label_set_text(h_musik_dock, musik_dock->value()

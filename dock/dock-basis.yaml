@@ -401,10 +401,12 @@ text_sensor:
 # (ha_tunnel). Die Remote nimmt den Link nur von bekannten Proxys an - Adresse unten ("Bluetooth-Adresse")
 # im Konfigurator unter Bluetooth -> "Home Assistant ueber Bluetooth" anhaken.
 esp32_ble_tracker:
+  # Netzbetrieb: oefter hinhoeren als ein Akku-Proxy (2026-10-19) - die Remote wird nach dem Aufwachen schneller
+  # gefunden. Ein Drittel der Zeit; mehr nimmt dem WLAN (gleicher Funk beim C3) zu viel.
   scan_parameters:
     active: true
-    interval: 320ms
-    window: 30ms
+    interval: 150ms
+    window: 50ms
 
 bluetooth_proxy:
   active: true
@@ -412,13 +414,16 @@ bluetooth_proxy:
 
 # ---------------------------------------------------------------- Direkt von der Remote
 # Infrarot/433 MHz kommen von den Remotes per ESP-NOW direkt hierher, ohne HA dazwischen (2026-10-18) - geht auch,
-# wenn HA gerade nicht laeuft. Beschreibung: components/dock_direkt/dock_direkt.h
+# wenn HA gerade nicht laeuft. Seit 2026-10-19 auch HA-Befehle: das Dock ist immer mit HA verbunden und fuehrt sie
+# sofort aus (die Remote muss nach dem Aufwachen nicht erst ihre eigene HA-Verbindung aufbauen). Beschreibung: components/dock_direkt/dock_direkt.h
 external_components:
   - source: {type: local, path: components}
     components: [dock_direkt]
 
 dock_direkt:
   schluessel: !secret direkt_schluessel
+  # HA-Befehle der Remotes ausfuehren (Remote-Einstellung "HA-Befehle ueber das Dock")
+  ha: true
   ir_sender: ir_tx
   rf_sender: rf_tx
   on_senden:

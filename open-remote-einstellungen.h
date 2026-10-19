@@ -143,6 +143,8 @@ inline esphome::menue::EinstRef finden(const std::string &k) {
     {"h_musik_dock", 'i', nullptr, h_musik_dock, 6},   // extras: Hinweis
     {"musik_player_btn", 'b', musik_player_btn, musik_player_lbl, 6},   // extras: Nur wenn Player spielt
     {"h_musik_player", 'i', nullptr, h_musik_player, 6},   // extras: Hinweis
+    {"ha_dock_btn", 'b', ha_dock_btn, ha_dock_lbl, 6},   // extras: HA-Befehle über das Dock
+    {"h_ha_dock", 'i', nullptr, h_ha_dock, 6},   // extras: Hinweis
     {"tile_touchtest", 'b', tile_touchtest, nullptr, 7},   // service: Touch-Test
     {"h_touch", 'i', nullptr, h_touch, 7},   // service: Hinweis
     {"tile_button_test", 'b', tile_button_test, nullptr, 7},   // service: Tasten-Test

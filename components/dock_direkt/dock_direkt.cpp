@@ -144,7 +144,30 @@ bool DockDirekt::bereit_() {
 
 bool DockDirekt::senden(const uint8_t mac[6], Typ typ, uint32_t param, const std::vector<int32_t> &zeiten,
                         std::function<void()> &&fehlschlag) {
-  if (zeiten.empty() || zeiten.size() > 0xFFFF || warte_.size() >= 6 || !bereit_()) return false;
+  if (zeiten.empty() || zeiten.size() > 0xFFFF) return false;
+  std::vector<uint8_t> inhalt;
+  inhalt.reserve(zeiten.size() * 2);
+  for (int32_t z : zeiten) varint(inhalt, z);
+  return einreihen_(mac, typ, param, (uint16_t) zeiten.size(), inhalt, std::move(fehlschlag));
+}
+
+bool DockDirekt::senden_ha(const uint8_t mac[6], const std::string &dienst,
+                           const std::vector<std::pair<std::string, std::string>> &daten, std::function<void()> &&fehlschlag) {
+  std::vector<uint8_t> inhalt(dienst.begin(), dienst.end());
+  inhalt.push_back(0);
+  for (auto &kv : daten) {
+    inhalt.insert(inhalt.end(), kv.first.begin(), kv.first.end());
+    inhalt.push_back(0);
+    inhalt.insert(inhalt.end(), kv.second.begin(), kv.second.end());
+    inhalt.push_back(0);
+  }
+  if (inhalt.size() > 0xFFFF) return false;
+  return einreihen_(mac, HA, 0, (uint16_t) inhalt.size(), inhalt, std::move(fehlschlag));
+}
+
+bool DockDirekt::einreihen_(const uint8_t mac[6], Typ typ, uint32_t param, uint16_t anzahl, const std::vector<uint8_t> &inhalt,
+                            std::function<void()> &&fehlschlag) {
+  if (warte_.size() >= 6 || !bereit_()) return false;
   auto *w = wifi::global_wifi_component;
   // WLAN verbindet sich gerade (sucht Kanaele): nicht dazwischenfunken
   if (w == nullptr || !(w->is_connected() || w->is_disabled())) {
@@ -158,7 +181,7 @@ bool DockDirekt::senden(const uint8_t mac[6], Typ typ, uint32_t param, const std
   Auftrag a;
   memcpy(a.mac, mac, 6);
   auto &p = a.paket;
-  p.reserve(KOPF + zeiten.size() * 2 + HMAC_LEN);
+  p.reserve(KOPF + inhalt.size() + HMAC_LEN);
   p.push_back('O');
   p.push_back('R');
   p.push_back(VER);
@@ -171,11 +194,11 @@ bool DockDirekt::senden(const uint8_t mac[6], Typ typ, uint32_t param, const std
   }
   u32(p, nr_);
   u32(p, param);
-  p.push_back((uint8_t) (zeiten.size() & 0xFF));
-  p.push_back((uint8_t) (zeiten.size() >> 8));
-  for (int32_t z : zeiten) varint(p, z);
+  p.push_back((uint8_t) (anzahl & 0xFF));
+  p.push_back((uint8_t) (anzahl >> 8));
+  p.insert(p.end(), inhalt.begin(), inhalt.end());
   if (p.size() + HMAC_LEN > MAX_PAKET) {
-    ESP_LOGW(TAG, "Signal zu lang fuer ein Paket (%u Byte)", (unsigned) p.size());
+    ESP_LOGW(TAG, "Inhalt zu lang fuer ein Paket (%u Byte)", (unsigned) p.size());
     return false;
   }
   uint8_t eigene[6], h[8];
@@ -230,6 +253,16 @@ void DockDirekt::loop() {
   if (const uint32_t v = s_verworfen.exchange(0)) ESP_LOGW(TAG, "%u Pakete verworfen (Puffer voll)", (unsigned) v);
   if (const uint32_t v = s_fremd.exchange(0)) ESP_LOGD(TAG, "%u fremde ESP-NOW-Pakete ignoriert", (unsigned) v);
 #endif
+#ifdef DD_HA
+  if (!ha_warte_.empty()) {
+    const bool da = api::global_api_server != nullptr && api::global_api_server->is_connected();
+    for (auto it = ha_warte_.begin(); it != ha_warte_.end();) {
+      if (da) { this->call_homeassistant_service(it->dienst, it->daten); it = ha_warte_.erase(it); }
+      else if (millis() - it->t0 > 30000) { ESP_LOGW(TAG, "HA-Aktion %s verworfen (keine HA-Verbindung)", it->dienst.c_str()); it = ha_warte_.erase(it); }
+      else ++it;
+    }
+  }
+#endif
 
   auto *w = wifi::global_wifi_component;
   // Kanal des WLANs merken (die Remote braucht ihn, wenn ihr WLAN aus ist)
@@ -258,6 +291,8 @@ void DockDirekt::loop() {
           wifi_second_chan_t s;
           if (esp_wifi_get_channel(&k, &s) == ESP_OK && k != kanal_ && k != 0) { kanal_ = k; kanal_pref_.save(&kanal_); }
         }
+        memcpy(ok_mac_, aktuell_.mac, 6);
+        ok_gueltig_ = true;
         unterwegs_ = false;
         aktuell_ = Auftrag{};
       } else {
@@ -340,10 +375,28 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
   a->sitzung = sitzung;
   a->nr = nr;
 
+  const size_t ende = n - HMAC_LEN;
+  if (typ == HA) {
+#ifdef DD_HA
+    if (KOPF + anzahl != ende || anzahl == 0 || d[ende - 1] != 0) { ESP_LOGW(TAG, "%s: HA-Paket kaputt", von); return; }
+    std::vector<std::string> teile;
+    const char *q = (const char *) d + KOPF, *qe = (const char *) d + ende;
+    while (q < qe) { const size_t l = strnlen(q, qe - q); teile.emplace_back(q, l); q += l + 1; }
+    if (teile.empty() || teile[0].find('.') == std::string::npos || teile.size() % 2 != 1) { ESP_LOGW(TAG, "%s: HA-Aktion ungueltig", von); return; }
+    HaAuftrag job{teile[0], {}, millis()};
+    for (size_t k = 1; k + 1 < teile.size(); k += 2) job.daten[teile[k]] = teile[k + 1];
+    n_empfangen_++;
+    ESP_LOGI(TAG, "Direkt von %s: HA-Aktion %s (%u Werte)", von, job.dienst.c_str(), (unsigned) job.daten.size());
+    for (auto &f : senden_cbs_) f(typ);
+    ha_ausfuehren_(job);
+#else
+    ESP_LOGW(TAG, "%s: HA-Aktionen sind hier nicht eingeschaltet (dock_direkt: ha: true)", von);
+#endif
+    return;
+  }
   std::vector<int32_t> t;
   t.reserve(anzahl);
   size_t i = KOPF;
-  const size_t ende = n - HMAC_LEN;
   while (t.size() < anzahl && i < ende) {
     uint32_t z = 0;
     int s = 0;
@@ -375,6 +428,17 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
   call.perform();
 #endif
 }
+
+#ifdef DD_HA
+void DockDirekt::ha_ausfuehren_(HaAuftrag &a) {
+  if (api::global_api_server != nullptr && api::global_api_server->is_connected()) {
+    this->call_homeassistant_service(a.dienst, a.daten);
+    return;
+  }
+  if (ha_warte_.size() < 8) ha_warte_.push_back(a);
+  ESP_LOGI(TAG, "HA-Aktion %s wartet auf die HA-Verbindung", a.dienst.c_str());
+}
+#endif
 
 }  // namespace dock_direkt
 }  // namespace esphome

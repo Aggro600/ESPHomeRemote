@@ -22,6 +22,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required("schluessel"): cv.All(cv.string_strict, cv.Length(min=16)),
         cv.Optional("ir_sender"): cv.use_id(RemoteTransmitter),
         cv.Optional("rf_sender"): cv.use_id(RemoteTransmitter),
+        # Dock: Home-Assistant-Aktionen der Remotes ausfuehren (typ 3, 2026-10-19)
+        cv.Optional("ha", default=False): cv.boolean,
         cv.Optional("on_senden"): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(SendenTrigger)}
         ),
@@ -39,6 +41,9 @@ async def to_code(config):
         cg.add(var.set_ir(await cg.get_variable(config["ir_sender"])))
     if "rf_sender" in config:
         cg.add(var.set_rf(await cg.get_variable(config["rf_sender"])))
+    if config["ha"]:
+        cg.add_define("DD_HA")
+        cg.add_define("USE_API_HOMEASSISTANT_SERVICES")
     for conf in config.get("on_senden", []):
         trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(trig, [(cg.int_, "typ")], conf)

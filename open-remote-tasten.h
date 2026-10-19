@@ -743,6 +743,7 @@ inline void einrichten() {
   };
   t->anzeige = [](int phase, int pct, const char *text) { konfig_anzeige(phase, pct, text); };
   t->modus_anzeige = [](const char *name, uint32_t ms) { modus_anzeige(name, ms); };
+  t->ha_dock_modus = []() { return (int) ha_dock->value(); };   // Einstellung "HA-Befehle ueber das Dock"
   // Neue Konfiguration: Aktivitaetsleiste neu aufbauen (Namen/Anzahl koennen sich geaendert haben)
   t->bei_neuer_konfig([]() {
     // Gleiches Geraet (Platz) wie vorher aktiv lassen, auch wenn die Aktivitaeten umsortiert wurden

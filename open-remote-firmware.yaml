@@ -1132,6 +1132,9 @@ globals:
   # Musik-Anzeige (2026-10-18, open-remote-musik.h): musik_dock = im Dock statt Smart Display, solange Musik laeuft;
   # musik_player = nur zuhoeren, wenn der "Jetzt laeuft"-Player spielt
   - {id: musik_dock,     type: bool,      restore_value: true,  initial_value: "true"}
+  # HA-Befehle ueber das Dock (2026-10-19, components/dock_direkt typ 3): 0 aus, 1 nur ohne HA-Verbindung,
+  # 2 immer zuerst ueber das Dock (sofort, auch direkt nach dem Tiefschlaf) - sonst/als Ausweg wie bisher
+  - {id: ha_dock,        type: int,       restore_value: true,  initial_value: "2"}
   - {id: musik_player,   type: bool,      restore_value: true,  initial_value: "true"}
   # Touchpad (open-remote-maus.h): Bit je Bluetooth-Platz - maus_slots = Maus melden, voll_slots = volle Tastatur
   # trotz kb_ziffern; maus_tempo = Zeigertempo in %
@@ -3512,6 +3515,7 @@ script:
               row(id(dock_bis_sld),      nullptr, nullptr);
               row(id(musik_dock_btn),    nullptr, nullptr);
               row(id(musik_player_btn),  nullptr, nullptr);
+              row(id(ha_dock_btn),       nullptr, nullptr);
               row(id(back_extras),       nullptr, nullptr);
               break;
             case 23: // Anzeige
@@ -8546,6 +8550,17 @@ lvgl:
               - label: {text: "Nur wenn Player spielt", text_font: a15, styles: [st_grow]}
               - label: {id: musik_player_lbl, text: "AN", text_font: a13, text_color: 0x22C55E}
         - label: {id: h_musik_player, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
+        - button:
+            id: ha_dock_btn
+            width: 100%
+            height: 44
+            styles: [st_ctrlbtn, st_fx_r10]
+            on_click:
+              - lambda: 'id(ha_dock) = (id(ha_dock) + 1) % 3; extras::auffrischen();'
+            widgets:
+              - label: {text: "HA-Befehle über das Dock", text_font: a15, styles: [st_grow]}
+              - label: {id: ha_dock_lbl, text: "Immer", text_font: a13, text_color: 0x22C55E}
+        - label: {id: h_ha_dock, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. open-remote-wlan.h
     - id: page_service
       styles: [st_screen, st_fx_c10]

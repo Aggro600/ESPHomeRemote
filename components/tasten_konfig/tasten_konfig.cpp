@@ -265,6 +265,7 @@ void TastenKonfig::loop() {
   if (modus_ >= 0 && ((int32_t) (millis() - modus_bis_) >= 0 || modus_gen_ != gen_)) modus_beenden();
 
   // HA-Warteschlange pumpen
+  if (api_ok_()) api_da_ms_ = millis();
   if (!ha_q_.empty()) {
     const bool con = api_ok_();
     for (auto it = ha_q_.begin(); it != ha_q_.end();) {
@@ -327,6 +328,43 @@ void TastenKonfig::loop() {
     return;
   }
   download_starten_();
+}
+
+void TastenKonfig::ha_aufruf(const std::string &svc, std::map<std::string, std::string> d) {
+#ifdef TK_USE_DIREKT
+  const int modus = ha_dock_modus ? ha_dock_modus() : 0;
+  if (direkt_ != nullptr && doc_ != nullptr && (modus == 2 || (modus == 1 && !api_ok_()))) {
+    std::vector<std::string> macs;
+    uint8_t ok[6];
+    char b[18];
+    if (direkt_->letztes_ok(ok)) {   // das Dock, das zuletzt geantwortet hat, zuerst
+      snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", ok[0], ok[1], ok[2], ok[3], ok[4], ok[5]);
+      macs.emplace_back(b);
+    }
+    for (JsonPairConst kv : (*doc_)["dmac"].as<JsonObjectConst>()) {
+      std::string m = kv.value() | "";
+      if (!m.empty() && std::find(macs.begin(), macs.end(), m) == macs.end()) macs.push_back(m);
+    }
+    if (!macs.empty()) { ha_ueber_dock_(svc, std::move(d), std::move(macs), 0); return; }
+  }
+#endif
+  ha_senden(svc, std::move(d));
+}
+
+void TastenKonfig::ha_ueber_dock_(const std::string &svc, std::map<std::string, std::string> d, std::vector<std::string> macs, size_t i) {
+#ifdef TK_USE_DIREKT
+  uint8_t mac[6];
+  while (i < macs.size() && !dock_direkt::DockDirekt::mac_lesen(macs[i].c_str(), mac)) i++;
+  if (i < macs.size()) {
+    std::vector<std::pair<std::string, std::string>> daten(d.begin(), d.end());
+    if (direkt_->senden_ha(mac, svc, daten, [this, svc, d, macs, i]() { ha_ueber_dock_(svc, d, macs, i + 1); })) {
+      ESP_LOGI(TAG, "HA-Aufruf %s ueber das Dock %s", svc.c_str(), macs[i].c_str());
+      return;
+    }
+  }
+  ESP_LOGI(TAG, "HA-Aufruf %s: kein Dock erreicht - direkt", svc.c_str());
+#endif
+  ha_senden(svc, std::move(d));
 }
 
 void TastenKonfig::ha_senden(const std::string &svc, std::map<std::string, std::string> d) {
@@ -463,7 +501,7 @@ void TastenKonfig::ha_(JsonObjectConst s) {
   for (JsonPairConst kv : s["data"].as<JsonObjectConst>()) d[kv.key().c_str()] = kv.value().as<std::string>();
   const char *e = s["entity"] | "";
   if (*e) d["entity_id"] = e;
-  ha_senden(s["svc"] | "", std::move(d));
+  ha_aufruf(s["svc"] | "", std::move(d));
 }
 
 // IR-Schritt (2026-10-11): {"t":"ir", "proto":"NEC","addr":..,"cmd":..} oder {"t":"ir","raw":[9000,-4500,..],"f":38000}.
@@ -635,7 +673,9 @@ static const char *gname_offline(Geste g) { return g == KURZ ? "short_offline" :
 // Schritte einer Geste. Ohne HA-Verbindung (weder WLAN noch Bluetooth-Bruecke) gilt "<geste>_offline", wenn belegt
 // (Konfigurator: "Ohne Home Assistant", 2026-10-18) - sonst die normalen Schritte (HA-Aufrufe warten dann kurz).
 JsonArrayConst TastenKonfig::steps_(JsonObjectConst kc, Geste g) const {
-  if (!api_ok_()) {
+  // "Ohne HA" erst, wenn HA laenger als 15 s fehlt - nicht in den ersten Sekunden nach dem Aufwachen, waehrend die
+  // Verbindung noch aufgebaut wird (2026-10-19). api_da_ms_ = zuletzt verbunden (Start zaehlt als verbunden).
+  if (!api_ok_() && millis() - api_da_ms_ > 15000) {
     JsonArrayConst o = kc[gname_offline(g)];
     if (!o.isNull() && o.size() > 0) return o;
   }

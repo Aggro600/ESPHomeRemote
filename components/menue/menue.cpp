@@ -1648,8 +1648,8 @@ void Menue::regler_cb_(lv_event_t *e) {
   const char *mo = self->items_[i].j["modus"] | "";
   if (*mo) self->tk_->modus_starten(mo);
   if (self->items_[i].typ == T_ZAHL) { self->zahl_setzen_(self->items_[i], (float) v); return; }
-  if (v <= 0) self->tk_->ha_senden("light.turn_off", {{"entity_id", ent}});
-  else self->tk_->ha_senden("light.turn_on", {{"entity_id", ent}, {"brightness_pct", std::to_string(v)}});
+  if (v <= 0) self->tk_->ha_aufruf("light.turn_off", {{"entity_id", ent}});
+  else self->tk_->ha_aufruf("light.turn_on", {{"entity_id", ent}, {"brightness_pct", std::to_string(v)}});
 }
 
 // number/input_number: set the value (clamped to the range); media_player: volume 0..100
@@ -1659,13 +1659,13 @@ void Menue::zahl_setzen_(Item &it, float wert) {
   char b[24];
   if (e.rfind("media_player.", 0) == 0) {
     snprintf(b, sizeof(b), "%.2f", std::max(0.0f, std::min(100.0f, wert)) / 100.0f);
-    tk_->ha_senden("media_player.volume_set", {{"entity_id", e}, {"volume_level", b}});
+    tk_->ha_aufruf("media_player.volume_set", {{"entity_id", e}, {"volume_level", b}});
     return;
   }
   auto f = zustand_cache_.find(PStr(e.c_str()));
   if (f != zustand_cache_.end()) wert = std::max(f->second.mn, std::min(f->second.mx, wert));
   snprintf(b, sizeof(b), "%g", wert);
-  tk_->ha_senden(e.rfind("input_number.", 0) == 0 ? "input_number.set_value" : "number.set_value",
+  tk_->ha_aufruf(e.rfind("input_number.", 0) == 0 ? "input_number.set_value" : "number.set_value",
                  {{"entity_id", e}, {"value", b}});
   abf_ab_ = millis() + 900;
 }
@@ -1679,7 +1679,7 @@ void Menue::ausloesen_(Item &it, int richtung) {
   const std::string e = it.j["entity"] | "";
   JsonArrayConst steps = it.j["steps"];
   const bool eigene = !steps.isNull() && steps.size() > 0;
-  auto ha = [&](const char *svc) { if (!e.empty()) tk_->ha_senden(svc, {{"entity_id", e}}); };
+  auto ha = [&](const char *svc) { if (!e.empty()) tk_->ha_aufruf(svc, {{"entity_id", e}}); };
   switch (it.typ) {
     case T_PAGE: {
       const char *z = it.j["target"] | "";
@@ -1704,7 +1704,7 @@ void Menue::ausloesen_(Item &it, int richtung) {
         int b = (f != zustand_cache_.end() && f->second.state == "on" && f->second.bri >= 0) ? (f->second.bri * 100 + 127) / 255 : 0;
         b = std::max(0, std::min(100, b + richtung * 10));
         if (b == 0) ha("light.turn_off");
-        else tk_->ha_senden("light.turn_on", {{"entity_id", e}, {"brightness_pct", std::to_string(b)}});
+        else tk_->ha_aufruf("light.turn_on", {{"entity_id", e}, {"brightness_pct", std::to_string(b)}});
         return;
       }
       if (eigene) tk_->schritte(steps); else ha("light.toggle");
@@ -1741,7 +1741,7 @@ void Menue::ausloesen_(Item &it, int richtung) {
       const bool inp = e.rfind("input_select.", 0) == 0;
       const char *svc = richtung < 0 ? (inp ? "input_select.select_previous" : "select.select_previous")
                                      : (inp ? "input_select.select_next" : "select.select_next");
-      tk_->ha_senden(svc, {{"entity_id", e}, {"cycle", "true"}});
+      tk_->ha_aufruf(svc, {{"entity_id", e}, {"cycle", "true"}});
       return;
     }
     case T_ACTION:
