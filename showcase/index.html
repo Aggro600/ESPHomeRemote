@@ -7,8 +7,8 @@
   <meta name="description" content="Interaktiver 3D-Showcase der OpenRemote Rev6 mit Dockingstation – aus den Original-CAD-Daten, mit der echten ESPHomeRemote-Oberfläche auf dem Display.">
   <meta name="theme-color" content="#07090d">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='10' y='2' width='12' height='28' rx='4' fill='%233B82F6'/%3E%3Crect x='12.5' y='5' width='7' height='9' rx='1' fill='%230E1116'/%3E%3C/svg%3E">
-  <script type="module" crossorigin src="./assets/index-BEqkPHEF.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-5Wz_lewz.css">
+  <script type="module" crossorigin src="./assets/index-BQ4Dc2h3.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-a43ylCak.css">
 </head>
 <body>
   <main id="buehne" aria-label="3D-Ansicht"></main>
@@ -63,11 +63,26 @@
       </div>
     </section>
     <section>
-      <h2>Dock-Farbe</h2>
-      <div class="farben" id="farben">
-        <button class="farbe" data-farbe="rot" aria-pressed="true" aria-label="Rot" style="--f:#8a1210"></button>
-        <button class="farbe" data-farbe="graphit" aria-pressed="false" aria-label="Graphit" style="--f:#252830"></button>
-        <button class="farbe" data-farbe="weiss" aria-pressed="false" aria-label="Weiß" style="--f:#e3e5e8"></button>
+      <h2>Farben</h2>
+      <div class="farbzeile">
+        <span>Remote</span>
+        <div class="farben">
+          <button class="farbe zwei" data-remote="standard" aria-pressed="true" aria-label="Schwarz mit grauer Abdeckplatte" title="Schwarz · Grau" style="--f:#0b0c0e;--g:#6a6d74"></button>
+          <button class="farbe" data-remote="schwarz" aria-pressed="false" aria-label="Schwarz" title="Schwarz" style="--f:#121316"></button>
+          <button class="farbe" data-remote="weiss" aria-pressed="false" aria-label="Weiß" title="Weiß" style="--f:#e3e5e8"></button>
+          <button class="farbe" data-remote="rot" aria-pressed="false" aria-label="Rot" title="Rot" style="--f:#8a1210"></button>
+          <button class="farbe" data-remote="blau" aria-pressed="false" aria-label="Blau" title="Blau" style="--f:#163a85"></button>
+        </div>
+      </div>
+      <div class="farbzeile">
+        <span>Dock</span>
+        <div class="farben">
+          <button class="farbe" data-dock="schwarz" aria-pressed="true" aria-label="Schwarz" title="Schwarz" style="--f:#121316"></button>
+          <button class="farbe" data-dock="graphit" aria-pressed="false" aria-label="Graphit" title="Graphit" style="--f:#2c3038"></button>
+          <button class="farbe" data-dock="rot" aria-pressed="false" aria-label="Rot" title="Rot" style="--f:#8a1210"></button>
+          <button class="farbe" data-dock="blau" aria-pressed="false" aria-label="Blau" title="Blau" style="--f:#163a85"></button>
+          <button class="farbe" data-dock="weiss" aria-pressed="false" aria-label="Weiß" title="Weiß" style="--f:#e3e5e8"></button>
+        </div>
       </div>
     </section>
     <p class="hinweis">Display antippen: im Dock erscheint die Fernbedienung, nach 20 s wieder das Smart Display – wie in der Firmware.</p>
