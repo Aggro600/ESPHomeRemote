@@ -133,6 +133,7 @@ void AtvVoice::setup() {
   // bewusst niedriger als der BLE-Stack, aber hoeher als Leerlauf.
   this->tx_lock_ = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(&AtvVoice::audio_task_trampoline_, "atvv_audio", 4096, this, 5, &this->audio_task_, 0);
+  this->bereit_ = true;   // ab hier darf ein Verbinden das Mikrofon starten (s. atvv_on_connect)
 }
 
 void AtvVoice::dump_config() {
@@ -184,6 +185,13 @@ void AtvVoice::atvv_on_connect(uint16_t conn_id) {
   this->state_ = ATVV_IDLE;
   this->caps_asked_ = false;
   this->caps_report_due_ = millis() + 10000;
+  // FORK 2026-10-21: Bluetooth startet seit 2026-10-20 frueh (Prioritaet 790) - verbindet sich der Fernseher, bevor
+  // Mikrofon/I2S und diese Komponente eingerichtet sind, stuerzte start() ab (assert in xQueueSemaphoreTake, Panic beim
+  // Aufwachen). Dann nur vormerken, loop() holt es nach.
+  if (!this->bereit_) {
+    this->mic_offen_ = true;
+    return;
+  }
   // VERSUCH 43 (2026-08-21): Mikrofon schon beim Verbinden starten und dann
   // durchlaufen lassen. Gemessen: der I2S-Treiber liefert erst ~1.3 s nach
   // start() die ersten Samples - wurde er erst beim Tastendruck gestartet,
@@ -210,7 +218,7 @@ void AtvVoice::set_mic_blocked(bool blocked) {
     ESP_LOGI(TAG, "Mikrofon gesperrt (SD-Karte) - I2S-Treiber gestoppt");
   } else {
     // Wie beim Verbinden: Treiber wieder anlegen, Einschwingzeit verwerfen.
-    if (this->connected_ && this->microphone_ != nullptr && !this->mic_running_ && !this->ruhe_) {
+    if (this->bereit_ && this->connected_ && this->microphone_ != nullptr && !this->mic_running_ && !this->ruhe_) {
       this->warmup_samples_remaining_ = this->sample_rate_ / 4;
       this->microphone_->start();
       this->mic_running_ = true;
@@ -257,7 +265,7 @@ void AtvVoice::atvv_unpark(uint16_t conn_id) {
     this->caps_asked_ = c.caps_asked;
     this->congested_ = false;
     this->state_ = ATVV_IDLE;
-    if (this->microphone_ != nullptr && !this->mic_running_ && !this->mic_blocked_ && !this->ruhe_) {
+    if (this->bereit_ && this->microphone_ != nullptr && !this->mic_running_ && !this->mic_blocked_ && !this->ruhe_) {
       this->warmup_samples_remaining_ = this->sample_rate_ / 4;
       this->microphone_->start();
       this->mic_running_ = true;
@@ -871,7 +879,7 @@ bool AtvVoice::pcm_pop_frame_(int16_t *out) {
 void AtvVoice::set_ruhe(bool ruhe) {
   if (ruhe == this->ruhe_) return;
   this->ruhe_ = ruhe;
-  if (!ruhe && this->connected_ && this->microphone_ != nullptr && !this->mic_running_ && !this->mic_blocked_) {
+  if (!ruhe && this->bereit_ && this->connected_ && this->microphone_ != nullptr && !this->mic_running_ && !this->mic_blocked_) {
     this->warmup_samples_remaining_ = this->sample_rate_ / 4;
     this->microphone_->start();
     this->mic_running_ = true;
@@ -881,6 +889,14 @@ void AtvVoice::set_ruhe(bool ruhe) {
 }
 
 void AtvVoice::loop() {
+  if (this->mic_offen_) {   // Verbinden kam vor dem Setup (s. atvv_on_connect)
+    this->mic_offen_ = false;
+    if (this->connected_ && this->microphone_ != nullptr && !this->mic_running_ && !this->mic_blocked_ && !this->ruhe_) {
+      this->warmup_samples_remaining_ = this->sample_rate_ / 4;
+      this->microphone_->start();
+      this->mic_running_ = true;
+    }
+  }
   if (this->ruhe_ && this->mic_running_ && this->state_ == ATVV_IDLE && !this->host_opened_ &&
       this->microphone_ != nullptr) {
     this->microphone_->stop();

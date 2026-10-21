@@ -253,6 +253,8 @@ class AtvVoice : public Component, public espidf_ble_keyboard::AtvVoiceHook {
   esp_gatt_if_t gatts_if_{ESP_GATT_IF_NONE};
   uint16_t conn_id_{0};
   bool connected_{false};
+  bool bereit_{false};      // setup() fertig (FORK 2026-10-21)
+  bool mic_offen_{false};   // Mikrofonstart vom Verbinden vor dem Setup, holt loop() nach
   uint16_t mtu_{23};
   uint16_t handles_[16]{};
   uint16_t tx_handle_{0};

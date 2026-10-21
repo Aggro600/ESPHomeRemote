@@ -228,6 +228,11 @@ static bool s_restart_adv_pending = false;
 // HALINK (2026-10-05): Zustand der Link-Verbindung (s. Header)
 static bool s_link_connected = false;
 static uint16_t s_link_conn_id = 0xFFFF;
+// HA-Link: abgelehnte Takt-Aenderung wiederholen (2026-10-19). Der Proxy stellt nach dem Verbinden selbst Parameter
+// ein; fragt die Remote gleichzeitig, scheitert ihre Anfrage (0x23 "Procedure Collision") und der Link blieb im alten
+// Takt - ein Cover brauchte so 24 s statt ~1 s.
+static uint32_t s_link_param_retry_ms = 0;
+static uint8_t s_link_param_tries = 0;
 static esp_bd_addr_t s_link_bda = {0};
 static uint16_t s_link_mtu = 23;
 static bool s_link_congested = false;
@@ -733,6 +738,25 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                      param->update_conn_params.conn_int,
                      param->update_conn_params.latency,
                      param->update_conn_params.timeout);
+            if (s_link_connected && memcmp(param->update_conn_params.bda, s_link_bda, 6) == 0) {   // HALINK
+                if (param->update_conn_params.status != ESP_BT_STATUS_SUCCESS && s_link_param_tries < 5) {
+                    s_link_param_tries++;
+                    // Abgelehnt (2026-10-20, Proxy mit 3 Verbindungen: Status 13 "anhaengig"/16 "Zeit"): beim neuen
+                    // Versuch den Bereich nach oben weiten (bis 50 bzw. 100 ms), schnelle Anfragen ohne Latenz - der
+                    // Proxy kann dann einen Takt waehlen, der neben seinen anderen Verbindungen passt.
+                    if (s_instance != nullptr && s_instance->link_int_min_ < 40) {
+                        const uint16_t weit = s_link_param_tries >= 3 ? 80 : 40;
+                        if (s_instance->link_int_max_ < weit) s_instance->link_int_max_ = weit;
+                        s_instance->link_latency_ = 0;
+                    }
+                    s_link_param_retry_ms = (millis() + 600u + 400u * s_link_param_tries) | 1;
+                    ESP_LOGI(TAG, "HALINK: Takt abgelehnt (%d) - neuer Versuch %u", (int) param->update_conn_params.status,
+                             (unsigned) s_link_param_tries);
+                } else if (param->update_conn_params.status == ESP_BT_STATUS_SUCCESS) {
+                    s_link_param_tries = 0;
+                }
+                break;
+            }
             if (s_instance && param->update_conn_params.status == ESP_BT_STATUS_SUCCESS)
                 s_instance->note_conn_params_updated(param->update_conn_params.conn_int);
             if (weck_log) {   // FORK 2026-10-02: tatsaechlich gueltiger Takt (Spartakt angenommen?)
@@ -3017,6 +3041,10 @@ void EspidfBleKeyboard::loop() {
             }
         }
     }
+    if (s_link_param_retry_ms != 0 && (int32_t) (millis() - s_link_param_retry_ms) >= 0) {
+        s_link_param_retry_ms = 0;
+        if (link_connected()) link_request_interval_();
+    }
     // HALINK-Waechter 2 (2026-10-16): Nach dem Ausstecken des Docks (Proxy) blieb Remote 2 3 min fuer HA unsichtbar, bis
     // zum Neustart - kein Scanner sah mehr Werbung. Deshalb: (a) Link alle 30 s per RSSI pruefen, (b) ist der Link
     // 30 s weg, die Werbung hart neu aufsetzen (Merker zuruecksetzen, abwechselnd stoppen/direkt starten).
@@ -3662,6 +3690,8 @@ void EspidfBleKeyboard::link_clear_() {
 }
 void EspidfBleKeyboard::set_link_interval(uint16_t mn, uint16_t mx, uint16_t lat) {
     link_int_min_ = mn; link_int_max_ = mx; link_latency_ = lat;
+    s_link_param_tries = 0;
+    s_link_param_retry_ms = 0;
     if (link_connected()) link_request_interval_();
 }
 void EspidfBleKeyboard::link_request_interval_() {

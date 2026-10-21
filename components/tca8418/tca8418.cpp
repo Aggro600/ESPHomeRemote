@@ -1,4 +1,5 @@
 #include "tca8418.h"
+#include <esp_sleep.h>
 
 #include <algorithm>
 
@@ -79,6 +80,25 @@ void TCA8418Component::setup() {
 void IRAM_ATTR TCA8418Component::gpio_intr_(TCA8418Component *self) { self->interrupt_pending_ = true; }
 
 void TCA8418Component::loop() {
+  // Gesicherte Ereignisse vom Aufwachen zuerst (FORK 2026-10-20) - ohne Entprellung, sie kommen ohne Abstand
+  if (!this->weck_ereignisse_.empty()) {
+    this->fifo_wake_ = true;
+    // Weck-Taste verwerfen (Einstellung, 2026-10-20): ihr erstes Druecken und Loslassen fallen weg; ist sie noch
+    // gedrueckt, wird das spaetere Loslassen ignoriert. Weitere Druecke derselben Taste zaehlen normal.
+    const bool weg = this->weck_verwerfen_ && this->weck_taste_ != 0;
+    bool losgelassen = false;
+    for (uint8_t e : this->weck_ereignisse_) {
+      if (weg && !losgelassen && (e & 0x7F) == this->weck_taste_) {
+        if (!(e & 0x80)) losgelassen = true;
+        continue;
+      }
+      this->handle_event_(e);
+    }
+    if (weg && !losgelassen) this->loslassen_ignorieren_ = this->weck_taste_;
+    if (weg) ESP_LOGI(TAG, "Weck-Taste %u verworfen (nur wecken)", this->weck_taste_);
+    this->weck_ereignisse_.clear();
+    this->fifo_wake_ = false;
+  }
   // Level-driven, not purely edge-driven. The OpenRemote firmware polls the
   // INT pin's LOW level every loop rather than trusting an edge - a missed or
   // never-delivered falling edge (seen on this hardware) then still gets
@@ -92,6 +112,22 @@ void TCA8418Component::loop() {
 }
 
 bool TCA8418Component::configure_() {
+  // FORK 2026-10-20: Nach dem Aufwachen aus dem Tiefschlaf stehen im FIFO die Weck-Taste und alles, was waehrend des
+  // Starts gedrueckt wurde. ZUERST sichern - das Neu-Einstellen unten leert den FIFO (gemessen: Weckpin "Taste",
+  // FIFO danach 0). loop() wertet die gesicherten Ereignisse dann normal aus.
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED) {
+    uint8_t n = 0;
+    this->read_reg_(REG_KEY_LCK_EC, n);
+    n &= 0x0F;
+    for (uint8_t i = 0; i < n && i < 10; i++) {
+      uint8_t e = 0;
+      if (!this->read_reg_(REG_KEY_EVENT_A, e)) break;
+      if ((e & 0x7F) != 0) this->weck_ereignisse_.push_back(e);
+      if ((e & 0x80) && this->weck_taste_ == 0) this->weck_taste_ = e & 0x7F;   // erstes Druecken = Weck-Taste
+    }
+    if (!this->weck_ereignisse_.empty())
+      ESP_LOGI(TAG, "Aufgewacht: %u Tastenereignis(se) gesichert", (unsigned) this->weck_ereignisse_.size());
+  }
   if (this->rows_ > 8 || this->columns_ > 10) {
     ESP_LOGE(TAG, "TCA8418 supports at most 8 rows and 10 columns (got %u x %u)", this->rows_, this->columns_);
     return false;
@@ -143,6 +179,7 @@ bool TCA8418Component::configure_() {
   if (!this->write_reg_(REG_CFG, CFG_KE_IEN | CFG_GPI_IEN)) return false;
 
   // Drain any stale FIFO entries and fully release INT before normal operation.
+  // (Nach dem Aufwachen aus dem Tiefschlaf sind die Ereignisse schon vorher gesichert, s. Anfang von configure_.)
   uint8_t event_count = 0;
   this->read_reg_(REG_KEY_LCK_EC, event_count);
   event_count &= 0x0F;
@@ -155,6 +192,7 @@ bool TCA8418Component::configure_() {
 
 void TCA8418Component::process_events_() {
   this->interrupt_pending_ = false;
+  struct WakeEnde { bool &f; ~WakeEnde() { f = false; } } wake_ende{this->fifo_wake_};   // gilt nur fuer diesen Durchlauf
 
   uint8_t int_stat = 0;
   if (!this->read_reg_(REG_INT_STAT, int_stat)) {
@@ -192,8 +230,14 @@ void TCA8418Component::handle_event_(uint8_t event) {
   const bool pressed = (event & 0x80) != 0;
   const uint8_t keycode = event & 0x7F;
   if (keycode == 0 || keycode >= 128) return;
+  if (!pressed && keycode == this->loslassen_ignorieren_) {   // zur verworfenen Weck-Taste (s. loop)
+    this->loslassen_ignorieren_ = 0;
+    return;
+  }
 
-  if (this->debounce_ms_ > 0 && (now - this->last_event_ms_[keycode]) < this->debounce_ms_) {
+  // Gemerkte Ereignisse vom Aufwachen kommen ohne Abstand (Druecken + Loslassen gleichzeitig) - nicht entprellen,
+  // sonst ginge das Loslassen verloren und die Taste bliebe "gedrueckt" (FORK 2026-10-20).
+  if (!this->fifo_wake_ && this->debounce_ms_ > 0 && (now - this->last_event_ms_[keycode]) < this->debounce_ms_) {
     return;
   }
   this->last_event_ms_[keycode] = now;

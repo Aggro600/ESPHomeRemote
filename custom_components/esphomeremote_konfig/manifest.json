@@ -19,7 +19,8 @@
   "issue_tracker": "https://github.com/Aggro600/ESPHomeRemote/issues",
   "single_config_entry": true,
   "after_dependencies": [
+    "bluetooth",
     "esphome_ble_link",
-    "bluetooth"
+    "recorder"
   ]
 }

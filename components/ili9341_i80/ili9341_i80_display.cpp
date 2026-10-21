@@ -51,7 +51,13 @@ void ILI9341I80Display::setup() {
   // init sequence if it arrives before its power-on reset completes.
   // NOTE: pass this pin WITHOUT `inverted:` in YAML - the active-low
   // semantics live here (digital_write(false) = LOW = panel on).
-  if (this->enable_pin_ != nullptr) {
+  if (this->enable_pin_ != nullptr && this->dunkel_starten_) {
+    // FORK 2026-10-21: dunkel starten - die Versorgung ist seit on_boot 1100 an und eingeschwungen; das Aus/Ein hier
+    // loeste im Panel einen Einschaltvorgang aus, bei dem es ~2 s nach dem Wecken kurz weisslich schimmerte. Nur
+    // halten, der Neustart des Panels kommt per SWRESET unten.
+    this->enable_pin_->pin_mode(gpio::FLAG_OUTPUT);
+    this->enable_pin_->digital_write(false);  // active (LOW) - rail on
+  } else if (this->enable_pin_ != nullptr) {
     this->enable_pin_->pin_mode(gpio::FLAG_OUTPUT);
     this->enable_pin_->digital_write(true);   // inactive (HIGH) - rail off
     delay(50);
@@ -141,6 +147,8 @@ void ILI9341I80Display::setup() {
     esp_lcd_panel_io_tx_param(this->io_handle_, inv_cmd, nullptr, 0);
   }
 
+  if (this->dunkel_starten_) ESP_LOGI(TAG, "Panel: dunkel gestartet (bleibt im Schlaf)");
+
   this->init_internal_(static_cast<uint32_t>(this->width_) * this->height_ * BYTES_PER_PIXEL);
   if (this->buffer_ == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate %d x %d display buffer", this->width_, this->height_);
@@ -158,6 +166,9 @@ void ILI9341I80Display::write_init_sequence_() {
     uint8_t len_and_flag = *addr++;
     bool has_delay = (len_and_flag & 0x80) != 0;
     uint8_t len = len_and_flag & 0x7F;
+    // Dunkel starten: weder aus dem Schlaf holen noch einschalten - nach SLPOUT gab das Panel trotz Display-Aus ein
+    // schwach weisses "leeres Bild" aus. Die Register gelten auch im Schlaf; exit_sleep() holt es spaeter heraus.
+    if ((cmd == ILI9XXX_DISPON || cmd == ILI9XXX_SLPOUT) && this->dunkel_starten_) { addr += len; continue; }
     esp_lcd_panel_io_tx_param(this->io_handle_, cmd, len ? addr : nullptr, len);
     addr += len;
     if (has_delay) delay(150);

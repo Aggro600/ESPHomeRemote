@@ -136,7 +136,8 @@ bool LIS3DHComponent::poll_events(bool &ruck, bool &doppel) {
   return true;
 }
 
-void LIS3DHComponent::arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uint8_t klopf_ths) {
+void LIS3DHComponent::arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uint8_t klopf_ths, bool hoch, uint8_t hoch_ths) {
+  if (hoch) ruck = false;   // Hochheben ersetzt den Ruck (gleicher Interrupt-Ausgang INT1)
   if (this->is_failed()) return;
   this->write_byte(REG_CTRL_REG3, 0x00);
   this->write_byte(REG_INT1_CFG, 0x00);
@@ -145,14 +146,16 @@ void LIS3DHComponent::arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uin
   // ein Tippen auf das Display ist nur ein kurzer Stoss und fiel bei 10 Hz oft zwischen zwei Messungen.
   // Mehrverbrauch laut Datenblatt ~3 uA. Mit Klopfen braucht es die 200 Hz.
   this->write_byte(REG_CTRL_REG1, klopf ? 0x6F : 0x4F);
-  this->write_byte(REG_CTRL_REG2, 0x05);
+  // Hochpass: Ruck und Klopfen (0x05); bei Hochheben NICHT fuer INT1 - die Lage braucht die Schwerkraft (0x04)
+  this->write_byte(REG_CTRL_REG2, hoch ? 0x04 : 0x05);
   this->write_byte(REG_CTRL_REG4, 0x80);
   this->write_byte(REG_CTRL_REG5, 0x00);    // Ruck NICHT festhalten: die Leitung folgt der Bewegung (FIFO aus)
   this->write_byte(0x2E, 0x00);             // FIFO: Bypass
   this->write_byte(REG_CTRL_REG6, 0x02);    // aktiv-LOW - ext1 weckt bei LOW
-  this->write_byte(REG_INT1_THS, ruck_ths & 0x7F);
-  // Mindestdauer: bei 200 Hz 4 Takte (20 ms) gegen Einzel-Spitzen, bei 50 Hz reicht eine Messung.
-  this->write_byte(REG_INT1_DURATION, klopf ? 4 : 0);
+  this->write_byte(REG_INT1_THS, (hoch ? hoch_ths : ruck_ths) & 0x7F);
+  // Mindestdauer: bei 200 Hz 4 Takte (20 ms) gegen Einzel-Spitzen, bei 50 Hz reicht eine Messung. Hochheben: die neue
+  // Lage muss ~0,3 s anliegen (gegen Wackeln und Anstossen).
+  this->write_byte(REG_INT1_DURATION, hoch ? (klopf ? 60 : 15) : (klopf ? 4 : 0));
   if (klopf) this->klopf_register_(klopf_ths);        // Klopfen bleibt festgehalten -> Pin bleibt LOW
   // Einschwingen wie die Original-Firmware (configureLis3dhDeepSleepWake): nach dem Umstellen
   // erst ruhige Messungen sammeln, dann die Hochpass-Referenz setzen und alte Ereignisse loeschen,
@@ -165,7 +168,8 @@ void LIS3DHComponent::arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uin
   this->read_byte(REG_INT1_SRC, &d);
   this->read_byte(REG_CLICK_SRC, &d);
   if (ruck) this->write_byte(REG_INT1_CFG, 0x2A);
-  this->write_byte(REG_CTRL_REG3, (ruck ? 0x40 : 0x00) | (klopf ? 0x80 : 0x00));
+  if (hoch) this->write_byte(REG_INT1_CFG, 0x7F);   // 6D-Bewegung: Lagewechsel auf einer der sechs Achsenrichtungen
+  this->write_byte(REG_CTRL_REG3, ((ruck || hoch) ? 0x40 : 0x00) | (klopf ? 0x80 : 0x00));
 }
 
 void LIS3DHComponent::set_fifo(bool an) {

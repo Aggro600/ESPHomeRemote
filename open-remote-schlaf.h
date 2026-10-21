@@ -12,7 +12,7 @@ inline const char *tiefschlaf_sperre(bool mit_ble = true) {
   if (mit_ble && deep_ohne_ble->value() && ble_paired->state && !low) return "Bluetooth-Geraet verbunden (Einstellung)";
   if (remote_strom::eff_deep_s(ps_deep_s->value(), ps_deep_tv_s->value(), tv_on->value(), low) < 0) return "Fernseher an (Einstellung: nie)";
   if (testmodus->value()) return "Testmodus";
-  if (boot_grace->value()) return "Schonfrist nach dem Start (10 min)";
+  if (boot_grace->value()) return "Schonfrist nach dem Start (2 min)";
   if (!api_ever->value()) return "noch nicht mit Home Assistant verbunden";
   if (laedt->value() || charger_present->state) return "laedt";
   if (voice_active->value()) return "Sprachabfrage";

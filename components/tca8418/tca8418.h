@@ -11,6 +11,7 @@
 namespace esphome {
 namespace tca8418 {
 
+
 // Listener interface for binary_sensor platform (one instance per watched keycode).
 class TCA8418Listener {
  public:
@@ -32,6 +33,10 @@ class TCA8418KeyTrigger : public Trigger<uint8_t, uint8_t, uint8_t, bool, bool> 
 // (e.g. a dedicated power button) directly to a spare row/col pin instead.
 class TCA8418Component : public Component, public i2c::I2CDevice {
  public:
+  // FORK 2026-10-20: Taste, die die Remote aus dem Tiefschlaf geweckt hat (0 = keine/anderer Weckgrund) - gueltig ab
+  // dem eigenen setup(). set_weck_verwerfen(true) vor dem ersten loop(): diese Taste weckt nur, wirkt aber nicht.
+  uint8_t weck_taste() const { return this->weck_taste_; }
+  void set_weck_verwerfen(bool v) { this->weck_verwerfen_ = v; }
   void set_rows(uint8_t rows) { this->rows_ = rows; }
   void set_columns(uint8_t columns) { this->columns_ = columns; }
   void set_extra_gpi_pins(const std::vector<uint8_t> &pins) { this->extra_gpi_pins_ = pins; }
@@ -61,6 +66,11 @@ class TCA8418Component : public Component, public i2c::I2CDevice {
   std::vector<uint8_t> extra_gpi_pins_{};
   InternalGPIOPin *interrupt_pin_{nullptr};
   volatile bool interrupt_pending_{false};
+  uint8_t weck_taste_{0};             // Taste, die aus dem Tiefschlaf geweckt hat (0 = keine)
+  bool weck_verwerfen_{false};
+  uint8_t loslassen_ignorieren_{0};
+  std::vector<uint8_t> weck_ereignisse_;   // FIFO-Inhalt vom Aufwachen, vor dem Einstellen gesichert (FORK 2026-10-20)
+  bool fifo_wake_{false};   // FIFO vom Aufwachen wird gerade ausgewertet (FORK 2026-10-20)
   uint32_t debounce_ms_{12};
   uint32_t long_press_ms_{500};
 

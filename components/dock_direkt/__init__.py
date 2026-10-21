@@ -25,6 +25,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional("rf_sender"): cv.use_id(RemoteTransmitter),
         # Dock: Home-Assistant-Aktionen der Remotes ausfuehren (typ 3, 2026-10-19)
         cv.Optional("ha", default=False): cv.boolean,
+        # Dock: HTTP ueber das Dock (typ 6-9, 2026-10-20) - HAs HTTP-Adresse "IP:Port"
+        cv.Optional("ha_http"): cv.string_strict,
         cv.Optional("on_senden"): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(SendenTrigger)}
         ),
@@ -46,6 +48,8 @@ async def to_code(config):
         cg.add(var.set_ir(await cg.get_variable(config["ir_sender"])))
     if "rf_sender" in config:
         cg.add(var.set_rf(await cg.get_variable(config["rf_sender"])))
+    if "ha_http" in config:
+        cg.add(var.set_ha_http(config["ha_http"]))
     if config["ha"]:
         cg.add_define("DD_HA")
         cg.add_define("USE_API_HOMEASSISTANT_SERVICES")

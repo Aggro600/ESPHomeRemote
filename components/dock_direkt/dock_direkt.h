@@ -25,6 +25,12 @@
 //   typ 4 = Zustands-Anfrage Remote -> Dock (inhalt = Geraetename), typ 5 = Zustand Dock -> Remote (inhalt = JSON,
 //           den HA dem Dock bei jeder Aenderung schickt: Startseite, Fernseher, Timer). So zeigt die Remote nach dem
 //           Tiefschlaf sofort den aktuellen Stand, bevor ihre eigene HA-Verbindung steht (2026-10-19).
+//   typ 6-9 = HTTP ueber das Dock (2026-10-20): die Remote holt Bilder/Konfiguration von HA, ohne eigene Verbindung.
+//           Ein Abruf = zufaellige Abruf-Nr. (param). 6 = oeffnen (Dock verbindet sich mit HAs HTTP), 7 = Daten
+//           (beide Richtungen; inhalt = Versatz u32 + Bytes), 8 = Ende (beide), 9 = Quittung (inhalt = empfangen u32).
+//           Die Daten sind mit AES-128-CTR verschluesselt (Schluessel aus direkt_schluessel) - ESP-NOW selbst ist
+//           offen, Cover-Adressen und Konfiguration sollen nicht mitlesbar sein. Laeuft je Seite in einem eigenen
+//           Task (Remote: HTTP-Vermittler von ha_tunnel, Dock: eigener Task), nicht in loop().
 
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
@@ -41,11 +47,12 @@
 #include "esphome/components/api/custom_api_device.h"
 #endif
 #include <map>
+#include <atomic>
 
 namespace esphome {
 namespace dock_direkt {
 
-enum Typ : uint8_t { IR = 1, RF = 2, HA = 3, ZUSTAND_FRAGE = 4, ZUSTAND = 5 };
+enum Typ : uint8_t { IR = 1, RF = 2, HA = 3, ZUSTAND_FRAGE = 4, ZUSTAND = 5, HTTP_AUF = 6, HTTP_DATEN = 7, HTTP_ZU = 8, HTTP_QUITT = 9 };
 
 class DockDirekt : public Component
 #ifdef DD_HA
@@ -83,6 +90,18 @@ class DockDirekt : public Component
 
   // Remote: Dock, das zuletzt bestaetigt hat (zuerst probieren)
   bool letztes_ok(uint8_t out[6]) const { if (!ok_gueltig_) return false; memcpy(out, ok_mac_, 6); return true; }
+  uint32_t ok_ms() const { return ok_ms_; }
+
+  // ---- HTTP ueber das Dock (2026-10-20), s. oben typ 6-9
+  // Remote: Docks in dieser Reihenfolge probieren (aus loop() setzen, z. B. tasten_konfig::dock_macs()).
+  void set_http_ziele(const std::vector<std::string> &macs);
+  // Remote, aus dem HTTP-Task von ha_tunnel: Abruf vom lokalen Socket c ueber ein Dock weiterleiten. "vorab" bekommt
+  // die schon gelesene Anfrage - false = kein Dock hat geantwortet, nichts an c geschrieben: der Aufrufer nimmt
+  // einen anderen Weg und schickt "vorab" zuerst.
+  bool http_relay(int c, std::vector<uint8_t> &vorab);
+  // Dock: HAs HTTP-Adresse ("IP:Port")
+  void set_ha_http(const std::string &hp) { ha_http_ = hp; }
+  void http_dock_task_();   // oeffentlich nur fuer den Task-Einstieg
   uint32_t empfangen() const { return n_empfangen_; }
   uint32_t gesendet() const { return n_gesendet_; }
 
@@ -121,6 +140,20 @@ class DockDirekt : public Component
   uint32_t kanal_pruef_ms_{0};
   uint8_t ok_mac_[6]{};
   bool ok_gueltig_{false};
+  uint32_t ok_ms_{0};   // Zeitpunkt der letzten Bestaetigung (Statusleiste der Remote)
+
+  // ---- HTTP ueber das Dock
+  std::string ha_http_;
+  uint8_t http_key_[16]{};   // AES-Schluessel (aus schluessel_ abgeleitet, setup)
+  struct HttpPeer { uint8_t mac[6]; uint32_t sitzung, nr; };
+  std::vector<HttpPeer> http_peers_;   // Dock: zuletzt gesehene Oeffnen-Pakete je Remote (Wiederholschutz)
+  std::vector<std::string> http_ziele_;   // geschuetzt durch http_mtx_ (HTTP-Task liest)
+  std::atomic<bool> http_funk_wunsch_{false}, http_funk_bereit_{false};   // Remote: HTTP-Task braucht den Funk
+  std::atomic<uint32_t> http_nr_{0};
+  bool http_paket_(const uint8_t mac[6], Typ typ, uint32_t id, const uint8_t *d, size_t n, std::vector<uint8_t> &out);
+  bool http_lesen_(const uint8_t mac[6], const std::vector<uint8_t> &p, uint8_t &typ, uint32_t &id, std::vector<uint8_t> &inhalt);
+  bool roh_senden_(const uint8_t mac[6], const std::vector<uint8_t> &p, int versuche);
+  void aes_ctr_(uint8_t typ, uint32_t sitzung, uint32_t nr, uint32_t id, uint8_t *d, size_t n) const;
 
   // ---- Empfangen (Dock)
 #ifdef DD_EMPFANG

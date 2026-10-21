@@ -96,7 +96,24 @@ esphome:
               GPIO_NUM_39, GPIO_NUM_40, GPIO_NUM_41, GPIO_NUM_42,
               GPIO_NUM_48, GPIO_NUM_47, GPIO_NUM_21, GPIO_NUM_14,
               GPIO_NUM_13, GPIO_NUM_12, GPIO_NUM_11, GPIO_NUM_10 };
+            // Display-Beleuchtung (GPIO9, invertiert: HIGH = aus) VOR dem Freigeben vollstaendig als Ausgang auf aus
+            // einrichten (2026-10-22): der Pin kommt per RTC-Haltung durch den Schlaf (open-remote-pm.h). Wurde er erst nach
+            // dem Loesen eingestellt, schwebte er kurz - Q3 leitete halb, die Beleuchtung glomm schwach, bis ledc (Stufe 800)
+            // den Pin uebernahm (Test 2026-10-22: Schimmern verschob sich mit einer Pause hier). Waehrend der Haltung
+            // greifen die Einstellungen erst beim Loesen - es gibt also keine Luecke.
+            gpio_set_level(GPIO_NUM_9, 1);
+            {
+              gpio_config_t bl = {};
+              bl.pin_bit_mask = 1ULL << GPIO_NUM_9;
+              bl.mode = GPIO_MODE_OUTPUT;
+              bl.pull_up_en = GPIO_PULLUP_ENABLE;
+              bl.pull_down_en = GPIO_PULLDOWN_DISABLE;
+              gpio_config(&bl);
+            }
+            gpio_set_level(GPIO_NUM_9, 1);
             for (auto p : held) gpio_hold_dis(p);
+            rtc_gpio_hold_dis(GPIO_NUM_9);
+            gpio_set_level(GPIO_NUM_9, 1);
             // ext1-Weckpins zuruecksetzen (im Schlaf als RTC-IO gehalten).
             rtc_gpio_hold_dis(GPIO_NUM_1);
             rtc_gpio_deinit(GPIO_NUM_1);
@@ -185,6 +202,7 @@ esphome:
             }
             if (c == ESP_SLEEP_WAKEUP_EXT1) {
               const uint64_t st = esp_sleep_get_ext1_wakeup_status();
+              id(weck_pins) = (uint32_t) st;   // fuer die Dunkel-Entscheidung in on_boot 100 (dort ist der Status nicht mehr sicher)
               ESP_LOGI("schlaf", "Wake ext1 status=0x%llx -> %s",
                        (unsigned long long) st,
                        (st & (1ULL << 1)) ? "Ladekabel (GPIO1)" :
@@ -194,7 +212,7 @@ esphome:
               ESP_LOGI("schlaf", "Wake cause=%d (Timer=%d)", (int) c, (int) ESP_SLEEP_WAKEUP_TIMER);
             }
             // Aufwachen aus dem Tiefschlaf (Timer oder Weckpin) ist KEIN echter
-            // Boot -> keine 10-min-Schonfrist, sonst kaeme der Chip nie zum
+            // Boot -> keine 2-min-Schonfrist, sonst kaeme der Chip nie zum
             // Schlafen. Nur ein Kaltstart / Reset / OTA-Reboot behaelt sie.
             const bool deep_wake = (c == ESP_SLEEP_WAKEUP_TIMER || c == ESP_SLEEP_WAKEUP_GPIO ||
                                     c == ESP_SLEEP_WAKEUP_EXT0  || c == ESP_SLEEP_WAKEUP_EXT1);
@@ -204,13 +222,42 @@ esphome:
             // rechtzeitig ins Flash geschrieben, bevor deep_sleep.enter laeuft.
             if (deep_wake && g_deep_active == 0x5EEEu) id(ps_deep) = true;
             if (!deep_wake) g_deep_active = 0;  // echter Boot: Modus geloescht
+    # Display-Beleuchtung frueh aus (2026-10-21). (Der fruehe Bluetooth-Start vom 2026-10-20 ist zurueckgenommen: er liess
+    # die Remote beim Aufwachen abstuerzen und Kopplungen verlorengehen - die Tastatur startet wieder bei -200.)
+    - priority: 795
+      then:
+        - lambda: |-
+            // Display-Beleuchtung sofort aus (2026-10-21): der PWM-Ausgang (Stufe 800) startet "an", die Licht-Komponente
+            // schreibt ihren Zustand erst nach dem kompletten Start (~3,7 s) - bis dahin leuchtete das noch weisse Panel,
+            // auch wenn die Remote dunkel aufwachen sollte. An macht sie wake_backlight.
+            id(backlight_pwm).set_level(0.0f);
     # Wartezeit zwischen Display-Start und Touch (frueher Stufe 800 = direkt nach dem Display;
     # seit 2026-09-30 laufen Display 245 / Touch 244 nach dem WLAN - die Pause wandert mit).
+    - priority: 246
+      then:
+        # Dunkel aufwachen? VOR dem Display-Start (245) entscheiden (2026-10-21): Tastenchip und Tasten-Konfiguration (DATA)
+        # sind schon da. Das Panel startet dann gar nicht erst (set_dunkel_starten) - vorher schimmerte es beim Einrichten
+        # ~1 s weiss, und apply_brightness (on_boot 100) schaltete die Beleuchtung ein.
+        # Faelle: Weck-Taste ohne Display ("Nur die Menuetaste", Taste wird gesendet) oder Bewegung bei "Aufwecken bei: Aus".
+        - lambda: |-
+            bool dunkel = false;
+            const uint8_t wk = id(keypad).weck_taste();
+            if (wk != 0) {
+              dunkel = !id(keys_wake_all) && id(weck_tasten) == 2 && !tasten::weckt(wk);
+            } else if (id(weck_pins) != 0) {
+              // Klopfen laeuft ueber denselben Pin und ist nicht zu unterscheiden - mit "Doppelt klopfen weckt" immer hell
+              const uint32_t st = id(weck_pins);
+              dunkel = (st & (1u << 2)) && !(st & ((1u << 8) | (1u << 1))) && id(motion_mode) == 0 && !id(klopf_wake);
+            }
+            id(dunkel_start) = dunkel;
+            if (dunkel) {
+              id(disp_off) = true;
+              id(panel_schlaeft) = true;   // wake_backlight weckt das Panel dann mit exit_sleep()
+              id(main_display).set_dunkel_starten(true);
+            }
     - priority: 244.5
       then:
         - lambda: 'delay(300);'
-    # Bluetooth-Optionen an die Tastatur-Komponente, BEVOR sie startet (ihre Prioritaet ist -200,
-    # die gespeicherten Globals sind hier schon geladen).
     # WLAN-Schnellstart aus: feste IP vor dem WLAN-Start (Prioritaet 250) entfernen -> DHCP.
     # Boot-Zeitplan (Messung 2026-09-30): millis() je Setup-Stufe -> Sensor "Boot-Zeitplan"
     # Flex-Layouts der gemeinsamen Styles st_fx_* / st_grow (siehe lvgl: style_definitions).
@@ -258,18 +305,18 @@ esphome:
             // IR-Kanaele nach dem Start abschalten (nur bei Bedarf an, s. open-remote-rmt.h)
             rmt_bedarf::sender(id(ir_tx), false);
             if (!id(ir_rx_power).state) rmt_bedarf::empfaenger(id(ir_rx), false);
-            if (!id(kb_ziffern)) { id(voll_slots) |= 0x0F; id(kb_ziffern) = true; }   // alter Schalter "Buchstaben"
-            id(kb).set_kb_digits(true);
-            if (id(kb).set_slot_flags(id(maus_slots), id(voll_slots))) {
-              ESP_LOGW("maus", "Maus-Merkmale geaendert - Neustart");
-              id(neustart_gleich)->execute();
-            }
             // Wischen wie am Handy: laengerer Schwung nach dem Loslassen (LVGL-Standard bremst 10 % je Bild,
             // hier 4 %) und Scrollen schon ab 6 px statt 10 px
             for (lv_indev_t *in = lv_indev_get_next(nullptr); in != nullptr; in = lv_indev_get_next(in)) {
               if (lv_indev_get_type(in) != LV_INDEV_TYPE_POINTER) continue;
               lv_indev_set_scroll_throw(in, 4);
               lv_indev_set_scroll_limit(in, 6);
+            }
+            if (!id(kb_ziffern)) { id(voll_slots) |= 0x0F; id(kb_ziffern) = true; }   // alter Schalter "Buchstaben"
+            id(kb).set_kb_digits(true);
+            if (id(kb).set_slot_flags(id(maus_slots), id(voll_slots))) {
+              ESP_LOGW("maus", "Maus-Merkmale geaendert - Neustart");
+              id(neustart_gleich)->execute();
             }
             id(kb).set_parallel(id(ble_parallel));
             tasten::einrichten();   // Tasten-Konfigurator + Menue: Hooks setzen (open-remote-tasten.h)
@@ -310,12 +357,33 @@ esphome:
         # Tiefschlaf-Entscheidung gleich beim Booten stimmt (der Sensor
         # braucht sonst bis zu 60 s bis zur ersten Messung).
         - script.execute: refresh_laden
-        - script.execute: wake_backlight
+        # Tasten beim Aufwachen (Einstellung weck_tasten, 2026-10-20): 2 = Weck-Taste und alles bis zur Verbindung senden,
+        # 1 = Weck-Taste weckt nur, danach gedrueckte senden, 0 = nur wecken, Bluetooth-Tasten vor der Verbindung verwerfen.
+        - lambda: |-
+            id(keypad).set_weck_verwerfen(id(weck_tasten) < 2);
+            id(tk_cfg).set_vor_verbindung_merken(id(weck_tasten) > 0);
+        # "Tasten wecken: Nur die Menuetaste" gilt auch nach dem Tiefschlaf (2026-10-20): hat eine andere Taste geweckt und
+        # wird sie gesendet, bleibt das Display aus (die Taste geht an den Fernseher). Wird die Weck-Taste verworfen, geht
+        # das Display an - sonst passierte beim Wecken gar nichts Sichtbares.
+        - if:
+            # Entschieden ganz vorne in diesem Block (dunkel_start): nur der Chip wacht auf, Bluetooth verbindet schon,
+            # die naechste Taste wirkt sofort
+            condition: {lambda: 'return id(dunkel_start);'}
+            then:
+              - lambda: |-
+                  id(disp_off) = true;
+                  id(sofort_aus) = true;
+                  weck_log("Aufgewacht ohne Display (Weck-Taste/Bewegung schalten es laut Einstellung nicht ein)");
+              - script.execute: backlight_idle_timeout
+            else:
+              - script.execute: wake_backlight
         # Kurz warten, bevor die Begruessung kommt: der erste Seitenaufbau
         # von LVGL kann sonst den Wechsel ueberschreiben (seit dem Update
         # auf ESPHome 2026.9 fehlte die Begruessung nach dem Flashen).
         - delay: 700ms
-        - lvgl.page.show: {id: page_welcome, animation: FADE_IN, time: 250ms}
+        - if:
+            condition: {lambda: 'return id(begruessung) && !id(disp_off);'}
+            then: [{lvgl.page.show: {id: page_welcome, animation: FADE_IN, time: 250ms}}]
 
 # Rev6 microSD: SPI-Modus. GPIO15=SCK, GPIO17=MOSI, GPIO7=MISO, GPIO18=CS,
 # GPIO16=SD_EN (Q7-P-MOSFET, LOW=Karte an). SD_DET laeuft ueber TCA8418.
@@ -539,13 +607,13 @@ api:
         - lambda: 'if (nr < 0) tasten::aktivitaet_aus(); else tasten::aktivitaet_setzen(nr);'
     # Cover neu laden: von der Integration (esphomeremote_konfig/cover.py), NACHDEM sie das Bild verkleinert abgelegt
     # hat - sonst kam das Cover des vorherigen Titels.
+    # Neues Cover (2026-10-20): beide Bilder nur vormerken, geladen wird je Seite, wenn sie zu sehen ist (cover_sichtbar) -
+    # vorher lud jede Remote bei jedem Titelwechsel beide Bilder, auch bei dunklem Display durch den langsamen
+    # Ruhe-Takt der HA-Verbindung (20-30 s, oft abgebrochen).
     - service: refresh_cover
       then:
-        - online_image.set_url:
-            id: mp_cover_image
-            url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_voll.jpg");'
-        - lambda: 'id(cover_title) = id(adb_title).state;'
-        - lvgl.widget.show: media_cover
+        - lambda: 'id(cover_mp_offen) = true; id(cover_home_offen) = true;'
+        - script.execute: cover_sichtbar
         # home_cover_image wird jetzt NICHT mehr parallel hier angestossen,
         # sondern erst in mp_cover_image's on_download_finished/on_error (s.
         # dort) - verhindert zwei gleichzeitige HTTP-Downloads.
@@ -807,7 +875,7 @@ font:
     id: ico_ha_verbindung
     size: 16
     bpp: 4
-    glyphs: ["\U000F07D0"]
+    glyphs: ["\U000F07D0", "\U000F011F"]   # + mdi:cellphone-dock (HA-Befehle ueber das Dock, 2026-10-20)
   # mdi:motion-sensor - blinkt kurz in der Statusleiste auf, sobald der Bewegungssensor
   # (LIS3DH) etwas registriert (Nutzerwunsch 2026-09-22), unabhaengig davon, ob gerade
   # eine der Optionen "Auch beim Abdunkeln" / "Nicht abdunkeln bei Bewegung" an ist -
@@ -1094,7 +1162,7 @@ globals:
   # WLAN erreichbar. Wird bei jedem echten Start ausgeschaltet (on_boot 100); restore_value, damit er ueber
   # das Aufwachen aus dem Tiefschlaf erhalten bleibt.
   - {id: testmodus,      type: bool,      restore_value: true,  initial_value: "false"}
-  # Erste 10 min nach JEDEM Boot: kein Tiefschlaf, kein WLAN-Aus - so gibt es
+  # Erste 2 min nach JEDEM Boot: kein Tiefschlaf, kein WLAN-Aus - so gibt es
   # nach jedem Flash sicher ein Fenster, um einen Fehler wieder zu flashen.
   - {id: boot_grace,     type: bool,      restore_value: false, initial_value: "true"}
   # Wurde die Home-Assistant-API seit dem Boot schon einmal verbunden? Nur dann
@@ -1133,9 +1201,26 @@ globals:
   # Musik-Anzeige (2026-10-18, open-remote-musik.h): musik_dock = im Dock statt Smart Display, solange Musik laeuft;
   # musik_player = nur zuhoeren, wenn der "Jetzt laeuft"-Player spielt
   - {id: musik_dock,     type: bool,      restore_value: true,  initial_value: "true"}
+  # Begruessung nach jedem Start/Aufwachen (2026-10-20, Konfigurator: Einstellungen > Begruessung). Text: cfg.begruessung
+  # (leer = "Hallo <Name>").
+  - {id: begruessung,    type: bool,      restore_value: true,  initial_value: "true"}
   # HA-Befehle ueber das Dock (2026-10-19, components/dock_direkt typ 3): 0 aus, 1 nur ohne HA-Verbindung,
   # 2 immer zuerst ueber das Dock (sofort, auch direkt nach dem Tiefschlaf) - sonst/als Ausweg wie bisher
   - {id: ha_dock,        type: int,       restore_value: true,  initial_value: "2"}
+  # Bilder/Konfiguration (HTTP) ueber das Dock (2026-10-20): 0 = nur als Ausweg (weder WLAN noch Bluetooth-Link),
+  # 1 = zuerst ueber das Dock - s. ha_tunnel set_http_weg, dock_direkt http_relay
+  - {id: http_dock,      type: int,       restore_value: true,  initial_value: "0"}
+  # Neues Cover noch nicht geladen, je Seite (2026-10-20, s. cover_sichtbar)
+  # Tasten beim Aufwachen aus dem Tiefschlaf (2026-10-20): 2 = alles senden, 1 = Weck-Taste nur wecken, 0 = nur wecken
+  - {id: weck_tasten,      type: int,     restore_value: true,  initial_value: "2"}
+  # Aufwecken aus dem Tiefschlaf bei (2026-10-21): -1 = wie "Aufwecken bei", 0 = aus, 1 = Bewegung, 2 = Hochheben
+  - {id: tief_motion,      type: int,     restore_value: true,  initial_value: "-1"}
+  # Bewegung verlaengert die Wartezeit bis zum Tiefschlaf wie ein Tastendruck (2026-10-21)
+  - {id: bewegung_haelt,   type: bool,    restore_value: true,  initial_value: "false"}
+  - {id: dunkel_start,     type: bool,    restore_value: false, initial_value: "false"}   # s. on_boot 100
+  - {id: weck_pins,        type: uint32_t, restore_value: false, initial_value: "0"}    # ext1-Weckpins (on_boot 900)
+  - {id: cover_mp_offen,   type: bool,    restore_value: false, initial_value: "false"}
+  - {id: cover_home_offen, type: bool,    restore_value: false, initial_value: "false"}
   # HA-Verbindung (Bluetooth-Link) im Ruhezustand trennen: Minuten nach Display-Aus, 0 = immer verbunden (2026-10-19).
   # Wieder an beim Aufwecken oder wenn ein HA-Aufruf sie braucht. Befehle gehen solange uebers Dock (ha_dock).
   - {id: ha_link_ruhe,   type: int,       restore_value: true,  initial_value: "2"}
@@ -1263,6 +1348,12 @@ dock_direkt:
         t(id(tv_state), "tv");
         t(id(timer_wohnung_remaining_attr), "tm_rest"); t(id(timer_wohnung_end_attr), "tm_ende"); t(id(timer_wohnung_state), "tm");
         ESP_LOGI("dock", "Startseite vom Dock: %s", id(mp_title).state.c_str());
+        // Neuer Titel: Cover gleich mit holen (liegt fertig verkleinert bei HA, kommt ueber das Dock) - 2026-10-20
+        if (!id(adb_title).state.empty() && id(adb_title).state != id(cover_title)) {
+          id(cover_mp_offen) = true;
+          id(cover_home_offen) = true;
+          id(cover_sichtbar).execute();
+        }
 
 # Konfigurierbares Menue (2026-10-03): Seiten/Eintraege aus derselben HA-Konfiguration, Raster 6x40 px.
 # Anzeige auf page_konfig (Seite 98). Ohne Konfiguration gibt es kein Menue.
@@ -1300,18 +1391,10 @@ image:
       # Fehler beim letzten Abruf), blieb die Medienseite leer, waehrend die Startseite das Bild schon hatte.
       - lvgl.widget.show: media_cover
       - script.execute: sd_logo_pruefen
-      - delay: 1500ms
-      - online_image.set_url:
-          id: home_cover_image
-          url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_voll.jpg");'
     on_error:
       - lvgl.widget.hide: media_cover
       - script.execute: sd_logo_pruefen
-      - delay: 1500ms
-      - online_image.set_url:
-          id: home_cover_image
-          url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_voll.jpg");'
-  # Cover der Startseiten-Karte (216x172, in HA zugeschnitten), geladen nach mp_cover_image.
+  # Cover der Startseiten-Karte (216x172, in HA zugeschnitten), geladen wenn die Startseite zu sehen ist (cover_sichtbar).
   - platform: online_image
     id: home_cover_image
     url: "http://${ha_host}/"
@@ -1573,7 +1656,9 @@ light:
     id: display_backlight
     output: backlight_pwm
     default_transition_length: 120ms
-    restore_mode: ALWAYS_ON
+    # Beim Start AUS (2026-10-21, vorher ALWAYS_ON): an macht sie wake_backlight am Ende des Starts - so bleibt das Display
+    # nach dem Aufwachen durch Bewegung bzw. eine Nicht-Menuetaste ganz dunkel (vorher leuchtete es die ~4 s Start ueber).
+    restore_mode: ALWAYS_OFF
     # Absicherung: geht die Beleuchtung an, waehrend der Controller schlaeft (Weg ohne wake_backlight), ihn wecken
     on_turn_on:
       - lambda: 'if (id(panel_schlaeft)) { id(main_display).exit_sleep(); id(panel_schlaeft) = false; }'
@@ -1584,6 +1669,27 @@ light:
     restore_mode: ALWAYS_OFF        # Tastenbeleuchtung standardmaessig aus
 
 interval:
+  # Dock-Symbol der Statusleiste nachfuehren, wenn sich der Weg der HA-Befehle aendert (2026-10-20) - die Balken
+  # werden sonst nur vom WLAN-/Bluetooth-Takt aufgefrischt. Ist das Dock noch nicht bestaetigt (oder zuletzt nicht
+  # erreicht), fragt die Remote bei Display an selbst den Stand ab - nichts wird ausgefuehrt; hoechstens alle 60 s.
+  - interval: 2s
+    then:
+      - lambda: |-
+          static int vorher = -1;
+          static uint32_t geprueft = 0;
+          const int dw = id(tk_cfg).dock_weg();
+          if ((dw == 1 || dw == 3) && !id(disp_off) && (geprueft == 0 || millis() - geprueft > 60000)) {
+            geprueft = millis() | 1;
+            id(tk_cfg).dock_pruefen();
+          }
+          if (dw != vorher) { vorher = dw; id(refresh_wifi_bars).execute(); }
+  # Stand ueber das Dock auch waehrend der Nutzung (2026-10-20): Display an, aber keine eigene HA-Verbindung (z. B.
+  # "Nur Dock" oder HA-Link pausiert) -> alle 5 s Startseite/Player/Fernseher/Timer beim Dock abfragen. Funk nur kurz an.
+  - interval: 5s
+    then:
+      - lambda: |-
+          if (id(disp_off) || id(ha_dock) == 0 || api::global_api_server->is_connected()) return;
+          id(tk_cfg).zustand_anfragen();
   # Dock-Anzeige (im Dock? zurueck zur Dock-Seite, Uhr, Daten) und Bewegungsgesten (FIFO abholen), 2026-10-17
   - interval: 250ms
     then:
@@ -2096,7 +2202,9 @@ script:
               // Gezaehlt ab dem SPAETEREN von Display-Aus und letzter Bedienung (Taste/Touch):
               // jede Taste setzt die Wartezeit zurueck, auch wenn sie das Display nicht weckt
               // ("Tasten wecken" = Nur Menue) - Nutzerwunsch 2026-09-27.
-              const uint32_t t0 = (int32_t) (id(last_input_ms) - id(deep_t0)) > 0 ? id(last_input_ms) : id(deep_t0);
+              uint32_t t0 = (int32_t) (id(last_input_ms) - id(deep_t0)) > 0 ? id(last_input_ms) : id(deep_t0);
+              // Bewegung haelt wach (Einstellung bewegung_haelt, 2026-10-21): eine Bewegung zaehlt wie ein Tastendruck
+              if (id(bewegung_haelt) && (int32_t) (id(last_motion_ms) - t0) > 0) t0 = id(last_motion_ms);
               return lim < 0 || (millis() - t0) < (uint32_t) lim * 1000;
           then:
             - delay: 5s
@@ -2157,7 +2265,8 @@ script:
             const bool low = id(low_bat);
             const int lim = remote_strom::eff_deep_s(id(ps_deep_s), id(ps_deep_tv_s), id(tv_on), low);
             char b[64];
-            snprintf(b, sizeof(b), "wartet: schlaeft %d min nach der letzten Bedienung%s", (lim + 59) / 60,
+            snprintf(b, sizeof(b), id(bewegung_haelt) ? "wartet: schlaeft %d min nach der letzten Bedienung/Bewegung%s"
+                                                      : "wartet: schlaeft %d min nach der letzten Bedienung%s", (lim + 59) / 60,
                      low ? " (Akku-Sparmodus)" : (id(tv_on) && id(ps_deep_tv_s) > 0 ? " (Fernseher an)" : ""));
             t = b;
           }
@@ -2166,13 +2275,15 @@ script:
   - id: backlight_idle_timeout
     mode: restart
     then:
+      - lambda: 'dockanz::ruhe_start_ms() = millis();'   # Dock: Uebernahme kurz vor dem Ausschalten
       # Optional erst abdunkeln (ps_dim_s < Display-Timeout), dann ausschalten.
       # wake_backlight stellt die volle Helligkeit bei jeder Bedienung wieder her.
       - if:
           condition:
-            # Im Dock mit "Bleibt an"/Zeitfenster nie abdunkeln: das Dock haelt das Display alle 5 s wach -
-            # mit Abdunkeln nach 5 s wurde es sonst staendig dunkel und wieder hell (2026-10-17)
-            lambda: "return !id(sofort_aus) && id(ps_dim_s) > 0 && id(ps_dim_s) < remote_strom::eff_disp_s(id(disp_timeout_s), id(low_bat)) && !(dockanz_im_dock() && dockanz::display_soll_an());"
+            # Dock-/Musik-Anzeige im Dock mit "Bleibt an"/Zeitfenster nie abdunkeln: das Dock haelt sie alle 5 s wach -
+            # mit Abdunkeln nach 5 s wurde es sonst staendig dunkel und wieder hell (2026-10-17). Die Fernbedienungs-
+            # seiten dunkeln auch im Dock normal ab (2026-10-20), statt auszugehen kommt dann die Dock-Anzeige.
+            lambda: "return !id(sofort_aus) && id(ps_dim_s) > 0 && id(ps_dim_s) < remote_strom::eff_disp_s(id(disp_timeout_s), id(low_bat)) && !dockanz::anzeige_haelt_an();"
           then:
             - delay: !lambda 'return (uint32_t) id(ps_dim_s) * 1000;'
             - light.turn_on:
@@ -2280,12 +2391,9 @@ script:
             lambda: "return id(adb_title).has_state() && !id(adb_title).state.empty() && id(adb_title).state != id(cover_title);"
           then:
             - lambda: |-
-                id(cover_title) = id(adb_title).state;
-                ESP_LOGI("cover", "Cover nach dem Verbinden nachladen: %s", id(cover_title).c_str());
-            - lvgl.widget.show: media_cover
-            - online_image.set_url:
-                id: mp_cover_image
-                url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_voll.jpg");'
+                ESP_LOGI("cover", "Cover nach dem Verbinden nachladen: %s", id(adb_title).state.c_str());
+                id(cover_mp_offen) = true; id(cover_home_offen) = true;
+            - script.execute: cover_sichtbar
 
   # Wiedergabestatus als Farbe des Play/Pause-Symbols (Nutzerwunsch 2026-09-20):
   # aus = rot, spielt = gruen, pausiert = blau, alles andere = weiss.
@@ -2565,10 +2673,13 @@ script:
           // Klopfen, wenn "Doppelt klopfen weckt" an ist.
           // Heruntergefahren: KEIN Bewegungs-/Klopfwecker, nur Aus-Taste/Ladekabel.
           const bool aus = g_ausgeschaltet == AUSGESCHALTET_MAGIC;
-          const bool ruck = id(motion_mode) != 0 && !aus, klopf = id(klopf_wake) && !aus;
-          if (ruck || klopf) {
+          // Bewegung = Ruck, Hochheben = Lagewechsel (seit 2026-10-20 auch im Tiefschlaf, vorher dort ebenfalls Ruck)
+          // Eigene Einstellung fuer den Tiefschlaf (tief_motion, 2026-10-21): -1 = wie "Aufwecken bei", 0 aus, 1 Bewegung, 2 Hochheben
+          const int tm = id(tief_motion) < 0 ? id(motion_mode) : id(tief_motion);
+          const bool ruck = tm == 1 && !aus, hoch = tm == 2 && !aus, klopf = id(klopf_wake) && !aus;
+          if (ruck || hoch || klopf) {
             id(motion_chip)->arm_for_sleep(ruck, remote_strom::ruck_ths(id(motion_sens)), klopf,
-                                           remote_strom::klopf_ths(id(klopf_sens)));
+                                           remote_strom::klopf_ths(id(klopf_sens)), hoch, remote_strom::hoch_ths(id(motion_sens)));
             mask |= (1ULL << 2);                        // GPIO2 = LIS3DH INT1
           }
 
@@ -2686,6 +2797,27 @@ script:
             - wifi.enable:
             - script.execute: wifi_ruhe_timer
 
+  # Vorgemerktes Cover der sichtbaren Seite laden: Medienseite (6) das grosse, Startseite (0) den Ausschnitt; bei
+  # dunklem Display nichts (2026-10-20). Aufgerufen vom Dienst refresh_cover, beim Einschalten und beim Seitenwechsel.
+  - id: cover_sichtbar
+    mode: queued
+    then:
+      - if:
+          condition: {lambda: 'return !id(disp_off) && id(cur_page) == 6 && id(cover_mp_offen);'}
+          then:
+            - lambda: 'id(cover_mp_offen) = false; id(cover_title) = id(adb_title).state;'
+            - online_image.set_url:
+                id: mp_cover_image
+                url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_voll.jpg");'
+            - lvgl.widget.show: media_cover
+      - if:
+          condition: {lambda: 'return !id(disp_off) && id(cur_page) == 0 && id(cover_home_offen);'}
+          then:
+            - lambda: 'id(cover_home_offen) = false; id(cover_title) = id(adb_title).state;'
+            - online_image.set_url:
+                id: home_cover_image
+                url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_voll.jpg");'
+
   - id: wake_backlight
     mode: restart
     then:
@@ -2745,6 +2877,7 @@ script:
           id: display_backlight
           brightness: !lambda 'return id(disp_bri) / 100.0f;'
       - lambda: 'id(disp_dimmed) = false;'
+      - script.execute: cover_sichtbar   # bei dunklem Display vorgemerktes Cover der sichtbaren Seite (2026-10-20)
       - if:
           condition: {lambda: "return id(kbd_light_on);"}
           then:
@@ -2982,8 +3115,9 @@ script:
             - lambda: 'ESP_LOGI("wartung", "Wartungsfenster vorbei - WLAN wieder aus");'
             - wifi.disable:
 
-  # 10-min-Boot-Schonfrist: nach jedem echten Boot (auch nach jedem OTA-Reboot)
-  # sind Tiefschlaf und WLAN-Aus fuer 10 min gesperrt. So gibt es nach jedem
+  # Boot-Schonfrist: nach jedem echten Boot (auch nach jedem OTA-Reboot)
+  # sind Tiefschlaf und WLAN-Aus fuer 2 min gesperrt (bis 2026-10-20: 10 min - zum Testen zu lang; zum
+  # Flashen gibt es inzwischen den Wartungsfenster-Knopf). So gibt es nach jedem
   # Flash sicher ein Fenster, um einen Fehler zu korrigieren. Nach dem Aufwachen
   # aus dem Tiefschlaf ist boot_grace schon in on_boot auf false gesetzt.
   - id: boot_grace_timer
@@ -2991,8 +3125,8 @@ script:
       - if:
           condition: {lambda: 'return id(boot_grace);'}
           then:
-            - lambda: 'ESP_LOGI("test", "Boot-Schonfrist: 10 min kein Tiefschlaf / kein WLAN-Aus");'
-            - delay: 600s
+            - lambda: 'ESP_LOGI("test", "Boot-Schonfrist: 2 min kein Tiefschlaf / kein WLAN-Aus");'
+            - delay: 120s
             - globals.set: {id: boot_grace, value: "false"}
             - lambda: 'ESP_LOGI("test", "Boot-Schonfrist vorbei");'
             - script.execute: backlight_idle_timeout
@@ -3037,7 +3171,11 @@ script:
           else if (t % 60 == 0) snprintf(b, sizeof(b), "%d min", t / 60);
           else               snprintf(b, sizeof(b), "%d:%02d min", t / 60, t % 60);
           lv_label_set_text(id(to_val_lbl), b);
-      - script.execute: wake_backlight
+      # Neue Zeit gleich anwenden - aber nur bei hellem Display (2026-10-21): beim dunklen Aufwachen (on_boot 100) schaltete
+      # dieser Aufruf das Display ein ("Display an" im Weckprotokoll, kurzes Aufblitzen)
+      - if:
+          condition: {lambda: 'return !id(disp_off);'}
+          then: [{script.execute: wake_backlight}]
 
   - id: apply_motion_on
     then:
@@ -3299,6 +3437,12 @@ script:
             lv_color_hex(!ha_da ? 0x6B7280 : (ha_ble ? 0x3B82F6 : 0x22C55E)), LV_PART_MAIN);
           if (id(show_ha)) lv_obj_remove_flag(id(ha_ble_dot), LV_OBJ_FLAG_HIDDEN);
           else lv_obj_add_flag(id(ha_ble_dot), LV_OBJ_FLAG_HIDDEN);
+          // Dock-Symbol: HA-Befehle gehen ueber das Dock (tasten_konfig::dock_weg, 2026-10-20)
+          const int dw = id(tk_cfg).dock_weg();
+          lv_obj_set_style_text_color(id(dock_weg_ico),
+            lv_color_hex(dw == 2 ? 0x3B82F6 : dw == 3 ? 0xEF4444 : 0x6B7280), LV_PART_MAIN);
+          if (id(show_ha) && dw != 0) lv_obj_remove_flag(id(dock_weg_ico), LV_OBJ_FLAG_HIDDEN);
+          else lv_obj_add_flag(id(dock_weg_ico), LV_OBJ_FLAG_HIDDEN);
 
   # Sichtbarkeit der vier Kopfzeilen-Elemente anwenden.
   - id: apply_show
@@ -3486,8 +3630,8 @@ script:
             case 26: // Sprachantwort
               row(id(voice_close), nullptr, nullptr);
               break;
-            case 24: // Begruessung - nichts zu fokussieren, sie wird
-                     // weggetippt oder mit Zurueck geschlossen.
+            case 24: // Begruessung - nichts zu fokussieren, sie wird weggetippt oder mit
+                     // der Menuetaste geschlossen; die Tasten steuern solange das Geraet.
               id(cur_focus) = nullptr;
               return;
             case 0:  // Home - kein Fokus: das D-Pad steuert hier den Fernseher,
@@ -4330,7 +4474,7 @@ script:
             "Wartezeit ab Display-Aus, bis Bluetooth in den langsamen Takt wechselt. Wirkt nur bei BLE-Verbindung langsam = AN.");
           lv_label_set_text(id(ps_h_touch), id(ps_touch_wake)
             ? "AN: Ein Tipp aufs Display weckt die Remote, so wie eine Taste oder das Anheben."
-            : "AUS: Im Ruhezustand wird der Touch-Chip nicht mehr abgefragt, nur Tasten, Anheben und Ladekabel wecken. Spart etwas Strom; der erste Tipp aufs dunkle Display bewirkt nichts.");
+            : "AUS: Im Ruhezustand wird der Touch-Chip nicht mehr abgefragt - es wecken nur Tasten, Bewegung, Klopfen und Ladekabel. Spart etwas Strom; der erste Tipp aufs dunkle Display bewirkt nichts. Aus dem Tiefschlaf weckt Touch ohnehin nie.");
           lv_label_set_text(id(ps_h_touchms), id(ps_touch_ms) <= 50
             ? "50 ms (Standard): Der Touch-Chip wird auch im Ruhezustand alle 50 ms gefragt, jeder Tipp weckt sicher."
             : "Der Touch-Chip wird im Ruhezustand seltener gefragt. Das spart etwas Strom (nicht gemessen), aber ein kurzer Tipp kann zwischen zwei Abfragen durchfallen - dann musst du mehrfach tippen, bis das Display angeht. Wirkt nur bei Touch weckt = AN.");
@@ -4338,7 +4482,7 @@ script:
           if (id(ps_deep)) {
             if (t_disp <= 0) h_deep = "AN, aber Display-Timeout ist auf nie gestellt: das Display geht nie aus, der Tiefschlaf beginnt daher nie.";
             else {
-              h_deep = "AN: " + fmt(t_disp + id(ps_deep_s)) + " nach der letzten Bedienung (Display-Timeout " + s_disp + " + " + s_deep + ") schaltet sich der Chip fast ganz ab und wacht nie von selbst auf. Wecken: beliebige Taste, Anheben oder Ladekabel. Der erste Druck weckt nur - das ist dann ein kompletter Neustart und kann bis zu etwa einer Minute dauern (gemessen 2026-09-22: 58 s), erst danach reagiert sie wieder. Kein Tiefschlaf am Ladekabel und beim Sprechen.";
+              h_deep = "AN: " + fmt(t_disp + id(ps_deep_s)) + " nach der letzten Bedienung (Display-Timeout " + s_disp + " + " + s_deep + ") schaltet sich der Chip fast ganz ab und wacht nie von selbst auf. Wecken: beliebige Taste, Bewegung bzw. Hochheben (je nach Einstellung), Doppelklopfen oder Ladekabel - Touch weckt aus dem Tiefschlaf nicht. Das ist ein Neustart von etwa 4 s; ob die Weck-Taste und was du in der Zeit drückst danach wirken, stellt der Konfigurator ein (Tasten beim Aufwachen). Kein Tiefschlaf am Ladekabel und beim Sprechen.";
             }
           } else {
             h_deep = "AUS: Der Chip schläft nie ganz. Im Ruhezustand bleibt Bluetooth bereit und die Remote sofort bedienbar, verbraucht dadurch aber dauerhaft mehr Strom. Für langen Akku: AN.";
@@ -4365,7 +4509,7 @@ script:
             ? "AN: Für die Fehlersuche - ausführliches Log, Diagnosewerte (RAM, Laufzeit, Verbindung) jede Minute an Home Assistant, Messwerte des Menüs und Status der Bluetooth-Verbindung ins HA-Log. Kostet etwas Akku."
             : "AUS: Normalbetrieb. Nur wichtige Log-Meldungen, keine Diagnosewerte an Home Assistant. Zum Suchen von Fehlern auf AN stellen.");
           lv_label_set_text(id(ps_h_test),
-            "AN: Kein Tiefschlaf und kein WLAN-Aus, die Remote ist immer per WLAN erreichbar (z. B. zum Flashen). Nach einem Neustart wird er automatisch ausgeschaltet; in den ersten 10 min nach dem Start sind Tiefschlaf und WLAN-Aus ohnehin gesperrt.");
+            "AN: Kein Tiefschlaf und kein WLAN-Aus, die Remote ist immer per WLAN erreichbar (z. B. zum Flashen). Nach einem Neustart wird er automatisch ausgeschaltet; in den ersten 2 min nach dem Start sind Tiefschlaf und WLAN-Aus ohnehin gesperrt.");
 
           // ---- Ablauf-Plan, nach Zeit sortiert (alles ab Display-Aus) ----
           std::string ab = dim_ok
@@ -4417,13 +4561,13 @@ script:
           lv_label_set_text(id(h_sh_assi), "Zeigt, welcher Sprachassistent auf der Mikrofon-Taste liegt: Google oder Home Assistant.");
           lv_label_set_text(id(h_cov_p), "GANZ: Das Bild wird vollständig gezeigt, es können Ränder bleiben. VOLL: Es füllt die ganze Fläche, die Ränder werden abgeschnitten. Gilt für den Player.");
           lv_label_set_text(id(h_cov_h), "GANZ: Das Bild wird vollständig gezeigt, es können Ränder bleiben. VOLL: Es füllt die ganze Fläche, die Ränder werden abgeschnitten. Gilt für die Startseite.");
-          lv_label_set_text(id(h_motion), "Was die Remote im Ruhezustand von selbst aufweckt. Aus: nur Tasten (siehe „Tasten wecken“) und Touch. Bewegung: schon ein Anstoßen. Hochheben: erst, wenn sie aus der Ablage gehoben wird.");
+          lv_label_set_text(id(h_motion), "Was das Display im Ruhezustand von selbst einschaltet. Aus: Bewegung weckt nie (nur Tasten, Touch, Klopfen). Bewegung: schon ein Anstoßen. Hochheben: erst, wenn sie gekippt bzw. aus der Ablage gehoben wird - ein Stoß gegen den Tisch weckt dann nicht. Für den Tiefschlaf gibt es im Konfigurator eine eigene Einstellung (sonst gilt diese).");
           lv_label_set_text(id(h_sens), "Wie stark die Remote bewegt werden muss. Rechts = empfindlicher, aber auch mehr ungewollte Weckungen, etwa durch Erschütterungen am Tisch.");
           lv_label_set_text(id(h_dim_wake), "AN: Ist die Remote abgedunkelt, hellt eine Bewegung sie wieder auf - egal, was bei „Aufwecken bei“ eingestellt ist. AUS: Aus dem Abgedunkelten holt sie dann erst ein Tipp oder eine Taste zurück.");
           lv_label_set_text(id(h_dim_hold), "AN: Solange sich die Remote bewegt, dunkelt sie gar nicht erst ab und schaltet auch nicht aus - praktisch, wenn man sie länger in der Hand hält. Kostet selbst kaum Strom (ein kurzer Sensor-Check alle 250 ms), aber indirekt mehr: Das Display bleibt dann länger hell, auch wenn nur der Tisch wackelt oder man im Auto sitzt - und das Display ist der größte Verbraucher. Darum standardmäßig AUS.");
           lv_label_set_text(id(h_klopf), "AN: Zweimal kurz auf die Remote klopfen weckt sie auf, auch aus dem Tiefschlaf und dem Abgedunkelten. Wie fest geklopft werden muss, stellt der Regler darüber ein - rechts = schon leichtes Klopfen.");
           lv_label_set_text(id(h_menue_weckt), "Menü öffnen: Ein Druck auf die Menütaste weckt das Display und öffnet gleich das Menü. Nur Display: Der erste Druck (kurz oder lang) weckt nur, der nächste öffnet das Menü. Gilt nur für die Menütaste, auch wenn alle Tasten wecken.");
-          lv_label_set_text(id(h_keys), "Alle: Jede Taste weckt das Display. Nur Menü: Nur die Menü-Taste weckt (kurz oder lang gedrückt). Andere Tasten wirken trotzdem - Lautstärke, Play usw. gehen an den Fernseher, das Display bleibt aber aus.");
+          lv_label_set_text(id(h_keys), "Gilt im Ruhezustand. Alle: Jede Taste schaltet das Display ein. Nur Menü: Nur die Menü-Taste (kurz oder lang). Andere Tasten wirken trotzdem - Lautstärke, Play usw. gehen an den Fernseher, das Display bleibt aber aus. Gilt auch nach dem Tiefschlaf, wenn die Weck-Taste gesendet wird.");
           lv_label_set_text(id(h_dim_sens), "Eigene Empfindlichkeit für die beiden Optionen oben, getrennt von „Empfindlichkeit“ bei Aufwecken bei. Rechts = empfindlicher, aber auch mehr Fehlauslöser.");
           lv_label_set_text(id(h_assi), "Google: Die Mikrofon-Taste startet die Google-Sprachsuche am Streamer, wie bei der Originalfernbedienung. Home Assistant: Die Abfrage geht an Assist in Home Assistant, zum Beispiel für Smart-Home-Befehle. Tippen schaltet um. Das Mikrofon-Symbol in SmartTube funktioniert immer.");
           lv_label_set_text(id(h_google_mode), "Nur bei Assistent = Google. Assistant: allgemeine Google-Sprachsuche. Suche: öffnet die SmartTube-Suche, das Gesprochene landet im Suchfeld - dafür in SmartTube unter Einstellungen > Suche \"Instant voice search\" einschalten. Auto: Suche nur, wenn SmartTube läuft, sonst Assistant. Tippen schaltet durch.");
@@ -5589,9 +5733,9 @@ tca8418:
             }
             id(held_key) = 0;
             const bool nav = keycode == 14 || keycode == 35 || keycode == 15 || keycode == 32 || keycode == 34 || keycode == 13;
-            // Startseite: das Steuerkreuz gehoert dem Geraet. War das Display dunkel (Menue noch im Hintergrund
-            // offen), weckt der erste Druck nur.
-            if (!nav || id(cur_page) == 0 || id(key_was_dark)) return;
+            // Startseite und Begruessung: das Steuerkreuz gehoert dem Geraet. War das Display dunkel (Menue noch im
+            // Hintergrund offen), weckt der erste Druck nur.
+            if (!nav || id(cur_page) == 0 || id(cur_page) == 24 || id(key_was_dark)) return;
             id(cur_key) = keycode;
             id(dispatch_key)->execute();
             // Beim Halten wiederholen (ausser OK)
@@ -5646,6 +5790,7 @@ binary_sensor:
   # ist HA aber auch ohne WLAN verbunden, deshalb umbenannt (Entitaets-ID in HA bleibt).
   - platform: status
     name: "HA verbunden"
+    id: ha_status
   # Echter WLAN-Zustand (2026-10-06)
   - platform: template
     name: "WLAN aktiv"
@@ -6256,6 +6401,7 @@ lvgl:
         - lambda: |-
             id(fmem_last_page) = -1;
             id(cur_page) = 0; id(frow) = 0; id(fcol) = 0;
+            id(cover_sichtbar).execute();   // vorgemerktes Cover dieser Seite (2026-10-20)
         - script.execute: fix_slider_geometry
         - script.execute: apply_home_layout
         - script.execute: focus_apply
@@ -6368,6 +6514,10 @@ lvgl:
                     # (abschaltbar: Anzeige > Home-Assistant-Symbol): gruen = ueber WLAN, blau = ueber Bluetooth,
                     # grau = nicht verbunden - s. refresh_wifi_bars.
                     - label: {id: ha_ble_dot, text: "\U000F07D0", text_font: ico_ha_verbindung, text_color: 0x6B7280, hidden: true}
+                    # Dock-Symbol (2026-10-20): nur sichtbar, solange HA-Befehle ueber das Dock gehen (Einstellung "HA-Befehle
+                    # ueber das Dock") und die eigene HA-Verbindung noch nicht steht: blau = Dock hat bestaetigt (Funk wie
+                    # Bluetooth), grau = wird gerade geprueft, rot = kein Dock erreicht - s. refresh_wifi_bars.
+                    - label: {id: dock_weg_ico, text: "\U000F011F", text_font: ico_ha_verbindung, text_color: 0x6B7280, hidden: true}
                     # Ladesymbol (Blitz) - nur sichtbar waehrend geladen wird.
                     - label:
                         id: lbl_batt_chg
@@ -7007,6 +7157,7 @@ lvgl:
       on_load:
         - lambda: |-
             id(cur_page) = 6; id(frow) = 0; id(fcol) = 1;
+            id(cover_sichtbar).execute();   // vorgemerktes Cover dieser Seite (2026-10-20)
             // Markierung nur 10 s nach dem Verlassen behalten (wie im Menue).
             // Sonst blieb sie ueber den Player-Knopf der Startseite beliebig
             // lange erhalten - dieser Weg laeuft nicht durch open_menu, das
@@ -7483,7 +7634,11 @@ lvgl:
       scrollbar_mode: "off"
       scrollable: false
       on_load:
-        - lambda: 'id(cur_page) = 24; id(frow) = 0; id(fcol) = 0; ESP_LOGI("boot", "Begruessung angezeigt");'
+        - lambda: |-
+            id(cur_page) = 24; id(frow) = 0; id(fcol) = 0; ESP_LOGI("boot", "Begruessung angezeigt");
+            // Eigener Text aus dem Konfigurator (cfg.begruessung), sonst der Name der Remote
+            const char *t = id(tk_cfg).konfig("begruessung") | "";
+            lv_label_set_text(id(welcome_lbl), *t ? t : "Hallo");
         # Der Abdunkel-/Ausschalt-Countdown wurde schon beim Booten gestartet (wake_backlight
         # laeuft VOR dieser Seite, mit dem cur_page-Stand von davor) - der galt aber noch fuer
         # die ALTE Seite. Hier einmal sauber NEU starten (nicht stoppen - die Begruessung soll
@@ -7515,8 +7670,12 @@ lvgl:
                   then: [{script.execute: go_home}]
             widgets:
               - label:
+                  id: welcome_lbl
                   align: CENTER
                   y: 0
+                  width: 216
+                  long_mode: WRAP
+                  text_align: CENTER
                   text: "Hallo"
                   text_font: a18
                   text_color: 0xF1F3F5
@@ -7525,7 +7684,7 @@ lvgl:
                   align: BOTTOM_MID
                   y: -12
                   width: 216
-                  text: "Zurück drücken oder tippen"
+                  text: "Tippen oder Menütaste"
                   text_font: a13
                   text_color: 0x3B82F6
                   text_align: CENTER
@@ -8367,7 +8526,7 @@ lvgl:
               # Andere Datei sofort laden (liegt in HA schon fertig); laedt danach auch die Startseite.
               - if:
                   condition: {lambda: "return !id(cover_title).empty();"}
-                  then: [{online_image.set_url: {id: mp_cover_image, url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_player_voll.jpg");'}}]
+                  then: [{online_image.set_url: {id: mp_cover_image, url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_voll.jpg");'}}]
             widgets:
               - label: {text: "Cover Player", text_font: a13, styles: [st_grow]}
               - label: {id: cover_player_lbl, text: "GANZ", text_font: a13, text_color: 0xF1F3F5}
@@ -8384,7 +8543,7 @@ lvgl:
                   text: !lambda 'return id(cover_ganz_home) ? std::string("GANZ") : std::string("VOLL");'
               - if:
                   condition: {lambda: "return !id(cover_title).empty();"}
-                  then: [{online_image.set_url: {id: home_cover_image, url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_remote_wz_sabrina_home_voll.jpg");'}}]
+                  then: [{online_image.set_url: {id: home_cover_image, url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_voll.jpg");'}}]
             widgets:
               - label: {text: "Cover Startseite", text_font: a13, styles: [st_grow]}
               - label: {id: cover_home_lbl, text: "GANZ", text_font: a13, text_color: 0xF1F3F5}

@@ -777,9 +777,10 @@ inline bool ereignis(int keycode, bool pressed) {
   // Touchpad: Steuerkreuz/OK/Zurueck/Kanal steuern die Maus (Einstellung "Steuerkreuz als Maus")
   if (p == 51 && !dunkel && !button_test_mode->value() && touchpad::taste(keycode, pressed)) { if (pressed) held_key->value() = 0; return true; }
   // Tasten eines laufenden Folgemodus gehoeren ihm auch auf den Menueseiten
+  // Dock-Anzeige (50) und Touchpad (51): Tasten wie auf der Startseite (2026-10-17), ebenso die Begruessung (24):
+  // sie steht nur da, die Remote ist sofort bedienbar (2026-10-20) - weg per Tippen oder Menuetaste.
   const bool darf = t->aktiv() && !button_test_mode->value() &&
-                    (t->modus_taste(keycode) || !(p != 0 && p != 50 && p != 51 && !dunkel && nav_taste(keycode)));
-  // Dock-Anzeige (50) und Touchpad (51): Tasten wie auf der Startseite (2026-10-17)
+                    (t->modus_taste(keycode) || !(p != 0 && p != 24 && p != 50 && p != 51 && !dunkel && nav_taste(keycode)));
   const bool r = t->ereignis(keycode, pressed, activity->value(), key_was_dark->value(), darf);
   if (r && pressed) held_key->value() = 0;
   return r;

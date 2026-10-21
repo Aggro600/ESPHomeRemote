@@ -61,6 +61,10 @@ class ILI9341I80Display : public display::DisplayBuffer {
   // der Tastendruck-/Bewegungs-Weckpin funktioniert.
   void enter_sleep();
   void exit_sleep();
+  // FORK 2026-10-21: vor setup() setzen - das Panel wird eingerichtet, aber nicht eingeschaltet (kein DISPON, gleich
+  // SLPIN). Sonst wurde das stromlos dunkle Panel beim Einrichten durchlaessig und schimmerte ~1 s weiss, obwohl die
+  // Remote dunkel aufwachen sollte. Einschalten dann mit exit_sleep().
+  void set_dunkel_starten(bool d) { dunkel_starten_ = d; }
   float get_setup_priority() const override { return setup_priority::HARDWARE; }
 
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_COLOR; }
@@ -95,6 +99,7 @@ class ILI9341I80Display : public display::DisplayBuffer {
   int16_t width_{240};
   int16_t height_{320};
   bool invert_colors_{false};
+  bool dunkel_starten_{false};
   bool mirror_x_{false};
   bool mirror_y_{false};
 

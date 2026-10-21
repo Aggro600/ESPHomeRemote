@@ -847,6 +847,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (await this._dockClick(a, t)) { this._render(); return; }
     if (await this._jetztClick(a, t)) { this._render(); return; }
     if (await this._klingelClick(a, t)) { this._render(); return; }
+    if (a === "ak_tage") { this.s.akTage = Number(t.dataset.t); this.s.akku = null; this._render(); return; }
     if (await this._irClick(a, t)) { this._render(); return; }
     if (await this._btClick(a, t)) { this._render(); return; }
     if (await this._lernClick(a, t)) { this._render(); return; }
@@ -1100,6 +1101,12 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       const j = s.jetzt.jetzt[Number(t.dataset.ji)];
       j[t.dataset.jz] = t.type === "checkbox" ? t.checked : t.value;
       this._jetztSpeichern(); return;
+    }
+    if (t.dataset.bgr != null) {
+      // Begruessungstext (cfg.begruessung, 2026-10-20) - leer = "Hallo <Name>"
+      const v = t.value.trim().slice(0, 40);
+      if (v) this.cfg.begruessung = v; else delete this.cfg.begruessung;
+      this._touch(); return this._render();
     }
     if (t.dataset.ent) {
       const ents = (this.cfg.ents ||= {});
@@ -3862,111 +3869,202 @@ const STUFEN = (werte, text = SEK, extra = {}) => werte.map((v) => [v, extra[v] 
 const HML = [[0, "Hoch"], [1, "Mittel"], [2, "Niedrig"]];
 const EINST_GRUPPEN = [
   ["Bildschirm", "mdi:brightness-6", [
-    ["disp_bri", "Helligkeit Display", { min: 5, max: 100, einheit: "%" }],
-    ["kbd_light_on", "Tastenbeleuchtung"],
-    ["kbd_bri", "Helligkeit Tastenbeleuchtung", { min: 0, max: 100, einheit: "%" }],
-    ["disp_timeout_s", "Display aus nach", { min: 0, max: 300, einheit: "s", null: "nie" }],
-    ["ps_dim_s", "Abdunkeln nach", { min: 0, max: 60, einheit: "s", null: "aus" }],
-    ["ps_dim_pct", "Abdunkeln auf", STUFEN([5, 10, 15, 20, 25, 30, 40, 50, 60, 70], (v) => `${v} %`)],
-  ]],
+    ["disp_bri", "Helligkeit Display", { min: 5, max: 100, einheit: "%" },
+      "Helligkeit im Betrieb. Niedriger spart Akku – das Display ist der größte Verbraucher. Folgt die Remote dem Lichtsensor, ist das der Ausgangswert."],
+    ["kbd_light_on", "Tastenbeleuchtung", null,
+      "Beleuchtung der Tasten. Aus spart Akku, die Tasten funktionieren trotzdem. An der Remote: linke Hälfte der Statusleiste antippen."],
+    ["kbd_bri", "Helligkeit Tastenbeleuchtung", { min: 0, max: 100, einheit: "%" },
+      "Helligkeit der Tastenbeleuchtung, wenn sie an ist."],
+    ["disp_timeout_s", "Display aus nach", { min: 0, max: 300, einheit: "s", null: "nie" },
+      "So lange ohne Bedienung, dann geht das Display aus und die Remote ist im <b>Ruhezustand</b> (nicht im Tiefschlaf – Tasten wirken sofort). 0 = nie (kostet viel Akku, und der Tiefschlaf beginnt dann nie)."],
+    ["ps_dim_s", "Abdunkeln nach", { min: 0, max: 60, einheit: "s", null: "aus" },
+      "So lange ohne Bedienung, dann wird das Display gedimmt (Stufe <b>abgedunkelt</b>). Jede Taste, jeder Tipp – und mit „Aufhellen bei Bewegung“ auch eine Bewegung – macht es wieder hell. 0 = nicht abdunkeln."],
+    ["ps_dim_pct", "Abdunkeln auf", STUFEN([5, 10, 15, 20, 25, 30, 40, 50, 60, 70], (v) => `${v} %`),
+      "Helligkeit im abgedunkelten Zustand, bezogen auf die normale Helligkeit."],
+  ], "<b>Die Stufen der Remote:</b> <b>Hell</b> → nach „Abdunkeln nach“ <b>abgedunkelt</b> → nach „Display aus nach“ <b>Ruhezustand</b> (Display aus, der Chip läuft weiter, Bluetooth zum Fernseher bleibt verbunden, jede Taste wirkt sofort) → nach „Tiefschlaf nach“ <b>Tiefschlaf</b> (Chip fast ganz aus, Akku hält Wochen; Wecken = Neustart, ca. 4 s bis die Tasten wirken)."],
   ["Anzeige", "mdi:monitor-dashboard", [
-    ["show_ble", "Bluetooth-Symbol"], ["show_wifi", "WLAN-Symbol"], ["show_batt", "Akkustand"], ["show_clock", "Uhrzeit"],
-    ["show_assi_icon", "Assistenten-Symbol"], ["show_motion", "Bewegungs-Symbol"], ["show_ha", "Home-Assistant-Symbol"],
-    ["cover_ganz_player", "Cover im Player", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]]],
-    ["cover_ganz_home", "Cover auf der Startseite", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]]],
-    ["mem_s", "Menü-Position merken für", STUFEN([5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, -1], SEK, { "-1": "immer" })],
-    ["menu_close_s", "Menü schließen nach", STUFEN([15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1800, -1], SEK, { "-1": "nie" })],
-    ["sd_logos", "Logos von der SD-Karte"],
-  ]],
+    ["show_ble", "Bluetooth-Symbol", null,
+      "Balken für Bluetooth zu Fernseher/Streamer. Blau = verbunden (Balken = Empfang), grau = an, aber nicht verbunden, dunkel = Bluetooth aus."], ["show_wifi", "WLAN-Symbol", null,
+      "Balken fürs WLAN. Grün = verbunden, grau = an, aber nicht verbunden, dunkel = WLAN aus (Ruhezustand oder „Nur Bluetooth“)."], ["show_batt", "Akkustand", null,
+      "Akkustand in Prozent, beim Laden mit Blitz."], ["show_clock", "Uhrzeit", null,
+      "Uhrzeit in der Statusleiste. Ohne Uhr rückt der Sleeptimer-Countdown nach links."],
+    ["show_assi_icon", "Assistenten-Symbol", null,
+      "Zeigt, welcher Assistent auf der Mikrofon-Taste liegt (Google oder Home Assistant)."], ["show_motion", "Bewegungs-Symbol", null,
+      "Blinkt kurz auf, wenn der Bewegungssensor etwas erkennt – hilft beim Einstellen der Empfindlichkeit."], ["show_ha", "Home-Assistant-Symbol", null,
+      "Symbol hinter den Balken: Verbindung zu Home Assistant (grün = WLAN, blau = Bluetooth, grau = keine). Dazu das Dock-Symbol, solange Befehle übers Dock laufen."],
+    ["cover_ganz_player", "Cover im Player", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]],
+      "Ganz: das Bild vollständig, ggf. mit Rand. Voll: füllt die Fläche, Ränder werden abgeschnitten. Gilt für die Medien-Seite."],
+    ["cover_ganz_home", "Cover auf der Startseite", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]],
+      "Wie oben, für die Karte auf der Startseite."],
+    ["mem_s", "Menü-Position merken für", STUFEN([5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, -1], SEK, { "-1": "immer" }),
+      "So lange nach dem Verlassen des Menüs (bzw. ab Display-Aus) merkt sich die Remote Seite und Markierung – Wiederöffnen springt dorthin zurück. Danach beginnt das Menü oben. Gilt auch für die Medien-Seite."],
+    ["menu_close_s", "Menü schließen nach", STUFEN([15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1800, -1], SEK, { "-1": "nie" }),
+      "So lange nach Display-Aus bleibt ein offenes Menü stehen; danach springt die Remote auf die Startseite, damit du sie beim Wecken siehst."],
+    ["sd_logos", "Logos von der SD-Karte", null,
+      "Zu Apps ohne eigenes Cover (Netflix, Disney+ …) das Logo von der SD-Karte (Ordner covers) zeigen. Das Mikrofon ist dabei kurz gesperrt."],
+  ], "Was oben in der Statusleiste und auf den Seiten zu sehen ist. Ändert nichts an der Funktion, nur an der Anzeige."],
   ["Wecken", "mdi:gesture-tap", [
-    ["keys_wake_all", "Tasten wecken das Display", [[true, "Alle Tasten"], [false, "Nur die Menütaste"]]],
-    ["menue_weckt_nur", "Menütaste bei dunklem Display", [[false, "Weckt und öffnet das Menü"], [true, "Weckt nur das Display"]]],
-    ["motion_mode", "Aufwecken bei", [[0, "Aus"], [1, "Bewegung"], [2, "Hochheben"]]],
-    ["motion_sens", "Empfindlichkeit (Aufwecken)", HML],
-    ["dim_wake", "Aufhellen bei Bewegung"],
-    ["dim_hold_motion", "Nicht abdunkeln, solange in Bewegung"],
-    ["dim_sens", "Empfindlichkeit (Aufhellen/Halten)", HML],
-    ["klopf_wake", "Doppelt klopfen weckt"],
-    ["klopf_sens", "Klopf-Empfindlichkeit", HML],
-    ["ps_touch_wake", "Touch weckt"],
-    ["ps_touch_ms", "Touch-Abfrage im Ruhezustand", STUFEN([50, 75, 100, 150, 200, 250, 300], (v) => `${v} ms`)],
-  ]],
+    ["keys_wake_all", "Tasten wecken das Display", [[true, "Alle Tasten"], [false, "Nur die Menütaste"]],
+      "Alle Tasten: jede Taste schaltet das Display ein (und wirkt trotzdem). Nur die Menütaste: andere Tasten wirken, das Display bleibt aber aus – praktisch für Lautstärke im Dunkeln. Gilt im Ruhezustand und nach dem Tiefschlaf (dort nur, wenn die Weck-Taste gesendet wird). Aus dem abgedunkelten Zustand holt immer jede Taste zurück."],
+    ["menue_weckt_nur", "Menütaste bei dunklem Display", [[false, "Weckt und öffnet das Menü"], [true, "Weckt nur das Display"]],
+      "Nur für die Menütaste bei dunklem Display. Weckt und öffnet: ein Druck schaltet ein und öffnet sofort das Menü. Weckt nur: der erste Druck schaltet nur ein, der nächste öffnet das Menü."],
+    ["weck_tasten", "Tasten beim Aufwachen aus dem Tiefschlaf", [[2, "Senden – auch die Weck-Taste"], [1, "Weck-Taste nur wecken, danach gedrückte senden"], [0, "Nur wecken – nichts nachsenden"]],
+      "Der Start aus dem Tiefschlaf dauert ca. 4 s. <b>Senden:</b> die Taste, mit der du weckst, und alles, was du während des Starts drückst, wirkt danach normal; Fernseher-Tasten warten, bis Bluetooth verbunden ist (bis zu 8 Tasten, höchstens 20 s nach dem Start, sonst verworfen). <b>Weck-Taste nur wecken:</b> die erste Taste schaltet nur ein, alle weiteren wirken wie oben. <b>Nur wecken:</b> die Weck-Taste wirkt nicht, und Fernseher-Tasten vor der Bluetooth-Verbindung werden verworfen. In allen Fällen gilt: Infrarot wirkt sofort, HA-Befehle gehen sofort übers Dock (ohne Dock warten sie bis zu 10 s auf die eigene HA-Verbindung)."],
+    ["motion_mode", "Aufwecken bei", [[0, "Aus"], [1, "Bewegung"], [2, "Hochheben"]],
+      "Was das Display im <b>Ruhezustand</b> (Display aus, Remote wach) von selbst einschaltet. Aus: Bewegung weckt nie (nur Tasten, Touch, Klopfen). Bewegung: schon ein leichtes Anstoßen. Hochheben: erst, wenn sie gekippt bzw. aus der Ablage gehoben wird (Lage ändert sich um 12–35°, je nach Empfindlichkeit) – ein Stoß gegen den Tisch weckt dann nicht. Für den Tiefschlaf gibt es die eigene Einstellung darunter."],
+    ["tief_motion", "Aufwecken aus dem Tiefschlaf bei", [[-1, "Wie oben (Aufwecken bei)"], [1, "Bewegung – schon leichtes Anstoßen"], [2, "Hochheben"], [0, "Aus – nur Tasten, Klopfen, Ladekabel"]],
+      "Eigene Wahl für den <b>Tiefschlaf</b>. Bewegung: jeder Ruck über der Empfindlichkeit startet die Remote. Hochheben: erst, wenn sich die Lage um 12–35° ändert und ca. 0,3 s so bleibt. <b>Das Display folgt dabei „Aufwecken bei“:</b> steht das auf Aus, wacht nur der Chip auf – das Display bleibt dunkel, Bluetooth zum Fernseher verbindet schon, und die nächste Taste wirkt sofort ohne die ~4 s Start. (Ist „Doppelt klopfen weckt“ an, geht das Display immer an – Klopfen und Bewegung kommen über denselben Anschluss.) Die Empfindlichkeit darunter gilt für beides."],
+    ["motion_sens", "Empfindlichkeit (Aufwecken)", HML,
+      "Wie stark bewegt bzw. wie weit gekippt werden muss (Ruhezustand und Tiefschlaf). Hoch = schon leichte Bewegung weckt, aber auch Erschütterungen am Tisch."],
+    ["dim_wake", "Aufhellen bei Bewegung", null,
+      "Ist das Display <b>abgedunkelt</b> (noch nicht aus), macht eine Bewegung es wieder hell – unabhängig von „Aufwecken bei“. Aus: zurück nur per Taste oder Tipp."],
+    ["dim_hold_motion", "Nicht abdunkeln, solange in Bewegung", null,
+      "Solange sich die Remote bewegt (z. B. in der Hand), wird sie weder abgedunkelt noch ausgeschaltet. Kostet indirekt Strom, weil das Display länger an bleibt – auch wenn nur der Tisch wackelt."],
+    ["dim_sens", "Empfindlichkeit (Aufhellen/Halten)", HML,
+      "Eigene Empfindlichkeit für „Aufhellen bei Bewegung“ und „Nicht abdunkeln“, getrennt von der Weck-Empfindlichkeit."],
+    ["klopf_wake", "Doppelt klopfen weckt", null,
+      "Zweimal kurz auf die Remote klopfen schaltet sie ein – aus dem abgedunkelten Zustand, aus dem Ruhezustand und auch aus dem Tiefschlaf."],
+    ["klopf_sens", "Klopf-Empfindlichkeit", HML,
+      "Wie fest geklopft werden muss. Hoch = schon leichtes Klopfen."],
+    ["ps_touch_wake", "Touch weckt", null,
+      "Ein Tipp aufs dunkle Display schaltet es im <b>Ruhezustand</b> ein. Aus: der Touch-Chip wird im Ruhezustand nicht abgefragt (spart etwas). Aus dem Tiefschlaf weckt Touch nie."],
+    ["ps_touch_ms", "Touch-Abfrage im Ruhezustand", STUFEN([50, 75, 100, 150, 200, 250, 300], (v) => `${v} ms`),
+      "Wie oft der Touch-Chip im Ruhezustand gefragt wird. Länger spart etwas Strom, aber ein kurzer Tipp kann durchrutschen – dann mehrmals tippen. Nur bei „Touch weckt“."],
+  ], "Die Stufen (hell → abgedunkelt → Ruhezustand → Tiefschlaf) stehen bei „Bildschirm“. <b>Was weckt was:</b><div class='wtabw'><table class='wtab'><tr><th></th><th>gedimmt</th><th>Ruhe&shy;zustand</th><th>Tief&shy;schlaf</th></tr><tr><td>Taste</td><td>ja</td><td>¹</td><td>jede²</td></tr><tr><td>Tipp</td><td>ja</td><td>„Touch weckt“</td><td>nein</td></tr><tr><td>Bewegung</td><td>„Aufhellen bei Bewegung“</td><td>„Aufwecken bei: Bewegung“</td><td>„… aus dem Tiefschlaf: Bewegung“⁴</td></tr><tr><td>Hochheben</td><td>–</td><td>„Aufwecken bei: Hochheben“</td><td>„… aus dem Tiefschlaf: Hochheben“⁴</td></tr><tr><td>Klopfen</td><td colspan='3'>überall, wenn „Doppelt klopfen weckt“ an ist</td></tr><tr><td>Ladekabel</td><td>–</td><td>ja</td><td>ja</td></tr><tr><td>Klingel</td><td>ja</td><td>„Klingel &amp; Popups“ = Ja</td><td>nein</td></tr></table></div>¹ je nach „Tasten wecken“ – andere Tasten wirken trotzdem, nur das Display bleibt aus.<br>² jede Taste weckt den Chip (Neustart ca. 4 s). Ob sie danach auch wirkt, regelt „Tasten beim Aufwachen“; das Display folgt „Tasten wecken“.<br>⁴ weckt den Chip; das Display nur, wenn „Aufwecken bei“ nicht auf Aus steht."],
   ["Energie", "mdi:leaf", [
-    ["nur_ble", "Nur Bluetooth (WLAN aus)"],
-    ["ps_wifi", "WLAN-Sparmodus"],
-    ["ps_wifi_max", "Sparmodus stark (Ruhe)"],
-    ["ps_wifi_off", "WLAN aus im Ruhezustand"],
-    ["ps_wifi_off_s", "WLAN aus nach", STUFEN([0, 15, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200], SEK, { 0: "sofort" })],
-    ["ps_wifi_off_tv_s", "WLAN aus bei TV an", STUFEN([-1, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 0], SEK, { "-1": "wie oben", 0: "nie" })],
-    ["wifi_fest", "WLAN-Schnellstart (feste IP, ab Neustart)"],
-    ["wlan_frueh", "WLAN früh einschalten (Taste/Bewegung)"],
-    ["ps_cpu", "Prozessor drosseln"],
-    ["ps_cpu_s", "Drosseln nach", STUFEN([0, 5, 10, 15, 20, 30, 45, 60, 120, 180, 300], SEK, { 0: "sofort" })],
-    ["ps_light", "Leichtschlaf"],
-    ["ps_bleidle", "Bluetooth-Verbindung langsam"],
-    ["ps_ble_s", "Bluetooth langsam nach", STUFEN([5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600])],
-    ["ps_low_pct", "Sparmodus bei Akku unter", STUFEN([0, 5, 10, 15, 20, 25, 30, 40], (v) => `${v} %`, { 0: "aus" })],
-  ]],
+    ["nur_ble", "Nur Bluetooth (WLAN aus)", null, "WLAN bleibt immer aus. Home Assistant, Bilder und Sprache laufen über Bluetooth zum HA-Rechner (HA-Symbol <b style='color:#3B82F6'>blau</b>). Spart am meisten; für Updates schaltet das Wartungsfenster das WLAN kurz ein."],
+    ["ps_wifi", "WLAN-Sparmodus", null,
+      "Der WLAN-Chip schläft zwischen den Datenpaketen. Spart viel, HA antwortet minimal später. Empfohlen: an."],
+    ["ps_wifi_max", "Sparmodus stark (Ruhe)", null,
+      "Im Ruhezustand schläft der WLAN-Chip noch länger zwischen den Paketen. Spart mehr, HA reagiert träger. Nur mit WLAN-Sparmodus."],
+    ["ps_wifi_off", "WLAN aus im Ruhezustand", null, "Ist das Display aus, geht das WLAN nach der eingestellten Zeit aus; HA läuft dann über Bluetooth weiter."],
+    ["ps_wifi_off_s", "WLAN aus nach", STUFEN([0, 15, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200], SEK, { 0: "sofort" }),
+      "Wartezeit ab Display-Aus, bis das WLAN abgeschaltet wird. Kürzer spart mehr. Nur bei „WLAN aus im Ruhezustand“."],
+    ["ps_wifi_off_tv_s", "WLAN aus bei TV an", STUFEN([-1, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 0], SEK, { "-1": "wie oben", 0: "nie" }),
+      "Abweichende Zeit, solange der Fernseher läuft. „Nie“ = WLAN bleibt bei laufendem Fernseher an."],
+    ["wifi_fest", "WLAN-Schnellstart (feste IP, ab Neustart)", null, "Feste IP statt DHCP – das WLAN ist nach dem Einschalten etwa 1 s schneller verbunden."],
+    ["wlan_frueh", "WLAN früh einschalten (Taste/Bewegung)", null, "Bei WLAN aus im Ruhezustand: schon bei Tastendruck oder Bewegung wieder einschalten, nicht erst, wenn es gebraucht wird."],
+    ["ps_cpu", "Prozessor drosseln", null,
+      "Im Ruhezustand läuft der Prozessor mit 80 statt 240 MHz. Bei Bedienung sofort wieder volle Leistung – merkt man nicht."],
+    ["ps_cpu_s", "Drosseln nach", STUFEN([0, 5, 10, 15, 20, 30, 45, 60, 120, 180, 300], SEK, { 0: "sofort" }),
+      "Wartezeit ab Display-Aus bis zum Drosseln."],
+    ["ps_light", "Leichtschlaf", null,
+      "Zwischen den Aufgaben schläft der Chip kurz (Leichtschlaf), Bluetooth bleibt verbunden. Spart im Ruhezustand deutlich. Nicht verwechseln mit dem Tiefschlaf."],
+    ["ps_bleidle", "Bluetooth-Verbindung langsam", null,
+      "Im Ruhezustand meldet sich die Remote beim Fernseher/Streamer seltener (ca. alle 0,6 s statt 15 ms). Die Verbindung bleibt, der erste Tastendruck kommt minimal später an."],
+    ["ps_ble_s", "Bluetooth langsam nach", STUFEN([5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600]),
+      "Wartezeit ab Display-Aus, bis Bluetooth zum Fernseher in den langsamen Takt geht."],
+    ["ps_low_pct", "Sparmodus bei Akku unter", STUFEN([0, 5, 10, 15, 20, 25, 30, 40], (v) => `${v} %`, { 0: "aus" }),
+      "Bei Akku unter diesem Wert (nicht beim Laden) gelten kurze Zeiten: Display nach höchstens 15 s aus, WLAN/Prozessor sofort gedrosselt, Tiefschlaf nach höchstens 30 s – auch wenn diese Optionen sonst aus sind."],
+  ], "Spart Strom, solange die Remote wach ist (hell, abgedunkelt oder im Ruhezustand). Die Zeiten zählen ab Display-Aus; jede Taste startet sie neu. Den Tiefschlaf stellst du eine Karte weiter ein."],
   ["Tiefschlaf", "mdi:sleep", [
-    ["ps_deep", "Tiefschlaf im Ruhezustand"],
-    ["deep_ohne_ble", "Nur ohne Bluetooth-Verbindung"],
-    ["ps_deep_s", "Tiefschlaf nach", STUFEN([30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200])],
-    ["ps_deep_tv_s", "Tiefschlaf bei TV an", STUFEN([-1, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 0], SEK, { "-1": "wie ohne TV", 0: "nie" })],
-  ]],
+    ["ps_deep", "Tiefschlaf im Ruhezustand", null,
+      "Im Ruhezustand nach der eingestellten Zeit in den Tiefschlaf. Dann: kein Bluetooth, keine Popups, Akku hält Wochen. Wecken siehe Karte „Wecken“; die Weck-Taste und alles, was du in den ~4 s Start drückst, kommt danach beim Gerät an."],
+    ["deep_ohne_ble", "Nur ohne Bluetooth-Verbindung", null,
+      "Nur in den Tiefschlaf, wenn gerade kein Fernseher/Streamer per Bluetooth verbunden ist. So bleibt die Remote beim Fernsehen sofort bedienbar."],
+    ["bewegung_haelt", "Bewegung hält wach", null,
+      "Eine Bewegung (Anheben, in der Hand halten, Anstoßen) startet die Wartezeit bis zum Tiefschlaf neu – genau wie ein Tastendruck. Solange du die Remote in der Hand hast, schläft sie also nicht ein; das Display bleibt dabei aus. Aus: nur Tasten und Tippen verlängern. Wie stark bewegt werden muss, bestimmt die Empfindlichkeit unter „Wecken“. Kostet etwas Akku, wenn die Remote oft bewegt wird (z. B. auf dem Sofa)."],
+    ["ps_deep_s", "Tiefschlaf nach", STUFEN([30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200]),
+      "Wartezeit ab Display-Aus bzw. letztem Tastendruck (mit „Bewegung hält wach“ auch letzter Bewegung), bis der Tiefschlaf beginnt. Kürzer spart mehr, dafür öfter ~4 s Start beim Wecken."],
+    ["ps_deep_tv_s", "Tiefschlaf bei TV an", STUFEN([-1, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 0], SEK, { "-1": "wie ohne TV", 0: "nie" }),
+      "Abweichende Zeit, solange der Fernseher läuft – damit die Remote beim Fernsehen nicht zu früh einschläft. „Nie“ = bei laufendem Fernseher kein Tiefschlaf."],
+  ], "Größter Spareffekt: Im Tiefschlaf ist fast alles aus – kein Bluetooth, kein WLAN, keine Popups. Was die Remote daraus weckt, steht in der Karte „Wecken“. Nach dem Wecken ist sie in etwa 4 s bereit; Tasten, die du in dieser Zeit drückst, werden gemerkt und danach gesendet. In den ersten 2 min nach einem Neustart oder Update schläft sie nie (damit sie per WLAN erreichbar bleibt)."],
   ["Sprache", "mdi:microphone", [
-    ["assistant", "Assistent", [[0, "Google"], [1, "Home Assistant"]]],
-    ["google_mode", "Google-Modus", [[0, "Assistant"], [1, "Suche"], [2, "Auto"]]],
-    ["tts_speaker", "Antwort hörbar"],
-    ["mic_allowed", "Mikrofon erlaubt"],
-    ["mic_vorwaermen", "Mikrofon vorwärmen"],
-  ]],
+    ["assistant", "Assistent", [[0, "Google"], [1, "Home Assistant"]],
+      "Google: die Mikrofon-Taste startet die Sprachsuche am Streamer (wie die Original-Fernbedienung). Home Assistant: die Frage geht an Assist (Smart-Home-Befehle)."],
+    ["google_mode", "Google-Modus", [[0, "Assistant"], [1, "Suche"], [2, "Auto"]],
+      "Nur bei Google. Assistant: allgemeine Sprachsuche. Suche: Text landet in der SmartTube-Suche. Auto: Suche, wenn SmartTube läuft, sonst Assistant."],
+    ["tts_speaker", "Antwort hörbar", null,
+      "Antworten von Home Assistant zusätzlich über einen Lautsprecher sprechen. Sonst nur als Text auf der Remote."],
+    ["mic_allowed", "Mikrofon erlaubt", null,
+      "Aus: Das Mikrofon ist stummgeschaltet, die Sprachtaste nimmt nichts auf (wie der Schalter „Mikrofon stumm“ in HA)."],
+    ["mic_vorwaermen", "Mikrofon vorwärmen", null,
+      "Das Mikrofon läuft schon bei eingeschaltetem Display, die Aufnahme startet ohne Verzögerung. Kostet etwas Strom."],
+  ], "Die Mikrofon-Taste: Spracheingabe am Fernseher/Streamer (Google) oder an Home Assistant (Assist)."],
   ["Bluetooth & Maus", "mdi:bluetooth", [
-    ["ble_parallel", "Parallel verbunden"],
-    ["maus_tempo", "Zeigertempo (Touchpad)", STUFEN([50, 75, 100, 125, 150, 200, 250], (v) => `${v} %`)],
-    ["maus_dpad", "Steuerkreuz als Maus (im Touchpad)"],
-    ["maus_dpad_tempo", "Tempo Steuerkreuz", STUFEN([50, 75, 100, 125, 150, 200, 250], (v) => `${v} %`)],
-    ["maus_zurueck", "Zurück-Taste im Touchpad", [[0, "Schließt das Touchpad"], [1, "Zurück am Gerät"], [2, "Rechtsklick"]]],
-  ]],
+    ["ble_parallel", "Parallel verbunden", null, "Mehrere Geräte (Plätze) bleiben gleichzeitig verbunden – der Aktivitätswechsel geht sofort, ohne neu zu verbinden."],
+    ["maus_tempo", "Zeigertempo (Touchpad)", STUFEN([50, 75, 100, 125, 150, 200, 250], (v) => `${v} %`),
+      "Wie schnell der Zeiger dem Finger auf dem Touchpad folgt."],
+    ["maus_dpad", "Steuerkreuz als Maus (im Touchpad)", null,
+      "Im Touchpad bewegt das Steuerkreuz den Zeiger, OK klickt."],
+    ["maus_dpad_tempo", "Tempo Steuerkreuz", STUFEN([50, 75, 100, 125, 150, 200, 250], (v) => `${v} %`),
+      "Zeigertempo mit dem Steuerkreuz."],
+    ["maus_zurueck", "Zurück-Taste im Touchpad", [[0, "Schließt das Touchpad"], [1, "Zurück am Gerät"], [2, "Rechtsklick"]],
+      "Was die Zurück-Taste im Touchpad macht."],
+  ], "Verbindung zu Fernseher und Streamern (die „Plätze“) und das Touchpad. Die Verbindung zu Home Assistant steht in der Karte „Verbindung zu Home Assistant“."],
   ["Dock-Anzeige", "mdi:tablet-dashboard", [
-    ["dock_an", "Smart Display im Dock"],
+    ["dock_an", "Smart Display im Dock", null,
+      "Im Dock als Smart Display: Uhrzeit, Wetter, Raumklima, Termine, Ladestand."],
     // 2 = Zeitfenster (open-remote-dock.h: an zwischen dock_von und dock_bis) - vorher hiess es hier "Uhrzeit unten"
-    ["dock_disp", "Display im Dock", [[0, "Geht aus wie sonst"], [1, "Bleibt an"], [2, "Bleibt an im Zeitfenster"]]],
-    ["ha_link_ruhe", "HA-Verbindung sparen nach (dunkles Display)", [[0, "Nie"], [1, "1 min"], [2, "2 min"], [5, "5 min"], [10, "10 min"], [30, "30 min"]]],
-    ["ha_link_modus", "… und zwar", [[0, "Normal (nichts ändern)"], [1, "Langsam – Klingel & Popups kommen weiter (~2 s)"], [2, "Trennen – spart am meisten, HA erst nach dem Wecken"]]],
-    ["ha_dock", "HA-Befehle über das Dock", [[0, "Aus – nur eigene Verbindung"], [1, "Nur ohne HA-Verbindung (z. B. nach dem Aufwachen)"], [2, "Immer zuerst übers Dock (am schnellsten)"]]],
-    ["dock_von", "Zeitfenster ab", STUFEN([0, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18], (v) => `${v} Uhr`)],
-    ["dock_bis", "Zeitfenster bis", STUFEN([12, 16, 18, 19, 20, 21, 22, 23, 24], (v) => `${v} Uhr`)],
-    ["musik_dock", "Musik-Anzeige im Dock (solange Musik läuft)"],
-    ["musik_player", "Musik-Anzeige nur, wenn der Player spielt"],
-  ]],
+    ["dock_disp", "Display im Dock", [[0, "Geht aus wie sonst"], [1, "Bleibt an"], [2, "Bleibt an im Zeitfenster"]],
+      "Geht aus wie sonst: das Display folgt „Display aus nach“. Bleibt an: im Dock immer an. Zeitfenster: nur zwischen den Uhrzeiten unten an."],
+    ["dock_von", "Zeitfenster ab", STUFEN([0, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18], (v) => `${v} Uhr`),
+      "Beginn des Zeitfensters (nur bei „Bleibt an im Zeitfenster“)."],
+    ["dock_bis", "Zeitfenster bis", STUFEN([12, 16, 18, 19, 20, 21, 22, 23, 24], (v) => `${v} Uhr`),
+      "Ende des Zeitfensters."],
+    ["musik_dock", "Musik-Anzeige im Dock (solange Musik läuft)", null,
+      "Läuft Musik, zeigt die Remote im Dock das Spektrum (übers Mikrofon) statt der Uhr."],
+    ["musik_player", "Musik-Anzeige nur, wenn der Player spielt", null,
+      "Musik-Anzeige nur, wenn ein Player in HA wirklich spielt – nicht schon bei Geräuschen."],
+  ], "Steht die Remote im Dock (Ladekontakte), kann sie als Smart Display Uhrzeit, Wetter, Termine und bei Musik das Spektrum zeigen."],
+  ["Verbindung zu Home Assistant", "mdi:home-assistant", [
+    ["ha_dock", "HA-Befehle über das Dock", [[0, "Aus – nur eigene Verbindung"], [1, "Nur ohne HA-Verbindung (z. B. nach dem Aufwachen)"], [2, "Immer zuerst übers Dock (am schnellsten)"]],
+      "Tastenbefehle an HA (Licht, Szenen, Skripte …) gehen per Funk ans Dock, das sie in HA ausführt – ohne dass die Remote erst eine Verbindung aufbauen muss. Antwortet kein Dock, nimmt die Remote ihre eigene Verbindung. Solange die Remote selbst noch nicht mit HA verbunden ist, zeigt die Statusleiste das Dock-Symbol."],
+    ["http_dock", "Bilder & Stand über das Dock", [[0, "Nur als Ausweg (ohne eigene Verbindung)"], [1, "Zuerst übers Dock (am schnellsten)"]],
+      "Cover, Logos und die Tasten-Konfiguration holt das Dock bei HA und funkt sie verschlüsselt an die Remote. Ist das Display an und hat die Remote keine eigene HA-Verbindung, fragt sie außerdem alle 5 s den Stand (Player, Fernseher, Timer) beim Dock ab."],
+    ["ha_link_modus", "Klingel & Popups bei dunklem Display", [[1, "Ja – Verbindung langsam halten"], [2, "Nein – Verbindung trennen (am sparsamsten)"], [0, "Ja, sofort – Verbindung normal halten (mehr Strom)"]],
+      "<b>Ja:</b> Die HA-Verbindung bleibt bei dunklem Display im langsamen Takt bestehen. Klingelt es (oder geht ein anderes Popup von selbst auf), schaltet sich die Remote ein – etwa 1–2 s später als bei normaler Verbindung. Kostet etwas Strom und belegt dauerhaft einen Platz am Bluetooth-Proxy. Große Daten wie Cover lädt die Remote in dieser Zeit nicht, erst beim Einschalten.<br><b>Nein:</b> Bei dunklem Display wird die HA-Verbindung getrennt. Es gehen keine Popups von selbst auf, dafür hält der Akku am längsten und der Proxy-Platz wird frei. Beim Einschalten verbindet sich die Remote neu; bis dahin laufen Tastenbefehle, Stand und Cover übers Dock.<br>Gilt nur, solange die Remote nicht im Tiefschlaf ist – im Tiefschlaf gibt es nie Popups."],
+    ["ha_link_ruhe", "… ab dunklem Display seit", [[0, "Nie (Verbindung bleibt normal)"], [1, "1 min"], [2, "2 min"], [5, "5 min"], [10, "10 min"], [30, "30 min"]],
+      "Wie lange das Display dunkel sein muss, bevor die Einstellung darüber greift. „Nie“ = die Verbindung bleibt immer normal (Popups sofort, mehr Strom)."],
+  ], `Die Remote hat bis zu drei Wege zu Home Assistant – oben rechts in der Statusleiste zu sehen:<br>
+    <b style="color:#22C55E">HA-Symbol grün</b> = über WLAN (schnell, braucht am meisten Strom).<br>
+    <b style="color:#3B82F6">HA-Symbol blau</b> = über Bluetooth zum HA-Rechner (WLAN aus; Bilder, Sprache und Popups gehen auch so).<br>
+    <b style="color:#3B82F6">Dock-Symbol</b> = noch keine eigene HA-Verbindung (z. B. direkt nach dem Aufwachen) – Tastenbefehle gehen solange per Funk übers Dock. Die Remote fragt das Dock dafür selbst kurz ab, ohne etwas auszuführen (grau = wird geprüft, rot = kein Dock erreicht). Steht die HA-Verbindung, verschwindet das Symbol.<br>
+    Fernseher und Streamer steuert die Remote unabhängig davon direkt per Bluetooth (Plätze) oder Infrarot.`],
   ["Gesten", "mdi:gesture", [
-    ["gesten_an", "Bewegungsgesten"],
-    ["gesten_dunkel", "Gesten auch bei dunklem Display"],
-    ["gesten_sens", "Gesten-Empfindlichkeit", [[0, "Streng"], [1, "Normal"], [2, "Empfindlich"]]],
-  ]],
+    ["gesten_an", "Bewegungsgesten", null,
+      "Bewegungsgesten mit der Remote erkennen."],
+    ["gesten_dunkel", "Gesten auch bei dunklem Display", null,
+      "Gesten auch bei dunklem Display auswerten (Ruhezustand). Kostet etwas Strom."],
+    ["gesten_sens", "Gesten-Empfindlichkeit", [[0, "Streng"], [1, "Normal"], [2, "Empfindlich"]],
+      "Streng: weniger Fehlauslöser, Gesten müssen deutlicher sein. Empfindlich: leichter, aber auch mal ungewollt."],
+  ], "Bewegungsgesten mit der ganzen Remote (z. B. Kreis, Wischen). Welche Geste was auslöst, stellst du auf der Seite „Gesten“ ein."],
   ["Wartung", "mdi:wrench", [
-    ["clean_s", "Reinigungsdauer", STUFEN([10, 15, 20, 30, 45, 60, 90, 120])],
-    ["ps_log_debug", "Debug-Modus (ausführliches Log)"],
-  ]],
+    ["clean_s", "Reinigungsdauer", STUFEN([10, 15, 20, 30, 45, 60, 90, 120]),
+      "So lange sind Tasten und Touch gesperrt, damit du das Display abwischen kannst (Start: zweimal kurz die Aus-Taste)."],
+    ["ps_log_debug", "Debug-Modus (ausführliches Log)", null,
+      "Ausführliches Log und Diagnosewerte an Home Assistant – nur zur Fehlersuche, kostet etwas Akku."],
+  ], "Für Pflege und Fehlersuche."],
 ];
 // Energiesparmodus (2026-10-18): ein Knopf setzt alle Spar-Einstellungen auf einmal. "mittel" = die Einstellungen,
 // mit denen Remote Remote 2 im Alltag laeuft (Stand 2026-10-18); leicht/stark davon abgeleitet.
 const ENERGIE_MODI = [
-  ["leicht", "Leicht", "mdi:leaf", "Bequem: WLAN bleibt lange an, Display 30 s, Touch weckt, Mikrofon vorgewärmt. Tiefschlaf erst nach 30 min und nur ohne Bluetooth-Gerät. HA-Verbindung im normalen Takt.",
-    { nur_ble: false, ps_wifi: true, ps_wifi_max: false, ps_wifi_off: true, ps_wifi_off_s: 1800, ps_wifi_off_tv_s: -1, wlan_frueh: true,
+  ["leicht", "Leicht", "mdi:leaf", "Bequem: WLAN bleibt lange an, Display 30 s, Touch weckt, Mikrofon vorgewärmt. Tiefschlaf erst nach 30 min und nur ohne Bluetooth-Gerät.",
+    { ps_wifi: true, ps_wifi_max: false, ps_wifi_off: true, ps_wifi_off_s: 1800, ps_wifi_off_tv_s: -1, wlan_frueh: true,
       ps_cpu: true, ps_cpu_s: 30, ps_light: true, ps_bleidle: true, ps_ble_s: 30, ps_low_pct: 15,
       ps_deep: true, deep_ohne_ble: true, ps_deep_s: 1800, ps_deep_tv_s: -1,
-      disp_timeout_s: 30, ps_dim_s: 15, ps_dim_pct: 30, ps_touch_wake: true, ps_touch_ms: 100, mic_vorwaermen: true, ha_link_ruhe: 0, ha_link_modus: 1 }],
-  ["mittel", "Mittel", "mdi:leaf-circle-outline", "Alltag: nur Bluetooth, WLAN aus nach 5 min, Tiefschlaf nach 5 min, Display 16 s, HA-Verbindung nach 2 min langsam. Empfohlen.",
-    { nur_ble: true, ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 300, ps_wifi_off_tv_s: 7200, wlan_frueh: true,
+      disp_timeout_s: 30, ps_dim_s: 15, ps_dim_pct: 30, ps_touch_wake: true, ps_touch_ms: 100, mic_vorwaermen: true }],
+  ["mittel", "Mittel", "mdi:leaf-circle-outline", "Alltag: WLAN aus nach 5 min, Tiefschlaf nach 5 min, Display 16 s. Empfohlen.",
+    { ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 300, ps_wifi_off_tv_s: 7200, wlan_frueh: true,
       ps_cpu: true, ps_cpu_s: 5, ps_light: true, ps_bleidle: true, ps_ble_s: 5, ps_low_pct: 5,
       ps_deep: true, deep_ohne_ble: false, ps_deep_s: 300, ps_deep_tv_s: 7200,
-      disp_timeout_s: 16, ps_dim_s: 5, ps_dim_pct: 20, ps_touch_wake: false, ps_touch_ms: 75, mic_vorwaermen: false, ha_link_ruhe: 2, ha_link_modus: 1 }],
+      disp_timeout_s: 16, ps_dim_s: 5, ps_dim_pct: 20, ps_touch_wake: false, ps_touch_ms: 75, mic_vorwaermen: false }],
   ["stark", "Stark", "mdi:battery-heart-variant", "Maximale Laufzeit: WLAN nach 1 min aus, Tiefschlaf nach 90 s, Display 10 s und dunkel, Sparmodus schon ab 25 % Akku.",
-    { nur_ble: true, ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 60, ps_wifi_off_tv_s: 600, wlan_frueh: false,
+    { ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 60, ps_wifi_off_tv_s: 600, wlan_frueh: false,
       ps_cpu: true, ps_cpu_s: 0, ps_light: true, ps_bleidle: true, ps_ble_s: 5, ps_low_pct: 25,
       ps_deep: true, deep_ohne_ble: false, ps_deep_s: 90, ps_deep_tv_s: 600,
-      disp_timeout_s: 10, ps_dim_s: 4, ps_dim_pct: 10, ps_touch_wake: false, ps_touch_ms: 150, mic_vorwaermen: false, ha_link_ruhe: 1, ha_link_modus: 1 }],
+      disp_timeout_s: 10, ps_dim_s: 4, ps_dim_pct: 10, ps_touch_wake: false, ps_touch_ms: 150, mic_vorwaermen: false }],
+];
+// Verbindung (2026-10-20): auf welchem Weg die Remote mit HA spricht - getrennt vom Energiesparmodus (der setzt sie nicht).
+const VERBINDUNG_MODI = [
+  ["wlan", "WLAN", "mdi:wifi", "Alles über WLAN: am schnellsten, braucht am meisten Strom. Das Dock springt nur ein, solange WLAN noch nicht verbunden ist.",
+    { nur_ble: false, ha_dock: 1, http_dock: 0, ha_link_ruhe: 0, ha_link_modus: 0 }],
+  ["bt", "Bluetooth", "mdi:bluetooth", "WLAN aus, alles über Bluetooth zum HA-Rechner (auch Bilder, Sprache, Klingel). Das Dock springt nur ein, solange Bluetooth noch nicht verbunden ist.",
+    { nur_ble: true, ha_dock: 1, http_dock: 0, ha_link_ruhe: 0, ha_link_modus: 0 }],
+  ["dock_bt", "Dock + Bluetooth (mit Popups)", "mdi:router-wireless", "Befehle, Stand und Bilder übers Dock – sofort, auch direkt nach dem Aufwachen. Bluetooth zu HA bleibt bei dunklem Display langsam bestehen: Klingel & Popups kommen auch bei dunkler Remote. Empfohlen.",
+    { nur_ble: true, ha_dock: 2, http_dock: 1, ha_link_ruhe: 2, ha_link_modus: 1 }],
+  ["dock", "Dock, sparsam (ohne Popups)", "mdi:router-wireless-off", "Wie „Dock + Bluetooth“, aber bei dunklem Display wird die Verbindung zu HA nach 1 min getrennt: KEINE Klingel & Popups bei dunkler Remote, dafür am längsten Akku und ein freier Proxy-Platz.",
+    { nur_ble: true, ha_dock: 2, http_dock: 1, ha_link_ruhe: 1, ha_link_modus: 2 }],
 ];
 const EINST_CSS = `
 .einst .emodi { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px; margin:4px 0 12px; }
@@ -3977,6 +4075,15 @@ const EINST_CSS = `
 .verkn .karte { display:flex; flex-direction:column; gap:6px; } .einst.verkn select { max-width:100%; width:100%; }
 .verkn .vtext { margin:0; color:var(--sec); font-size:13px; line-height:1.4; } .verkn .ez small.vtext { display:block; font-size:12px; }
 .verkn h3 input { font:inherit; }
+.akku .akzahlen { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; margin:6px 0 12px; }
+.akku .akzahlen > div { border:1px solid var(--div); background:var(--card); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; gap:2px; }
+.akku .akzahlen b { font-size:22px; } .akku .akzahlen small { color:var(--sec); }
+.akku .akbalken { display:flex; height:16px; border-radius:8px; overflow:hidden; background:var(--div); }
+.akku .aklegende { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; font-size:13px; color:var(--sec); }
+.akku .aklegende i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:middle; }
+.akku .ez b { min-width:5.5em; text-align:right; white-space:nowrap; } .akku .ez small { color:var(--sec); white-space:nowrap; text-align:right; }
+.akku .ez > span { display:flex; align-items:center; gap:6px; } .akku .ez > span ha-icon { --mdc-icon-size:18px; flex:none; }
+.akku .karte + .egrid { margin-top:12px; }
 .einst.jz .egrid { grid-template-columns:repeat(auto-fill, minmax(min(100%, 440px), 1fr)); }
 .jz .ez:not(.quer) { flex-direction:column; align-items:stretch; gap:4px; padding:6px 0; } .jz .ez:not(.quer) select { max-width:100%; width:100%; }
 .einst .egrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px; }
@@ -3989,6 +4096,13 @@ const EINST_CSS = `
 .einst select, .einst input[type=number] { max-width:52%; }
 .einst input[type=number] { width:5.5em; }
 .einst .estat { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 10px; }
+.einst .ehilfe { margin:-2px 0 6px; font-size:12px; line-height:1.4; color:var(--sec); }
+.einst .eintro { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--sec); }
+.einst .eintro .wtabw { overflow-x:auto; margin:6px 0; }
+.einst .eintro .wtab { width:100%; border-collapse:collapse; font-size:11.5px; table-layout:fixed; }
+.einst .eintro .wtab th, .einst .eintro .wtab td { border:1px solid var(--div); padding:3px 5px; text-align:left; vertical-align:top; }
+.einst .eintro .wtab th { color:var(--fg); font-weight:600; }
+.einst .eintro .wtab td:first-child { font-weight:600; width:22%; }
 `;
 const EinstTab = {
   // Seite "Wiedergabe" (jetzt.py): zusammengefasste "Jetzt laeuft"-Player, Aenderungen gelten sofort
@@ -4144,9 +4258,47 @@ const EinstTab = {
       <p><button class="btn small" data-a="kl_test" data-ki="${ki}" ${k.kamera ? "" : "disabled"}><ha-icon icon="mdi:bell-ring-outline"></ha-icon>Testen</button></p>
     </div>`).join("");
     return `<div class="einst verkn jz">
-      <p class="hint">Beim Klingeln holt Home Assistant das Bild der Kamera, verkleinert es und schickt es an alle wachen Remotes. Im Menü zeigt ein Eintrag „Kamerabild“ mit der Bildquelle der Klingel es an; ein Popup dazu öffnest du über einen Auslöser im Menü-Editor (z. B. derselbe Auslöser auf „an“). Die Kameras für „Kamerabild“ und „Live-Bild“ stellst du je Remote im Menü-Editor ein.</p>
+      <p class="hint">Beim Klingeln holt Home Assistant das Bild der Kamera, verkleinert es und schickt es an die Remotes – auch bei dunklem Display, solange ihre HA-Verbindung dabei nicht getrennt wird (Einstellungen › Verbindung zu Home Assistant). Im Menü zeigt ein Eintrag „Kamerabild“ mit der Bildquelle der Klingel es an; ein Popup dazu öffnest du über einen Auslöser im Menü-Editor (z. B. derselbe Auslöser auf „an“). Die Kameras für „Kamerabild“ und „Live-Bild“ stellst du je Remote im Menü-Editor ein.</p>
       <div class="egrid">${karten}</div>
       ${d.klingel.length < 2 ? `<p><button class="btn" data-a="kl_add"><ha-icon icon="mdi:plus"></ha-icon>Klingel anlegen</button> <small>(bis zu zwei)</small></p>` : ""}</div>`;
+  },
+  // Seite "Akku" (auswertung.py): Verbrauch je Zustand aus dem Recorder, Schlafquote, Gruende, Laufzeit
+  async _akkuLaden(dev, tage) {
+    if (this._akLaedt) return;
+    this._akLaedt = true;
+    try { this.s.akku = { dev, tage, d: await this._hass.callWS({ type: "esphomeremote_konfig/akku_auswertung", device: dev, tage }) }; }
+    catch (e) { this.s.akku = { dev, tage, fehler: e.message || String(e) }; }
+    this._akLaedt = false; this._render();
+  },
+  _akkuHtml() {
+    const s = this.s, tage = s.akTage || 3;
+    if (!s.akku || s.akku.dev !== s.dev || s.akku.tage !== tage) { this._akkuLaden(s.dev, tage); return `<div class="einst"><div class="lade"><span class="spin"></span> Werte aus dem Recorder …</div></div>`; }
+    if (s.akku.fehler) return `<div class="einst"><div class="msg err">${esc(s.akku.fehler)}</div></div>`;
+    const d = s.akku.d, z = d.zustaende || {}, an = d.anteile || {};
+    const zahl = (v, n = 1) => v == null ? "–" : Number(v).toLocaleString("de-DE", { maximumFractionDigits: n, minimumFractionDigits: n });
+    const NAMEN = [["tiefschlaf", "Tiefschlaf", "mdi:sleep"], ["wach_ble", "Wach, nur Bluetooth", "mdi:bluetooth"], ["wach_wlan", "Wach, mit WLAN", "mdi:wifi"]];
+    const gesamt = (an.laden || 0) + (an.tiefschlaf || 0) + (an.wach || 0) || 1;
+    const balken = [["laden", "Laden", "var(--gruen, #22c55e)"], ["tiefschlaf", "Tiefschlaf / nicht erreichbar", "var(--acc)"], ["wach", "Wach", "var(--gelb, #f59e0b)"]]
+      .map(([k, n, f]) => `<span style="flex:${an[k] || 0};background:${f}" title="${n}: ${zahl(an[k])} h"></span>`).join("");
+    const legende = [["laden", "Laden", "var(--gruen, #22c55e)"], ["tiefschlaf", "Tiefschlaf", "var(--acc)"], ["wach", "Wach", "var(--gelb, #f59e0b)"]]
+      .map(([k, n, f]) => `<span><i style="background:${f}"></i>${n} ${zahl(an[k])} h (${Math.round(100 * (an[k] || 0) / gesamt)} %)</span>`).join("");
+    const zeilen = NAMEN.map(([k, n, ic]) => z[k] ? `<div class="ez"><span><ha-icon icon="${ic}"></ha-icon> ${n}</span><b>${zahl(z[k].pro_stunde, 2)} %/h</b><small>${zahl(z[k].stunden)} h gemessen</small></div>` : "").join("");
+    const gruende = (d.gruende || []).map((g) => `<div class="ez"><span>${esc(g.grund)}</span><b>${zahl(g.stunden)} h</b></div>`).join("")
+      || `<p class="vtext">Noch keine Daten – der Sensor „Tiefschlaf-Status“ kommt mit der Firmware vom 19.10.</p>`;
+    return `<div class="einst verkn akku">
+      <div class="estat"><small>Zeitraum</small>${[1, 3, 7, 14].map((t) => `<button class="btn small ${t === tage ? "" : "ghost"}" data-a="ak_tage" data-t="${t}">${t === 1 ? "24 h" : t + " Tage"}</button>`).join("")}</div>
+      <div class="akzahlen">
+        <div><b>${zahl(d.schnitt_pro_stunde, 2)} %/h</b><small>Verbrauch im Schnitt (ohne Laden)</small></div>
+        <div><b>${zahl(d.laufzeit_tage)} Tage</b><small>pro Akkuladung bei diesem Gebrauch</small></div>
+        <div><b>${d.schlafquote ?? "–"} %</b><small>der Zeit ohne Ladekabel im Tiefschlaf</small></div>
+        <div><b>${d.akku_jetzt != null ? Math.round(d.akku_jetzt) + " %" : "–"}</b><small>Akku zuletzt</small></div>
+      </div>
+      <div class="karte"><h3><ha-icon icon="mdi:chart-timeline"></ha-icon>Wofür die Zeit draufging</h3><div class="akbalken">${balken}</div><div class="aklegende">${legende}</div></div>
+      <div class="egrid">
+        <div class="karte"><h3><ha-icon icon="mdi:battery-arrow-down"></ha-icon>Verbrauch je Zustand</h3>${zeilen || '<p class="vtext">Zu wenig Daten.</p>'}
+          <p class="vtext">Je länger die Remote im Tiefschlaf ist, desto länger hält der Akku. Was den Schlaf verhindert, zeigt „Warum nicht im Tiefschlaf“.</p></div>
+        <div class="karte"><h3><ha-icon icon="mdi:sleep-off"></ha-icon>Warum nicht im Tiefschlaf</h3>${gruende}</div>
+      </div></div>`;
   },
   _verknHtml() {
     const ents = this.cfg.ents || {}, st = this._hass.states;
@@ -4170,7 +4322,7 @@ const EinstTab = {
     const w = m.einst || {}, offen = new Set(m.einst_offen || []), std = s.einstStandard || {};
     if (!Object.keys(w).length) return `<div class="einst"><div class="empty"><ha-icon icon="mdi:tune-variant"></ha-icon>
       <p>Von ${esc(devName(s.dev))} sind noch keine Einstellungen bekannt. Die Remote meldet sie nach dem Flashen der neuen Firmware von selbst.</p></div></div>`;
-    const zeile = ([k, name, art]) => {
+    const zeile = ([k, name, art, hilfe]) => {
       if (!(k in w)) return "";
       const v = w[k];
       let ctl;
@@ -4181,12 +4333,13 @@ const EinstTab = {
         ctl = `<input type="number" data-einst="${k}" min="${art.min}" max="${art.max}" value="${v}"> ${art.einheit}${art.null && v === 0 ? ` <small>(${art.null})</small>` : ""}`;
       } else ctl = `<label class="sw"><input type="checkbox" data-einst="${k}" ${v ? "checked" : ""}></label>`;
       const anders = k in std && std[k] !== v;
-      return `<div class="ez ${offen.has(k) ? "offen" : ""} ${anders ? "anders" : ""}" data-k="${k}" title="${offen.has(k) ? "wartet auf die Remote" : anders ? "weicht vom Standard ab" : ""}"><span>${esc(name)}${this._lichtHinweis(k)}</span>${ctl}</div>`;
+      return `<div class="ez ${offen.has(k) ? "offen" : ""} ${anders ? "anders" : ""}" data-k="${k}" title="${offen.has(k) ? "wartet auf die Remote" : anders ? "weicht vom Standard ab" : ""}"><span>${esc(name)}${this._lichtHinweis(k)}</span>${ctl}</div>`
+        + (hilfe ? `<p class="ehilfe">${hilfe}</p>` : "");
     };
-    const karten = EINST_GRUPPEN.map(([titel, icon, felder]) => {
+    const karten = EINST_GRUPPEN.map(([titel, icon, felder, intro]) => {
       const z = felder.map(zeile).join("");
-      return z ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>${z}</div>` : "";
-    }).join("");
+      return z ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>${intro ? `<div class="eintro">${intro}</div>` : ""}${z}</div>` : "";
+    }).join("") + this._begruessungHtml(zeile);
     const zeit = m.einst_at ? new Date(m.einst_at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "–";
     const nAnders = Object.keys(std).filter((k) => k in w && std[k] !== w[k]).length;
     return `<div class="einst">
@@ -4200,8 +4353,23 @@ const EinstTab = {
         const on = Object.entries(werte).every(([k, v]) => !(k in w) || w[k] === v);
         return `<button class="emodus ${on ? "on" : ""}" data-a="einst_modus" data-m="${id}"><b><ha-icon icon="${ic}"></ha-icon>${n}</b><small>${esc(text)}</small></button>`;
       }).join("")}</div>
+      <h3><ha-icon icon="mdi:transit-connection-variant"></ha-icon>Verbindung zu Home Assistant</h3>
+      <div class="emodi">${VERBINDUNG_MODI.map(([id, n, ic, text, werte]) => {
+        const on = Object.entries(werte).every(([k, v]) => !(k in w) || w[k] === v);
+        return `<button class="emodus ${on ? "on" : ""}" data-a="einst_vmodus" data-m="${id}"><b><ha-icon icon="${ic}"></ha-icon>${n}</b><small>${esc(text)}</small></button>`;
+      }).join("")}</div>
       ${this._lichtHtml()}
       <div class="egrid">${karten}</div></div>`;
+  },
+  // Begruessung (2026-10-20): an/aus = Einstellung "begruessung" (sofort), Text = cfg.begruessung (mit "Speichern")
+  _begruessungHtml(zeile) {
+    const z = zeile(["begruessung", "Nach dem Start/Aufwachen zeigen"]);
+    if (!z) return "";
+    const t = this.cfg.begruessung || "", fremd = fremdeZeichen(t);
+    return `<div class="karte"><h3><ha-icon icon="mdi:hand-wave-outline"></ha-icon>Begrüßung</h3>${z}
+      <div class="ez"><span>Text</span><input data-bgr value="${esc(t)}" maxlength="40" placeholder="Hallo ${esc(devName(this.s.dev).replace(/^Remote( WZ)? /, ""))}"
+        ${fremd.length ? `title="Zeichen ohne Schrift auf der Remote: ${esc(fremd.join(" "))}" style="border-color:var(--gelb)"` : ""}></div>
+      <p class="vtext" style="margin:4px 0 0;font-size:12px;color:var(--sec)">Leer = „Hallo“ und der Name der Remote. Der Text wirkt nach „Speichern“. Die Tasten bedienen das Gerät schon, während die Begrüßung steht.</p></div>`;
   },
   async _einstSetzen(arg) {
     const s = this.s;
@@ -4223,6 +4391,13 @@ const EinstTab = {
   },
   async _einstClick(a, t) {
     const s = this.s;
+    if (a === "einst_vmodus") {
+      const m = VERBINDUNG_MODI.find(([id]) => id === t.dataset.m);
+      if (!m || !confirm(`Verbindung „${m[1]}“ für ${devName(s.dev)} setzen?\n\n${m[3]}`)) return true;
+      const r = await this._einstSetzen({ werte: m[4] });
+      if (r) s.msg = { text: `Verbindung „${m[1]}“: ${r.geaendert} Einstellung(en) geändert${r.einst_offen?.length ? " – gehen beim nächsten Aufwachen an die Remote" : ""}.` };
+      return true;
+    }
     if (a === "einst_modus") {
       const m = ENERGIE_MODI.find(([id]) => id === t.dataset.m);
       if (!m || !confirm(`Energiesparmodus „${m[1]}“ für ${devName(s.dev)} setzen?\n\n${m[3]}`)) return true;
@@ -5091,6 +5266,7 @@ const SEITEN_REMOTE = [
   ["bt", "Bluetooth", "mdi:bluetooth-settings"],
   ["ir", "Infrarot", "mdi:remote-tv"],
   ["verkn", "Verknüpfungen", "mdi:link-variant"],
+  ["akku", "Akku", "mdi:battery-heart-variant"],
   ["einst", "Einstellungen", "mdi:tune-variant"],
 ];
 // Verknuepfungen je Remote (cfg.ents, spiegel.py): welche HA-Entitaeten die eingebauten Funktionen nutzen
@@ -5103,7 +5279,7 @@ const VERKN = [
     "Zeigt der Wiedergabe-Player die Quelle „multiroom“, steuern Play/Vor/Zurück/Lautstärke diesen Player statt Bluetooth."],
   ["tts", "Lautsprecher für den Assistenten", "mdi:account-voice", ["media_player"],
     "Antworten des Sprachassistenten werden hier abgespielt (Einstellung „Antwort hörbar“)."],
-  ["adb", "Streamer (Texteingabe per ADB)", "mdi:cast", ["media_player", "remote"],
+  ["adb", "Streamer (Texteingabe per ADB)", "mdi:cast", ["media_player"],
     "Android-TV-/ADB-Entität: die Tastatur-Seite tippt Text darüber ein."],
   ["timer", "Timer neben der Uhr", "mdi:timer-outline", ["timer"],
     "Läuft dieser Timer, zeigt die Statusleiste den Countdown."],
@@ -5389,6 +5565,7 @@ const OberflaecheTab = {
       case "gesten": return this._gestenHtml();
       case "einst": return this._einstHtml();
       case "verkn": return this._verknHtml();
+      case "akku": return this._akkuHtml();
       case "home": return this._homeHtml();
       case "menu": return this._menuHtml();
       case "bt": case "ir": {

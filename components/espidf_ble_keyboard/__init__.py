@@ -265,6 +265,8 @@ CONFIG_SCHEMA = cv.All(
             lower=True,
         ),
         cv.Optional(CONF_WEB_CONTROL, default=False): cv.boolean,
+        # Setup-Prioritaet (2026-10-20): Standard -200 = ganz am Ende des Starts
+        cv.Optional("start_prioritaet", default=-200.0): cv.float_,
         # Auto-register the documented HA services (run_action, mouse_move, ...)
         # from C++ — requires the `api:` component. Off by default: configs that
         # pasted the manual `api: services:` snippets would get duplicate names.
@@ -316,6 +318,7 @@ CONFIG_SCHEMA = cv.All(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    cg.add(var.set_start_prio(config["start_prioritaet"]))
 
     # Ohne Zeigegeraet: Maus und absoluter Zeiger fallen aus der
     # HID-Geraetebeschreibung. Android TV wechselt sonst bei jedem Verbinden in

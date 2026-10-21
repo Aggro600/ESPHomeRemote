@@ -125,6 +125,14 @@ class TastenKonfig : public Component {
   std::function<void()> ha_wecken;
   // Stand (Startseite) beim Dock anfragen - Antwort ueber dock_direkt on_zustand (2026-10-19)
   bool zustand_anfragen();   // HA-Aufruf wartet: pausierten HA-Link wieder einschalten
+  // Statusleiste (2026-10-20): Weg der HA-Befehle. 0 = eigene HA-Verbindung steht (oder Dock-Weg aus),
+  // 1 = ueber das Dock (noch nichts bestaetigt),
+  // 2 = ueber das Dock und das Dock hat zuletzt geantwortet, 3 = ueber das Dock, aber zuletzt kein Dock erreicht.
+  int dock_weg() const;
+  void dock_pruefen();
+  // Bluetooth-Tasten vor der Verbindung merken und nachsenden (sonst verwerfen), Einstellung weck_tasten
+  void set_vor_verbindung_merken(bool m) { vor_verbindung_merken_ = m; }
+  std::vector<std::string> dock_macs() const;   // Docks: das zuletzt bestaetigte zuerst (HTTP ueber das Dock)   // Stand beim Dock abfragen (nichts ausfuehren) - fuer das Statusleisten-Symbol
 
   // ---- Geraete-Einstellungen (2026-10-16): gepflegt im Konfigurator (cfg.einst = {"name": [wert, rev]}) ----
   // Die YAML meldet jede Einstellung an (Name = id des globals). Neue Konfiguration aus HA: Werte mit geaenderter
@@ -144,6 +152,7 @@ class TastenKonfig : public Component {
   void modus_verlaengern_(int taste = -1);   // taste: eigene Zeit der Modus-Taste ("s"), sonst die des Modus
   void schritt_(JsonObjectConst s, const Ctx &c, bool halten);
   void ble_(JsonObjectConst s, bool halten);
+  void ble_puffer_();   // vor der Bluetooth-Verbindung gedrueckte Tasten nachsenden
   void ha_(JsonObjectConst s);
   void ir_(JsonObjectConst s);
   void ir_selbst_(const std::vector<int32_t> &t, uint32_t f);
@@ -216,12 +225,21 @@ class TastenKonfig : public Component {
   struct EinstFeld { std::string k; bool bol; std::function<int()> get; std::function<void(int)> set; int gemeldet; };
   std::vector<EinstFeld> einst_;
   bool einst_voll_{true};   // alle Werte melden (nach dem Start)
+  bool einst_api_vorher_{false};   // HA-Verbindung beim letzten Pruefen (Flanke -> alles neu melden)
   uint32_t einst_ms_{0}, einst_log_ms_{0};
   void einst_uebernehmen_(JsonDocument *alt, JsonDocument *neu);
   void einst_pruefen_();
 
   struct HaJob { std::string svc; std::map<std::string, std::string> d; uint32_t t0; };
   std::vector<HaJob> ha_q_;
+  uint32_t dock_fehl_ms_{0};   // zuletzt kein Dock erreicht (s. dock_weg)
+  void dock_pruefen_(std::vector<std::string> macs, size_t i);
+  // Tasten direkt nach dem Start/Aufwachen, bevor der Bluetooth-Host verbunden ist (2026-10-20): statt sie zu
+  // verwerfen, kurz merken und nachsenden, sobald die Verbindung steht.
+  struct BleJob { uint8_t art; uint16_t code; uint8_t mod; };   // art: 0 consumer, 1 key, 2 button
+  std::vector<BleJob> ble_q_;
+  bool vor_verbindung_merken_{true};
+  uint32_t ble_da_ms_{0};
   uint32_t api_da_ms_{0};   // zuletzt mit HA verbunden (fuer "Ohne HA"-Belegungen)
 };
 

@@ -34,6 +34,8 @@ inline int eff_deep_s(int base, int tv_s, bool tv_on, bool low) {
 inline uint8_t ruck_ths(int sens)  { static const uint8_t t[3] = {0x08, 0x10, 0x1C}; return t[(sens >= 0 && sens <= 2) ? sens : 1]; }
 // Bewegung bei Display an (Aufhellen / nicht abdunkeln, dim_sens), 2026-10-07 feiner: 48 / 96 / 192 mg - vorher
 // dieselben Stufen wie das Aufwecken, "Hoch" (128 mg) reagierte in der Hand zu selten.
+// Hochheben im Tiefschlaf (6D-Lage, 2026-10-20): sin(12/20/35 Grad) in 16 mg - dieselben Winkel wie wach
+inline uint8_t hoch_ths(int sens)  { static const uint8_t t[3] = {13, 21, 36}; return t[(sens >= 0 && sens <= 2) ? sens : 1]; }
 inline uint8_t dim_ths(int sens)   { static const uint8_t t[3] = {0x03, 0x06, 0x0C}; return t[(sens >= 0 && sens <= 2) ? sens : 1]; }
 // Klopfen: Spitze eines einzelnen Klopfers, 320 / 512 / 768 mg.
 inline uint8_t klopf_ths(int sens) { static const uint8_t t[3] = {0x14, 0x20, 0x30}; return t[(sens >= 0 && sens <= 2) ? sens : 1]; }

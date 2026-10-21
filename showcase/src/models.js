@@ -7,13 +7,14 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 const MM = 0.001;
 
 // Oberflaechen. Die Teile sind 3D-gedruckt; die Farben folgen den Bildern im Hardware-Repository
-// (Gehaeuse schwarz, Abdeckplatte grau, Tasten schwarz mit weissen Symbolen, Dock schwarz). Remote und Dock sind
+// (Gehaeuse schwarz, Abdeckplatte grau, Tasten schwarz mit weissen Symbolen, Dock schwarz). Seit 2026-10-22 ist auch die
+// Abdeckplatte schwarz (alles schwarz, Farbtasten farbig, Symbole weiss - wie die gedruckten Remotes). Remote und Dock sind
 // umfaerbbar (FARBEN_REMOTE, FARBEN_DOCK).
 const MATERIAL = {
   gehaeuse: { color: 0x0b0c0e, roughness: 0.62, clearcoat: 0.15, clearcoatRoughness: 0.6 },
-  abdeckung: { color: 0x5d6067, roughness: 0.7, metalness: 0.05 },
+  abdeckung: { color: 0x17181b, roughness: 0.66, metalness: 0.05 },
   tasten: { color: 0x101114, roughness: 0.5, clearcoat: 0.25, clearcoatRoughness: 0.45 },
-  tasten_symbole: { color: 0xf2f4f7, roughness: 0.45, emissive: 0xffffff, emissiveIntensity: 0.12 },
+  tasten_symbole: { color: 0xf2f4f7, roughness: 0.45, emissive: 0xffffff, emissiveIntensity: 0.22 },
   taste_rot: { color: 0xb3120f, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3 },
   taste_gruen: { color: 0x0f8a2e, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3 },
   taste_gelb: { color: 0xe8b80c, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3 },
@@ -37,7 +38,7 @@ const MATERIAL = {
 // Einfaerbbare Teile (Tafel "Farben", main.js): Name, Teile, Standardfarbe, Fuzzy Skin moeglich
 export const TEILE = {
   rueckseite: { name: "Rückseite", teile: ["remote_gehaeuse"], farbe: "#0b0c0e", fuzzy: true },
-  front: { name: "Frontcover", teile: ["remote_abdeckung"], farbe: "#5d6067", fuzzy: true },
+  front: { name: "Frontcover", teile: ["remote_abdeckung"], farbe: "#17181b", fuzzy: true },
   tasten: { name: "Tasten", teile: ["remote_tasten"], farbe: "#101114" },
   symbole: { name: "Symbole", teile: ["remote_tasten_symbole", "remote_taste_aus_symbol"], farbe: "#f2f4f7" },
   dock: { name: "Dock", teile: ["dock_schale"], farbe: "#101114", fuzzy: true },

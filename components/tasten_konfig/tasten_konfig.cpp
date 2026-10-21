@@ -161,12 +161,20 @@ void TastenKonfig::einst_uebernehmen_(JsonDocument *alt, JsonDocument *neu) {
 }
 
 void TastenKonfig::einst_pruefen_() {
-  if (einst_.empty() || !einst_melden || millis() - einst_ms_ < 2000) return;
+  if (einst_.empty() || !einst_melden) return;
+  // Nach jedem (Wieder-)Verbinden mit HA alles neu melden (2 s spaeter): brach die API-Sitzung direkt nach dem Start
+  // wieder ab, ging die einzige Meldung verloren und HA kannte neue Einstellungen nie (2026-10-20, "begruessung").
+  // Erst wenn HA die Zustaende abonniert hat (2026-10-21): ueber Bluetooth stand die Verbindung oft schon, HA hoerte
+  // aber noch nicht zu - das Ereignis kam 2 s nach dem Verbinden und ging verloren (Remote 2/Remote 1 meldeten nie).
+  const bool api = api::global_api_server != nullptr && api::global_api_server->is_connected_with_state_subscription();
+  if (api && !einst_api_vorher_) { einst_voll_ = true; einst_ms_ = millis(); }
+  einst_api_vorher_ = api;
+  if (millis() - einst_ms_ < 2000) return;
   einst_ms_ = millis();
   bool anders = einst_voll_;
   for (auto &f : einst_) if (f.get() != f.gemeldet) { anders = true; break; }
   if (!anders) return;
-  if (!api_ok_()) {
+  if (!api) {
     if (millis() - einst_log_ms_ > 60000) { einst_log_ms_ = millis(); ESP_LOGI(TAG, "Einstellungen geaendert, warte auf HA"); }
     return;
   }
@@ -262,6 +270,7 @@ void TastenKonfig::download_einmal_(TastenKonfig *self) {
 
 void TastenKonfig::loop() {
   einst_pruefen_();
+  ble_puffer_();
   if (modus_ >= 0 && ((int32_t) (millis() - modus_bis_) >= 0 || modus_gen_ != gen_)) modus_beenden();
 
   // HA-Warteschlange pumpen
@@ -380,8 +389,62 @@ void TastenKonfig::ha_ueber_dock_(const std::string &svc, std::map<std::string, 
     }
   }
   ESP_LOGI(TAG, "HA-Aufruf %s: kein Dock erreicht - direkt", svc.c_str());
+  dock_fehl_ms_ = millis() | 1;
 #endif
   ha_senden(svc, std::move(d));
+}
+
+int TastenKonfig::dock_weg() const {
+#ifdef TK_USE_DIREKT
+  const int modus = ha_dock_modus ? ha_dock_modus() : 0;
+  if (direkt_ == nullptr || doc_ == nullptr || (*doc_)["dmac"].as<JsonObjectConst>().size() == 0) return 0;
+  // Steht die eigene HA-Verbindung, uebernimmt HA - das Dock-Symbol verschwindet (Nutzerwunsch 2026-10-20)
+  if (api_ok_() || modus == 0) return 0;
+  const uint32_t ok = direkt_->ok_ms();
+  if (dock_fehl_ms_ != 0 && (int32_t) (dock_fehl_ms_ - ok) > 0) return 3;
+  return ok != 0 ? 2 : 1;
+#else
+  return 0;
+#endif
+}
+
+// Dock pruefen, ohne etwas auszufuehren (2026-10-20): nur den Stand abfragen - bestaetigt das Dock, wird das
+// Statusleisten-Symbol blau, sonst rot. Antwort wie bei zustand_anfragen() ueber dock_direkt on_zustand.
+std::vector<std::string> TastenKonfig::dock_macs() const {
+  std::vector<std::string> macs;
+#ifdef TK_USE_DIREKT
+  if (direkt_ == nullptr || doc_ == nullptr) return macs;
+  uint8_t ok[6];
+  char b[18];
+  if (direkt_->letztes_ok(ok)) {
+    snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", ok[0], ok[1], ok[2], ok[3], ok[4], ok[5]);
+    macs.emplace_back(b);
+  }
+  for (JsonPairConst kv : (*doc_)["dmac"].as<JsonObjectConst>()) {
+    std::string m = kv.value() | "";
+    if (!m.empty() && std::find(macs.begin(), macs.end(), m) == macs.end()) macs.push_back(m);
+  }
+#endif
+  return macs;
+}
+
+void TastenKonfig::dock_pruefen() {
+#ifdef TK_USE_DIREKT
+  if (direkt_ == nullptr || doc_ == nullptr) return;
+  dock_pruefen_(dock_macs(), 0);
+#endif
+}
+
+void TastenKonfig::dock_pruefen_(std::vector<std::string> macs, size_t i) {
+#ifdef TK_USE_DIREKT
+  uint8_t mac[6];
+  while (i < macs.size() && !dock_direkt::DockDirekt::mac_lesen(macs[i].c_str(), mac)) i++;
+  if (i < macs.size() &&
+      direkt_->zustand_anfragen(mac, App.get_name(), [this, macs, i]() { dock_pruefen_(macs, i + 1); }))
+    return;
+  ESP_LOGI(TAG, "Dock-Pruefung: kein Dock erreicht");
+  dock_fehl_ms_ = millis() | 1;
+#endif
 }
 
 void TastenKonfig::ha_senden(const std::string &svc, std::map<std::string, std::string> d) {
@@ -503,6 +566,14 @@ void TastenKonfig::ble_(JsonObjectConst s, bool halten) {
     else if (button) kb->send_button_to(dev, code);
     return;
   }
+  // Noch nicht verbunden, kurz nach dem Start/Aufwachen: Tipp merken statt verwerfen (2026-10-20). Auch Tasten mit
+  // "halten wie echte Fernbedienung" (Steuerkreuz, OK, ...) - die gehen dann als kurzer Druck raus.
+  if (dev < 0 && !kb->is_paired() && millis() < 20000) {
+    if (!vor_verbindung_merken_) { ESP_LOGI(TAG, "Bluetooth noch nicht verbunden - Taste verworfen (Einstellung)"); return; }
+    if (ble_q_.size() < 8) ble_q_.push_back({(uint8_t) (consumer ? 0 : key ? 1 : 2), (uint16_t) code, (uint8_t) mod});
+    ESP_LOGI(TAG, "Bluetooth noch nicht verbunden - Taste gemerkt (%u)", (unsigned) ble_q_.size());
+    return;
+  }
   char act[32];
   if (halten && consumer) { snprintf(act, sizeof(act), "consumer_hold:0x%04X", code); kb->hold_action(act); return; }
   if (halten && key) { snprintf(act, sizeof(act), "key_hold:0x%02X:0x%02X", mod, code); kb->hold_action(act); return; }
@@ -512,6 +583,21 @@ void TastenKonfig::ble_(JsonObjectConst s, bool halten) {
   // send_consumer stellt eine gehaltene Taste wieder her (Kanal-Fehler 2026-09-23):
   // haelt die Belegung gerade nichts, alles freigeben.
   if (kb->has_held() && !haelt_irgendwas_()) kb->execute_action("release");
+}
+
+void TastenKonfig::ble_puffer_() {
+  if (ble_q_.empty() || kb_ == nullptr) return;
+  if (millis() > 30000) { ESP_LOGW(TAG, "%u gemerkte Tasten verworfen (keine Bluetooth-Verbindung)", (unsigned) ble_q_.size()); ble_q_.clear(); return; }
+  if (!kb_->is_paired() || !kb_->is_connected()) { ble_da_ms_ = 0; return; }
+  if (ble_da_ms_ == 0) { ble_da_ms_ = millis(); return; }
+  if (millis() - ble_da_ms_ < 300) return;   // Host erst die Benachrichtigungen einschalten lassen
+  const BleJob j = ble_q_.front();
+  ble_q_.erase(ble_q_.begin());
+  ESP_LOGI(TAG, "Gemerkte Taste nachgesendet (noch %u)", (unsigned) ble_q_.size());
+  if (j.art == 0) kb_->send_consumer(j.code);
+  else if (j.art == 1) kb_->send_key_combo(j.mod, j.code);
+  else kb_->send_button(j.code);
+  if (kb_->has_held() && !haelt_irgendwas_()) kb_->execute_action("release");
 }
 
 void TastenKonfig::ha_(JsonObjectConst s) {

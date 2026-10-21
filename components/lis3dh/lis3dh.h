@@ -24,7 +24,9 @@ class LIS3DHComponent : public Component, public i2c::I2CDevice {
   // Festgehaltene Ereignisse abholen (und damit loeschen). false = Lesefehler.
   bool poll_events(bool &ruck, bool &doppel);
   // Vor dem Tiefschlaf: gewaehlte Ereignisse aktiv-LOW auf INT1 legen.
-  void arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uint8_t klopf_ths);
+  // hoch (2026-10-20): statt Ruck die Lage-Erkennung (6D) - weckt erst, wenn die Remote um mehr als hoch_ths gekippt
+  // wird ("Aufwecken bei: Hochheben" auch im Tiefschlaf). hoch_ths in 16-mg-Schritten (= sin(Winkel) * 1 g).
+  void arm_for_sleep(bool ruck, uint8_t ruck_ths, bool klopf, uint8_t klopf_ths, bool hoch = false, uint8_t hoch_ths = 21);
   // FIFO (2026-10-17, Bewegungsgesten): Stream-Modus, die letzten 32 Messungen (200 Hz) stehen im Chip bereit.
   // Ist er an, liefern die Ausgangsregister die AELTESTE Messung - Lage dann ueber fifo_lesen holen.
   void set_fifo(bool an);

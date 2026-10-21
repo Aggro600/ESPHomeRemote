@@ -44,8 +44,15 @@ inline void peripherie_fuer_schlaf() {
   gpio_reset_pin(GPIO_NUM_4);    // IR_RX hochohmig: kein Querstrom in den toten Empfaenger (~60 uA)
   gpio_reset_pin(GPIO_NUM_19);   // I2C hochohmig: keine Pull-ups, die ueber den Touch-Chip die tote Rail speisen
   gpio_reset_pin(GPIO_NUM_20);
-  for (auto p : {GPIO_NUM_38, GPIO_NUM_9, GPIO_NUM_16, GPIO_NUM_6, GPIO_NUM_5}) gpio_hold_en(p);
+  for (auto p : {GPIO_NUM_38, GPIO_NUM_16, GPIO_NUM_6, GPIO_NUM_5}) gpio_hold_en(p);
   gpio_deep_sleep_hold_en();
+  // Display-Beleuchtung (GPIO9, invertiert) ueber die RTC-Haltefunktion aus halten (2026-10-21): die normale Pin-Haltung
+  // setzt der Chip beim Aufwachen zurueck - bis on_boot 1100 (~0,96 s) lag der Pin LOW und die Beleuchtung blitzte auf.
+  // Die RTC-Haltung bleibt bis rtc_gpio_hold_dis (on_boot 1100) bestehen.
+  rtc_gpio_init(GPIO_NUM_9);
+  rtc_gpio_set_direction(GPIO_NUM_9, RTC_GPIO_MODE_OUTPUT_ONLY);
+  rtc_gpio_set_level(GPIO_NUM_9, 1);
+  rtc_gpio_hold_en(GPIO_NUM_9);
   // GPIO1 (Ladekabel, TP4056 ~CHRG) hat keinen Pull-up: internen RTC-Pull-up an und halten
   rtc_gpio_init(GPIO_NUM_1);
   rtc_gpio_set_direction(GPIO_NUM_1, RTC_GPIO_MODE_INPUT_ONLY);
@@ -111,3 +118,4 @@ inline std::string weck_log_ende(size_t max) {
   std::string a(weck_log_ok_() ? g_weck_log : "");
   return a.size() > max ? a.substr(a.size() - max) : a;
 }
+

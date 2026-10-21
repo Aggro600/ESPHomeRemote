@@ -431,6 +431,8 @@ dock_direkt:
   schluessel: !secret direkt_schluessel
   # HA-Befehle der Remotes ausfuehren (Remote-Einstellung "HA-Befehle ueber das Dock")
   ha: true
+  # Bilder/Konfiguration fuer die Remotes von HA holen (HTTP ueber das Dock, 2026-10-20) - Adresse wie ha_adresse der Remotes
+  ha_http: "homeassistant.local:8123"
   ir_sender: ir_tx
   rf_sender: rf_tx
   on_senden:

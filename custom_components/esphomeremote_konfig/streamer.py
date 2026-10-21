@@ -155,9 +155,13 @@ class Streamer:
 
     @callback
     def starten(self) -> None:
-        webhook.async_register(self.hass, DOMAIN, f"Streamer {self.cfg['name']}", self.cfg["webhook"], self._webhook,
-                               local_only=True, allowed_methods=["POST"])
-        self._weg.append(lambda: webhook.async_unregister(self.hass, self.cfg["webhook"]))
+        try:
+            webhook.async_register(self.hass, DOMAIN, f"Streamer {self.cfg['name']}", self.cfg["webhook"], self._webhook,
+                                   local_only=True, allowed_methods=["POST"])
+            wh = self.cfg["webhook"]
+            self._weg.append(lambda: webhook.async_unregister(self.hass, wh))
+        except ValueError as err:   # Kennung schon vergeben (z. B. noch ein altes Template-Paket mit demselben Webhook)
+            _LOGGER.warning("Streamer %s: Webhook %s nicht moeglich: %s", self.cfg["name"], self.cfg["webhook"], err)
         if self.cfg["adb"]:
             from datetime import timedelta
             self._weg.append(async_track_time_interval(self.hass, self._cec_fragen, timedelta(seconds=30)))
@@ -174,7 +178,11 @@ class Streamer:
             text = str((await request.json()).get("text") or "")
         except Exception:  # noqa: BLE001
             return None
-        self.daten = auswerten(text, self.daten, self.kd.basis() or "homeassistant.local:8123")
+        try:
+            self.daten = auswerten(text, self.daten, self.kd.basis() or "homeassistant.local:8123")
+        except Exception:  # noqa: BLE001 - eine kaputte Meldung darf den Webhook nicht abschiessen
+            _LOGGER.exception("Streamer %s: Meldung nicht auswertbar", self.cfg["name"])
+            return None
         self._melden()
         return None
 

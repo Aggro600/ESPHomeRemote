@@ -5,7 +5,7 @@
 // Im Dock?  Das Ladekabel (Pogo-Pins) meldet sich -> die Lage (Bewegungssensor) wird als "Dock-Lage" gemerkt.
 // Solange sie bleibt, gilt die Remote als im Dock - auch wenn der Lade-IC bei vollem Akku "nicht mehr laden"
 // meldet. Weicht die Lage deutlich ab (herausgenommen), sofort zurueck zur Fernbedienung.
-// Taste oder Tipp im Dock: die Fernbedienung erscheint; 20 s nach der letzten Eingabe wieder die Dock-Anzeige.
+// Taste oder Tipp im Dock: die Fernbedienung erscheint; wenn das Display sonst ausginge, wieder die Dock-Anzeige.
 // Display im Dock (Einstellung dock_disp): 0 = wie sonst (geht nach der Zeit aus), 1 = bleibt an,
 // 2 = bleibt an zwischen dock_von und dock_bis Uhr. Helligkeit wie immer (Lichtsensor-Kurve).
 // Daten: GET /api/esphomeremote_konfig/anzeige/<geraet> (HA, anzeige.py), jede Minute solange sichtbar.
@@ -28,6 +28,8 @@ struct Zustand {
   bool lage_ok{false};
   int weg{0};
   uint32_t kabel_seit{0};
+  uint32_t kabel_weg_seit{0};
+  uint32_t gezeigt_ms{0};       // zuletzt auf Dock-/Musik-Anzeige umgeschaltet (cur_page wechselt erst nach dem Einblenden)   // seit wann die Ladekontakte keinen Strom mehr haben
   bool kabel_vorher{false};
   uint32_t wach_ms{0};
   uint32_t abruf_ms{0};
@@ -288,6 +290,15 @@ inline void daten_anwenden() {
 
 // ---------------------------------------------------------------- Ablauf
 inline bool im_dock() { return z().im_dock; }
+// Dock- oder Musik-Anzeige sichtbar, im Dock und Display soll an bleiben: dann nie abdunkeln (backlight_idle_timeout).
+// Auf den Fernbedienungsseiten dunkelt es normal ab; statt auszugehen kommt die Anzeige in voller Helligkeit.
+inline bool display_soll_an();
+inline bool anzeige_haelt_an() {
+  const int p = cur_page->value();
+  return z().im_dock && (p == 50 || p == 52 || millis() - z().gezeigt_ms < 2000) && display_soll_an();
+}
+// Start des Display-Ruhe-Timers (backlight_idle_timeout setzt ihn) - daraus: wann das Display ausginge
+inline uint32_t &ruhe_start_ms() { static uint32_t t = 0; return t; }
 
 inline bool display_soll_an() {
   const int m = dock_disp->value();
@@ -300,6 +311,7 @@ inline bool display_soll_an() {
 }
 
 inline void zeigen() {
+  z().gezeigt_ms = millis();
   if (z().im_dock && musik::im_dock_zeigen()) { musik::zeigen(true); return; }
   aufbauen();
   uhr_zeigen(true);
@@ -345,6 +357,7 @@ inline void dock_takt() {
   const uint32_t jetzt = millis();
   const bool kabel = charger_present->state;
   if (kabel && !s.kabel_vorher) s.kabel_seit = jetzt;
+  if (!kabel && s.kabel_vorher) s.kabel_weg_seit = jetzt;
   s.kabel_vorher = kabel;
   if (!dock_an->value()) { if (s.im_dock) verlassen("ausgeschaltet"); return; }
   if (!kabel && !s.im_dock) return;   // ohne Kabel und nicht im Dock: nichts zu tun (kein I2C)
@@ -365,7 +378,17 @@ inline void dock_takt() {
   // Im Dock: herausgenommen?
   if (lage && s.lage_ok) {
     const float deg = remote_strom::winkel_grad(x, y, zz, s.lx, s.ly, s.lz);
-    if (deg >= (kabel ? 25.0f : 12.0f)) { if (++s.weg >= 2) { verlassen("Lage"); return; } }
+    if (kabel) {
+      // An den Ladekontakten kann sie nicht heraus sein (2026-10-20): Bewegen im Dock ist keine Entnahme - vorher ab
+      // 25 Grad kurz "heraus" (Startseite mit Bewegungs-Symbol), gleich danach "wieder drin" -> Anzeige flackerte.
+      // Die neue Lage gilt als Dock-Lage; beim Herausnehmen faellt das Kabel weg, dann zaehlt der Winkel.
+      if (deg >= 6.0f) { s.lx = x; s.ly = y; s.lz = zz; }
+      s.weg = 0;
+    } else if (jetzt - s.kabel_weg_seit < 1500) {
+      // Kontakte gerade erst weg: bei kraeftigem Bewegen im Dock federn sie kurz ab (2026-10-20, Flackern blieb) -
+      // erst wenn der Strom 1,5 s fehlt, entscheidet der Winkel
+      s.weg = 0;
+    } else if (deg >= 12.0f) { if (++s.weg >= 2) { verlassen("Lage"); return; } }
     else s.weg = 0;
   } else if (!kabel && !lage) {
     // ohne Lage (Sensor aus) und ohne Kabel: nicht laenger im Dock annehmen
@@ -382,15 +405,24 @@ inline void dock_takt() {
   } else {
     s.ohne_strom_ms = 0;
   }
-  // Display wach halten
+  const int p = cur_page->value();
+  const bool anzeige = p == 50 || p == 52;   // Dock- oder Musik-Anzeige sichtbar
+  // Display wach halten - nur die Dock-/Musik-Anzeige. Auf der Fernbedienung laeuft die normale Display-Zeit, damit
+  // die Uebernahme unten weiss, wann das Display ausginge.
   if (display_soll_an() && jetzt - s.wach_ms > 5000) {
     s.wach_ms = jetzt;
-    if (disp_off->value()) wake_backlight->execute();
-    else idle_touch_ping->execute();
+    if (disp_off->value()) { wake_backlight->execute(); zeigen(); }
+    else if (anzeige) idle_touch_ping->execute();
   }
-  // Zurueck zur Dock-Anzeige: von der Startseite, 20 s nach der letzten Eingabe, kein Popup
-  const int p = cur_page->value();
-  if (p == 0 && !disp_off->value() && popup_seite->value() < 0 && jetzt - last_input_ms->value() > 20000) zeigen();
+  // Zurueck zur Dock-/Musik-Anzeige erst dann, wenn das Display sonst ausginge, und statt es auszuschalten (Nutzer
+  // 2026-10-20; vorher fest 20 s nach der letzten Eingabe, nur von der Startseite). Danach gilt die Einstellung
+  // "Display im Dock": bleibt an bzw. geht nach der normalen Zeit aus. Nicht bei Popups und bewusstem Ausschalten.
+  if (!anzeige && !disp_off->value() && popup_seite->value() < 0 && !sofort_aus->value() &&
+      backlight_idle_timeout->is_running() &&
+      jetzt - ruhe_start_ms() + 400 >= remote_strom::eff_disp_s(disp_timeout_s->value(), low_bat->value()) * 1000u) {
+    zeigen();
+    idle_touch_ping->execute();
+  }
   if (p == 50 && jetzt - last_input_ms->value() < 400) go_home->execute();   // Taste im Dock: Fernbedienung
 }
 

@@ -25,7 +25,7 @@ ROLLEN = {
     "tv": (("media_player",), True, "Fernseher: an/aus, Energie-Zeiten, Knopf „Fernseher einschalten“"),
     "multiroom": (("media_player",), False, "Musik-Steuerung bei Quelle Multiroom"),
     "tts": (("media_player",), False, "Lautsprecher für Antworten des Assistenten"),
-    "adb": (("media_player", "remote"), False, "Streamer für Texteingabe per ADB"),
+    "adb": (("media_player",), False, "Streamer für Texteingabe per ADB (Android-TV-Integration)"),
     "timer": (("timer",), True, "Countdown neben der Uhr"),
 }
 

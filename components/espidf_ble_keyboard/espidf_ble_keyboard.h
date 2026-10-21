@@ -36,6 +36,8 @@
 namespace esphome {
 namespace espidf_ble_keyboard {
 
+
+
 // Maximum number of host slots for multi-host switching
 static const uint8_t MAX_HOST_SLOTS = 10;
 
@@ -123,7 +125,11 @@ class EspidfBleKeyboard : public Component
   // Fork addition: ATV Voice (ATVV) service, see AtvVoiceHook above.
   void set_atv_voice_hook(AtvVoiceHook *hook) { atv_voice_hook_ = hook; }
   AtvVoiceHook *atv_voice_hook() const { return atv_voice_hook_; }
-  float get_setup_priority() const override { return -200.0f; }
+  float get_setup_priority() const override { return start_prio_; }
+  // FORK 2026-10-20: Startreihenfolge aus dem YAML (start_prioritaet) - frueh gestartet ist der Host nach dem
+  // Aufwachen schneller verbunden.
+  void set_start_prio(float p) { start_prio_ = p; }
+  float start_prio_{-200.0f};
   void send_string(const std::string &str);
   void send_ctrl_alt_del();
   void send_key_combo(uint8_t modifiers, uint8_t keycode);

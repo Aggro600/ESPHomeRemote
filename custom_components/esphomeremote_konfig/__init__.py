@@ -44,7 +44,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "77"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "90"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -140,6 +140,8 @@ def validate_config(cfg: dict) -> dict:
         out["makros"] = validate_makros(cfg["makros"])
     if isinstance(cfg.get("ents"), dict) and (ents := validate_ents(cfg["ents"])):
         out["ents"] = ents   # Verknuepfungen (spiegel.py)
+    if isinstance(cfg.get("begruessung"), str) and cfg["begruessung"].strip():
+        out["begruessung"] = cfg["begruessung"].strip()[:40]   # Text der Begruessung auf der Remote (2026-10-20)
     return out
 
 
@@ -882,6 +884,9 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
 
     hass.data[DOMAIN + "_cover"] = cover = Cover(hass, kd)   # Cover je Remote aus ihrem "Jetzt laeuft"-Player
     cover.starten()
+    from .auswertung import registrieren as auswertung_registrieren
+
+    auswertung_registrieren(hass)   # Akku-Auswertung (Konfigurator-Seite "Akku")
     from .zustand import einrichten as zustand_einrichten
 
     zustand_einrichten(hass, kd)   # Stand je Remote an die Docks (Startseite sofort nach dem Tiefschlaf)
