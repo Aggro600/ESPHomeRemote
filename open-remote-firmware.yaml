@@ -61,7 +61,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.10.28.2"
+    version: "2026.10.28.3"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
@@ -629,7 +629,8 @@ deep_sleep:
   id: nachtschlaf
 
 external_components:
-  - source: {type: local, path: components}
+  - source: {type: git, url: https://github.com/Aggro600/ESPHomeRemote, ref: stabil, path: components}
+    refresh: 0s
     # online_image: eigene Fassung (2026-10-10) - Download und JPEG-Dekodierung im Hintergrund-Task, die Remote
     # bleibt bedienbar, waehrend Cover/Klingelbilder per WLAN oder Bluetooth kommen (s. components/online_image).
     components: [ili9341_i80, tca8418, max17048, lis3dh, espidf_ble_keyboard, atv_voice, ft63x6, sd_card, tasten_konfig, menue, online_image, dock_direkt]
@@ -1137,6 +1138,9 @@ globals:
 
   # Laedt der Akku gerade? Kommt aus dem CRATE-Register des MAX17048.
   - {id: laedt,          type: bool,      restore_value: false, initial_value: "false"}
+  # Ladekabel-Flackern bei vollem Akku erkennen (on_press/on_release von charger_present, 2026-10-28)
+  - {id: kabel_weg_ms,   type: uint32_t,  restore_value: false, initial_value: "0"}
+  - {id: kabel_ruhig,    type: bool,      restore_value: false, initial_value: "false"}
   # Kabel war dran (Lade-IC hat geladen) - Grundlage fuer die "voll"-Anzeige, s. apply_charge_icon.
   - {id: charge_latch,   type: bool,      restore_value: false, initial_value: "false"}
   # Standardwerte der Sparoptionen unten (bis kbd_bri): erprobte Alltagswerte (2026-09-27).
@@ -6264,16 +6268,25 @@ binary_sensor:
       - delayed_off: 2s
       - delayed_on: 200ms
     on_press:
-      - lambda: 'akkustat::laden_start();'   # Akku-Statistik: Entladung beginnt nach dem Laden neu
+      # Nachladen bei vollem Akku (2026-10-28): der TP4056 beendet das Laden, die Zelle sinkt unter Last, er laedt
+      # kurz nach - der Pin flackert dann alle paar Sekunden (Remote 2: ~2700x, Display 80 min an). Kommt das Kabel
+      # binnen 2 min nach "weg" zurueck und ist der Akku >= 95 %, ist das kein Einstecken: nur das Symbol nachziehen.
+      - lambda: |-
+          id(kabel_ruhig) = id(kabel_weg_ms) != 0 && millis() - id(kabel_weg_ms) < 120000 &&
+                            !std::isnan(id(akku_level).state) && id(akku_level).state >= 95.0f;
       - script.execute: apply_charge_icon
-      - script.execute: wake_backlight
       - script.execute: refresh_laden
-      # "Nur Bluetooth": kein Wartungsfenster beim Einstecken - Updates laufen durch den Bluetooth-Tunnel,
-      # WLAN bleibt aus (2026-10-07, Nutzerwunsch). Notausgang: Knopf "Wartungsfenster jetzt" in HA.
       - if:
-          condition: {lambda: 'return !wlan_zugriff::g_nur_ble;'}
-          then: [{script.execute: wartungsfenster}]
-      - script.execute: lade_popup
+          condition: {lambda: 'return !id(kabel_ruhig);'}
+          then:
+            - lambda: 'akkustat::laden_start();'   # Akku-Statistik: Entladung beginnt nach dem Laden neu
+            - script.execute: wake_backlight
+            # "Nur Bluetooth": kein Wartungsfenster beim Einstecken - Updates laufen durch den Bluetooth-Tunnel,
+            # WLAN bleibt aus (2026-10-07, Nutzerwunsch). Notausgang: Knopf "Wartungsfenster jetzt" in HA.
+            - if:
+                condition: {lambda: 'return !wlan_zugriff::g_nur_ble;'}
+                then: [{script.execute: wartungsfenster}]
+            - script.execute: lade_popup
     # Icon jetzt direkt hier (apply_charge_icon), nicht mehr nur ueber den
     # Umweg refresh_laden -> CRATE-Register - das reagiert traege, s.
     # Kommentar bei apply_charge_icon weiter oben. Nutzerhinweis
@@ -6283,9 +6296,13 @@ binary_sensor:
       - lambda: |-
           if (id(sntp_time).now().is_valid())
             akkustat::laden_ende(id(sntp_time).now().timestamp, id(akku_level).state);
+          id(kabel_weg_ms) = millis() | 1;
       - script.execute: apply_charge_icon
-      - script.execute: wake_backlight
       - script.execute: refresh_laden
+      # beim Nachladen-Flackern (s. on_press) das Display nicht wecken
+      - if:
+          condition: {lambda: 'return !id(kabel_ruhig);'}
+          then: [{script.execute: wake_backlight}]
 
 
 

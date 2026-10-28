@@ -35,7 +35,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote-dock
-    version: "2026.10.28.2"
+    version: "2026.10.28.3"
   includes:
     - <esp_mac.h>
     - <esp_heap_caps.h>
@@ -636,7 +636,8 @@ dock_hid:
 # wenn HA gerade nicht laeuft. Seit 2026-10-19 auch HA-Befehle: das Dock ist immer mit HA verbunden und fuehrt sie
 # sofort aus (die Remote muss nach dem Aufwachen nicht erst ihre eigene HA-Verbindung aufbauen). Beschreibung: components/dock_direkt/dock_direkt.h
 external_components:
-  - source: {type: local, path: components}
+  - source: {type: git, url: https://github.com/Aggro600/ESPHomeRemote, ref: stabil, path: components}
+    refresh: 0s
     # bluetooth_connection: eigene Fassung (ESPHome 2026.9.1 + Dock-Takt fuer Proxy-Verbindungen, 2026-10-23)
     components: [dock_direkt, dock_hid, bluetooth_connection]
 

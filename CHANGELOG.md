@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.10.28.3 (2026-10-28)
+
+Fixed update error "menue: expected a dictionary": the firmware package now loads its components straight from GitHub instead of the ESPHome folder – old copies there no longer interfere. Under Firmware the configurator detects old files in the ESPHome folder (components, esphomeremote-*.h, fonts) and moves them to the archive with one click. Remote: when the battery is full on the charger, the flickering charge signal no longer keeps the display on (it could stay lit for hours).
+
+<details><summary>Deutsch</summary>
+
+Update-Fehler „menue: expected a dictionary“ behoben: Das Firmware-Paket holt seine Komponenten jetzt direkt von GitHub statt aus dem ESPHome-Ordner – alte Kopien dort stören nicht mehr. Der Konfigurator erkennt unter Firmware alte Dateien im ESPHome-Ordner (Komponenten, esphomeremote-*.h, Schriften) und räumt sie auf Knopfdruck ins Archiv. Remote: ist der Akku am Kabel voll, flackert die Lade-Meldung nicht mehr das Display an (Display blieb sonst stundenlang an).
+
+</details>
+
 ## 2026.10.28.2 (2026-10-28)
 
 - Fresh start: the repository starts over without the old version history (cleaned up)

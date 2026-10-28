@@ -563,7 +563,8 @@ async def liste(hass: HomeAssistant) -> dict:
                for j in _jobs.values() if not j["fertig"]]
     return {"geraete": out, "ports": ports, "fehler": fehler, "jobs": laufend, "version": soll,
             "lokal": await hass.async_add_executor_job(lambda: (ESPHOME_DIR / "templates" / "remote.yaml").exists()),
-            "entwickler": await hass.async_add_executor_job(entwickler)}
+            "entwickler": await hass.async_add_executor_job(entwickler),
+            "altlasten": await hass.async_add_executor_job(altlasten)}
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/fw_liste"})
@@ -880,8 +881,51 @@ class FirmwareView(HomeAssistantView):
                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+# Alte Kopien im ESPHome-Ordner (2026-10-28, Tester: "menue: expected a dictionary" nach einem Update): ESPHome sucht
+# Dateien eines GitHub-Pakets (Header, Schriften, frueher auch die Komponenten) ZUERST im ESPHome-Ordner des Nutzers
+# und erst dann im Paket. Liegen dort alte Kopien von uns, baut das Update mit altem Code. Gilt nicht fuer den
+# Entwickler-Stand (templates/remote.yaml) und nicht, solange eine Geraete-Datei den lokalen Stand noch einbindet.
+KOMPONENTEN = ("atv_voice", "bluetooth_connection", "dock_direkt", "dock_hid", "espidf_ble_keyboard", "ft63x6", "ha_tunnel",
+               "ili9341_i80", "lis3dh", "max17048", "menue", "network", "online_image", "sd_card", "tasten_konfig", "tca8418")
+SCHRIFTEN = ("Audiowide-Regular.ttf", "mdi-subset.ttf")
+
+
+def altlasten() -> list[str]:
+    if (ESPHOME_DIR / "templates" / "remote.yaml").exists():
+        return []
+    for f in ESPHOME_DIR.glob("*.yaml"):
+        t = _lesen(f)
+        if "path: components" in t or "!include templates/" in t:
+            return []
+    out = [f"components/{k}" for k in KOMPONENTEN if (ESPHOME_DIR / "components" / k).is_dir()]
+    out += sorted(f.name for f in ESPHOME_DIR.glob("*.h") if re.fullmatch(r"(esphomeremote|open-remote)-[\w-]+\.h", f.name))
+    out += [f"fonts/{s}" for s in SCHRIFTEN if (ESPHOME_DIR / "fonts" / s).is_file()]
+    return out
+
+
+def altlasten_wegraeumen() -> str:
+    ziel = ESPHOME_DIR / "archive" / f"esphomeremote-alt-{time.strftime('%Y%m%d-%H%M%S')}"
+    for rel in altlasten():
+        dst = ziel / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        (ESPHOME_DIR / rel).rename(dst)
+    for leer in ("components", "fonts"):
+        d = ESPHOME_DIR / leer
+        if d.is_dir() and not any(d.iterdir()):
+            d.rmdir()
+    return str(ziel.relative_to(ESPHOME_DIR))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/fw_aufraeumen"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_aufraeumen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    ordner = await hass.async_add_executor_job(altlasten_wegraeumen)
+    connection.send_result(msg["id"], {"ordner": ordner})
+
+
 def registrieren(hass: HomeAssistant) -> None:
-    for fn in (ws_liste, ws_installieren, ws_job, ws_sperren, ws_vormerken, ws_test_wiederholen, ws_entwickler, ws_umstellen):
+    for fn in (ws_liste, ws_installieren, ws_job, ws_sperren, ws_vormerken, ws_test_wiederholen, ws_entwickler, ws_umstellen, ws_aufraeumen):
         websocket_api.async_register_command(hass, fn)
     hass.http.register_view(FirmwareView(hass))
 

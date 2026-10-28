@@ -5433,6 +5433,9 @@ const FirmwareTab = {
       ${fw.fehler ? `<div class="msg err">${esc(fw.fehler)}</div>` : ""}
       ${alt.length ? `<div class="neuversion"><ha-icon icon="mdi:gift-outline"></ha-icon><span><b>Neue Version ${esc(fw.version)}</b> – ${alt.length} Gerät${alt.length === 1 ? "" : "e"} haben noch eine ältere Firmware: ${alt.map((g) => `${esc(g.friendly || g.name)} (${esc(g.fw || "ohne Versionsangabe")})`).join(", ")}.
         „Alle aktualisieren“ baut und spielt sie auf – schlafende Remotes kurz anfassen.</span></div>` : fw.version ? `<small class="note">Version ${esc(fw.version)} – alle Geräte aktuell.</small>` : ""}
+      ${fw.altlasten?.length ? `<div class="msg err"><b>Alte Dateien im ESPHome-Ordner gefunden</b> – ESPHome nimmt sie beim Bauen statt der aktuellen aus GitHub, ein Update kann daran scheitern:
+        ${fw.altlasten.map((f) => `<code>${esc(f)}</code>`).join(", ")}.
+        <div class="row" style="margin-top:6px"><button class="btn primary small" data-a="fw_aufraeumen" ${beschaeftigt ? "disabled" : ""}><ha-icon icon="mdi:broom"></ha-icon>Aufräumen (ins Archiv verschieben)</button></div></div>` : ""}
       ${this._fwEntwicklerHtml()}
       ${sammel}
       <div class="dkopf"><h3>Fernbedienungen</h3><span class="grow"></span>
@@ -5548,6 +5551,12 @@ const FirmwareTab = {
     const g = fw?.geraete?.find((x) => x.datei === datei);
     switch (a) {
       case "fw_reload": await this._fwLaden(); return true;
+      case "fw_aufraeumen":
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_aufraeumen" });
+          this.s.msg = { text: `Aufgeräumt – die alten Dateien liegen jetzt in esphome/${r.ordner}. Jetzt neu bauen.` };
+        } catch (e) { this.s.msg = { err: true, text: "Aufräumen: " + (e.message || e.code) }; }
+        await this._fwLaden(); return true;
       case "fw_los": {
         const weg = t.dataset.weg;
         fw.usb = null;
