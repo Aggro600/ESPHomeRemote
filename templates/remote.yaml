@@ -48,7 +48,7 @@ esphome:
   friendly_name: Remote WZ Remotename
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.10.28.3"
+    version: "2026.10.28.4"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
@@ -5033,12 +5033,7 @@ script:
             return;
           }
 
-          // Sprachantwort: Hoch/Runter scrollt den Text, statt den Fokus zu
-          // bewegen - dort gibt es nur einen Knopf.
-          if (p == 26 && (keycode == 14 || keycode == 35)) {
-            lv_obj_scroll_by(id(voice_box), 0, keycode == 14 ? 40 : -40, LV_ANIM_ON);
-            return;
-          }
+          // Sprachantwort (26): Tasten gehen seit 2026-10-28 wie auf der Startseite ans Geraet - hier kommt nichts an.
 
           // Steht der Fokus auf einem Regler, aendern Links/Rechts dessen Wert (Schritt 1, Grenzen vom Regler).
           if ((keycode == 15 || keycode == 32) && id(cur_focus) != nullptr &&
@@ -6155,9 +6150,9 @@ tca8418:
             }
             id(held_key) = 0;
             const bool nav = keycode == 14 || keycode == 35 || keycode == 15 || keycode == 32 || keycode == 34 || keycode == 13;
-            // Startseite und Begruessung: das Steuerkreuz gehoert dem Geraet. War das Display dunkel (Menue noch im
-            // Hintergrund offen), weckt der erste Druck nur.
-            if (!nav || id(cur_page) == 0 || id(cur_page) == 24 || id(key_was_dark)) return;
+            // Startseite, Begruessung und Sprachantwort: das Steuerkreuz gehoert dem Geraet. War das Display dunkel
+            // (Menue noch im Hintergrund offen), weckt der erste Druck nur.
+            if (!nav || id(cur_page) == 0 || id(cur_page) == 24 || id(cur_page) == 26 || id(key_was_dark)) return;
             id(cur_key) = keycode;
             id(dispatch_key)->execute();
             // Beim Halten wiederholen (ausser OK)

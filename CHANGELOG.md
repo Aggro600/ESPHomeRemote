@@ -1,5 +1,19 @@
 # What's new · Was ist neu
 
+## 2026.10.28.4 (2026-10-28)
+
+- **Configurator:** The *Keys* page now shows a faithful front view of the remote (grey front cover, black keys with white symbols, coloured keys). Dots below each symbol show the assignment (short/double/long/without HA); the display shows the activity's start page.
+- **Voice search:** While the voice popup is open, all keys (including the D-pad) work normally, just like on the start page.
+- **Charging:** If the charge signal flickers after a full charge (charger chip at end of charge), the remote no longer wakes the display each time or counts new charge cycles.
+
+<details><summary>Deutsch</summary>
+
+- **Konfigurator:** Unter *Tasten* zeigt der Konfigurator jetzt eine originalgetreue Vorderansicht der Remote (graues Frontcover, schwarze Tasten mit weißen Symbolen, bunte Farbtasten). Punkte unter dem Symbol zeigen die Belegung (kurz/doppelt/lang/ohne HA), das Display zeigt die Startseite der Aktivität.
+- **Sprachsuche:** Solange das Sprach-Popup offen ist, funktionieren alle Tasten (auch das Steuerkreuz) normal wie auf der Startseite.
+- **Laden:** Flackert das Ladesignal nach dem Vollladen (Ladechip am Ende der Ladung), schaltet die Remote nicht mehr jedes Mal das Display ein und zählt keine neuen Ladevorgänge.
+
+</details>
+
 ## 2026.10.28.3 (2026-10-28)
 
 Fixed update error "menue: expected a dictionary": the firmware package now loads its components straight from GitHub instead of the ESPHome folder – old copies there no longer interfere. Under Firmware the configurator detects old files in the ESPHome folder (components, esphomeremote-*.h, fonts) and moves them to the archive with one click. Remote: when the battery is full on the charger, the flickering charge signal no longer keeps the display on (it could stay lit for hours).
