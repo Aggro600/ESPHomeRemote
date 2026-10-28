@@ -1,0 +1,25 @@
+# Streamer bzw. Fernseher neu starten per ADB (2026-10-05): wenn er haengt und keine Tasten mehr annimmt.
+# Auf der Remote: Menue > Geraete & Medien > Streamer bzw. TV > "... neu starten" (mit Rueckfrage).
+# Der TV hat keine aktive androidtv-Integration (Eintrag absichtlich aus) - darum direkt per Skript.
+shell_command:
+  esphomeremote_adb: 'python3 /config/esphomeremote_scripts/adb_befehl.py {{ ip }} "{{ befehl }}"'
+
+script:
+  streamer_neustarten:
+    alias: Streamer neu starten
+    icon: mdi:restart
+    mode: single
+    sequence:
+      - action: androidtv.adb_command
+        target: {entity_id: media_player.android_tv_192_168_2_79}
+        data: {command: reboot}
+        continue_on_error: true
+
+  tv_neustarten:
+    alias: Fernseher neu starten
+    icon: mdi:restart
+    mode: single
+    sequence:
+      - action: shell_command.esphomeremote_adb
+        data: {ip: 192.168.1.41, befehl: reboot}
+        continue_on_error: true

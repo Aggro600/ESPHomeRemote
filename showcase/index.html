@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>OpenRemote Rev6 · 3D</title>
+  <meta name="description" content="Interaktiver 3D-Showcase der OpenRemote Rev6 mit Dockingstation – aus den Original-CAD-Daten, mit der echten ESPHomeRemote-Oberfläche auf dem Display.">
+  <meta name="theme-color" content="#07090d">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='10' y='2' width='12' height='28' rx='4' fill='%233B82F6'/%3E%3Crect x='12.5' y='5' width='7' height='9' rx='1' fill='%230E1116'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <main id="buehne" aria-label="3D-Ansicht"></main>
+
+  <header class="kopf">
+    <div class="marke">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>OpenRemote <em>Rev6</em></h1>
+        <p>ESPHomeRemote · Dockingstation · 3D</p>
+      </div>
+    </div>
+  </header>
+
+  <aside class="tafel" id="tafel" aria-label="Steuerung">
+    <button class="tafel-griff" id="griff" aria-label="Steuerung ein-/ausklappen" aria-expanded="true"><span></span></button>
+    <section>
+      <h2>Dockingstation</h2>
+      <div class="zeile">
+        <button class="knopf haupt" id="dockKnopf" data-taste="D">Andocken</button>
+        <button class="knopf" id="irKnopf" title="IR-Blitz zeigen">IR senden</button>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite">
+        <span class="punkt"></span><span id="statusText">Frei</span>
+        <span class="akku"><span id="akkuBalken"></span></span><span id="akkuText">64 %</span>
+      </div>
+    </section>
+    <section>
+      <h2>Ansicht</h2>
+      <div class="raster5" id="presets">
+        <button class="knopf klein" data-preset="vorne" data-taste="1">Vorne</button>
+        <button class="knopf klein" data-preset="hinten" data-taste="2">Hinten</button>
+        <button class="knopf klein" data-preset="seite" data-taste="3">Seite</button>
+        <button class="knopf klein" data-preset="oben" data-taste="4">Oben</button>
+        <button class="knopf klein" data-preset="dock" data-taste="5">Dock</button>
+      </div>
+      <label class="regler">
+        <span>Explosion <b id="explosionWert">0 %</b></span>
+        <input type="range" id="explosion" min="0" max="100" value="0" aria-label="Explosionsansicht">
+      </label>
+      <div class="schalter">
+        <button class="pille" id="drehen" aria-pressed="false" data-taste="A">Auto-Rotation</button>
+        <button class="pille" id="punkte" aria-pressed="true" data-taste="H">Hotspots</button>
+        <button class="pille" id="zerlegen" aria-pressed="false" data-taste="E">Zerlegen</button>
+      </div>
+    </section>
+    <section>
+      <h2>Präsentation</h2>
+      <div class="zeile">
+        <button class="knopf haupt" id="tourKnopf" data-taste="P">▶ Starten</button>
+        <button class="knopf" id="resetKnopf" data-taste="R">Zurücksetzen</button>
+      </div>
+    </section>
+    <section>
+      <h2>Farben</h2>
+      <div id="farbTafel"></div>
+    </section>
+    <p class="hinweis">Display antippen: im Dock erscheint die Fernbedienung, nach 20 s wieder das Smart Display – wie in der Firmware.</p>
+  </aside>
+
+  <div class="hotspots" id="hotspots" aria-hidden="false"></div>
+  <article class="karte" id="karte" hidden>
+    <button class="zu" id="karteZu" aria-label="Schließen">×</button>
+    <h3 id="karteTitel"></h3>
+    <p id="karteText"></p>
+  </article>
+  <div class="untertitel" id="untertitel" hidden></div>
+
+  <footer class="fuss">
+    <span>Modelle: <a href="https://github.com/LORDSn1per/OpenRemote-Hardware" target="_blank" rel="noopener">OpenRemote-Hardware</a> (GPL-3.0) · Firmware: <a id="repoLink" href="https://github.com/Aggro600/ESPHomeRemote" target="_blank" rel="noopener">ESPHomeRemote</a></span>
+    <span class="tasten">Maus/Touch: drehen · zoomen · verschieben &nbsp;|&nbsp; Tasten: D E P R A H 1–5</span>
+  </footer>
+
+  <div class="laden" id="laden">
+    <div class="laden-innen">
+      <span class="logo gross" aria-hidden="true"></span>
+      <p id="ladenText">Lade Modelle …</p>
+      <div class="laden-balken"><span id="ladenBalken"></span></div>
+    </div>
+  </div>
+  <div class="fehler" id="fehler" hidden>
+    <h2>Das hat nicht geklappt</h2>
+    <p id="fehlerText"></p>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

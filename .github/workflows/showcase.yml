@@ -1,0 +1,51 @@
+# Baut den 3D-Showcase (showcase/) und legt ihn auf gh-pages unter /showcase ab.
+# Der Rest von gh-pages (Web-Installer: index.html, manifest.json, firmware.factory.bin) bleibt unberuehrt.
+name: 3D-Showcase
+
+on:
+  push:
+    branches: [master]
+    paths: ["showcase/**", ".github/workflows/showcase.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: showcase-pages
+  cancel-in-progress: true
+
+jobs:
+  bauen-und-veroeffentlichen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: showcase/package-lock.json
+
+      - name: Bauen
+        working-directory: showcase
+        run: |
+          npm ci
+          npm run build
+          test -f dist/models/remote.glb && test -f dist/models/dock.glb && test -f dist/fonts/Audiowide-Regular.ttf
+
+      - name: Nach gh-pages/showcase kopieren
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages --depth 1
+          git worktree add ../seiten origin/gh-pages
+          cd ../seiten
+          git checkout -B gh-pages
+          rm -rf showcase
+          cp -r "$GITHUB_WORKSPACE/showcase/dist" showcase
+          touch .nojekyll
+          git add -A showcase .nojekyll
+          if git diff --cached --quiet; then echo "Keine Aenderung"; exit 0; fi
+          git commit -m "3D-Showcase: ${GITHUB_SHA::7}"
+          git push origin gh-pages

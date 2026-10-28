@@ -1,0 +1,27 @@
+# =============================================================================
+#  ESPHomeRemote - Dockingstation (Einbinde-Datei)
+# =============================================================================
+# ESPHome-Add-on -> "Neues Geraet" -> ueberspringen -> Inhalt dieser Datei einfuegen, Name unten anpassen.
+# Bequemer: Konfigurator > Firmware & Geraete > "Neues Dock" legt diese Datei selbst an.
+# Die Firmware kommt vom Zweig "stabil" (letzter Release); Passwoerter aus deiner secrets.yaml.
+# =============================================================================
+
+substitutions:
+  name:          dock-wohnzimmer
+  friendly_name: Dock Wohnzimmer
+  # Pakete von GitHub duerfen kein !secret lesen - die Werte kommen von hier
+  wifi_ssid:         !secret wifi_ssid
+  wifi_password:     !secret wifi_password
+  ota_pw:            !secret ota_pw
+  direkt_schluessel: !secret direkt_schluessel
+
+dashboard_import:
+  package_import_url: github://Aggro600/ESPHomeRemote/esphomeremote-dock.yaml@stabil
+  import_full_config: false
+
+packages:
+  basis:
+    url: https://github.com/Aggro600/ESPHomeRemote
+    ref: stabil
+    files: [esphomeremote-dock-firmware.yaml]
+    refresh: 0s

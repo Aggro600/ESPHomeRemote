@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "start": "home",
+  "theme": {
+    "bg": "#0b0f14",
+    "card": "#1a1f27",
+    "accent": "#22c55e",
+    "text": "#e5e7eb"
+  },
+  "pages": [
+    {
+      "id": "home", "name": "Start", "cols": 2,
+      "items": [
+        { "type": "nav", "slot": 0, "label": "Wohnzimmer",   "target": "wz",      "icon": "sofa" },
+        { "type": "nav", "slot": 1, "label": "Schlafzimmer",  "target": "sz",      "icon": "bed" },
+        { "type": "nav", "slot": 2, "label": "Geraete",       "target": "geraete", "icon": "remote-tv" },
+        { "type": "nav", "slot": 3, "label": "Aktivitaeten",  "target": "akt",     "icon": "movie-open" }
+      ]
+    },
+    {
+      "id": "wz", "name": "Wohnzimmer", "cols": 2,
+      "items": [
+        { "type": "light",  "slot": 0, "span": 2, "label": "Licht Wohnzimmer", "entity": "light.wohnzimmer",        "icon": "lightbulb" },
+        { "type": "cover",  "slot": 2, "span": 2, "label": "Rollo Wohnzimmer", "entity": "cover.wohnzimmer_rollo",  "icon": "window-shutter" },
+        { "type": "toggle", "slot": 4, "span": 2, "label": "Sternenhimmel",    "entity": "light.sternenhimmel",     "icon": "string-lights" },
+        { "type": "button", "slot": 6, "label": "TV an",   "device": "Hisense TV", "command": "Power", "icon": "power" },
+        { "type": "button", "slot": 7, "label": "< Start", "press": "home",        "icon": "home" }
+      ]
+    },
+    {
+      "id": "sz", "name": "Schlafzimmer", "cols": 2,
+      "items": [
+        { "type": "light",  "slot": 0, "span": 2, "label": "Licht Schlafzimmer", "entity": "light.schlafzimmer",       "icon": "lightbulb" },
+        { "type": "cover",  "slot": 2, "span": 2, "label": "Rollo Schlafzimmer", "entity": "cover.schlafzimmer_rollo", "icon": "window-shutter" },
+        { "type": "button", "slot": 4, "label": "< Start", "press": "home", "icon": "home" }
+      ]
+    },
+    {
+      "id": "geraete", "name": "Geraete", "cols": 3,
+      "items": [
+        { "type": "button", "slot": 0, "label": "TV Power",  "device": "Hisense TV", "command": "Power",       "icon": "power" },
+        { "type": "button", "slot": 1, "label": "Vol +",     "device": "Sony Amp",   "command": "Volume Up",   "icon": "volume-plus" },
+        { "type": "button", "slot": 2, "label": "Vol -",     "device": "Sony Amp",   "command": "Volume Down", "icon": "volume-minus" },
+        { "type": "button", "slot": 3, "label": "Home",      "device": "Chromecast", "command": "Home",        "icon": "home" },
+        { "type": "button", "slot": 4, "label": "Zurueck",   "device": "Chromecast", "command": "Back",        "icon": "arrow-left" },
+        { "type": "button", "slot": 5, "label": "OK",        "device": "Chromecast", "command": "Select",      "icon": "check" },
+        { "type": "button", "slot": 6, "label": "< Start",   "press": "home",                                  "icon": "home" }
+      ]
+    },
+    {
+      "id": "akt", "name": "Aktivitaeten", "cols": 2,
+      "items": [
+        { "type": "button", "slot": 0, "label": "Fetch TV",   "activity": "Fetch TV",   "icon": "television-classic" },
+        { "type": "button", "slot": 1, "label": "Chromecast",  "activity": "Chromecast", "icon": "cast" },
+        { "type": "button", "slot": 2, "label": "< Start",     "press": "home",          "icon": "home" }
+      ]
+    }
+  ]
+}

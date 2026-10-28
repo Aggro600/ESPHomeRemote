@@ -1,0 +1,155 @@
+# =============================================================================
+#  Test- und Diagnosewerkzeuge fuer die Entwicklung (wird NICHT veroeffentlicht)
+# =============================================================================
+# Seit 2026-10-16 auf ALLEN Remotes: templates/remote-halink.yaml bindet es ein (packages: dev), damit alle
+# Remotes bis auf den Namen gleich sind. Die Dienste erscheinen in HA als esphome.remote_wz_<name>_<dienst>.
+#
+#   seite_zeigen  {seite}   Seite fuer Bildschirmfotos: "menue", "menue_x" (X markiert), "menue_rein" (markierten
+#                           Eintrag oeffnen), "start" oder eine eingebaute Seite (media, ble, power ...).
+#                           Mit "_zeitlupe" am Ende laufen alle Animationen 15x langsamer (z. B. "menue_zeitlupe").
+#                           Bild holen: Schalter "Konfig-Modus (HTTP)" an, dann GET http://<ip>/sd/api/bild?y=0
+#                           (rohes RGB565, 240x320; Umwandeln: scratchpad bild.py).
+#   menue_popup_zu          (in der Firmware) Popup schliessen
+#   mic_selbsttest          Mikrofon 1,5 s aufnehmen, Kennwerte ins Log und in den Sensor "Mikrofon-Selbsttest"
+#   ram_messen {schritt}    internes RAM/PSRAM sofort ins Log, RAM-Sensoren aktualisieren
+#   tiefschlaf_jetzt        sofort in den normalen Tiefschlaf (alle Weckquellen wie im Alltag)
+#   weckprotokoll_log       ganzes Weckprotokoll (RTC) ins Log
+#   pm_bericht              wer haelt den Prozessor wach (esp_pm-Sperren), zeilenweise ins HA-Log (Bruecke)
+#   modus_starten {modus}   Folgemodus (cfg.modi) starten wie per Taste, z. B. "haengelampe"
+#   taste {code, ms}        Hardware-Taste nachstellen: druecken, ms halten, loslassen (ueber die Belegung)
+# =============================================================================
+
+text_sensor:
+  - platform: template
+    id: mic_test_text
+    name: "Mikrofon-Selbsttest"
+    icon: "mdi:microphone-message"
+    entity_category: diagnostic
+
+api:
+  services:
+    - service: modus_starten
+      variables: {modus: string}
+      then:
+        - script.execute: wake_backlight
+        - delay: 300ms
+        - lambda: 'id(tk_cfg)->modus_starten(modus.c_str());'
+    - service: taste
+      variables: {code: int, ms: int}
+      then:
+        - lambda: 'tasten::ereignis(code, true);'
+        - delay: !lambda 'return (uint32_t) std::max<int32_t>(ms, 30);'
+        - lambda: 'tasten::ereignis(code, false);'
+    # Musik-Anzeige mit kuenstlicher Musik (Optik pruefen, auch wenn das Mikrofon gesperrt ist), 2026-10-18
+    - service: musik_demo
+      variables: {an: bool}
+      then:
+        - lambda: 'musik::demo(an); if (an) musik::zeigen(false);'
+    - service: seite_zeigen
+      variables: {seite: string}
+      then:
+        - script.execute: wake_backlight
+        - lambda: |-
+            const bool zl = seite.size() > 9 && seite.compare(seite.size() - 9, 9, "_zeitlupe") == 0;
+            id(mn)->zeitlupe = zl ? 15 : 1;
+        - if:
+            condition: {lambda: 'return seite.rfind("menue", 0) == 0;'}
+            then:
+              - script.execute: open_menu
+              - if: {condition: {lambda: 'return seite.rfind("menue_x", 0) == 0;'}, then: [{delay: 1500ms}, {lambda: 'id(mn)->fokus(0, -1);'}]}
+              - if: {condition: {lambda: 'return seite.rfind("menue_rein", 0) == 0;'}, then: [{delay: 1500ms}, {lambda: 'id(mn)->ok();'}]}
+            else:
+              - if:
+                  condition: {lambda: 'return seite.rfind("start", 0) == 0;'}
+                  then: [{script.execute: go_home}]
+                  else: [{lambda: 'tasten::spezial_zeigen(std::string(seite.c_str(), seite.size()));'}]
+    - service: mic_selbsttest
+      then:
+        - script.execute: wake_backlight
+        - lambda: |-
+            struct MicTest { volatile bool an = false; uint32_t n = 0, null = 0; int32_t mn = 0, mx = 0; uint64_t sum = 0; uint32_t bytes = 0; };
+            static MicTest *m = new MicTest();
+            static bool reg = false;
+            if (!reg) {
+              reg = true;
+              id(remote_mic)->add_data_callback([](const std::vector<uint8_t> &d) {
+                if (!m->an) return;
+                m->bytes += d.size();
+                for (size_t i = 0; i + 3 < d.size(); i += 4) {
+                  int32_t s; memcpy(&s, &d[i], 4); s >>= 8;
+                  if (m->n == 0) { m->mn = m->mx = s; }
+                  if (s < m->mn) m->mn = s;
+                  if (s > m->mx) m->mx = s;
+                  if (s == 0) m->null++;
+                  m->sum += (uint64_t) (s < 0 ? -(int64_t) s : s);
+                  m->n++;
+                }
+              });
+            }
+            *m = MicTest();
+            id(mic_power)->turn_on();
+            delay(400);
+            m->an = true;
+            id(remote_mic)->start();
+            id(mic_test_text).publish_state("laeuft ...");
+            // Auswertung nach 1,5 s
+            App.scheduler.set_timeout(id(remote_mic), "mic_selbsttest", 1500, []() {
+              m->an = false;
+              id(remote_mic)->stop();
+              char b[200];
+              snprintf(b, sizeof(b), "Bytes %u, Samples %u, Null %u, Min %d, Max %d, Mittel|x| %u",
+                       (unsigned) m->bytes, (unsigned) m->n, (unsigned) m->null, (int) m->mn, (int) m->mx,
+                       (unsigned) (m->n ? m->sum / m->n : 0));
+              ESP_LOGI("mictest", "%s", b);
+              id(mic_test_text).publish_state(b);
+              id(apply_mic_power).execute();
+            });
+    - service: ram_messen
+      variables: {schritt: string}
+      then:
+        - lambda: |-
+            ESP_LOGI("ram", "[%s] intern frei %u, groesster Block %u, minimum seit Start %u, PSRAM frei %u KB",
+                     schritt.c_str(), (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                     (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+        - component.update: ram_frei
+        - component.update: ram_min
+        - component.update: ram_block
+    - service: tiefschlaf_jetzt
+      then:
+        - lambda: |-
+            weck_log("Tiefschlaf (Test per HA)");
+            g_deep_active = id(ps_deep) ? 0x5EEEu : 0;
+        - delay: 500ms
+        - script.execute: deep_sleep_powerdown
+        - deep_sleep.enter: {id: nachtschlaf}
+    - service: weckprotokoll_log
+      then:
+        - lambda: |-
+            const std::string t = weck_log_ende(WECK_LOG_BYTES);
+            for (size_t i = 0; i < t.size(); i += 180) ESP_LOGI("weckprot", "%s", t.substr(i, 180).c_str());
+            id(weck_text).publish_state(weck_log_ende(250));
+    # Strom-Diagnose: wer haelt den Prozessor wach (esp_pm-Sperren). Ausgabe zeilenweise ins HA-Log (Bruecke).
+    - service: pm_bericht
+      then:
+        - lambda: |-
+            char *buf = nullptr;
+            size_t len = 0;
+            FILE *f = open_memstream(&buf, &len);
+            if (f == nullptr) return;
+            esp_pm_dump_locks(f);
+            fclose(f);
+            std::string s(buf, len);
+            free(buf);
+            char kopf[96];
+            snprintf(kopf, sizeof(kopf), "PM-Bericht: Display %s, Laufzeit %u s", id(disp_off) ? "aus" : "an", (unsigned) (millis() / 1000));
+            id(tunnel).meldung(kopf);
+            size_t a = 0;
+            while (a < s.size()) {
+              size_t e = s.find('\n', a);
+              if (e == std::string::npos) e = s.size();
+              std::string z = s.substr(a, e - a);
+              if (z.find_first_not_of(" \t\r") != std::string::npos) id(tunnel).meldung(z);
+              a = e + 1;
+            }

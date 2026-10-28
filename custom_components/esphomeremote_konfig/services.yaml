@@ -1,0 +1,128 @@
+an_remotes:
+  name: An alle Fernbedienungen
+  description: Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.<remote>_<dienst>).
+  fields:
+    dienst:
+      name: Dienst
+      description: "Teil hinter dem Geraetenamen, z. B. refresh_cover, doorbell_image, remote_show_keyboard"
+      required: true
+      example: refresh_cover
+      selector:
+        text:
+    daten:
+      name: Daten
+      required: false
+      example: '{"door": 1}'
+      selector:
+        object:
+regeln:
+  name: Schrittweise regeln
+  description: "Für Tasten und Folgemodi der Fernbedienung: Licht heller/dunkler, Farbtemperatur, Lüfterstufe, Drehung umschalten."
+  fields:
+    entity_id:
+      name: Entität
+      required: true
+      selector:
+        entity:
+          domain: [light, fan]
+    art:
+      name: Art
+      required: true
+      selector:
+        select:
+          options: [helligkeit, farbtemperatur, stufe, drehung]
+    schritt:
+      name: Schritt
+      description: "Helligkeit in %, Farbtemperatur in Kelvin, Lüfter in Stufen (negativ = runter/wärmer)"
+      required: false
+      example: 10
+      selector:
+        number:
+          min: -2000
+          max: 2000
+remote_log:
+  name: Remote-Protokoll über das Dock
+  description: "Ruft das Dock auf, wenn eine Remote ohne eigene HA-Verbindung ihr Protokoll funkt (nur mit Debug-Protokoll an). Fehler und Warnungen landen im HA-Protokoll, alle Zeilen im Konfigurator."
+  fields:
+    geraet:
+      name: Gerät
+      required: true
+      example: remote-wz-wohnzimmer
+      selector:
+        text:
+    z:
+      name: Zeilen
+      example: "12 I dock: Startseite vom Dock"
+      selector:
+        text:
+          multiline: true
+wlan_kommt:
+  name: Remote schaltet ihr WLAN ein
+  description: "Ruft das Dock auf, wenn eine Remote gleich ihr WLAN einschaltet (Sprache an HA, kein Dock). HA verbindet sich dann sofort, sobald sie erreichbar ist."
+  fields:
+    geraet:
+      name: Gerät
+      required: true
+      example: remote-wz-wohnzimmer
+      selector:
+        text:
+remote_status:
+  name: Remote-Werte über das Dock
+  description: "Ruft das Dock auf, wenn eine Remote ohne eigene HA-Verbindung ihre Werte funkt (Akku, Ladekabel, Aktivität, Tiefschlaf-Status, Tasten-Konfiguration). Trägt sie in die Entitäten der Remote ein, solange diese nicht selbst verbunden ist."
+  fields:
+    geraet:
+      name: Gerät
+      required: true
+      example: remote-wz-wohnzimmer
+      selector:
+        text:
+timer_verlaengern:
+  name: Timer verlängern
+  description: "Startet den zuletzt abgelaufenen Timer (aus der Auswahl der Remotes) neu mit dieser Dauer - für den Knopf „+5 min“ im Timer-Popup."
+  fields:
+    minuten:
+      name: Minuten
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 600
+timer_neu_starten:
+  name: Timer neu starten
+  description: "Startet den zuletzt abgelaufenen Timer mit seiner bisherigen Dauer neu (Knopf „Nochmal“ im Timer-Popup)."
+blaster_senden:
+  name: Über fremden IR-/RF-Sender senden
+  description: "Schickt einen Rohcode über einen IR-Sender einer anderen Integration (infrared-Entität) oder einen Broadlink (IR oder 433 MHz) - so wie ein Dock. Die Remotes rufen das für Sender auf, die im Konfigurator statt eines Docks gewählt sind."
+  fields:
+    sender:
+      name: Sender
+      required: true
+      selector:
+        entity:
+          domain: [infrared, remote]
+    code:
+      name: Code
+      description: "Zeiten in Mikrosekunden, + an / - aus, mit Komma getrennt"
+      required: true
+      selector:
+        text:
+    traeger:
+      name: Trägerfrequenz
+      default: 38000
+      selector:
+        number:
+          min: 10000
+          max: 500000
+    art:
+      name: Art
+      default: ir
+      selector:
+        select:
+          options: [ir, rf]
+    wiederholen:
+      name: Wiederholen
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 30

@@ -1,0 +1,20 @@
+# Zuverlaessiger Eingang des Sony-TV fuer die Fernbedienungen (2026-09-29).
+# Quelle: HDMI-CEC des Streamers (sensor.esphomeremote_streamer_wohnzimmer_am_tv, aus der ADB-Abfrage in
+# esphomeremote_smarttube.yaml). Die Bravia-Integration (media_player.tv_wz) meldet zeitweise
+# "Smart TV", obwohl HDMI 3 laeuft, und laesst Attribute weg - dafuer nicht verlaesslich.
+# 2026-10-25: Reihenfolge umgedreht - meldet der TV selbst port=3, gilt das. CEC (isActiveSource) stand bei HDMI 3
+# auf "false" und loeste das HDMI-Popup jedes Mal aus; CEC hilft nur noch, wenn der TV faelschlich "Smart TV" meldet.
+#   hdmi3  = TV an und zeigt den Streamer
+#   anders = TV an, anderer Eingang oder Smart-TV-App
+#   aus    = TV aus
+template:
+  - sensor:
+      - name: "ESPHomeRemote TV Eingang"
+        unique_id: esphomeremote_tv_eingang
+        state: >
+          {% set s = states('media_player.tv_wz') %}
+          {% set cec = states('sensor.esphomeremote_streamer_wohnzimmer_am_tv') %}
+          {% if s in ['off', 'standby', 'unavailable'] %}aus
+          {% elif 'port=3' in (state_attr('media_player.tv_wz', 'media_content_id') | default('', true) | string) %}hdmi3
+          {% elif cec == 'true' %}hdmi3
+          {% else %}anders{% endif %}

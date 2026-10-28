@@ -1,0 +1,125 @@
+"""Verknuepfungen je Remote (2026-10-19): welche HA-Entitaeten die Firmware nutzt, gewaehlt im Konfigurator.
+
+cfg["ents"] = {rolle: entity_id}. Die Firmware kann HA-Entitaeten nur abonnieren, wenn ihr Name beim Bauen feststeht.
+Deshalb spiegelt die Integration die gewaehlte Entitaet auf einen festen Namen je Remote:
+
+    sensor.esphomeremote_spiegel_<remote>_<rolle>   (Zustand + alle Attribute der gewaehlten Entitaet)
+
+Kein Registry-Eintrag, kein Recorder (wie sensor.esphomeremote_konfig_<remote>). Aktionen (einschalten, Ansage,
+ADB-Text, Multiroom-Tasten) schickt die Remote direkt an die gewaehlte Entitaet - die Namen stehen in ihrer
+Konfiguration (tasten_konfig: ent("tv") ...). Ohne Auswahl: Spiegel "unavailable", die Funktion ist aus.
+"""
+
+from __future__ import annotations
+
+import re
+
+import voluptuous as vol
+
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_state_change_event
+
+# rolle: (Domaenen, gespiegelt?, Beschreibung)
+ROLLEN = {
+    "jetzt": (("media_player",), True, "Wiedergabe-Karte, Media-Seite, Musik-Anzeige"),
+    "tv": (("media_player",), True, "Fernseher: an/aus, Energie-Zeiten, Knopf „Fernseher einschalten“"),
+    "multiroom": (("media_player",), False, "Musik-Steuerung bei Quelle Multiroom"),
+    "tts": (("media_player",), False, "Lautsprecher für Antworten des Assistenten"),
+    "adb": (("media_player",), False, "Streamer für Texteingabe per ADB (Android-TV-Integration)"),
+    "timer": (("timer",), True, "Countdown neben der Uhr"),
+}
+# Rollen mit mehreren Entitaeten (2026-10-26): Liste, gespiegelt wird die passendste (Timer: der zuerst ablaeuft)
+MEHRERE = {"timer"}
+
+
+def validate_ents(v) -> dict:
+    if not isinstance(v, dict):
+        raise vol.Invalid("Verknüpfungen: Objekt erwartet")
+    out = {}
+    for rolle, e in v.items():
+        if rolle not in ROLLEN:
+            continue
+        liste = e if isinstance(e, list) and rolle in MEHRERE else [e]
+        gut = []
+        for x in liste[:12]:
+            x = str(x or "").strip()
+            if not x:
+                continue
+            dom = x.split(".", 1)[0]
+            if dom not in ROLLEN[rolle][0] or not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", x):
+                raise vol.Invalid(f"Verknüpfung {rolle}: '{x}' passt nicht ({', '.join(ROLLEN[rolle][0])})")
+            gut.append(x)
+        if gut:
+            out[rolle] = gut if rolle in MEHRERE and isinstance(e, list) else gut[0]
+    return out
+
+
+def als_liste(e) -> list[str]:
+    return [x for x in (e if isinstance(e, list) else [e]) if x]
+
+
+def spiegel_id(slug: str, rolle: str) -> str:
+    return f"sensor.esphomeremote_spiegel_{slug}_{rolle}"
+
+
+class Spiegel:
+    """Haelt die Spiegel-Zustaende aller Remotes aktuell."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+        self._abos: dict[str, callable] = {}   # slug -> Abmelden
+        self._ziele: dict[str, dict] = {}      # slug -> {rolle: entity_id}
+
+    @callback
+    def setzen(self, slug: str, ents: dict) -> None:
+        ziele = {r: ents.get(r, "") for r, (_, gespiegelt, _) in ROLLEN.items() if gespiegelt}
+        if self._ziele.get(slug) == ziele and slug in self._abos:
+            return
+        self.weg(slug, entfernen=False)
+        self._ziele[slug] = ziele
+        for rolle, e in ziele.items():
+            self._kopieren(slug, rolle, e)
+        quellen = {x: r for r, e in ziele.items() for x in als_liste(e)}
+
+        @callback
+        def geaendert(ev) -> None:
+            e = ev.data["entity_id"]
+            for rolle, ziel in self._ziele.get(slug, {}).items():
+                if e in als_liste(ziel):
+                    self._kopieren(slug, rolle, ziel)
+
+        if quellen:
+            self._abos[slug] = async_track_state_change_event(self.hass, list(quellen), geaendert)
+        else:
+            self._abos[slug] = lambda: None
+
+    def _waehlen(self, ziel) -> str:
+        """Mehrere Timer: laufender, der zuerst ablaeuft; sonst pausierter; sonst der erste."""
+        liste = als_liste(ziel)
+        if len(liste) <= 1:
+            return liste[0] if liste else ""
+        sts = [(x, self.hass.states.get(x)) for x in liste]
+        aktiv = sorted((str(st.attributes.get("finishes_at") or "~"), x) for x, st in sts if st and st.state == "active")
+        if aktiv:
+            return aktiv[0][1]
+        pause = [x for x, st in sts if st and st.state == "paused"]
+        return pause[0] if pause else liste[0]
+
+    @callback
+    def _kopieren(self, slug: str, rolle: str, e) -> None:
+        e = self._waehlen(e)
+        st = self.hass.states.get(e) if e else None
+        attr = dict(st.attributes) if st else {}
+        attr["friendly_name"] = f"Spiegel {slug} {rolle}"
+        attr["gespiegelt_von"] = e
+        self.hass.states.async_set(spiegel_id(slug, rolle), st.state if st else "unavailable", attr)
+
+    @callback
+    def weg(self, slug: str, entfernen: bool = True) -> None:
+        if (ab := self._abos.pop(slug, None)) is not None:
+            ab()
+        if entfernen:
+            for rolle, (_, gespiegelt, _) in ROLLEN.items():
+                if gespiegelt:
+                    self.hass.states.async_remove(spiegel_id(slug, rolle))
+            self._ziele.pop(slug, None)

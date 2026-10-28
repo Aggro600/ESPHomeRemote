@@ -1,0 +1,32 @@
+# menu.json Icon-Katalog (Feld "icon": "<name>")
+# Aus fonts/mdi-subset.ttf, Font mdi_menu (esphomeremote-sd-test.yaml).
+# Nur diese Namen funktionieren; unbekannt -> kein Icon (Layout bleibt ok).
+# Tabelle: components/menu_ui/mdi_icons.h. Mehr Icons: dort + Font-glyphs ergaenzen.
+
+153 Icons
+air-conditioner          alarm                    alert                    apple                    arrow-down               arrow-left
+arrow-right              arrow-up                 bathtub                  battery                  battery-charging         bed
+bed-outline              bell                     bell-outline             blinds                   blinds-open              bluetooth
+brightness-6             camera                   car                      cast                     cast-connected           cctv
+ceiling-light            cellphone                check                    chevron-down             chevron-left             chevron-right
+chevron-up               close                    coffee                   cog                      cog-outline              controller-classic
+curtains                 desk                     desktop-tower-monitor    door                     door-closed              door-open
+doorbell                 doorbell-video           dots-horizontal          dots-vertical            fan                      fast-forward
+flash                    flash-outline            floor-lamp               flower                   fridge                   gamepad-variant
+garage                   garage-open              garage-variant           google-chrome            heart                    heat-wave
+home                     home-outline             image                    information              key                      key-variant
+keyboard-return          kodi                     lamp                     laptop                   leaf                     led-strip
+lightbulb                lightbulb-group          lightbulb-on             lock                     lock-open-variant        menu
+microphone               minus                    minus-circle             movie                    movie-open               music
+music-note               netflix                  nintendo-switch          palette                  pause                    pine-tree
+play                     play-pause               plex                     plus                     plus-circle              podcast
+power                    power-standby            printer-3d               radiator                 radio                    record
+remote                   remote-tv                repeat                   rewind                   roller-shade             set-top-box
+shower                   shuffle                  silverware-fork-knife    skip-next                skip-previous            sleep
+snowflake                sofa                     sony-playstation         soundbar                 speaker                  speaker-multiple
+spotify                  star                     stop                     stove                    string-lights            tablet
+television               television-classic       tent                     thermometer              thermostat               timer
+timer-outline            video                    vlc                      volume-high              volume-low               volume-medium
+volume-minus             volume-mute              volume-off               volume-plus              washing-machine          weather-night
+weather-partly-cloudy    weather-sunny            white-balance-sunny      wifi                     window-closed-variant    window-shutter
+window-shutter-open      youtube                  youtube-tv

@@ -1,0 +1,31 @@
+# Legt zu jedem Versions-Tag (v...) einen GitHub-Release an: Beschreibung aus CHANGELOG.md, dazu die Streamer-App.
+# HACS zeigt damit in Home Assistant "Update verfuegbar" mit Versionsnummer und Aenderungen.
+# Getaggt und auf den Zweig "stabil" geschoben wird von tools/release.py (Entwickler-Rechner).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Beschreibung aus CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '/^## /{p = index($0, v) > 0; next} p' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Version $v" > notes.md
+          cat notes.md
+
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "ESPHomeRemote ${GITHUB_REF_NAME#v}" --notes-file notes.md \
+            streamer-app/esphomeremote-streamer.apk

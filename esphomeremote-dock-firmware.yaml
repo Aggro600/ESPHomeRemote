@@ -1,0 +1,713 @@
+# ESPHomeRemote - Dock-Firmware (wird als Paket von esphomeremote-dock.yaml geladen, automatisch erzeugt)
+# OpenRemote Dock (Rev 6) in ESPHome - gemeinsame Basis aller Docks (2026-10-11, Basis seit 2026-10-16)
+#
+# Jedes Dock ist eine kleine Datei dock-<name>.yaml (Name + Anzeigename), die diese Basis einbindet. Neue Docks
+# legt der Konfigurator an (Fernbedienung -> Dockingstation -> Docks).
+#
+# Hardware laut github.com/LORDSn1per/OpenRemote-Firmware (dock/README.md) und
+# OpenRemote-Hardware (PCB/Dock Rev6/README.md):
+#   ESP32-C3 Super Mini (4 MB Flash, kein PSRAM)
+#   GPIO0  IR-Sender (Rev6: MOSFET Q1 auf 4 IR-LEDs, 39R; ohne Platine: IR-LED ueber 100R)
+#          -> nur gepulst betreiben, nie dauerhaft HIGH (~95 mA pro LED)
+#   GPIO1  gruene Status-LED D5 (Rev6, aktiv HIGH)
+#   GPIO8  blaue LED des Super Mini (aktiv LOW)
+#   GPIO3  Taste SW1 (Rev6, 10k Pull-up + 100nF)
+#   GPIO9  BOOT-Taste des Super Mini
+#   CC1101 433 MHz: SCK 4, MISO 5, MOSI 6, CSN 7, GDO0 10 (Senden), GDO2 20 (Empfang/Lernen)
+#   GPIO2  Nachruestung: Ladekontakte schalten (P-MOSFET, externer 10k Pull-up = an), GPIO21 reserviert.
+#
+# Die Original-Firmware spricht ESP-NOW mit der OpenRemote-Firmware. Unsere Remote laeuft mit ESPHome und
+# redet mit Home Assistant - deshalb ist das Dock hier ein normales HA-Geraet:
+#   - IR- und 433-MHz-Sender als infrared/radio_frequency-Entitaeten (HA-IR/RF-Proxy)
+#   - HA-Aktionen esphome.<dock>_ir_* / rf_* zum Senden aus Remote, Skripten und Automationen;
+#     ir_roh nimmt die fertigen Zeiten der Remote an (Sendeweg "Dock" im Konfigurator)
+#   - Ladekontakte schaltbar + "Remote wecken" (ersetzt den Smart Plug)
+#   - Bluetooth-Proxy (aktiv) fuer den HA-Link der Remote ueber Bluetooth
+#   - 433-MHz-Lernen: Aktion rf_lernen -> Ereignis esphome.dock_rf_gelernt mit den Rohzeiten
+#   - Status-LED wie im Original: an = mit HA verbunden, schnell blinken = Lernfenster, kurz aus = sendet
+#   - Taste: kurz/doppelt/lang als Ereignis-Entitaet; 10 s halten = Neustart
+#
+# Erstes Flashen per USB (C3 ohne USB-Seriell-Wandler: BOOT halten, RESET tippen, BOOT loslassen),
+# danach per WLAN.
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
+    name: aggro600.esphomeremote-dock
+    version: "2026.10.28.2"
+  includes:
+    - <esp_mac.h>
+    - <esp_heap_caps.h>
+    - <esp_system.h>                                   # TEST Neustartgrund (2026-10-26)
+    - <esphome/components/esp32/crash_handler.h>       # TEST Letzter Absturz (2026-10-26)
+  on_boot:
+    - priority: -100
+      then:
+        - script.execute: led_status
+        # TEST (2026-10-26, kann evtl. wieder weg): Neustartgrund und Absturz des letzten Laufs als Sensoren - das Dock
+        # startete am 26.10. um 05:43 ohne erkennbaren Grund neu. ESPHome schreibt den Absturz nur einmal ins Log und
+        # loescht ihn, sobald ein Log-Abo ihn bekommt; hier noch einmal ausgeben, logger on_message faengt ihn ein.
+        - lambda: |-
+            const char *g = "unbekannt";
+            switch (esp_reset_reason()) {
+              case ESP_RST_POWERON: g = "Strom an"; break;
+              case ESP_RST_SW: g = "gewollt (Neustart/Update)"; break;
+              case ESP_RST_PANIC: g = "Absturz"; break;
+              case ESP_RST_INT_WDT: g = "Watchdog (Interrupt)"; break;
+              case ESP_RST_TASK_WDT: g = "Watchdog (Task)"; break;
+              case ESP_RST_WDT: g = "Watchdog"; break;
+              case ESP_RST_BROWNOUT: g = "Spannungseinbruch"; break;
+              case ESP_RST_DEEPSLEEP: g = "Tiefschlaf"; break;
+              case ESP_RST_EXT: g = "Reset-Pin"; break;
+              default: break;
+            }
+            id(neustart_grund).publish_state(g);
+            id(absturz_txt).publish_state("kein Absturz");
+            #ifdef USE_ESP32_CRASH_HANDLER
+            esp32::crash_handler_log();
+            #endif
+    # 433 MHz lernen: liest die Flanken direkt aus dem Empfangspuffer (keine Kopie je Rauschen), s. remote_receiver
+    - priority: 600
+      then:
+        - lambda: |-
+            struct RfLernen : public remote_base::RemoteReceiverListener {
+              bool on_receive(remote_base::RemoteReceiveData d) override {
+                if ((int32_t) (id(lern_bis) - millis()) <= 0) return false;
+                const auto &x = d.get_raw_data();
+                if (x.size() < 24) return false;   // nur echte Telegramme, kein Rauschen: genug Flanken
+                std::string s;
+                s.reserve(x.size() * 6);
+                for (size_t i = 0; i < x.size(); i++) {
+                  if (i) s += ',';
+                  s += std::to_string(x[i]);
+                }
+                ESP_LOGI("dock", "433 MHz gelernt: %u Flanken", (unsigned) x.size());
+                id(lern_bis) = 0;
+                id(led_status).execute();
+                id(rf_gelernt).execute(s, (int) x.size());
+                return false;
+              }
+            };
+            id(rf_rx).register_listener(new RfLernen());
+
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: esp32c3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      # Interrupt-Watchdog 300 -> 800 ms (2026-10-22): das Dock startete mehrmals am Tag neu, "Interrupt wdt" im
+      # Bluetooth-Controller (r_sch_prog_end_isr) bei Proxy + WLAN + ESP-NOW auf dem einen Funk des C3
+      CONFIG_ESP_INT_WDT_TIMEOUT_MS: "800"
+      # WLAN-Puffer begrenzen (2026-10-25): IDF erlaubt je 32 Empfangs-/Sendepuffer a ~1,6 kB, das Dock hat ~30 kB frei.
+      # Unter Last fiel der Speicher auf 0,6 kB und das WLAN war minutenlang weg (Couchtisch 2026-10-25 00:02-00:18).
+      CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM: "6"
+      CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM: "12"
+      CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM: "12"
+      CONFIG_ESP_WIFI_AMPDU_TX_ENABLED: "n"
+      CONFIG_ESP_WIFI_RX_BA_WIN: "4"
+
+logger:
+  level: INFO
+  # USB-CDC: nie blockieren, wenn kein Monitor dranhaengt (Original: Serial.setTxTimeoutMs(0))
+  hardware_uart: USB_SERIAL_JTAG
+  # TEST (2026-10-26, kann evtl. wieder weg): Absturz-Zeilen (esp32.crash) in den Sensor "Letzter Absturz"
+  on_message:
+    level: ERROR
+    then:
+      - lambda: |-
+          if (strcmp(tag, "esp32.crash") != 0) return;
+          static std::string t;
+          if (strstr(message, "CRASH DETECTED") != nullptr) t.clear();
+          else if (t.size() < 200) { if (!t.empty()) t += " | "; t += message; }
+          if (t.size() > 250) t.resize(250);
+          if (!t.empty()) id(absturz_txt).publish_state(t);
+
+api:
+  id: api_server
+  encryption: {}   # Schluessel vergibt Home Assistant beim Einbinden
+  on_client_connected:
+    - script.execute: led_status
+  on_client_disconnected:
+    - script.execute: led_status
+  actions:
+    # IR - Codes wie bei remote_transmitter. Beispiel: action: esphome.<dock>_ir_nec, data: {address: 0x04, command: 0x08}
+    - action: ir_nec
+      variables: {address: int, command: int, wiederholen: int}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_nec:
+            transmitter_id: ir_tx
+            address: !lambda return (uint16_t) address;
+            command: !lambda return (uint16_t) command;
+            repeat:
+              times: !lambda "return wiederholen < 1 ? 1 : wiederholen;"
+              wait_time: 40ms
+    - action: ir_samsung
+      variables: {data: int, nbits: int}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_samsung:
+            transmitter_id: ir_tx
+            data: !lambda return (uint64_t) (uint32_t) data;
+            nbits: !lambda "return nbits > 0 ? nbits : 32;"
+    - action: ir_sony
+      variables: {data: int, nbits: int}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_sony:
+            transmitter_id: ir_tx
+            data: !lambda return (uint32_t) data;
+            nbits: !lambda "return nbits > 0 ? nbits : 12;"
+            repeat: {times: 3, wait_time: 25ms}
+    - action: ir_pronto
+      variables: {code: string}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_pronto:
+            transmitter_id: ir_tx
+            data: !lambda return code;
+    - action: ir_raw
+      # code: Mikrosekunden, positiv = an, negativ = aus; traeger: Hz (0 = 38000)
+      variables: {code: "int[]", traeger: int}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_raw:
+            transmitter_id: ir_tx
+            code: !lambda return code;
+            carrier_frequency: !lambda "return traeger > 0 ? traeger : 38000;"
+    # Von der Remote (Tasten-Konfigurator, Sendeweg "Dock"): fertige Zeiten als Text "9000,-4500,560,...",
+    # positiv = an, negativ = aus (us). Text statt int[], weil die Remote HA-Daten nur als Text weiterreicht.
+    - action: ir_roh
+      variables: {code: string, traeger: int}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_raw:
+            transmitter_id: ir_tx
+            code: !lambda |-
+              std::vector<int32_t> v;
+              v.reserve(code.size() / 4);
+              const char *p = code.c_str();
+              while (*p) {
+                char *e = nullptr;
+                long x = strtol(p, &e, 10);
+                if (e == p) { p++; continue; }
+                if (x != 0 && v.size() < 1500) v.push_back((int32_t) x);
+                p = e;
+              }
+              return v;
+            carrier_frequency: !lambda "return traeger > 0 ? traeger : 38000;"
+    # 433 MHz (OOK), Rohzeiten wie aus rf_lernen
+    - action: rf_raw
+      variables: {code: "int[]", wiederholen: int}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_raw:
+            transmitter_id: rf_tx
+            code: !lambda return code;
+            repeat:
+              times: !lambda "return wiederholen < 1 ? 5 : wiederholen;"
+              wait_time: 10ms
+    # Von der Remote / dem Konfigurator: Rohzeiten als Text "350,-1050,..." (wie ir_roh)
+    - action: rf_roh
+      variables: {code: string, wiederholen: int}
+      then:
+        - script.execute: {id: led_sendet}
+        - remote_transmitter.transmit_raw:
+            transmitter_id: rf_tx
+            code: !lambda |-
+              std::vector<int32_t> v;
+              v.reserve(code.size() / 4);
+              const char *p = code.c_str();
+              while (*p) {
+                char *e = nullptr;
+                long x = strtol(p, &e, 10);
+                if (e == p) { p++; continue; }
+                if (x != 0 && v.size() < 1500) v.push_back((int32_t) x);
+                p = e;
+              }
+              return v;
+            repeat:
+              times: !lambda "return wiederholen < 1 ? 5 : (wiederholen > 20 ? 20 : wiederholen);"
+              wait_time: 10ms
+    # Stand einer Remote (Startseite, Fernseher, Timer) als JSON - von der Integration bei jeder Aenderung; die Remote
+    # holt ihn nach dem Tiefschlaf per Funk ab (dock_direkt typ 4/5), bevor ihre eigene HA-Verbindung steht
+    - action: zustand
+      variables: {remote: string, inhalt: string}
+      then:
+        - lambda: 'id(direkt).zustand_setzen(remote, inhalt);'
+    # ---- Bluetooth-Tastatur fuer mehrere Geraete (dock_hid, 2026-10-22) - Plaetze 1..4 wie im Konfigurator
+    # Koppeln: Dock 2 Minuten sichtbar; am Fernseher/Tablet/Laptop "Bluetooth-Geraet hinzufuegen" -> Name des Docks.
+    # optionen: 1 = Maus/Touchpad, 2 = volle Tastatur (Buchstaben) - beides wirkt nur beim Koppeln.
+    - action: bt_koppeln
+      variables: {platz: int, name: string, optionen: int}
+      then:
+        - lambda: 'id(bt_hid).koppeln(platz - 1, name, optionen);'
+    - action: bt_koppeln_abbrechen
+      then:
+        - lambda: 'id(bt_hid).koppeln_abbrechen();'
+    - action: bt_vergessen
+      variables: {platz: int}
+      then:
+        - lambda: 'id(bt_hid).vergessen(platz - 1);'
+    # Geraet trennen und so lange nicht wieder verbinden lassen (Diagnose, 2026-10-23)
+    - action: bt_trennen
+      variables: {platz: int, sekunden: int}
+      then:
+        - lambda: 'id(bt_hid).trennen(platz - 1, sekunden);'
+    - action: bt_optionen
+      variables: {platz: int, name: string, optionen: int}
+      then:
+        - lambda: 'id(bt_hid).optionen(platz - 1, name, optionen);'
+    # Suchtempo des Proxys (2026-10-22, HA dockscan.py jede Minute): Zeiten in ms, grund fuer die Anzeige, weck_* =
+    # schnelle Suche nach einem Weckruf (Remote fragt ihren Stand ab), remotes = welche Remotes zaehlen ("a,b", leer = alle)
+    - action: scan_stufe
+      # fenster_verbunden: hoechstens so lange am Stueck hinhoeren, solange ein Geraet am Dock verbunden ist (0 = YAML)
+      variables: {intervall: int, fenster: int, grund: string, weck_s: int, weck_intervall: int, weck_fenster: int, remotes: string, fenster_verbunden: int}
+      then:
+        - lambda: 'id(bt_hid).scan_stufe(intervall, fenster, grund, weck_s, weck_intervall, weck_fenster, remotes, fenster_verbunden);'
+    # Taste an ein Geraet (Test im Konfigurator, Ausweg ueber HA): art consumer/taste/knopf/system, aktion tipp/druecken/loslassen
+    - action: bt_senden
+      variables: {platz: int, art: string, code: int, mod: int, aktion: string}
+      then:
+        - lambda: |-
+            using namespace dock_hid;
+            Ereignis e{CONSUMER, TIPP, {0, 0, 0, 0}};
+            if (art == "taste") { e.art = TASTE; e.d[0] = mod; e.d[1] = code; }
+            else if (art == "knopf") { e.art = KNOPF; e.d[0] = code; }
+            else if (art == "system") { e.art = SYSTEM; e.d[0] = code; }
+            else { e.d[0] = code & 0xFF; e.d[1] = (code >> 8) & 0xFF; }
+            if (aktion == "druecken") e.aktion = DRUECKEN;
+            else if (aktion == "loslassen") e.aktion = LOSLASSEN;
+            if (!id(bt_hid).senden(platz - 1, e)) ESP_LOGW("dock_hid", "Platz %d nicht verbunden", platz);
+            else id(led_sendet).execute();
+    - action: rf_lernen
+      # Lernfenster (Sekunden, Standard 10). Das erste brauchbare Signal kommt als
+      # Ereignis esphome.dock_rf_gelernt {code: "350,-1050,...", anzahl: N}
+      variables: {sekunden: int}
+      then:
+        - lambda: |-
+            id(lern_bis) = millis() + 1000u * (sekunden > 0 ? sekunden : 10);
+        - script.execute: led_status
+
+ota:
+  - platform: esphome
+    password: "${ota_pw}"
+
+wifi:
+  ssid: "${wifi_ssid}"
+  password: "${wifi_password}"
+  # Netzbetrieb: Funk nie schlafen lassen (wie im Original)
+  power_save_mode: none
+  # 1 min ohne WLAN -> Neustart (Standard 15 min). Bei Speichermangel kommt das WLAN von selbst nicht wieder
+  # (Couchtisch 2026-10-25 00:50: Empfangspuffer 1,7 kB scheiterten, Dock 15 min weg) - Neustart dauert ~10 s.
+  reboot_timeout: 1min
+  # Kein Fallback-Hotspot mehr (2026-10-25): ohne WLAN machte das Dock nach 1 min zusaetzlich einen Hotspot samt
+  # Webserver auf - kostet Speicher und Funkzeit genau dann, wenn es sich wieder verbinden soll. Notfall: USB.
+
+globals:
+  - {id: lern_bis, type: uint32_t, initial_value: "0"}
+  - {id: led_blinkt_beim_senden, type: bool, restore_value: true, initial_value: "true"}
+
+# ---------------------------------------------------------------- LEDs
+output:
+  - platform: ledc
+    id: led_gruen_pwm
+    pin: GPIO1
+    frequency: 2000Hz
+  - platform: ledc
+    id: led_blau_pwm
+    pin: {number: GPIO8, inverted: true, ignore_strapping_warning: true}
+    frequency: 2000Hz
+  # Beide LEDs zeigen dasselbe (Platine + Super Mini), wie Firmware 1.30+
+  - platform: template
+    id: led_beide
+    type: float
+    write_action:
+      - lambda: |-
+          id(led_gruen_pwm).set_level(state);
+          id(led_blau_pwm).set_level(state);
+
+light:
+  - platform: monochromatic
+    id: status_led
+    name: Status-LED
+    icon: mdi:led-on
+    output: led_beide
+    default_transition_length: 0s
+    gamma_correct: 2.0
+    restore_mode: ALWAYS_OFF
+    entity_category: config
+    effects:
+      - pulse:
+          name: Verbinden
+          transition_length: 400ms
+          update_interval: 400ms
+      - strobe:
+          name: Lernen
+          colors:
+            - {state: true, brightness: 100%, duration: 120ms}
+            - {state: false, duration: 120ms}
+
+number:
+  - platform: template
+    id: led_helligkeit
+    name: LED-Helligkeit
+    icon: mdi:brightness-6
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 5
+    max_value: 100
+    step: 5
+    initial_value: 40
+    restore_value: true
+    optimistic: true
+    on_value:
+      - script.execute: led_status
+
+script:
+  # Grundzustand der LED: Lernfenster > verbunden (an) > nicht verbunden (pulsieren)
+  - id: led_status
+    mode: restart
+    then:
+      - lambda: |-
+          auto c = id(status_led).make_call();
+          float h = id(led_helligkeit).state / 100.0f;
+          if (isnan(h)) h = 0.4f;
+          if ((int32_t) (id(lern_bis) - millis()) > 0) {
+            c.set_state(true); c.set_brightness(1.0f); c.set_effect("Lernen");
+          } else if (id(api_server).is_connected()) {
+            c.set_state(true); c.set_brightness(h); c.set_effect("None");
+          } else {
+            c.set_state(true); c.set_brightness(h); c.set_effect("Verbinden");
+          }
+          c.perform();
+  # Gelerntes 433-MHz-Signal an HA melden (Entwicklerwerkzeuge -> Ereignisse: esphome.dock_rf_gelernt)
+  - id: rf_gelernt
+    parameters: {code: string, anzahl: int}
+    then:
+      - homeassistant.event:
+          event: esphome.dock_rf_gelernt
+          data:
+            code: !lambda return code;
+            anzahl: !lambda return anzahl;
+  # Kurzes Aus-Blinken beim Senden (Original: "Brief flash")
+  - id: led_sendet
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: return id(led_blinkt_beim_senden) && (int32_t) (id(lern_bis) - millis()) <= 0;
+          then:
+            - lambda: |-
+                float h = id(led_helligkeit).state / 100.0f;
+                auto c = id(status_led).make_call();
+                c.set_effect("None");
+                c.set_state(true);
+                // Aus-Blinken bei leuchtender LED, sonst kurz an - mit der eingestellten Helligkeit (2026-10-25: vorher
+                // volle Helligkeit, das Dock blitzte dann heller als sonst)
+                c.set_brightness(id(status_led).current_values.is_on() && id(status_led).current_values.get_brightness() > 0.5f * h ? 0.0f : h);
+                c.perform();
+            - delay: 80ms
+            - script.execute: led_status
+
+interval:
+  # Speicher-Notbremse (2026-10-25): groesster freier Block 20 s am Stueck unter 2 kB -> Neustart. Dann scheitern die
+  # WLAN-Empfangspuffer (1,7 kB), Daten fuer HA stauen sich, der Speicher wird noch knapper - von selbst kommt es nicht raus.
+  - interval: 1s
+    then:
+      - lambda: |-
+          static uint8_t knapp = 0;
+          if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) >= 2048) { knapp = 0; return; }
+          if (++knapp == 20) {
+            ESP_LOGE("dock", "Speicher seit 20 s zerstueckelt (groesster Block < 2 kB) - Neustart");
+            App.safe_reboot();
+          }
+  # Lernfenster abgelaufen -> LED zurueck
+  - interval: 1s
+    then:
+      - lambda: |-
+          static bool war = false;
+          bool aktiv = (int32_t) (id(lern_bis) - millis()) > 0;
+          if (war && !aktiv) {
+            ESP_LOGI("dock", "Lernfenster ohne Signal beendet");
+            id(led_status).execute();
+          }
+          war = aktiv;
+
+# ---------------------------------------------------------------- Ladekontakte (Pogo-Pins)
+# Nachruestung (2026-10-11), ersetzt die Smart-Plug-Steckdose: GPIO2 schaltet POGO_5V ueber einen
+# High-Side-P-MOSFET (Schaltung in esphomeremote-docs/dock-ladekontakte-schalten.md). GPIO2 hat einen externen
+# 10k-Pull-up -> beim Start, Reset und ohne Firmware sind die Kontakte AN (Remote laedt immer).
+# Aus -> an = steigende Flanke an den Pogo-Pins = Weckgrund "Ladekabel" der Remote.
+switch:
+  - platform: gpio
+    id: ladekontakte
+    name: Ladekontakte
+    icon: mdi:battery-charging
+    pin: {number: GPIO2, ignore_strapping_warning: true}
+    restore_mode: ALWAYS_ON
+  - platform: template
+    name: LED beim Senden blinken
+    icon: mdi:led-variant-on
+    entity_category: config
+    lambda: return id(led_blinkt_beim_senden);
+    turn_on_action:
+      - globals.set: {id: led_blinkt_beim_senden, value: "true"}
+    turn_off_action:
+      - globals.set: {id: led_blinkt_beim_senden, value: "false"}
+
+button:
+  - platform: restart
+    id: neustart
+    name: Neustart
+  - platform: template
+    name: Remote wecken
+    icon: mdi:gesture-tap
+    on_press:
+      - switch.turn_off: ladekontakte
+      - delay: 1500ms
+      - switch.turn_on: ladekontakte
+
+# ---------------------------------------------------------------- Tasten
+binary_sensor:
+  - platform: gpio
+    id: taste_platine
+    pin: {number: GPIO3, inverted: true, mode: {input: true}}   # externer 10k Pull-up auf Rev6
+    filters: [delayed_on_off: 20ms]
+    on_multi_click: &klicks
+      - timing: [ON for at least 10s]
+        then:
+          - logger.log: "Taste 10 s -> Neustart"
+          - button.press: neustart
+      - timing: [ON for 1s to 10s, OFF for at least 50ms]
+        then:
+          - event.trigger: {id: taste_ereignis, event_type: lang}
+      - timing: [ON for at most 600ms, OFF for at most 400ms, ON for at most 600ms, OFF for at least 300ms]
+        then:
+          - event.trigger: {id: taste_ereignis, event_type: doppelt}
+      - timing: [ON for at most 600ms, OFF for at least 400ms]
+        then:
+          - event.trigger: {id: taste_ereignis, event_type: kurz}
+  - platform: gpio
+    id: taste_boot
+    pin: {number: GPIO9, inverted: true, mode: {input: true, pullup: true}, ignore_strapping_warning: true}
+    filters: [delayed_on_off: 20ms]
+    on_multi_click: *klicks
+  - platform: status
+    name: Status
+
+event:
+  - platform: template
+    id: taste_ereignis
+    name: Taste
+    icon: mdi:gesture-tap-button
+    event_types: [kurz, doppelt, lang]
+
+sensor:
+  - platform: wifi_signal
+    name: WLAN-Signal
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: uptime
+    name: Laufzeit
+    update_interval: 300s
+    entity_category: diagnostic
+  # Freier Arbeitsspeicher (2026-10-22): Proxy + Bluetooth-Tastatur + WLAN teilen sich ~320 kB ohne PSRAM
+  - platform: template
+    name: Freier Speicher
+    unit_of_measurement: kB
+    accuracy_decimals: 0
+    icon: mdi:memory
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: 'return heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0f;'
+  - platform: template
+    name: Kleinster freier Speicher
+    unit_of_measurement: kB
+    accuracy_decimals: 0
+    icon: mdi:memory
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: 'return heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024.0f;'
+  # Groesster Block am Stueck (2026-10-25): zerstueckelter Speicher laesst Anforderungen scheitern, obwohl genug frei ist
+  - platform: template
+    name: Groesster freier Block
+    unit_of_measurement: kB
+    accuracy_decimals: 1
+    icon: mdi:memory
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: 'return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024.0f;'
+
+text_sensor:
+  # TEST (2026-10-26, kann evtl. wieder weg): warum das Dock zuletzt neu gestartet ist (s. on_boot)
+  - platform: template
+    id: neustart_grund
+    name: Neustartgrund
+    icon: mdi:restart-alert
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: absturz_txt
+    name: Letzter Absturz
+    icon: mdi:bug
+    entity_category: diagnostic
+    update_interval: never
+  # Stand der Bluetooth-Plaetze (dock_hid) fuer den Konfigurator: {"k": Kopplung Platz-1 oder -1, "ks": Restzeit,
+  # "p": [{"b": belegt, "n": Name, "v": verbunden, "o": Optionen}, ...]}
+  - platform: template
+    id: bt_geraete
+    name: Bluetooth-Geraete
+    icon: mdi:bluetooth-connect
+    entity_category: diagnostic
+    update_interval: never
+  # Suchtempo des Proxys (Scan-Stufen): {"i": Intervall, "f": Fenster (ms), "g": Grund, "r": Rest Weckruf (s), "p": pausiert}
+  - platform: template
+    id: scan_tempo
+    name: Suchtempo
+    icon: mdi:radar
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: Bluetooth-Adresse
+    icon: mdi:bluetooth
+    entity_category: diagnostic
+    update_interval: never
+    lambda: |-
+      uint8_t m[6];
+      esp_read_mac(m, ESP_MAC_BT);
+      char b[18];
+      snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
+      return std::string(b);
+  - platform: version
+    name: ESPHome-Version
+    hide_timestamp: true
+  - platform: wifi_info
+    ip_address:
+      name: IP-Adresse
+
+# ---------------------------------------------------------------- Bluetooth-Proxy
+# Das Dock steht am Ladeplatz direkt neben der Remote: idealer Proxy fuer den HA-Link ueber Bluetooth
+# (ha_tunnel). Die Remote nimmt den Link nur von bekannten Proxys an - Adresse unten ("Bluetooth-Adresse")
+# im Konfigurator unter Bluetooth -> "Home Assistant ueber Bluetooth" anhaken.
+esp32_ble_tracker:
+  # Netzbetrieb: oefter hinhoeren als ein Akku-Proxy (2026-10-19) - die Remote wird nach dem Aufwachen schneller
+  # gefunden. Ein Drittel der Zeit; mehr nimmt dem WLAN (gleicher Funk beim C3) zu viel.
+  # Seit 2026-10-22 nur noch Standard: HA stellt das Tempo je nach Lage um (dock_hid Scan-Stufen, Konfigurator
+  # Dockingstation > Suchtempo). Bei Aenderung auch dock_hid scan_intervall/scan_fenster anpassen.
+  scan_parameters:
+    # Passiv (2026-10-27): das Dock stuerzte etwa stuendlich im Interrupt-Watchdog ab, haengend in der Scan-Planung
+    # des Bluetooth-Controllers (r_lld_scan_try_sched), meist wenn Remotes ueber das Dock mit HA verbunden waren.
+    # Aktiv schickt zu jedem Fund eine Scan-Anfrage - mehr Arbeit fuer den Controller. Die Remotes findet HA auch
+    # passiv (Kennung steht in den Werbedaten, nicht in der Scan-Antwort).
+    active: false
+    interval: 150ms
+    window: 50ms
+    # Nicht gleich beim Start: dock_hid startet den Scan 20 s spaeter, wenn WLAN, HA und die Bluetooth-Geraete am Dock
+    # verbunden sind. Alles gleichzeitig brachte den Controller in den Interrupt-Watchdog (Absturzschleife 2026-10-22).
+    continuous: false
+
+bluetooth_proxy:
+  active: true
+  cache_services: true
+
+# ---------------------------------------------------------------- Bluetooth-Tastatur fuer mehrere Geraete
+# (2026-10-22) Das Dock bleibt dauerhaft mit bis zu 4 Geraeten gekoppelt und verbunden (Fernseher, Streamer, Tablet,
+# Laptop ...). Die Remotes schicken Tasten und Touchpad per Funk (dock_direkt typ 10) - kommt sofort an, auch aus dem
+# Tiefschlaf der Remote. Laeuft neben dem Proxy auf demselben Bluetooth (3 Proxy- + 4 Geraete-Verbindungen).
+esp32_ble:
+  max_connections: 7
+
+dock_hid:
+  id: bt_hid
+  name: ${friendly_name}
+  plaetze: 4
+  status: bt_geraete
+  scan_status: scan_tempo
+  scan_intervall: 150ms   # = scan_parameters oben
+  scan_fenster: 50ms
+  # Sprache der Remote ueber das Dock an den Fernseher, beide Richtungen (Mikrofontaste / Fernseher fordert an), 2026-10-24
+  sprache: true
+
+# ---------------------------------------------------------------- Direkt von der Remote
+# Infrarot/433 MHz kommen von den Remotes per ESP-NOW direkt hierher, ohne HA dazwischen (2026-10-18) - geht auch,
+# wenn HA gerade nicht laeuft. Seit 2026-10-19 auch HA-Befehle: das Dock ist immer mit HA verbunden und fuehrt sie
+# sofort aus (die Remote muss nach dem Aufwachen nicht erst ihre eigene HA-Verbindung aufbauen). Beschreibung: components/dock_direkt/dock_direkt.h
+external_components:
+  - source: {type: local, path: components}
+    # bluetooth_connection: eigene Fassung (ESPHome 2026.9.1 + Dock-Takt fuer Proxy-Verbindungen, 2026-10-23)
+    components: [dock_direkt, dock_hid, bluetooth_connection]
+
+dock_direkt:
+  id: direkt
+  schluessel: "${direkt_schluessel}"
+  # HA-Befehle der Remotes ausfuehren (Remote-Einstellung "HA-Befehle ueber das Dock")
+  ha: true
+  # Bilder/Konfiguration fuer die Remotes von HA holen (HTTP ueber das Dock, 2026-10-20) - Adresse wie ha_adresse der Remotes
+  ha_http: "homeassistant.local:8123"
+  ir_sender: ir_tx
+  rf_sender: rf_tx
+  # Bluetooth-Eingaben der Remotes an die gekoppelten Geraete (dock_hid)
+  hid: bt_hid
+  on_senden:
+    - script.execute: {id: led_sendet}
+
+# ---------------------------------------------------------------- IR
+remote_transmitter:
+  - id: ir_tx
+    pin: GPIO0
+    carrier_duty_percent: 33%     # gepulst - Q1/IR-LEDs nie dauerhaft an
+    eot_level: false
+    non_blocking: true
+  # 433 MHz: Daten nach GDO0, der CC1101 moduliert selbst (deshalb 100 %)
+  - id: rf_tx
+    pin: GPIO10
+    carrier_duty_percent: 100%
+    eot_level: false
+    non_blocking: false
+    on_transmit:
+      - cc1101.begin_tx: rf
+    on_complete:
+      - cc1101.begin_rx: rf
+
+infrared:
+  - platform: ir_rf_proxy
+    name: IR-Sender
+    remote_transmitter_id: ir_tx
+
+# ---------------------------------------------------------------- 433 MHz (CC1101)
+spi:
+  clk_pin: GPIO4
+  miso_pin: GPIO5
+  mosi_pin: GPIO6
+
+cc1101:
+  id: rf
+  cs_pin: GPIO7
+  frequency: 433.92MHz
+  modulation_type: ASK/OOK
+  output_power: 10
+
+remote_receiver:
+  id: rf_rx
+  pin: GPIO20                     # GDO2
+  dump: []
+  tolerance: 50%
+  filter: 150us
+  idle: 6ms
+  buffer_size: 2kb                # 2026-10-23: 4 -> 2 kB (Speicher des Docks knapp), reicht fuer >1000 Flanken
+  # 433 MHz lernen (2026-10-23): kein on_raw mehr - der Trigger kopierte bei JEDEM Rauschen (CC1101 empfaengt
+  # dauernd) die Flanken in einen neuen Block bis 4 kB, auch ausserhalb des Lernens. Bei zerstueckeltem Speicher
+  # (min. 16 kB frei) -> std::bad_alloc -> Absturz (Couchtisch 2026-10-23). Jetzt ein Zuhoerer ohne Kopie (on_boot).
+
+radio_frequency:
+  - platform: ir_rf_proxy
+    name: 433-MHz-Sender
+    frequency: 433.92MHz
+    remote_transmitter_id: rf_tx
+  - platform: ir_rf_proxy
+    name: 433-MHz-Empfaenger
+    frequency: 433.92MHz
+    remote_receiver_id: rf_rx

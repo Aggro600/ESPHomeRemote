@@ -1,0 +1,9089 @@
+// Tasten-Konfigurator fuer die ESPHome-Fernbedienungen.
+// Panel fuer Home Assistant (Seitenleiste "Fernbedienung"), Handy und PC.
+// Daten: Websocket esphomeremote_konfig/get|save|default (custom_components/esphomeremote_konfig).
+
+// ---------------------------------------------------------------------------
+// Feste Daten: Tasten, Befehle, Funktionen
+// ---------------------------------------------------------------------------
+
+// Anordnung von vorn, Display oben (Rev6-Leiterplatte). [keycode, kurzer Text, Icon]
+const ROWS = [
+  [[5, "Stop", "mdi:stop"], [4, "Rücklauf", "mdi:rewind"], [2, "Play", "mdi:play-pause"], [11, "Vorlauf", "mdi:fast-forward"]],
+  [[3, "Menu", "mdi:menu"], [14, "Hoch", "mdi:chevron-up"], [31, "Info", "mdi:information-outline"]],
+  [[15, "Links", "mdi:chevron-left"], [34, "OK", null], [32, "Rechts", "mdi:chevron-right"]],
+  [[13, "Zurück", "mdi:arrow-u-left-top"], [35, "Runter", "mdi:chevron-down"], [41, "Return", "mdi:keyboard-return"]],
+  [[33, "Vol +", "mdi:volume-plus"], [44, "Mute", "mdi:volume-mute"], [42, "CH +", "mdi:chevron-double-up"]],
+  [[43, "Vol −", "mdi:volume-minus"], [45, "Mikro", "mdi:microphone"], [22, "CH −", "mdi:chevron-double-down"]],
+  [[23, "Rot", null], [25, "Grün", null], [24, "Gelb", null], [21, "Blau", null]],
+];
+const POWER = [102, "Aus", "mdi:power"];
+const COLOR_KEYS = { 23: "#e53935", 25: "#43a047", 24: "#fdd835", 21: "#1e88e5" };
+
+const KEYNAME = {
+  102: "Aus-Taste", 5: "Stop", 4: "Rücklauf", 2: "Play/Pause", 11: "Vorlauf",
+  3: "Menu-Taste (links)", 14: "Hoch", 31: "Info-Taste (Menütaste der Remote)",
+  15: "Links", 34: "OK", 32: "Rechts", 13: "Zurück", 35: "Runter", 41: "Return (rund ums D-Pad)",
+  33: "Lauter", 44: "Stumm", 42: "Kanal +", 43: "Leiser", 45: "Mikrofon", 22: "Kanal −",
+  23: "Rot", 25: "Grün", 24: "Gelb", 21: "Blau",
+  900: "Beim Starten der Aktivität", 901: "Beim Beenden der Aktivität",
+};
+// Keine Tasten: Schritte, wenn die Aktivitaet startet / beendet wird (Leiste, Taste, HA-Schalter)
+const AKT_EVENTS = [[900, "Beim Starten", "mdi:play-circle-outline"], [901, "Beim Beenden", "mdi:stop-circle-outline"]];
+// Diese Tasten gehoeren im Menue der Remote der Navigation (Konfiguration gilt nur auf der Startseite).
+const NAV_KEYS = new Set([14, 35, 15, 32, 34, 13]);
+
+// "Schrittweise regeln" (2026-10-18): eigener Schritt im Editor, gespeichert als HA-Schritt mit dem Dienst
+// esphomeremote_konfig.regeln (regeln.py rechnet den neuen Wert aus dem aktuellen Zustand aus).
+const REGELN_SVC = "esphomeremote_konfig.regeln";
+const istRegeln = (s) => s?.t === "ha" && s.svc === REGELN_SVC;
+// [art, Text, Domain, Standardschritt, Einheit, Hinweis]
+const REGELN_ARTEN = [
+  ["helligkeit", "Helligkeit ändern", "light", 10, "%", "Plus = heller, Minus = dunkler. Ist das Licht aus, schaltet Plus es ein."],
+  ["farbtemperatur", "Farbtemperatur ändern", "light", -400, "K", "Plus = kälter (mehr Kelvin), Minus = wärmer. Nur wenn das Licht an ist."],
+  ["stufe", "Stufe ändern", "fan", 1, "Stufen", "Plus = schneller, Minus = langsamer."],
+  ["drehung", "Drehung an/aus", "fan", 0, "", "Schaltet das Schwenken des Ventilators um."],
+];
+const GNAME = { short: "Kurz", double: "Doppelt", long: "Lang", short_offline: "Kurz ohne HA", double_offline: "Doppelt ohne HA", long_offline: "Lang ohne HA" };
+const GESTURES = [
+  ["short", "Kurz", "mdi:gesture-tap"],
+  ["double", "Doppelt", "mdi:gesture-double-tap"],
+  ["long", "Lang", "mdi:gesture-tap-hold"],
+];
+// Ersatz ohne HA-Verbindung (2026-10-18): "<geste>_offline" laeuft auf der Remote statt "<geste>", solange sie
+// weder per WLAN noch ueber die Bluetooth-Bruecke mit HA verbunden ist. Leer = normale Schritte.
+const OFFLINE = GESTURES.map(([g, l, i]) => [g + "_offline", l, i]);
+const hatG = (kc, g) => !!(kc[g]?.length || kc[g + "_offline"]?.length);
+
+// Bluetooth-Befehle. kind: consumer (Medien/System-Usage), key (Tastatur-Usage), button (HID-Button 1..8)
+const BLE_GROUPS = [
+  ["Navigation", [
+    ["consumer", 0x42, "Hoch"], ["consumer", 0x43, "Runter"], ["consumer", 0x44, "Links"],
+    ["consumer", 0x45, "Rechts"], ["consumer", 0x41, "OK"], ["consumer", 0x224, "Zurück"],
+    ["consumer", 0x223, "Home"], ["consumer", 0x40, "Menü"], ["consumer", 0x221, "Suche / Assistant"],
+    ["consumer", 0xCF, "Sprachbefehl"], ["consumer", 0x8D, "Programmführer"], ["consumer", 0x60, "Info"],
+  ]],
+  ["Lautstärke", [["consumer", 0xE9, "Lauter"], ["consumer", 0xEA, "Leiser"], ["consumer", 0xE2, "Stumm"]]],
+  ["Wiedergabe", [
+    ["consumer", 0xCD, "Play/Pause"], ["consumer", 0xB0, "Play"], ["consumer", 0xB1, "Pause"],
+    ["consumer", 0xB7, "Stop"], ["consumer", 0xB3, "Vorspulen"], ["consumer", 0xB4, "Zurückspulen"],
+    ["consumer", 0xB5, "Nächster Titel"], ["consumer", 0xB6, "Voriger Titel"], ["consumer", 0xB2, "Aufnahme"],
+  ]],
+  ["Kanal", [["consumer", 0x9C, "Kanal +"], ["consumer", 0x9D, "Kanal −"]]],
+  ["System", [["consumer", 0x30, "Power (Ein/Aus)"], ["consumer", 0x32, "Schlafen"]]],
+  ["HID-Buttons", [
+    ["button", 1, "Button 1"], ["button", 2, "Button 2 (Sony: Schnelleinstellungen)"], ["button", 3, "Button 3"],
+    ["button", 4, "Button 4"], ["button", 5, "Button 5"], ["button", 6, "Button 6"], ["button", 7, "Button 7"], ["button", 8, "Button 8"],
+  ]],
+  ["Tastatur", [
+    ["key", 0x28, "Enter"], ["key", 0x29, "Esc"], ["key", 0x2A, "Rücktaste"], ["key", 0x2B, "Tab"], ["key", 0x2C, "Leertaste"],
+    ["key", 0x4B, "Bild auf"], ["key", 0x4E, "Bild ab"], ["key", 0x52, "Pfeil hoch"], ["key", 0x51, "Pfeil runter"],
+    ["key", 0x50, "Pfeil links"], ["key", 0x4F, "Pfeil rechts"],
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => ["key", n === 0 ? 0x27 : 0x1D + n, `Ziffer ${n}`]),
+    ...Array.from({ length: 12 }, (_, i) => ["key", 0x3A + i, `F${i + 1}`]),
+  ]],
+];
+const BLE_LABEL = {};
+for (const [, items] of BLE_GROUPS) for (const [k, c, l] of items) BLE_LABEL[`${k}:${c}`] = l;
+
+const INT_FNS = [
+  ["menu_smart", "Menü ↔ Startseite (wie Menütaste kurz)"],
+  ["menu_open", "Menü öffnen (letzte Seite)"],
+  ["menu_top", "Menü öffnen, ganz oben"],
+  ["home", "Zur Startseite"],
+  ["display_off", "Display aus (im Dunkeln: nur wecken)"],
+  ["display_wake", "Display an"],
+  ["voice_ptt", "Sprechen, solange gedrückt (nur für Lang)"],
+  ["assistant_toggle", "Assistent wechseln (Google ↔ Home Assistant)"],
+  ["activity", "Aktivität wechseln zu …"],
+  ["activity_next", "Nächste Aktivität"],
+  ["activity_off", "Aktivität beenden"],
+  ["keyboard", "Bildschirmtastatur zeigen"],
+  ["kbd_light", "Tastenbeleuchtung an/aus"],
+  ["mic_toggle", "Mikrofon an/aus"],
+  ["clean", "Reinigungsmodus (Zurück lang beendet)"],
+  ["power_off", "Remote ausschalten"],
+  ["popup_close", "Popup schließen (zurück, wo man war)"],
+  ["keymode", "Tastenmodus an/aus (D-Pad steuert Einträge mit Taste)"],
+  ["touchpad", "Touchpad zeigen (Maus für PC/Tablet)"],
+  ["maus_tastatur", "Maus ↔ Tastatur umschalten (sonst Touchpad zeigen)"],
+  ["dock_anzeige", "Smart Display zeigen (Uhr, Wetter, Termine)"],
+  ["musik_anzeige", "Musik-Anzeige zeigen (Spektrum übers Mikrofon)"],
+  ["popup_open", "Menüseite als Popup öffnen …"],
+];
+const INT_LABEL = Object.fromEntries(INT_FNS);
+const MENU_FNS = new Set(["menu_smart", "menu_open", "menu_top"]);
+
+// wie components/tasten_konfig/ir_encoders.h (NEC1/NEC5/Onkyo = NECext, Panasonic/Denon = Kaseikyo kommen aus der IR-Datenbank)
+const IR_PROTOS = ["NEC", "NECext", "NEC42", "NEC42ext", "Samsung32", "RC5", "RC5X", "RC6", "SIRC", "SIRC15", "SIRC20", "Kaseikyo", "Pioneer", "RCA", "JVC"];
+
+const DOMAIN_CHIPS = [
+  ["", "Alle"], ["script", "Skripte"], ["input_boolean", "Schalter (Helfer)"], ["light", "Licht"],
+  ["switch", "Steckdosen"], ["scene", "Szenen"], ["cover", "Rollos"], ["media_player", "Medien"],
+  ["fan", "Lüfter"], ["automation", "Automationen"], ["button", "Buttons"], ["input_button", "Helfer-Buttons"],
+  ["climate", "Heizung"], ["remote", "Fernbed."],
+];
+const SVC_ORDER = ["toggle", "turn_on", "turn_off", "press", "trigger", "open_cover", "close_cover", "stop_cover",
+  "media_play_pause", "volume_up", "volume_down", "volume_mute", "select_source", "send_command"];
+const SVC_DE = {
+  toggle: "umschalten", turn_on: "einschalten / starten", turn_off: "ausschalten", press: "drücken",
+  trigger: "auslösen", open_cover: "öffnen", close_cover: "schließen", stop_cover: "stoppen",
+  media_play_pause: "Play/Pause", volume_up: "lauter", volume_down: "leiser", volume_mute: "stumm",
+  select_source: "Quelle wählen", send_command: "Befehl senden", reload: "neu laden",
+};
+
+// Geraetename fuer die Anzeige: "remote-wz-kueche" -> "Remote Kueche"
+const devName = (d) => String(d).startsWith("remote-wz-")
+  ? "Remote " + String(d).slice(10).replace(/^./, (x) => x.toUpperCase())
+  : String(d).split("-").map((w) => w.replace(/^./, (x) => x.toUpperCase())).join(" ");   // "open-remote" -> "Open Remote"
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const hex = (n, w = 2) => "0x" + Number(n).toString(16).toUpperCase().padStart(w, "0");
+// Angelernte IR-Signale erkennen (2026-10-26): Sony SIRC, NEC/NECext, Samsung32 - Feldaufteilung wie die Kodierer der
+// Firmware (Flipper-Konventionen, ir_encoders.h). Als Protokoll gespeichert sendet die Remote es richtig (Sony z. B.
+// 3x - eine Aufnahme enthaelt oft nur einen Rahmen, den Sony-Fernseher ignorieren). null = nicht erkannt.
+const IR_NAMEN = { SIRC: "Sony SIRC", SIRC15: "Sony SIRC-15", SIRC20: "Sony SIRC-20", NEC: "NEC", NECext: "NEC (erweitert)", Samsung32: "Samsung" };
+function irErkennen(raw) {
+  if (!Array.isArray(raw) || raw.length < 20) return null;
+  const um = (x, a, b) => x >= a && x <= b;
+  const m = (i) => Math.abs(raw[i] || 0), sp = (i) => (raw[i] < 0 ? -raw[i] : 0);
+  // Pulse-Distance (fester Mark, Bit im Space), LSB zuerst
+  const pd = (start, n, mk, null_, eins) => {
+    let v = 0n;
+    for (let b = 0; b < n; b++) {
+      const i = start + 2 * b;
+      if (!um(raw[i], mk[0], mk[1])) return null;
+      const s = sp(i + 1) || (b === n - 1 ? null_[0] : 0);
+      if (um(s, null_[0], null_[1])) continue;
+      if (um(s, eins[0], eins[1])) { v |= 1n << BigInt(b); continue; }
+      return null;
+    }
+    return v;
+  };
+  // Sony: 2400 Kopf, Bit im Mark (1200 = 1, 600 = 0), 600 Pause
+  if (um(raw[0], 2000, 2900) && um(sp(1), 400, 800)) {
+    let v = 0, n = 0;
+    for (let i = 2; i < raw.length && n < 20; i += 2) {
+      if (um(raw[i], 950, 1500)) v |= 1 << n; else if (!um(raw[i], 400, 850)) return null;
+      n++;
+      if (!(sp(i + 1) && sp(i + 1) <= 900)) break;   // Rahmenende (lange Pause oder Schluss)
+    }
+    const proto = n === 12 ? "SIRC" : n === 15 ? "SIRC15" : n === 20 ? "SIRC20" : null;
+    return proto ? { proto, addr: v >>> 7, cmd: v & 0x7f } : null;
+  }
+  // NEC: 9000/4500 Kopf, 32 Bit
+  if (um(raw[0], 8000, 10000) && um(sp(1), 3800, 5200)) {
+    const v = pd(2, 32, [350, 800], [350, 800], [1350, 1950]);
+    if (v === null) return null;
+    const b = [0, 1, 2, 3].map((k) => Number((v >> BigInt(8 * k)) & 0xFFn));
+    if ((b[0] ^ b[1]) === 0xFF && (b[2] ^ b[3]) === 0xFF) return { proto: "NEC", addr: b[0], cmd: b[2] };
+    return { proto: "NECext", addr: Number(v & 0xFFFFn), cmd: Number(v >> 16n) };
+  }
+  // Samsung32: 4500/4500 Kopf, 32 Bit, Adresse doppelt, Befehl + Komplement
+  if (um(raw[0], 3800, 5200) && um(sp(1), 3800, 5200)) {
+    const v = pd(2, 32, [350, 800], [350, 800], [1350, 1950]);
+    if (v === null) return null;
+    const b = [0, 1, 2, 3].map((k) => Number((v >> BigInt(8 * k)) & 0xFFn));
+    if (b[0] === b[1] && (b[2] ^ b[3]) === 0xFF) return { proto: "Samsung32", addr: b[0], cmd: b[2] };
+  }
+  return null;
+}
+const irErkanntText = (e) => `${IR_NAMEN[e.proto] || e.proto}, Adresse ${hex(e.addr)}, Befehl ${hex(e.cmd)}`;
+const parseNum = (v) => { const s = String(v).trim(); const n = /^0x/i.test(s) ? parseInt(s, 16) : parseInt(s, 10); return Number.isFinite(n) ? n : 0; };
+
+// ---------------------------------------------------------------------------
+
+class EsphomeremoteKonfigurator extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    // ShadowRoot kennt kein onclick/onchange - Listener einmalig anhaengen
+    this.shadowRoot.addEventListener("click", (ev) => this._click(ev));
+    this.shadowRoot.addEventListener("change", (ev) => this._change(ev));
+    this.s = { loaded: false, dev: null, act: 0, key: null, cfg: {}, enabled: {}, meta: {}, dirty: {}, hist: {}, base: {}, saved: {}, order: [], modal: null, msg: null, clip: null, undo: null, mode: "keys", mpage: null, mitem: null };
+    try { this.s.clip = JSON.parse(localStorage.getItem("erk_clip") || "null"); } catch (e) { /* egal */ }
+    this._onKey = (ev) => this._shortcut(ev);
+  }
+
+  connectedCallback() { window.addEventListener("keydown", this._onKey); }
+  disconnectedCallback() {
+    window.removeEventListener("keydown", this._onKey);
+    // Ereignis-Abos beenden - _gestAbo meldet sich beim naechsten Zeichnen der Gesten-Seite neu an
+    const g = this._gestUnsub; this._gestUnsub = null;
+    for (const u of g || []) u();
+    this._lernAus();
+    this._btAus();
+  }
+
+  // Strg+C / Strg+V auf der gewaehlten Taste (nicht, waehrend man in einem Feld tippt)
+  // Strg+K Suche, Strg+S Speichern, Esc schliesst, / oeffnet die Suche (2026-10-17)
+  _shortcut(ev) {
+    const s = this.s;
+    if (!s.loaded) return;
+    const tag = (ev.composedPath()[0]?.tagName || "").toLowerCase();
+    const tippt = ["input", "textarea", "select"].includes(tag);
+    const strg = ev.ctrlKey || ev.metaKey;
+    const k = (ev.key || "").toLowerCase();
+    if (strg && k === "k") { ev.preventDefault(); s.pal = s.pal ? null : { q: "", i: 0 }; this._render(); return; }
+    if (strg && k === "s") {
+      ev.preventDefault();
+      if (s.bereich === "dock" && s.dock?.dirty) this._click({ target: this._knopf("dk_save") });
+      else if (s.dirty[s.dev]) this._save();
+      else { s.msg = { text: "Alles gespeichert – nichts zu tun." }; this._render(); }
+      return;
+    }
+    if (s.pal) return;
+    if (k === "escape") {
+      if (s.modal && !this._modalAlsSeite()) s.modal = null;
+      else if (s.nav) s.nav = false;
+      else if (s.syncOffen) s.syncOffen = false;
+      else if (s.key != null && s.bereich === "remote" && s.mode === "keys" && !tippt) s.key = null;
+      else return;
+      this._render(); return;
+    }
+    if (!strg && !tippt && ev.key === "/" && !s.modal) { ev.preventDefault(); s.pal = { q: "", i: 0 }; this._render(); return; }
+    if (!strg || s.modal || tippt) return;
+    if (k === "z" && !ev.shiftKey) { ev.preventDefault(); this._undo(); this._render(); return; }
+    if (s.key == null || s.mode !== "keys" || s.bereich !== "remote") return;
+    if (k === "c") { ev.preventDefault(); this._copy(); this._render(); }
+    else if (k === "v" && this.s.clip) { ev.preventDefault(); this._paste(); this._render(); }
+  }
+
+  // ------------------------------------------------------ Kopieren/Einfuegen/Tauschen
+  _setClip(clip) {
+    this.s.clip = clip;
+    try { localStorage.setItem("erk_clip", JSON.stringify(clip)); } catch (e) { /* egal */ }
+  }
+  _origin() { return `${KEYNAME[this.s.key]} · ${this.activity.name}${this.s.order.length > 1 ? " · " + devName(this.s.dev).replace("Remote ", "") : ""}`; }
+  _copy(g) {
+    const MGRUPPEN = ["item", "release", "lang", "gest"];
+    const kc = MGRUPPEN.includes(g) ? this._steps(g) : clone(this.keyCfg());
+    if (MGRUPPEN.includes(g)) {
+      this._setClip({ type: "gest", data: kc[g] || [], label: `${{ item: "Beim Antippen", release: "Beim Loslassen", lang: "Lang drücken", gest: "Geste" }[g]} · ${this._mEditor() ? this._mItemText(this.mitem || {}) : "Geste"}` });
+      this.s.msg = { text: "Aktionen kopiert. An beliebiger Stelle (Taste, Menü-Knopf …) auf „Einfügen“ tippen." };
+    } else if (g) {
+      this._setClip({ type: "gest", data: kc[g] || [], label: `${GNAME[g]} von ${this._origin()}` });
+      this.s.msg = { text: `„${GNAME[g]}“ kopiert. Bei einer anderen Taste/Druckart auf „Einfügen“ tippen.` };
+    } else {
+      this._setClip({ type: "key", data: kc, label: this._origin() });
+      this.s.msg = { text: "Taste kopiert. Jetzt die Ziel-Taste wählen und „Einfügen“ tippen (oder Strg+V)." };
+    }
+  }
+  _remember(text) {
+    this.s.undo = { dev: this.s.dev, act: this.s.act, key: this.s.key, kc: clone(this.keyCfg()) };
+    this.s.msg = { text, undo: true };
+  }
+  // Einfuegen (2026-10-26): nie mehr blind ersetzen - ist das Ziel belegt, fragt ein Dialog: anhaengen, davor, ersetzen.
+  // Ganze Taste: je Druckart ein Haken.
+  _paste(g) {
+    const c = this.s.clip;
+    if (!c) return;
+    if (c.type === "key" && !g) {
+      const arten = Object.keys(c.data).filter((k) => Array.isArray(c.data[k]) && c.data[k].length);
+      this.s.modal = { type: "einfkey", sel: Object.fromEntries(arten.map((k) => [k, true])), art: "ersetzen" };
+      return;
+    }
+    const steps = c.type === "gest" || c.type === "steps" ? c.data : c.type === "key" ? (c.data[g] || c.data.short || []) : null;
+    if (!steps) { this.s.msg = { err: true, text: "In der Zwischenablage liegen keine Aktionen." }; return; }
+    const tgt = g || "short";
+    if (!(this._steps(tgt)[tgt] || []).length) { this._einf(tgt, steps, "ersetzen"); return; }
+    this.s.modal = { type: "einf", g: tgt, n: steps.length, label: c.label };
+  }
+  _einf(g, steps, art) {
+    const kc = this._steps(g), alt = kc[g] || [];
+    const name = GNAME[g] || { item: "Beim Antippen", release: "Beim Loslassen", lang: "Lang drücken", gest: "Geste" }[g] || g;
+    const was = art === "ersetzen" ? "ersetzt" : art === "davor" ? "davor eingefügt" : "angehängt";
+    if (!["item", "release", "lang", "gest"].includes(g)) this._remember(`${steps.length} Aktion(en) → ${name} (${was}).`);
+    else this.s.msg = { text: `${steps.length} Aktion(en) → ${name} ${was}.` };
+    kc[g] = art === "ersetzen" ? clone(steps) : art === "davor" ? [...clone(steps), ...alt] : [...alt, ...clone(steps)];
+    this._commit(kc);
+  }
+  // "Teile uebernehmen" (2026-10-26): statt alles zu ersetzen einzelne Aktivitaeten, Menueseiten/Popups und Bereiche
+  // einer anderen Remote holen. Gleicher Name bzw. gleiche Kennung = ersetzen, sonst dazu.
+  _teileModal() {
+    const m = this.s.modal, d = this.s.dev, andere = this.s.order.filter((x) => x !== d);
+    const q = this.s.cfg[m.quelle], z = this.s.cfg[d];
+    if (!q) return "";
+    const zeile = (b, k, titel, info, neu) => `<label class="opt"><input type="checkbox" data-tl="${b}|${esc(k)}" ${m.sel[b]?.[k] ? "checked" : ""}><span><b>${esc(titel)}</b><small>${esc(info)} · <i class="${neu ? "neu" : "ers"}">${neu ? "kommt dazu" : "ersetzt die vorhandene"}</i></small></span></label>`;
+    const akt = (q.activities || []).map((a) => zeile("akt", a.name, a.name, `${Object.keys(a.keys || {}).length} Tasten`, !(z.activities || []).some((x) => x.name === a.name))).join("");
+    const zp = new Set((z.menu?.pages || []).map((pg) => pg.id));
+    const seiten = (q.menu?.pages || []).map((pg) => zeile("seite", pg.id, pg.title || pg.id, `${pg.popup ? "Popup" : "Seite"} · ${(pg.items || []).length} Einträge`, !zp.has(pg.id))).join("");
+    const BL = [["home", "Startseite (Kacheln)"], ["modi", "Folgemodi"], ["kameras", "Kameras"], ["gesten", "Gesten"], ["makros", "Touchpad-Makros"], ["ir", "Infrarot-Vorgabe"], ["slots", "Bluetooth-Plätze (Namen)"]];
+    const bl = BL.filter(([k]) => q[k] != null).map(([k, l]) => zeile("block", k, l, "ganzer Bereich", z[k] == null)).join("");
+    const n = Object.values(m.sel).reduce((a, o) => a + Object.values(o).filter(Boolean).length, 0);
+    return `<div class="modal" data-a="modalbg"><div class="dlg wide">
+      <div class="dh"><h2>Teile nach ${esc(devName(d))} übernehmen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <label class="col">Von<select data-tq="1">${andere.map((x) => `<option value="${esc(x)}" ${x === m.quelle ? "selected" : ""}>${esc(devName(x))}</option>`).join("")}</select></label>
+      <div class="teile"><div><h3>Aktivitäten</h3><div class="opts">${akt || '<div class="none">keine</div>'}</div></div>
+        <div><h3>Menüseiten &amp; Popups</h3><div class="opts">${seiten || '<div class="none">keine</div>'}</div></div>
+        <div><h3>Bereiche</h3><div class="opts">${bl || '<div class="none">keine</div>'}</div></div></div>
+      <small class="note">Alles andere bleibt, wie es ist. Fehlende Unterseiten übernommener Seiten kommen automatisch mit. Erst „Speichern“ überträgt es – bis dahin geht „Rückgängig“.</small>
+      <div class="dfoot"><button class="btn ghost" data-a="teile_alles" title="Wie bisher: alles inklusive Einstellungen ersetzen">Alles komplett …</button><span class="grow"></span>
+        <button class="btn primary" data-a="teile_do" ${n ? "" : "disabled"}><ha-icon icon="mdi:content-duplicate"></ha-icon>${n} übernehmen</button></div></div></div>`;
+  }
+  _teileUebernehmen() {
+    const s = this.s, m = s.modal, q = s.cfg[m.quelle], z = s.cfg[s.dev];
+    if (!q) return;
+    const an = (b) => Object.entries(m.sel[b] || {}).filter(([, v]) => v).map(([k]) => k);
+    const fertig = [];
+    for (const name of an("akt")) {
+      const a = clone(q.activities.find((x) => x.name === name)); if (!a) continue;
+      const i = (z.activities || []).findIndex((x) => x.name === name);
+      if (i >= 0) { a.dock = z.activities[i].dock; z.activities[i] = a; }
+      else { a.dock = z.activities.filter((x) => x.dock !== false).length < 4 && a.dock !== false; z.activities.push(a); }
+      fertig.push(name);
+    }
+    const seiten = an("seite");
+    if (seiten.length) {
+      z.menu = z.menu || { start: q.menu.start, pages: [] };
+      const qp = Object.fromEntries((q.menu.pages || []).map((pg) => [pg.id, pg]));
+      const offen = [...seiten], gesehen = new Set();
+      while (offen.length) {
+        const id = offen.shift(); if (gesehen.has(id) || !qp[id]) continue; gesehen.add(id);
+        const pg = clone(qp[id]), i = z.menu.pages.findIndex((x) => x.id === id);
+        if (i >= 0) z.menu.pages[i] = pg; else z.menu.pages.push(pg);
+        for (const it of pg.items || []) if (it.t === "page" && !z.menu.pages.some((x) => x.id === it.target)) offen.push(it.target);
+        fertig.push(pg.title || id);
+      }
+    }
+    for (const k of an("block")) { z[k] = clone(q[k]); fertig.push(k); }
+    s.modal = null; this._touch();
+    s.msg = { text: `${fertig.length} Teile von ${devName(m.quelle)} übernommen – noch nicht gespeichert.`, undo: true };
+  }
+
+  _einfModal() {
+    const m = this.s.modal, c = this.s.clip;
+    if (m.type === "einf") {
+      const name = GNAME[m.g] || { item: "Beim Antippen", release: "Beim Loslassen", lang: "Lang drücken", gest: "Geste" }[m.g] || m.g;
+      return `<div class="modal" data-a="modalbg"><div class="dlg">
+        <div class="dh"><h2>Einfügen in „${esc(name)}“</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <p>${m.n} Aktion(en) aus <b>${esc(m.label || "")}</b>. „${esc(name)}“ hat schon ${(this._steps(m.g)[m.g] || []).length} Aktion(en).</p>
+        <div class="dfoot"><button class="btn" data-a="einf_do" data-v="anhaengen"><ha-icon icon="mdi:playlist-plus"></ha-icon>Anhängen</button>
+          <button class="btn" data-a="einf_do" data-v="davor"><ha-icon icon="mdi:format-list-bulleted-square"></ha-icon>Davor einfügen</button>
+          <button class="btn ghost" data-a="einf_do" data-v="ersetzen"><ha-icon icon="mdi:swap-horizontal"></ha-icon>Ersetzen</button></div></div></div>`;
+    }
+    const arten = Object.keys(m.sel);
+    const kc = this.keyCfg();
+    return `<div class="modal" data-a="modalbg"><div class="dlg">
+      <div class="dh"><h2>Taste einfügen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <p>Von <b>${esc(c?.label || "")}</b> nach <b>${esc(KEYNAME[this.s.key] || "")}</b> – welche Druckarten?</p>
+      <div class="opts">${arten.map((g) => `<label class="opt"><input type="checkbox" data-ek="${g}" ${m.sel[g] ? "checked" : ""}><span><b>${esc(GNAME[g] || g)}</b><small>${(c.data[g] || []).length} Aktion(en)${(kc[g] || []).length ? ` · hier schon ${(kc[g] || []).length}` : " · hier leer"}</small></span></label>`).join("")}</div>
+      <div class="seg sm">${[["ersetzen", "Ersetzen"], ["anhaengen", "Anhängen"], ["davor", "Davor"]].map(([v, l]) => `<button class="${m.art === v ? "on" : ""}" data-a="einfk_art" data-v="${v}">${l}</button>`).join("")}</div>
+      <small class="note">Nicht angehakte Druckarten der Ziel-Taste bleiben, wie sie sind.</small>
+      <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><button class="btn primary" data-a="einfk_do"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen</button></div></div></div>`;
+  }
+  _swap(a, b) {
+    const kc = clone(this.keyCfg());
+    this._remember(`${GNAME[a]} und ${GNAME[b]} getauscht.`);
+    [kc[a], kc[b]] = [kc[b], kc[a]];
+    // Sprechen-solange-gedrueckt geht nur bei Lang
+    for (const g of [a, b]) if (g !== "long" && (kc[g] || []).some((s) => s.t === "int" && s.fn === "voice_ptt"))
+      this.s.msg.text += " Achtung: „Sprechen, solange gedrückt“ wirkt nur bei Lang.";
+    this.setKeyCfg(this.s.key, kc);
+  }
+
+  set hass(h) {
+    const first = !this._hass;
+    this._hass = h;
+    // Dunkelmodus (2026-10-27): aufgeklappte Auswahllisten zeichnet der Browser - ohne color-scheme hell mit heller Schrift
+    const dunkel = h?.themes?.darkMode ? "dark" : "light";
+    if (this.style.colorScheme !== dunkel) this.style.colorScheme = dunkel;
+    if (first) this._load();
+    else if (this.s.loaded) { this._updateStatus(); this._liveAuffrischen(); }
+  }
+  // Uebersicht und Seitenleiste zeigen Akku und Verbindung live - hoechstens alle 3 s neu zeichnen
+  _liveAuffrischen() {
+    if (this._liveT) return;
+    this._liveT = setTimeout(() => {
+      this._liveT = null;
+      const r = this.shadowRoot, akt = r.activeElement;
+      const tippt = akt && ["INPUT", "SELECT", "TEXTAREA"].includes(akt.tagName);
+      // nur neu zeichnen, wenn sich etwas Sichtbares geaendert hat (HA meldet staendig irgendwelche Zustaende)
+      if (this.s.bereich === "start" && !this.s.modal && !this.s.pal && !tippt) { if (this._uebersichtHtml() !== this._ueberAlt) this._render(); }
+      else if (["fw", "werk"].includes(this.s.bereich) && !this.s.modal && !this.s.pal && !tippt
+        // Hardware-Test: Ergebnisse live (jede Taste, jede Ecke ...)
+        && (this._hwSig = (this.s.fw?.geraete || []).filter((g) => g.art === "test").flatMap((g) => (g.test?.werte || []).map((x) => this._hass.states[x.entity]?.state)).join("|")) !== this._hwAlt) {
+        this._hwAlt = this._hwSig; this._render();
+      }
+      // Bluetooth-Geraete am Dock: Verbinden/Koppeln live (Restzeit der Kopplung zaehlt)
+      else if (this.s.bereich === "dock" && !this.s.modal && !this.s.pal && !tippt
+        && (this._dbtSig = this._dbtDocks().map((d) => JSON.stringify([d.k, d.ks, d.p])).join("|") + this._scanSig()) !== this._dbtAlt) {
+        this._dbtAlt = this._dbtSig; this._render();
+      }
+      else { const l = r.querySelector(".rliste"), h = this._remListeHtml(); if (l && h !== this._listeAlt) { l.innerHTML = h; this._listeAlt = h; } }
+    }, 3000);
+  }
+  set narrow(n) { this._narrow = n; }
+
+  // ----------------------------------------------------------------- Daten
+  async _load() {
+    this._klingelLaden();
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/get" });
+      this.s.order = r.order;
+      for (const d of r.order) {
+        this.s.cfg[d] = r.devices[d].config;
+        this.s.enabled[d] = r.devices[d].enabled;
+        this.s.meta[d] = r.devices[d];
+        this.s.dirty[d] = false;
+        this._histReset(d);
+      }
+      let last = null;
+      try { last = localStorage.getItem("erk_dev"); } catch (e) { /* egal */ }
+      this.s.dev = r.order.includes(last) ? last : r.order[0];
+      this.s.einstStandard = r.einst_standard || {};
+      this.s.maxBytes = r.max_bytes || 90000;
+      this.s.loaded = true;
+      if (!this._seiteDa) {
+        this._seiteDa = true;
+        try { const x = JSON.parse(localStorage.getItem("erk_seite") || "null"); if (Array.isArray(x)) { this.s.bereich = x[0]; this.s.mode = x[1] || "keys"; } } catch (e) { /* egal */ }
+        this.s.bereich ||= "start";
+        this._fwSicher();
+      }
+    } catch (e) {
+      this.s.msg = { err: true, text: "Laden fehlgeschlagen: " + (e.message || e.code || e) };
+    }
+    this._render();
+  }
+
+  get cfg() { return this.s.cfg[this.s.dev]; }
+  // Folgemodus gewaehlt (s.modus = Index in cfg.modi): der Tasten-Editor bearbeitet dessen Tasten
+  get activity() { return this.s.modus != null && this.cfg.modi?.[this.s.modus] ? this.cfg.modi[this.s.modus] : this.cfg.activities[this.s.act]; }
+  modusName(id) { return (this.cfg.modi || []).find((m) => m.id === id)?.name || id || "–"; }
+  keyCfg(k = this.s.key) { return this.activity.keys[String(k)] || {}; }
+  _commit(kc) {
+    if ("gest" in kc) { this._gestCommit(kc); return; }
+    if ("item" in kc && this._mEditor()) { if (kc.item.length) this.mitem.steps = kc.item; else delete this.mitem.steps; this._touch(); return; }
+    if ("lang" in kc && this._mEditor()) { if (kc.lang.length) this.mitem.lang = kc.lang; else delete this.mitem.lang; this._touch(); return; }
+    if ("release" in kc && this._mEditor()) { if (kc.release.length) this.mitem.release = kc.release; else delete this.mitem.release; this._touch(); return; }
+    this.setKeyCfg(this.s.key, kc);
+  }
+  setKeyCfg(k, v) {
+    const clean = {};
+    for (const [g] of [...GESTURES, ...OFFLINE]) if (v[g] && v[g].length) clean[g] = v[g];
+    if (v.hold && hatG(clean, "short") && !hatG(clean, "double") && !hatG(clean, "long")) clean.hold = true;
+    if (v.repeat && hatG(clean, "short") && !clean.hold) clean.repeat = v.repeat;
+    if (v.lrepeat && hatG(clean, "long") && !clean.hold && !clean.repeat) clean.lrepeat = v.lrepeat;
+    if (this.s.modus != null && v.s && Object.keys(clean).length) clean.s = v.s;   // Folgemodus: eigene Zeit
+    if (Object.keys(clean).length) this.activity.keys[String(k)] = clean;
+    else delete this.activity.keys[String(k)];
+    this._touch();
+  }
+  // Rueckgaengig (2026-10-11): Jede Aenderung meldet sich ueber _touch(). base = Stand vor der naechsten
+  // Aenderung, hist = Stapel frueherer Staende (max. 60). Schnell aufeinanderfolgende Aenderungen (< 700 ms,
+  // z. B. Ziehen) zaehlen als ein Schritt. saved = zuletzt gespeicherter Stand -> "Nicht gespeichert" stimmt
+  // auch nach dem Zurueckgehen.
+  _histReset(d) {
+    const j = JSON.stringify(this.s.cfg[d]);
+    this.s.base[d] = j; this.s.saved[d] = j; this.s.hist[d] = []; (this.s.savedEn ||= {})[d] = !!this.s.enabled[d];
+  }
+  _touch(d = this.s.dev) {
+    const s = this.s;
+    const j = JSON.stringify(s.cfg[d]);
+    if (s.base[d] !== undefined && j !== s.base[d]) {
+      const h = (s.hist[d] ||= []);
+      const jetzt = Date.now();
+      if (!h.length || jetzt - (this._histT || 0) > 700 || this._histD !== d) {
+        h.push(s.base[d]);
+        if (h.length > 60) h.shift();
+      }
+      this._histT = jetzt; this._histD = d;
+      s.base[d] = j;
+    }
+    s.dirty[d] = s.saved[d] === undefined || j !== s.saved[d] || !!s.enabled[d] !== (s.savedEn || {})[d];
+  }
+  _undo() {
+    const s = this.s, d = s.dev;
+    const h = s.hist[d] || [];
+    if (!h.length) { s.msg = { text: "Nichts mehr rückgängig zu machen." }; return; }
+    const j = h.pop();
+    s.cfg[d] = JSON.parse(j);
+    s.base[d] = j; this._histT = 0;
+    s.dirty[d] = j !== s.saved[d] || !!s.enabled[d] !== (s.savedEn || {})[d];
+    if (s.act >= (this.cfg.activities || []).length) s.act = 0;
+    if (s.mitem != null && !this.mitem) s.mitem = null;
+    s.undo = null;
+    s.msg = { text: `Rückgängig gemacht${h.length ? ` – noch ${h.length} Schritt${h.length === 1 ? "" : "e"} zurück möglich` : ""}.` };
+  }
+
+  async _save() {
+    const d = this.s.dev;
+    for (const [i, a] of this.cfg.activities.entries()) {
+      if (!this._hasMenu(a)) {
+        if (!confirm(`In der Aktivität „${a.name}“ öffnet keine Taste das Menü der Remote.\nTrotzdem speichern?`)) return;
+      }
+    }
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/save", device: d, config: this.cfg, enabled: this.s.enabled[d] });
+      this.s.dirty[d] = false;
+      this.s.saved[d] = JSON.stringify(this.cfg); (this.s.savedEn ||= {})[d] = !!this.s.enabled[d];
+      this.s.meta[d].hash = r.hash;
+      if (r.bytes != null) this.s.meta[d].bytes = r.bytes;
+      this.s.msg = null;
+      await this._syncNachladen(r.abgeglichen);   // Synchronisieren: auch an die anderen Remotes der Gruppe
+      // Remote direkt anstossen (falls die Ankuendigung verloren geht); schlaeft sie, holt sie es beim Aufwachen
+      this._neuLaden(d);
+    } catch (e) {
+      this.s.msg = { err: true, text: "Speichern fehlgeschlagen: " + (e.message || e.code) };
+    }
+    this._render();
+  }
+
+  _hasMenu(a) {
+    return Object.values(a.keys || {}).some((kc) =>
+      GESTURES.some(([g]) => (kc[g] || []).some((s) => s.t === "int" && MENU_FNS.has(s.fn))));
+  }
+
+  // Wovon wird der Folgemodus gestartet? Schritte "Folgemodus starten" in allen Aktivitaeten und Menue-Eintraege
+  // mit "Danach Folgemodus" - als Spruenge zur Stelle (2026-10-18, vorher nirgends sichtbar).
+  _modStarter(mo) {
+    const L = [];
+    (this.cfg.activities || []).forEach((a, ai) => {
+      for (const [k, kc] of Object.entries(a.keys || {}))
+        for (const [g, gl] of [...GESTURES, ...OFFLINE])
+          if ((kc[g] || []).some((st) => st.t === "modus" && st.id === mo.id))
+            L.push({ t: `${a.name} · ${KEYNAME[k] || k} ${GNAME[g] || gl}`, a: `data-a="modgeh" data-ai="${ai}" data-k="${k}"` });
+    });
+    for (const pg of this.cfg.menu?.pages || [])
+      (pg.items || []).forEach((it, j) => { if (it.modus === mo.id) L.push({ t: `Menü „${pg.title}“ · ${this._mItemText(it) || it.t}`, a: `data-a="modgehm" data-p="${esc(pg.id)}" data-j="${j}"` }); });
+    return `<div class="modstart"><b><ha-icon icon="mdi:play-circle-outline"></ha-icon>Gestartet von</b>
+      ${L.map((x) => `<button class="chip" ${x.a}>${esc(x.t)}</button>`).join("") || `<span class="note">noch nichts – bei einer Taste den Schritt „Folgemodus starten“ einfügen oder bei einem Menü-Eintrag „Danach Folgemodus“ wählen.</span>`}</div>`;
+  }
+
+  // Vorlagen fuer Folgemodi: Kanal + / Kanal - (42 / 22) ueber den Dienst esphomeremote_konfig.regeln
+  _modVorlage(art, e) {
+    const mo = this.cfg.modi[this.s.modus];
+    const r = (a, schritt) => [{ t: "ha", svc: "esphomeremote_konfig.regeln", entity: e, data: { art: a, schritt: String(schritt) } }];
+    if (art === "licht") {
+      // kurz: heller/dunkler (20 %), lang (wiederholt): Kanal + waermer, Kanal - kaelter (Wunsch 2026-10-15)
+      mo.keys["42"] = { short: r("helligkeit", 20), long: r("farbtemperatur", -400), lrepeat: 500 };
+      mo.keys["22"] = { short: r("helligkeit", -20), long: r("farbtemperatur", 400), lrepeat: 500 };
+    } else {
+      // kurz: Stufe hoch/runter, lang: Drehung umschalten
+      mo.keys["42"] = { short: r("stufe", 1), long: r("drehung", 0) };
+      mo.keys["22"] = { short: r("stufe", -1), long: r("drehung", 0) };
+    }
+    this._touch();
+    this.s.msg = { text: `Vorlage gesetzt: Kanal + / Kanal − steuern ${this._hass.states[e]?.attributes.friendly_name || e}. Kurz und lang lassen sich unten an den Tasten anpassen.` };
+  }
+
+  // ----------------------------------------------------------- Beschriftung
+  stepText(s) {
+    if (!s) return "";
+    switch (s.t) {
+      case "ble": {
+        const l = BLE_LABEL[`${s.kind}:${s.code}`] || `${s.kind === "key" ? "Taste" : s.kind === "button" ? "Button" : "Code"} ${s.kind === "button" ? s.code : hex(s.code, 3)}`;
+        const dev = s.dock ? ` → ${this._dbtName(s.dock, s.dp)} (Dock)` : s.dev == null || s.dev < 0 ? "" : ` → ${this.slotName(s.dev)}`;
+        return `${l}${dev}`;
+      }
+      case "ha": {
+        const st = s.entity && this._hass.states[s.entity];
+        const name = st ? st.attributes.friendly_name || s.entity : s.entity || "";
+        if (istRegeln(s)) {
+          const a = REGELN_ARTEN.find(([x]) => x === s.data?.art);
+          const n = Number(s.data?.schritt) || 0;
+          return `${name ? name + ": " : ""}${a ? a[1] : "regeln"}${a && a[0] !== "drehung" ? ` ${n > 0 ? "+" : ""}${n} ${a[4]}` : ""}`;
+        }
+        const [, svc] = s.svc.split(".");
+        return `${name ? name + ": " : ""}${SVC_DE[svc] || s.svc}`;
+      }
+      case "int":
+        if (s.fn === "activity") return `Aktivität: ${this.cfg.activities[s.arg]?.name ?? s.arg}`;
+        return INT_LABEL[s.fn] || s.fn;
+      case "ir": return s.n ? `IR ${s.n}` : Array.isArray(s.raw) ? `IR roh (${s.raw.length} Werte)` : `IR ${s.proto || "NEC"} ${hex(s.addr || 0)}/${hex(s.cmd || 0)}`;
+      case "rf": return s.n ? `433 MHz ${s.n}` : s.raw?.length ? `433 MHz (${s.raw.length} Werte)` : "433 MHz – noch nicht angelernt";
+      case "wait": return `${s.ms || 0} ms warten`;
+      case "modus": return `Folgemodus: ${this.modusName(s.id)}`;
+    }
+    return "?";
+  }
+  stepIcon(s) {
+    return { ble: "mdi:bluetooth", ha: "mdi:home-assistant", int: "mdi:remote", ir: "mdi:led-on", rf: "mdi:radio-tower", wait: "mdi:timer-sand", modus: "mdi:timer-cog-outline" }[s.t] || "mdi:help";
+  }
+  slotName(i) { return i == null ? "aktives Gerät" : (this.cfg.slots || [])[i] || `Platz ${i + 1}`; }
+
+  // ----------------------------------------------------------------- Status
+  _remoteState(d = this.s.dev) {
+    const slug = this.s.meta[d]?.slug;
+    const st = slug && this._hass.states[`sensor.${slug}_tasten_konfiguration`];
+    return st ? st.state : null;
+  }
+  // Uebertragungs-Sensor der Remote ("Tasten-Konfiguration Übertragung")
+  _transfer(d = this.s.dev) {
+    const slug = this.s.meta[d]?.slug, S = this._hass.states, m = (this._trId ||= {});
+    if (!m[d] || !S[m[d]]) m[d] = Object.keys(S).find((e) => e.startsWith(`sensor.${slug}_tasten_konfiguration_u`));
+    return m[d] ? S[m[d]] : null;
+  }
+  // Stand der Uebertragung: gespeichert -> Remote verbunden -> Uebertragung -> aktiv (phase 1..4)
+  _syncStand(d = this.s.dev) {
+    if (this.s.dirty[d]) return { art: "dirty", phase: 0, text: "Nicht gespeichert" };
+    const r = this._remoteState(d);
+    if (r == null) return { art: "unbekannt", phase: 0, text: "Remote meldet keinen Stand (Firmware ohne Konfigurator?)" };
+    const have = String(r).split(" ")[0], want = this.s.meta[d].hash;
+    const tr = this._transfer(d);
+    const t = tr?.state || "";
+    const alter = tr ? (Date.now() - new Date(tr.last_updated || tr.last_changed).getTime()) / 1000 : 1e9;
+    if (have === want) return { art: "ok", phase: 4, pct: 100, text: "Auf der Remote aktiv" };
+    const m = t.match(/^Lädt (\d+)/);
+    if (alter < 90 && m) return { art: "laedt", phase: 3, pct: Number(m[1]), text: t };
+    if (alter < 90 && /^Verbinde/.test(t)) return { art: "verbinde", phase: 2, pct: 3, text: "Remote verbindet sich mit HA …" };
+    if (alter < 600 && /^Fehler/.test(t)) return { art: "fehler", phase: 3, err: true, text: t };
+    return { art: "wartet", phase: 1, text: "Wartet auf die Remote – schläft sie? Eine Taste drücken oder „Übertragen“." };
+  }
+  _statusHtml() {
+    const z = this._syncStand();
+    if (z.art === "dirty") return `<span class="st warn"><ha-icon icon="mdi:content-save-alert"></ha-icon>Nicht gespeichert – erst speichern, dann geht es an die Remote.</span>`;
+    if (z.art === "unbekannt") return `<span class="st"><ha-icon icon="mdi:help-circle-outline"></ha-icon>${esc(z.text)}</span>`;
+    const { phase, err } = z;
+    const steps = ["Gespeichert", "Remote verbunden", "Übertragung", "Aktiv"].map((l, i) => {
+      const done = phase > i + 1 || phase === 4, cur = phase === i + 1 && phase !== 4;
+      const ic = done ? "mdi:check-circle" : cur ? (err ? "mdi:alert-circle" : "mdi:progress-clock") : "mdi:circle-outline";
+      return `<span class="xs ${done ? "ok" : cur ? (err ? "err" : "cur") : ""}"><ha-icon icon="${ic}"></ha-icon>${l}</span>`;
+    }).join('<span class="xl"></span>');
+    const barPct = phase === 4 ? 100 : phase === 3 ? Math.max(10, z.pct || 0) : phase === 2 ? 30 : 15;
+    return `<div class="xfer ${err ? "err" : phase === 4 ? "ok" : ""}">
+        <div class="xsteps">${steps}</div>
+        <div class="xbar ${phase < 3 && !err ? "busy" : ""}"><span style="width:${barPct}%"></span></div>
+        <div class="xtxt">${esc(z.text)}${phase !== 4 ? ' <button class="btn small" data-a="push"><ha-icon icon="mdi:upload"></ha-icon>' + (err ? "Erneut versuchen" : "Übertragen") + "</button>" : ""}</div>
+      </div>`;
+  }
+  _updateStatus() {
+    const r = this.shadowRoot;
+    const p = r.querySelector("#sync");
+    if (p) { const alt = this._syncAlt, h = this._syncPillKnopf(); if (h !== alt) p.outerHTML = h; }
+    const x = r.querySelector("#syncx");
+    if (x) { const h = this._statusHtml(); if (h !== x.innerHTML) x.innerHTML = h; }
+    const wp = r.querySelector("#wlanp");
+    if (wp && this.s.bereich === "remote") { const h = this._wlanKnopf(); if (h !== this._wlanAlt) { this._wlanAlt = h; wp.innerHTML = h; } }
+    const al = r.querySelector("#aktivl");
+    if (al) { const h = this._aktivLeisteHtml(); if (h !== al.innerHTML) al.innerHTML = h; }
+  }
+
+  // ----------------------------------------------------------------- Render
+  // Aufbau (2026-10-17): Seitenleiste (Uebersicht, je Remote ihre Seiten, Dock/Firmware/Werkstatt) | Kopf + Seite.
+  // s.bereich: start | remote | dock | fw | werk; bei remote waehlt s.mode die Seite (keys, home, menu, gesten, bt, ir, einst).
+  _render() {
+    const s = this.s;
+    const root = this.shadowRoot;
+    if (this._btUnsub && s.modal !== this._btM) this._btAus();   // Bluetooth-Seite verlassen
+    const scroll = root.querySelector(".editor")?.scrollTop;
+    const navScroll = root.querySelector(".side")?.scrollTop;
+    const seite = window.scrollY, haupt = document.scrollingElement?.scrollTop;
+    const logs = this._logsMerken();
+    // Aufgeklappte Bereiche (<details>) bleiben beim Neuzeichnen offen/zu (2026-10-27: "Home Assistant ueber
+    // Bluetooth (Proxys)" klappte bei jedem Haken wieder zu) - Schluessel = Text der Ueberschrift
+    const klapp = new Map([...root.querySelectorAll("details")].map((d) => [d.querySelector("summary")?.textContent.trim() || "", d.open]));
+    const css = `<style>${CSS}${MENU_CSS}${DOCK_CSS}${FW_CSS}${EINST_CSS}${LICHT_CSS}${GESTEN_CSS}${SYNC_CSS}${PRUEF_CSS}${IRC_CSS}${THEME_CSS}${SHELL_CSS}</style>`;
+    if (!s.loaded) {
+      root.innerHTML = `${css}<div class="laden">${s.msg ? `<div class="msg err">${esc(s.msg.text)}</div>`
+        : `<span class="logo"><ha-icon icon="mdi:remote-tv"></ha-icon></span><span class="spin"></span>`}</div>`;
+      return;
+    }
+    if (!["start", "remote", ...SEITEN_SYSTEM.map(([k]) => k)].includes(s.bereich)) s.bereich = "start";
+    if (!SEITEN_REMOTE.some(([m]) => m === s.mode)) s.mode = "keys";
+    const alsSeite = this._modalAlsSeite();
+    root.innerHTML = `${css}<div class="huelle"><div class="app ${s.nav ? "navauf" : ""}">
+        <nav class="side">${this._navHtml()}</nav><div class="navgrund" data-a="o_navzu"></div>
+        <main class="haupt">${this._kopfHtml()}
+          <div id="aktivl">${this._aktivLeisteHtml()}</div>
+          <div class="inhalt seite-${s.bereich}${s.bereich === "remote" ? " modus-" + s.mode : ""}">${this._seiteHtml()}</div>
+          <div class="sbw">${this._speicherleiste()}</div></main>
+      </div>${this._untenHtml()}</div>
+      <input type="file" id="bkfile" accept=".json,application/json" hidden>
+      ${this._toastHtml()}
+      ${s.modal && !alsSeite ? this._modalHtml() : ""}
+      ${s.pal ? this._palHtml() : ""}`;
+    this._bind();
+    this._palBind();
+    root.querySelectorAll("[data-teil]").forEach((x) => { x.indeterminate = true; });   // Synchronisieren: Gruppe teilweise
+    this._logsSetzen(logs);
+    root.querySelectorAll("details").forEach((d) => {
+      if (d.classList.contains("mgrp")) { d.ontoggle = () => { (this.s.mgrp ||= {})[d.dataset.grp] = d.open; }; return; }   // eigener Zustand
+      const k = d.querySelector("summary")?.textContent.trim() || "";
+      if (k && klapp.has(k)) d.open = klapp.get(k);
+    });
+    const side = root.querySelector(".side");
+    if (side && navScroll) side.scrollTop = navScroll;
+    if (this._nachOben) { this._nachOben = false; window.scrollTo(0, 0); if (document.scrollingElement) document.scrollingElement.scrollTop = 0; }
+    else {
+      const ed = root.querySelector(".editor");
+      if (ed && scroll) ed.scrollTop = scroll;
+      if (seite) window.scrollTo(0, seite);
+      if (haupt && document.scrollingElement) document.scrollingElement.scrollTop = haupt;
+    }
+    this._blinken();
+  }
+
+  // Protokoll-Fenster (Flashen, Einrichten): stand es unten, bleibt es unten; sonst bleibt die Position
+  _logsMerken() {
+    return [...this.shadowRoot.querySelectorAll(".joblog, .neulog pre")].map((el) => ({ top: el.scrollTop, unten: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }));
+  }
+  _logsSetzen(alt) {
+    this.shadowRoot.querySelectorAll(".joblog, .neulog pre").forEach((el, i) => {
+      const a = alt[i];
+      el.scrollTop = !a || a.unten ? el.scrollHeight : a.top;
+    });
+  }
+  // Leiste unten, nur bei ungespeicherten Aenderungen
+  _saveBar(text, undo, verwerfen, speichern) {
+    return `<div class="savebar"><ha-icon icon="mdi:pencil-circle-outline"></ha-icon><span class="sbt">${esc(text)}</span>${undo}
+      <button class="btn ghost" data-a="${verwerfen}" title="Alle ungespeicherten Änderungen verwerfen"><ha-icon icon="mdi:restore"></ha-icon>Verwerfen</button>
+      <button class="btn primary" data-a="${speichern}"><ha-icon icon="mdi:content-save"></ha-icon>Speichern</button></div><div class="savebar-platz"></div>`;
+  }
+
+  _keyBtn([k, label, icon]) {
+    const kc = this.keyCfg(k);
+    const dots = GESTURES.map(([g]) => (kc[g] && kc[g].length ? `<b class="dot ${g}"></b>` : "")).join("")
+      + (OFFLINE.some(([g]) => kc[g]?.length) ? `<ha-icon class="offl" icon="mdi:cloud-off-outline" title="eigene Belegung ohne Home Assistant"></ha-icon>` : "");
+    const menu = GESTURES.some(([g]) => (kc[g] || []).some((s) => s.t === "int" && MENU_FNS.has(s.fn)));
+    const col = COLOR_KEYS[k];
+    const sub = kc.short?.[0] ? this.stepText(kc.short[0]) : kc.long?.[0] ? "lang: " + this.stepText(kc.long[0]) : kc.double?.[0] ? "2×: " + this.stepText(kc.double[0])
+      : kc.short_offline?.[0] ? "ohne HA: " + this.stepText(kc.short_offline[0]) : "frei";
+    return `<button class="key ${this.s.key === k ? "sel" : ""} ${k === 34 ? "ok" : ""} ${col ? "color" : ""} ${menu ? "menukey" : ""}" data-a="key" data-k="${k}" title="${esc(KEYNAME[k])}">
+      ${col ? `<span class="cdot" style="background:${col}"></span>` : icon ? `<ha-icon icon="${icon}"></ha-icon>` : `<span class="okt">${label}</span>`}
+      <span class="kl">${esc(sub)}</span><span class="dots">${dots}</span>
+      ${NAV_KEYS.has(k) ? `<ha-icon class="lock" icon="mdi:lock"></ha-icon>` : ""}${menu ? `<ha-icon class="mstar" icon="mdi:star-four-points"></ha-icon>` : ""}</button>`;
+  }
+
+  _remoteHtml() {
+    const rows = ROWS.map((r, i) => `<div class="row r${r.length} ${i === 6 ? "colors" : ""}">${r.map((k) => this._keyBtn(k)).join("")}</div>`).join("");
+    return `<div class="remote">
+      <div class="row power"><button class="screen" data-a="mode" data-m="home" title="Startseite des Touchscreens bearbeiten">
+        <span class="sbar"><i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i><ha-icon icon="mdi:bluetooth"></ha-icon><ha-icon icon="mdi:battery-80"></ha-icon></span>
+        <b>${esc(this.activity?.name || "")}</b><small><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite</small></button>${this._keyBtn(POWER)}</div>
+      ${rows}
+      <div class="row r2 aktev">${AKT_EVENTS.map((k) => this._keyBtn(k)).join("")}</div></div>`;
+  }
+
+  _editorHtml() {
+    const k = this.s.key;
+    const kc = this.keyCfg();
+    const holdable = kc.short?.length === 1 && kc.short[0].t === "ble" && kc.short[0].kind !== "button";
+    const modus = kc.hold ? "hold" : kc.repeat ? "repeat" : kc.lrepeat ? "lrepeat" : "long";
+    const halten = `<div class="haltmodus"><b><ha-icon icon="mdi:gesture-tap-hold"></ha-icon>Beim Gedrückthalten</b>
+      <select data-a="haltmodus">
+        <option value="long" ${modus === "long" ? "selected" : ""}>„Lang“ auslösen (einmal nach 0,4 s)</option>
+        <option value="lrepeat" ${modus === "lrepeat" ? "selected" : ""}>„Lang“ auslösen und wiederholen, solange gehalten</option>
+        <option value="repeat" ${modus === "repeat" ? "selected" : ""}>„Kurz“ wiederholen, solange gehalten</option>
+        <option value="hold" ${modus === "hold" ? "selected" : ""} ${holdable ? "" : "disabled"}>Taste am Gerät halten – Gerät wiederholt selbst${holdable ? "" : " (nur bei genau einem Bluetooth-Befehl)"}</option>
+      </select>
+      ${modus === "repeat" || modus === "lrepeat" ? `<label class="inl2">alle <select data-a="wdhms">${[100, 150, 200, 300, 500, 800, 1000].map((n) => `<option ${(modus === "repeat" ? kc.repeat : kc.lrepeat) === n ? "selected" : ""}>${n}</option>`).join("")}</select> ms</label>` : ""}
+      <small class="note">${modus === "long" ? "Kurz = antippen · Doppelt = zweimal schnell · Lang = 0,4 s halten (löst einmal aus, noch während du hältst)."
+        : modus === "lrepeat" ? "Kurz und Doppelt wie gewohnt; „Lang“ löst nach 0,4 s aus und wiederholt dann im eingestellten Takt, bis du loslässt (z. B. Farbtemperatur verstellen)."
+        : modus === "repeat" ? "Löst „Kurz“ sofort aus, nach 0,4 s wiederholt es im eingestellten Takt, bis du loslässt – auch für HA-Aktionen (z. B. dimmen). „Doppelt“ und „Lang“ werden dann nicht ausgewertet."
+        : "Wie eine echte Fernbedienung: die Taste bleibt am Gerät gedrückt, bis du loslässt (z. B. Lautstärke, Pfeile). „Doppelt“ und „Lang“ werden dann nicht ausgewertet."}</small></div>`;
+    const virt = k >= 900;
+    const mo = this.s.modus != null ? this.cfg.modi?.[this.s.modus] : null;
+    const modusZeit = mo && !virt ? `<div class="haltmodus"><b><ha-icon icon="mdi:timer-outline"></ha-icon>Zeit nach dem Drücken</b>
+      <select data-a="modzeit">${[0, 2, 3, 4, 5, 7, 10, 15, 20, 30, 45, 60].map((n) => `<option value="${n}" ${(kc.s || 0) === n ? "selected" : ""}>${n ? `${n} s` : `Standard des Modus (${mo.s || 7} s)`}</option>`).join("")}</select>
+      <small class="note">So lange bleibt der Folgemodus nach einem Druck auf diese Taste noch aktiv. Standard ist die Dauer des Modus (oben neben dem Namen).</small></div>` : "";
+    const abschnitt = ([g, label, icon]) => {
+      const basis = g.replace("_offline", ""), off = g !== basis;
+      const aus = basis !== "short" && modus !== "long" && modus !== "lrepeat";
+      const steps = kc[g] || [];
+      const list = steps.map((st, i) => this._stepHtml(g, i, st, steps.length)).join("");
+      let note = "";
+      if (g === "short" && kc.double?.length) note = `<small class="note">Reagiert 160 ms verzögert, weil „Doppelt“ belegt ist.</small>`;
+      if (g === "double" && !steps.length) note = `<small class="note">Leer lassen = kurz reagiert sofort.</small>`;
+      if (off && !steps.length) note = `<small class="note">Leer = wie oben (${(kc[basis] || []).length ? esc(this.stepText(kc[basis][0])) : "nichts"}).</small>`;
+      if (off && steps.some((st) => st.t === "ha" || st.t === "rf")) note += `<small class="note warn">Home-Assistant- und 433-MHz-Schritte brauchen die Verbindung zu HA – hier kommen sie nicht an.</small>`;
+      return `<section class="gest ${aus ? "aus" : ""} ${off ? "off" : ""}">
+        <h3><ha-icon icon="${icon}"></ha-icon>${label}${aus ? ' <small class="note">(wird beim Gedrückthalten-Modus nicht ausgewertet)</small>' : ""}<span class="grow"></span>
+          <button class="icon sm" data-a="copyg" data-g="${g}" title="${label} kopieren" ${steps.length ? "" : "disabled"}><ha-icon icon="mdi:content-copy"></ha-icon></button>
+          ${this.s.clip ? `<button class="icon sm" data-a="pasteg" data-g="${g}" title="Hier einfügen: ${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon></button>` : ""}
+          <button class="btn small" data-a="add" data-g="${g}"><ha-icon icon="mdi:plus"></ha-icon>Aktion</button></h3>
+        ${list || `<div class="none">nichts</div>`}${note}
+      </section>`;
+    };
+    const ges = virt ? [["short", "Schritte", "mdi:format-list-numbered"]] : GESTURES;
+    const sections = ges.map(abschnitt).join("");
+    const offBelegt = OFFLINE.some(([g]) => kc[g]?.length);
+    const offAuf = offBelegt || this.s.offline;
+    const ohneHa = `<div class="ohneha"><button class="ohkopf" data-a="offline_auf" ${offBelegt ? "disabled" : ""}>
+        <ha-icon icon="mdi:cloud-off-outline"></ha-icon><b>Ohne Home Assistant</b>
+        <span class="note">${offBelegt ? "eigene Belegung" : "wie oben"}</span><span class="grow"></span>
+        ${offBelegt ? "" : `<ha-icon icon="mdi:chevron-${offAuf ? "up" : "down"}"></ha-icon>`}</button>
+      ${offAuf ? `<small class="note">Gilt, solange die Remote keine Verbindung zu Home Assistant hat (weder WLAN noch Bluetooth-Brücke).
+        Dann laufen diese Schritte statt der normalen – z. B. Infrarot direkt von der Remote, ein Bluetooth-Befehl oder eine Funktion der Remote.
+        Leer = die normalen Schritte (Home-Assistant-Aktionen darin warten bis zu 10 s auf die Verbindung und verfallen dann).</small>
+        ${(virt ? [["short_offline", "Schritte", "mdi:format-list-numbered"]] : OFFLINE).map(abschnitt).join("")}` : ""}</div>`;
+    return `<div class="edhead">
+        <button class="icon back" data-a="close"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
+        <div><h2>${esc(KEYNAME[k])}</h2><small>${virt ? "keine Taste – läuft beim Wechsel der Aktivität (Leiste, Taste, HA-Schalter)" : `Taste ${k}`} · Aktivität „${esc(this.activity.name)}“${NAV_KEYS.has(k) ? " · im Menü: Navigation" : ""}</small></div>
+        <span class="grow"></span>
+        <button class="btn ghost" data-a="copy" title="Taste kopieren (Strg+C)"><ha-icon icon="mdi:content-copy"></ha-icon><span class="wide">Kopieren</span></button>
+        <button class="btn ${this.s.clip ? "primary" : "ghost"}" data-a="paste" ${this.s.clip ? "" : "disabled"} title="${this.s.clip ? "Einfügen: " + esc(this.s.clip.label) + " (Strg+V)" : "Erst eine Taste kopieren"}"><ha-icon icon="mdi:content-paste"></ha-icon><span class="wide">Einfügen</span></button>
+        <button class="btn ghost" data-a="copykey" title="Auf andere Aktivitäten übertragen"><ha-icon icon="mdi:content-duplicate"></ha-icon><span class="wide">Übertragen</span></button>
+        <button class="btn ghost" data-a="clearkey" title="Taste leeren"><ha-icon icon="mdi:eraser"></ha-icon></button>
+      </div>${modusZeit}${virt ? "" : halten + `
+      <div class="swaps"><span>Tauschen:</span>
+        <button class="chip" data-a="swap" data-x="short" data-y="double">Kurz ⇄ Doppelt</button>
+        <button class="chip" data-a="swap" data-x="double" data-y="long">Doppelt ⇄ Lang</button>
+        <button class="chip" data-a="swap" data-x="short" data-y="long">Kurz ⇄ Lang</button></div>`}${sections}${ohneHa}`;
+  }
+
+  // Neue Aktion einer Art (Tastenbelegung)
+  _neuerSchritt(v, g) {
+    if (v === "regeln") return { t: "ha", svc: REGELN_SVC, entity: "", data: { art: "helligkeit", schritt: "10" } };
+    return { ble: { t: "ble", kind: "consumer", code: 0xCD, dev: -1 }, ha: { t: "ha", svc: "script.turn_on", entity: "", data: {} },
+      int: { t: "int", fn: g === "long" && this.s.key === 45 ? "voice_ptt" : "menu_smart" }, ir: { t: "ir", proto: "NEC", addr: 0, cmd: 0 }, rf: { t: "rf", raw: [], wdh: 5 },
+      wait: { t: "wait", ms: 300 }, modus: { t: "modus", id: this.cfg.modi?.[0]?.id || "" } }[v];
+  }
+  _addArtModal() {
+    const arten = [["ble", "mdi:bluetooth", "Bluetooth-Gerät", "Taste an TV/Streamer (Lauter, OK, Home …)"],
+      ["ha", "mdi:home-assistant", "Home Assistant", "Skript, Szene, Licht, Schalter …"],
+      ["regeln", "mdi:brightness-6", "Schrittweise regeln", "Licht heller/dunkler, Ventilator schneller"],
+      ["ir", "mdi:remote", "Infrarot", "Code senden (gelernt oder aus der Datenbank)"],
+      ["rf", "mdi:radio-tower", "433 MHz (Dock)", "Funksteckdose, Tor …"],
+      ["int", "mdi:cog", "Funktion der Remote", "Menü, Popup, Aktivität wechseln …"],
+      ["wait", "mdi:timer-sand", "Warten", "Pause zwischen zwei Aktionen"],
+      ...(this.cfg.modi?.length ? [["modus", "mdi:swap-horizontal", "Folgemodus starten", "Tasten vorübergehend umbelegen"]] : [])];
+    return `<div class="modal" data-a="modalbg"><div class="dlg addart">
+      <div class="dh"><h2>Was soll passieren?</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <div class="opts">${arten.map(([v, ic, l, d]) => `<button class="opt" data-a="addart_w" data-v="${v}"><ha-icon icon="${ic}"></ha-icon><span><b>${l}</b><small>${d}</small></span></button>`).join("")}</div>
+    </div></div>`;
+  }
+  _stepHtml(g, i, st, n) {
+    const id = `data-g="${g}" data-i="${i}"`;
+    const typeSel = `<select data-f="t" ${id}>
+      ${[["ble", "Bluetooth-Gerät"], ["ha", "Home Assistant"], ["regeln", "Schrittweise regeln (Licht / Ventilator)"], ["int", "Funktion der Remote"], ["ir", "Infrarot"], ["rf", "433 MHz (Dock)"], ["wait", "Warten"], ["modus", "Folgemodus starten"]]
+        .map(([v, l]) => `<option value="${v}" ${istRegeln(st) ? (v === "regeln" ? "selected" : "") : st.t === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    let body = "";
+    if (st.t === "ble") {
+      // Geraete nur am Dock (2026-10-22, dock_hid): Wert "d:<dock>:<platz>"
+      const dockGer = this._dbtGeraete().filter((x) => x.belegt);
+      const devSel = `<select data-f="dev" ${id}><option value="-1" ${st.dock ? "" : st.dev == null || st.dev < 0 ? "selected" : ""}>Gerät der Aktivität (${esc(this.slotName(this.activity.slot))})</option>
+        ${[0, 1, 2, 3].map((d) => `<option value="${d}" ${!st.dock && st.dev === d ? "selected" : ""}>${esc(this.slotName(d))}</option>`).join("")}
+        ${dockGer.length ? `<optgroup label="Nur am Dock gekoppelt">${dockGer.map((x) => `<option value="d:${x.slug}:${x.p}" ${st.dock === x.slug && st.dp === x.p ? "selected" : ""}>${esc(x.name)} (${esc(x.dockName)})</option>`).join("")}</optgroup>` : ""}</select>`;
+      const wegSel = `<select data-f="blew" ${id} title="Weg zum Gerät">${[[null, "Weg: wie eingestellt"], [0, "Weg: automatisch"], [1, "Weg: nur Remote"], [2, "Weg: Dock zuerst"]]
+        .map(([v, l]) => `<option value="${v}" ${(st.w ?? null) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+      const cur = `${st.kind}:${st.code}`;
+      const known = BLE_LABEL[cur] != null;
+      const opts = BLE_GROUPS.map(([gr, items]) => `<optgroup label="${gr}">${items.map(([kd, c, l]) =>
+        `<option value="${kd}:${c}" ${cur === `${kd}:${c}` ? "selected" : ""}>${esc(l)}</option>`).join("")}</optgroup>`).join("");
+      body = `${devSel}${st.dock ? "" : wegSel}<select data-f="blecmd" ${id}>${opts}<option value="custom" ${known ? "" : "selected"}>Eigener Code …</option></select>
+        ${known ? "" : `<div class="inl"><select data-f="kind" ${id}>${["consumer", "key", "button"].map((x) => `<option ${st.kind === x ? "selected" : ""}>${x}</option>`).join("")}</select>
+          <input data-f="code" ${id} value="${st.kind === "button" ? st.code : hex(st.code, 3)}" placeholder="0x00E9"></div>`}
+        ${st.dock ? `<small class="note">Geht per Funk ans Dock, das mit dem Gerät verbunden ist – auch wenn die Remote schläft. Antwortet das Dock nicht, über Home Assistant.</small>`
+          : st.dev != null && st.dev >= 0 && st.dev !== this.activity.slot && !this.cfg.bt?.dock?.[st.dev] ? `<small class="note">Kommt nur an, wenn das Gerät gerade verbunden oder im Hintergrund gekoppelt ist („parallel verbunden“) – oder es ist auch am Dock gekoppelt (Bluetooth › Am Dock).</small>` : ""}`;
+    } else if (istRegeln(st)) {
+      const ent = st.entity ? this._hass.states[st.entity] : null;
+      const dom = st.entity ? st.entity.split(".")[0] : "";
+      const arten = REGELN_ARTEN.filter(([, , d]) => !dom || d === dom);
+      const art = REGELN_ARTEN.find(([a]) => a === st.data?.art) || arten[0];
+      body = `<button class="entity" data-a="pick" ${id}>${ent ? `<ha-icon icon="${esc(ent.attributes.icon || "mdi:shape")}"></ha-icon><span><b>${esc(ent.attributes.friendly_name || st.entity)}</b><small>${esc(st.entity)}</small></span>`
+        : `<ha-icon icon="mdi:magnify"></ha-icon><span><b>Licht oder Ventilator wählen …</b></span>`}</button>
+        <div class="inl"><select data-f="rg_art" ${id}>${arten.map(([a, l]) => `<option value="${a}" ${art?.[0] === a ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+        ${art && art[0] !== "drehung" ? `<input type="number" data-f="rg_schritt" ${id} value="${esc(st.data?.schritt ?? art[3])}" style="width:6em"><span>${art[4]}</span>` : ""}</div>
+        <small class="note">${art?.[5] || ""}</small>`;
+    } else if (st.t === "ha") {
+      const ent = st.entity ? this._hass.states[st.entity] : null;
+      const domain = st.entity ? st.entity.split(".")[0] : st.svc.split(".")[0];
+      const svcs = Object.keys(this._hass.services[domain] || {}).sort((a, b) => {
+        const ia = SVC_ORDER.indexOf(a), ib = SVC_ORDER.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+      });
+      const curSvc = st.svc.split(".")[1];
+      if (st.svc.startsWith(domain + ".") && !svcs.includes(curSvc)) svcs.unshift(curSvc);
+      const data = Object.entries(st.data || {}).map(([a, b]) => `${a}: ${b}`).join("\n");
+      const fields = Object.keys(this._hass.services[domain]?.[curSvc]?.fields || {}).filter((f) => f !== "entity_id");
+      body = `<button class="entity" data-a="pick" ${id}>${ent ? `<ha-icon icon="${esc(ent.attributes.icon || "mdi:shape")}"></ha-icon><span><b>${esc(ent.attributes.friendly_name || st.entity)}</b><small>${esc(st.entity)}</small></span>`
+        : st.entity ? `<ha-icon icon="mdi:alert"></ha-icon><span><b>${esc(st.entity)}</b><small>Entität nicht gefunden</small></span>` : `<ha-icon icon="mdi:magnify"></ha-icon><span><b>Entität wählen …</b></span>`}</button>
+        <select data-f="svc" ${id}>${svcs.map((x) => `<option value="${domain}.${x}" ${curSvc === x && st.svc.startsWith(domain) ? "selected" : ""}>${esc(SVC_DE[x] ? `${SVC_DE[x]} (${x})` : x)}</option>`).join("")}</select>
+        <details ${data ? "open" : ""}><summary>Zusätzliche Daten${fields.length ? ` <small>(${esc(fields.slice(0, 6).join(", "))})</small>` : ""}</summary>
+          <textarea data-f="data" ${id} rows="2" placeholder="brightness_pct: 50">${esc(data)}</textarea>
+          <input data-f="svcraw" ${id} value="${esc(st.svc)}" title="Dienst direkt eingeben" placeholder="domain.dienst"></details>`;
+    } else if (st.t === "int") {
+      body = `<select data-f="fn" ${id}>${INT_FNS.map(([v, l]) => `<option value="${v}" ${st.fn === v ? "selected" : ""} ${v === "voice_ptt" && g !== "long" ? "disabled" : ""}>${esc(l)}</option>`).join("")}</select>
+        ${st.fn === "activity" ? `<select data-f="arg" ${id}>${this.cfg.activities.map((a, j) => `<option value="${j}" ${st.arg === j ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : ""}
+        ${st.fn === "popup_open" ? `<select data-f="page" ${id}>${(this.cfg.menu?.pages || []).map((pg) => `<option value="${esc(pg.id)}" ${st.page === pg.id ? "selected" : ""}>${esc(pg.title || pg.id)}${pg.popup ? " (Popup)" : ""}</option>`).join("")}</select>
+          <small class="note">Zeigt die Seite sofort als Popup (weckt das Display). Schließen mit X/Zurück, die Menütaste legt es weg.</small>` : ""}`;
+    } else if (st.t === "ir") {
+      body = this._irStepBody(st, id);
+    } else if (st.t === "rf") {
+      body = this._rfStepBody(st, id);
+    } else if (st.t === "wait") {
+      body = `<div class="inl"><input type="number" min="0" max="10000" step="50" data-f="ms" ${id} value="${st.ms || 0}"><span>ms</span></div>`;
+    } else if (st.t === "modus") {
+      const modi = this.cfg.modi || [];
+      body = modi.length ? `<select data-f="mid" ${id}>${modi.map((m) => `<option value="${esc(m.id)}" ${st.id === m.id ? "selected" : ""}>${esc(m.name)} (${m.s || 7} s)</option>`).join("")}</select>`
+        : `<small class="note">Noch kein Folgemodus angelegt – unter „Tasten“ neben den Aktivitäten auf „+ Folgemodus“.</small>`;
+    }
+    return `<div class="step"><div class="sh"><ha-icon icon="${this.stepIcon(st)}"></ha-icon>${typeSel}<span class="grow"></span>
+        ${i > 0 ? `<button class="icon" data-a="up" ${id} title="nach oben"><ha-icon icon="mdi:arrow-up"></ha-icon></button>` : ""}
+        <button class="icon" data-a="copystep" ${id} title="Diese Aktion kopieren (Strg/Umschalt: dazunehmen)"><ha-icon icon="mdi:content-copy"></ha-icon></button>
+        <button class="icon" data-a="del" ${id} title="entfernen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
+      <div class="sb">${body}</div></div>`;
+  }
+
+  // ------------------------------------------------------------------ Modals
+  _modalHtml() {
+    const m = this.s.modal;
+    if (m.type === "neu") return this._neuHtml();
+    if (m.type === "irdb" || m.type === "irset") return this._irModal();
+    if (m.type === "dockdb") return this._dockDbModal();
+    if (m.type === "kopie") {   // 2026-10-16: ganze Konfiguration einer anderen Remote uebernehmen (1:1, nur der Name bleibt)
+      const andere = this.s.order.filter((d) => d !== this.s.dev);
+      return `<div class="modal" data-a="modalbg"><div class="dlg">
+        <div class="dh"><h2>Komplett kopieren nach ${esc(devName(this.s.dev))}</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <p>Übernimmt <b>alles</b> von der gewählten Remote: Aktivitäten, Tasten, Startseite, Menü, Folgemodi, Infrarot, Bluetooth-Proxys und Kameras.
+          Die bisherige Belegung von ${esc(devName(this.s.dev))} wird ersetzt – erst „Speichern“ überträgt es, bis dahin geht „Rückgängig“.
+          Die <b>Einstellungen</b> der Remote (Bildschirm, Energie, Wecken …) werden sofort mit übernommen.</p>
+        <label class="col">Kopieren von<select data-neu="quelle">${andere.map((d) => `<option value="${esc(d)}" ${d === this.s.modal.quelle ? "selected" : ""}>${esc(devName(d))}</option>`).join("")}</select></label>
+        <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><button class="btn primary" data-a="kopie_do" ${andere.length ? "" : "disabled"}><ha-icon icon="mdi:content-duplicate"></ha-icon>Kopieren</button></div>
+      </div></div>`;
+    }
+    if (m.type === "lernen") return this._lernModal();
+    if (m.type === "addart") return this._addArtModal();
+    if (m.type === "btset") return this._btModal();
+    if (m.type === "pick") {
+      const q = (m.q || "").toLowerCase();
+      const all = Object.values(this._hass.states).filter((e) => {
+        const d = e.entity_id.split(".")[0];
+        if (m.domain ? d !== m.domain : !m.trig && !(m.domains || DOMAIN_CHIPS.map(([x]) => x)).some((x) => x && x === d)) return false;
+        if (!q) return true;
+        return e.entity_id.includes(q) || (e.attributes.friendly_name || "").toLowerCase().includes(q);
+      }).sort((a, b) => (a.attributes.friendly_name || a.entity_id).localeCompare(b.attributes.friendly_name || b.entity_id, "de"));
+      const list = all.slice(0, 80).map((e) => `<button class="ent" data-a="pickent" data-e="${esc(e.entity_id)}">
+        <ha-icon icon="${esc(e.attributes.icon || DOMAIN_ICON[e.entity_id.split(".")[0]] || "mdi:shape")}"></ha-icon>
+        <span><b>${esc(e.attributes.friendly_name || e.entity_id)}</b><small>${esc(e.entity_id)} · ${esc(e.state)}</small></span></button>`).join("");
+      return `<div class="modal" data-a="modalbg"><div class="dlg pick">
+        <div class="dh"><h2>Entität wählen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <input id="q" type="search" placeholder="Suchen (Name oder entity_id) …" value="${esc(m.q || "")}" autocomplete="off">
+        <div class="chips">${DOMAIN_CHIPS.filter(([d]) => !m.domains || !d || m.domains.includes(d)).map(([d, l]) => `<button class="chip ${m.domain === d ? "on" : ""}" data-a="dom" data-d="${d}">${l}</button>`).join("")}</div>
+        <div class="list">${list || `<div class="none">Nichts gefunden.</div>`}${all.length > 80 ? `<div class="none">… ${all.length - 80} weitere – Suche verfeinern</div>` : ""}</div>
+      </div></div>`;
+    }
+    if (m.type === "icon") return this._mIconModal();
+    if (m.type === "vorlage") return this._mVorlageModal();
+    if (m.type === "einf" || m.type === "einfkey") return this._einfModal();
+    if (m.type === "mers") return this._mErsetzenModal();
+    if (m.type === "teile") return this._teileModal();
+    if (m.type === "restore") {
+      const opts = (sel) => `<option value="">– nicht ändern –</option>` + m.quellen.map((q) => `<option value="${esc(q)}" ${q === sel ? "selected" : ""}>${esc(q)}</option>`).join("");
+      return `<div class="modal" data-a="modalbg"><div class="dlg">
+        <div class="dh"><h2>Sicherung einspielen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <p class="note">${esc(m.datei)} · exportiert ${esc((m.daten.exportiert || "").slice(0, 16).replace("T", " "))}</p>
+        <p>Welche Remote aus der Sicherung soll auf welche Remote hier geschrieben werden?</p>
+        <div class="opts">${this.s.order.map((z) => `<label class="opt"><span><b>${esc(devName(z))}</b><small>bekommt</small></span>
+          <select data-bk="${esc(z)}">${opts(m.ziel[z])}</select></label>`).join("")}</div>
+        <h3>Was je Remote?</h3><div class="opts">
+          <label class="opt"><input type="checkbox" data-bkt="belegung" ${m.teile.belegung ? "checked" : ""}><span><b>Belegung</b><small>Aktivitäten, Tasten, Menü, Popups, Startseite, An/Aus – wird ersetzt</small></span></label>
+          ${m.quellen.some((q) => m.daten.remotes[q].einst) ? `<label class="opt"><input type="checkbox" data-bkt="einst" ${m.teile.einst ? "checked" : ""}><span><b>Einstellungen der Remote</b><small>Bildschirm, Energie, Wecken, Funk … – gehen sofort an die Remote</small></span></label>` : '<div class="none">Ältere Sicherung: ohne Einstellungen der Remotes</div>'}
+          <label class="opt"><input type="checkbox" data-bkt="abgleich" ${m.teile.abgleich ? "checked" : ""}><span><b>Danach auf die Abgleich-Gruppe übertragen</b><small>Aus: jede Remote bekommt genau ihren Stand, die anderen bleiben unberührt</small></span></label></div>
+        ${Object.keys(m.daten.global || {}).length ? `<h3>Gemeinsame Bereiche</h3><div class="opts">${Object.keys(m.daten.global).map((k) => `<label class="opt"><input type="checkbox" data-bkt="${k}" ${m.teile[k] ? "checked" : ""}><span><b>${esc(BK_NAMEN[k] || k)}</b><small>wird ersetzt</small></span></label>`).join("")}</div>` : ""}
+        <small class="note">Tipp: vorher „Sicherung herunterladen“, dann lässt sich der jetzige Stand zurückholen.</small>
+        <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><button class="btn primary" data-a="bk_do">Einspielen</button></div>
+      </div></div>`;
+    }
+    if (m.type === "copyact") {
+      const opts = [];
+      for (const d of this.s.order) this.s.cfg[d].activities.forEach((a, i) => {
+        if (d === this.s.dev && i === this.s.act) return;
+        opts.push(`<label class="opt"><input type="radio" name="src" value="${esc(d)}|${i}" ${m.src === `${d}|${i}` ? "checked" : ""}><span><b>${esc(a.name)}</b><small>${esc(devName(d))}</small></span></label>`);
+      });
+      opts.push(`<label class="opt"><input type="radio" name="src" value="default" ${m.src === "default" ? "checked" : ""}><span><b>Werkseinstellung</b><small>Belegung, wie sie fest in der Firmware steckt</small></span></label>`);
+      return `<div class="modal" data-a="modalbg"><div class="dlg">
+        <div class="dh"><h2>Layout kopieren</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <p>Ersetzt alle Tasten der Aktivität <b>„${esc(this.activity.name)}“</b> durch die Belegung von:</p>
+        <div class="opts">${opts.join("")}</div>
+        <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><button class="btn primary" data-a="docopyact">Kopieren</button></div>
+      </div></div>`;
+    }
+    if (m.type === "copykey") {
+      const opts = [];
+      for (const d of this.s.order) this.s.cfg[d].activities.forEach((a, i) => {
+        if (d === this.s.dev && i === this.s.act) return;
+        opts.push(`<label class="opt"><input type="checkbox" name="dst" value="${esc(d)}|${i}" ${d === this.s.dev ? "checked" : ""}><span><b>${esc(a.name)}</b><small>${esc(devName(d))}</small></span></label>`);
+      });
+      return `<div class="modal" data-a="modalbg"><div class="dlg">
+        <div class="dh"><h2>„${esc(KEYNAME[this.s.key])}“ übertragen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <p>Kurz, doppelt und lang dieser Taste in folgende Aktivitäten übernehmen:</p>
+        <div class="opts">${opts.join("")}</div>
+        <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><button class="btn primary" data-a="docopykey">Übertragen</button></div>
+      </div></div>`;
+    }
+    return "";
+  }
+
+  // ----------------------------------------------------------------- Events
+  _bind() {
+    const r = this.shadowRoot;
+    const q = r.querySelector("#q");
+    if (q) {
+      q.oninput = () => {
+        this.s.modal.q = q.value;
+        // Entitaeten-Auswahl (2026-10-27): nur die Trefferliste tauschen - jedes Zeichen zeichnete das Fenster neu (Flackern)
+        const liste = q.closest(".dlg.pick")?.querySelector(".list");
+        if (liste && this.s.modal.type === "pick") {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = this._modalHtml();
+          const neu = tmp.querySelector(".dlg.pick .list");
+          if (neu) { liste.innerHTML = neu.innerHTML; liste.scrollTop = 0; return; }
+        }
+        const pos = q.selectionStart;
+        this._render();
+        const nq = this.shadowRoot.querySelector("#q");
+        nq.focus();
+        nq.setSelectionRange(pos, pos);
+      };
+      if (!this._narrow) setTimeout(() => q.focus(), 0);
+    }
+    this._irBind();
+    this._ircBind();
+    this._pruefBind();
+    this._dockBind();
+    this._lichtBind();
+    if (this.s.bereich !== "remote") return;
+    if (this.s.mode === "menu") { this._mBindDrag(); this._mBaumBind(); }
+    if (this.s.mode === "home") { if (this.s.hstd || !this.mpage) this._hBindDrag(); else this._mBindDrag(); }
+  }
+
+  _steps(g) {
+    if (g === "gest") return this._gestSteps();   // Bewegungsgeste (2026-10-17)
+    if (g === "item") return { item: clone(this.mitem?.steps || []) };   // Menue-Eintrag
+    if (g === "release") return { release: clone(this.mitem?.release || []) };   // Halte-Knopf: beim Loslassen
+    if (g === "lang") return { lang: clone(this.mitem?.lang || []) };   // Menue-Eintrag lang druecken (2026-10-26)
+    const kc = clone(this.keyCfg());
+    kc[g] = kc[g] || [];
+    return kc;
+  }
+
+  async _click(ev) {
+    const t = ev.target.closest("[data-a]");
+    if (this.s.syncOffen && !ev.target.closest(".syncw")) { this.s.syncOffen = false; if (!t) { this._render(); return; } }
+    if (!t) return;
+    const a = t.dataset.a;
+    const g = t.dataset.g, i = Number(t.dataset.i);
+    const s = this.s;
+    if (a === "feld_ok") {   // ✓ neben einem Namensfeld (2026-10-26): wie Enter/Verlassen - Feld uebernehmen
+      const inp = t.parentElement?.querySelector("input");
+      if (inp) { inp.dispatchEvent(new Event("change", { bubbles: true })); s.msg = { text: "Übernommen." }; this._render(); }
+      return;
+    }
+    const o = await this._oClick(a, t, ev);
+    if (o === "stop") return;
+    if (o) { this._render(); return; }
+    if (await this._neuClick(a, t)) { this._render(); return; }
+    if (await this._fwClick(a, t)) { this._render(); return; }
+    if (await this._einstClick(a, t)) { this._render(); return; }
+    if (await this._lichtClick(a, t)) { this._render(); return; }
+    if (await this._gestenClick(a, t)) { this._render(); return; }
+    if (await this._dockClick(a, t)) { this._render(); return; }
+    if (await this._jetztClick(a, t)) { this._render(); return; }
+    if (await this._klingelClick(a, t)) { this._render(); return; }
+    if (await this._syncClick(a, t)) { this._render(); return; }
+    if (await this._vglClick(a, t)) { this._render(); return; }
+    if (a === "ak_tage") { this.s.akTage = Number(t.dataset.t); this.s.akku = null; this._render(); return; }
+    if (await this._ircClick(a, t)) { this._render(); return; }
+    if (await this._irClick(a, t)) { this._render(); return; }
+    if (await this._btClick(a, t)) { this._render(); return; }
+    if (await this._dbtClick(a, t)) { this._render(); return; }
+    if (await this._scanClick(a, t)) return;
+    if (await this._lernClick(a, t)) { this._render(); return; }
+    if (this._hClick(a, t)) { this._render(); return; }
+    if (this._mClick(a, t, ev)) { this._render(); return; }
+    switch (a) {
+      case "menu": this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })); return;
+      case "msgx": s.msg = null; break;
+      case "werk_merken": {   // Werkseinstellung (2026-10-27): Belegung + Einstellungen dieser Remote merken
+        if (s.dirty[s.dev]) { s.msg = { err: true, text: "Erst speichern – gemerkt wird der gespeicherte Stand." }; break; }
+        if (!confirm(`Belegung und Einstellungen von ${devName(s.dev)} als Werkseinstellung merken?\n\nDie bisherige Werkseinstellung wird ersetzt. Sie bleibt auf deinem Home Assistant.`)) return;
+        try { await this._hass.callWS({ type: "esphomeremote_konfig/werk_speichern", device: s.dev }); s.msg = { text: `Werkseinstellung gemerkt (Stand vom ${new Date().toLocaleDateString("de-DE")}).` }; }
+        catch (e) { s.msg = { err: true, text: "Merken ging nicht: " + (e.message || e.code) }; }
+        break;
+      }
+      case "werk_laden": case "werk_menu": case "werk_tasten": {
+        let w;
+        try { w = await this._hass.callWS({ type: "esphomeremote_konfig/werk_get" }); }
+        catch (e) { s.msg = { err: true, text: "Werkseinstellung nicht lesbar: " + (e.message || e.code) }; break; }
+        const datum = w.zeit ? new Date(w.zeit).toLocaleDateString("de-DE") : "";
+        const wer = w.eigen ? `Werkseinstellung${datum ? ` vom ${datum}` : ""}` : "eingebaute Werkseinstellung der Firmware";
+        const was = { werk_laden: "Belegung UND Einstellungen", werk_menu: "das ganze Menü (alle Seiten und Popups)", werk_tasten: "alle Aktivitäten mit ihrer Tastenbelegung" }[a];
+        if (!confirm(`${devName(s.dev)}: ${was} durch die ${wer} ersetzen?\n\nBis zum Speichern holt „Verwerfen“ den alten Stand zurück.`)) return;
+        const c = this.cfg, q = clone(w.config);
+        if (a === "werk_laden") { s.cfg[s.dev] = q; }
+        else if (a === "werk_menu") { c.menu = q.menu || c.menu; for (const akt of c.activities || []) if (akt.home && !(c.menu.pages || []).some((p) => p.id === akt.home)) delete akt.home; }
+        else { c.activities = q.activities || c.activities; if (q.modi) c.modi = q.modi; if (q.gesten) c.gesten = q.gesten; }
+        this._touch();
+        s.act = 0; s.key = null; s.mitem = null; s.modus = null; s.mpage = null;
+        if (a === "werk_laden" && w.einst && Object.keys(w.einst).length) await this._einstSetzen({ werte: w.einst });
+        s.msg = { text: `${was[0].toUpperCase() + was.slice(1)} aus der ${wer} übernommen – noch nicht gespeichert.${a === "werk_laden" ? " Die Einstellungen gehen beim nächsten Aufwachen an die Remote." : ""}` };
+        break;
+      }
+      case "o_wlan": {
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/wlan_an", device: s.dev });
+          (s.wlanAn ||= {})[s.dev] = Date.now();
+          s.msg = { text: r.weg === "dock" ? `WLAN von ${devName(s.dev)} angefordert – sie schaltet es ein, sobald sie das Dock das nächste Mal fragt (ist das Display an, sofort; sonst eine Taste drücken).` : `WLAN von ${devName(s.dev)} wird eingeschaltet.` };
+        } catch (e) { s.msg = { err: true, text: "WLAN einschalten ging nicht: " + (e.message || e.code) }; }
+        break;
+      }
+      case "push": {
+        const slug = s.meta[s.dev].slug;
+        try {
+          if (!(await this._neuLaden(s.dev))) throw new Error("nicht verbunden");
+          s.msg = null;
+        } catch (e) {
+          s.msg = { err: true, text: "Remote nicht erreichbar – sie schläft (WLAN aus). Eine Taste drücken oder aufs Display tippen, dann holt sie sich die Belegung selbst." };
+        }
+        break;
+      }
+      case "einf_do": { const m = s.modal, c = s.clip; s.modal = null;
+        const steps = c.type === "key" ? (c.data[m.g] || c.data.short || []) : c.data; this._einf(m.g, steps, t.dataset.v); break; }
+      case "einfk_art": s.modal.art = t.dataset.v; break;
+      case "einfk_do": {
+        const m = s.modal, c = s.clip, kc = clone(this.keyCfg());
+        const gew = Object.keys(m.sel).filter((g) => m.sel[g]);
+        for (const g of gew) { const neu = clone(c.data[g] || []), alt = kc[g] || [];
+          kc[g] = m.art === "ersetzen" ? neu : m.art === "davor" ? [...neu, ...alt] : [...alt, ...neu]; }
+        for (const f of ["hold", "repeat", "lrepeat"]) if (m.art === "ersetzen" && gew.includes(f === "lrepeat" ? "long" : "short") && c.data[f]) kc[f] = c.data[f];
+        this._remember(`${gew.map((g) => GNAME[g] || g).join(", ")} von ${c.label} eingefügt.`);
+        this.setKeyCfg(s.key, kc); s.modal = null; break;
+      }
+      case "copystep": {   // einzelne Aktion; mit Strg/Umschalt zur Zwischenablage dazu
+        const st = this._steps(g)[g]?.[i]; if (!st) break;
+        const dazu = (ev.ctrlKey || ev.shiftKey || ev.metaKey) && s.clip?.type === "steps";
+        this._setClip({ type: "steps", data: dazu ? [...s.clip.data, clone(st)] : [clone(st)], label: dazu ? `${s.clip.data.length + 1} Aktionen` : this.stepText(st) });
+        s.msg = { text: dazu ? `${s.clip.data.length} Aktionen in der Zwischenablage.` : "Aktion kopiert – mit Strg/Umschalt weitere dazunehmen. Einfügen über das Einfügen-Symbol einer Druckart." };
+        break;
+      }
+      case "copy": this._copy(); break;
+      case "paste": this._paste(); break;
+      case "copyg": this._copy(g); break;
+      case "pasteg": this._paste(g); break;
+      case "clipx": this._setClip(null); break;
+      case "swap": this._swap(t.dataset.x, t.dataset.y); break;
+      case "offline_auf": s.offline = !s.offline; break;
+      case "undo": {
+        const u = s.undo;
+        if (u && u.dev !== s.dev) s.dev = u.dev;
+        this._undo();
+        break;
+      }
+      case "act": s.act = Number(t.dataset.i); s.modus = null; break;
+      case "modus": s.modus = Number(t.dataset.i); s.key = null; break;
+      case "modadd": {
+        const name = prompt("Name des Folgemodus (erscheint oben auf der Remote), z. B. „Hängelampe“:", "");
+        if (!name) return;
+        const modi = (this.cfg.modi ||= []);
+        let id = name.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "modus";
+        while (modi.some((m) => m.id === id)) id = id.slice(0, 20) + "_" + Math.floor(Math.random() * 90 + 10);
+        modi.push({ id, name: name.slice(0, 24), s: 7, keys: {} });
+        s.modus = modi.length - 1; s.key = null; this._touch();
+        s.msg = { text: `Folgemodus „${name}“ angelegt. Tasten belegen (oder Vorlage wählen) und ihn dann per Schritt „Folgemodus starten“ an eine Taste hängen.` };
+        break;
+      }
+      case "moddel": {
+        const mo = this.cfg.modi[s.modus];
+        if (!confirm(`Folgemodus „${mo.name}“ löschen? Schritte und Menü-Einträge, die ihn starten, tun dann nichts mehr.`)) return;
+        this.cfg.modi.splice(s.modus, 1); if (!this.cfg.modi.length) delete this.cfg.modi;
+        s.modus = null; s.key = null; this._touch();
+        break;
+      }
+      case "modgeh": s.modus = null; s.act = Number(t.dataset.ai); s.key = Number(t.dataset.k); break;
+      case "modgehm": this._geh("remote", "menu"); s.mpage = t.dataset.p; s.mitem = Number(t.dataset.j); break;
+      case "modvor": s.modal = { type: "pick", g: "modvor", i: -1, domain: t.dataset.p === "licht" ? "light" : "fan", domains: [t.dataset.p === "licht" ? "light" : "fan"], q: "", modvor: t.dataset.p }; break;
+      case "actadd": {
+        const acts = this.cfg.activities;
+        const name = prompt("Name der neuen Aktivität (erscheint in der Leiste der Remote):", "Neu");
+        if (!name) return;
+        const kopie = confirm(`Tasten von „${this.activity.name}“ übernehmen?\n(Abbrechen = alle Tasten leer)`);
+        acts.forEach((a, i) => { if (a.dock == null) a.dock = i < 4; });
+        acts.push({ name: name.slice(0, 16), slot: this.activity.slot, dock: acts.filter((a) => a.dock).length < 4, keys: kopie ? clone(this.activity.keys) : {} });
+        s.act = acts.length - 1; s.key = null; this._touch();
+        s.msg = { text: `Aktivität „${name}“ angelegt – in der Leiste der Remote erscheint sie nach dem Speichern.` };
+        break;
+      }
+      case "actdel": {
+        const acts = this.cfg.activities;
+        if (acts.length <= 1 || !confirm(`Aktivität „${this.activity.name}“ mit ihrer ganzen Tastenbelegung löschen?`)) return;
+        acts.splice(s.act, 1); s.act = Math.max(0, s.act - 1); s.key = null; this._touch();
+        s.msg = { text: "Aktivität gelöscht. Hinweis: Knöpfe „Aktivität wechseln zu …“ zählen nach Position – bitte prüfen." };
+        break;
+      }
+      case "actmove": {
+        const acts = this.cfg.activities, j = s.act + Number(t.dataset.d);
+        [acts[s.act], acts[j]] = [acts[j], acts[s.act]]; s.act = j; this._touch();
+        break;
+      }
+      case "key": s.key = Number(t.dataset.k); break;
+      case "close": s.key = null; break;
+      case "save": await this._save(); return;
+      case "bk_down": {
+        // gespeicherter Stand aus HA (nicht ungespeicherte Aenderungen im Browser). Version 2 (2026-10-26): je Remote auch
+        // die Einstellungen, dazu die gemeinsamen Bereiche (Wiedergabe, Streamer, Klingel, Licht, Anzeige, Docks, Abgleich)
+        const r = await this._hass.callWS({ type: "esphomeremote_konfig/sicherung" });
+        const daten = { format: "esphomeremote_konfig", version: 2, exportiert: new Date().toISOString(), remotes: r.remotes, global: r.global };
+        const blob = new Blob([JSON.stringify(daten, null, 2)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `fernbedienung-sicherung-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        s.msg = { text: `Sicherung heruntergeladen (${r.order.length} Remotes mit Einstellungen, ${Object.keys(r.global).length} gemeinsame Bereiche${Object.values(s.dirty).some(Boolean) ? " – ungespeicherte Änderungen sind NICHT enthalten" : ""}).` };
+        break;
+      }
+      case "kopie":
+        s.modal = { type: "teile", quelle: s.order.find((d) => d !== s.dev) || "", sel: {} };
+        this._render(); return;
+      case "teile_alles": s.modal = { type: "kopie", quelle: s.modal.quelle }; this._render(); return;
+      case "teile_do": this._teileUebernehmen(); this._render(); return;
+      case "kopie_do": {
+        const q = s.modal.quelle || this.shadowRoot.querySelector('[data-neu="quelle"]')?.value;
+        if (!q || !s.cfg[q]) return;
+        s.cfg[s.dev] = clone(s.cfg[q]);
+        s.enabled[s.dev] = !!s.enabled[q];
+        this._touch();
+        await this._einstSetzen({ von: q });   // Einstellungen gleich mit (gehen sofort an die Remote)
+        s.act = 0; s.key = null; s.mitem = null; s.modus = null;
+        s.modal = null;
+        s.msg = { text: `Alles von ${devName(q)} übernommen – noch nicht gespeichert.`, undo: true };
+        this._render(); return;
+      }
+      case "bk_up": {
+        const f = this.shadowRoot.querySelector("#bkfile");
+        f.value = "";
+        f.onchange = async () => {
+          const datei = f.files[0];
+          if (!datei) return;
+          try {
+            const d = JSON.parse(await datei.text());
+            if (d.format !== "esphomeremote_konfig" || !d.remotes) throw new Error("keine Fernbedienungs-Sicherung");
+            const quellen = Object.keys(d.remotes);
+            // Vorschlag: gleicher Name, sonst gleiche Position
+            const ziel = Object.fromEntries(s.order.map((z, i) => [z, quellen.includes(z) ? z : quellen[i] || ""]));
+            const glob = Object.keys(d.global || {});
+            s.modal = { type: "restore", daten: d, quellen, ziel, datei: datei.name,
+              teile: { belegung: true, einst: quellen.some((q) => d.remotes[q].einst), abgleich: false, ...Object.fromEntries(glob.map((k) => [k, false])) } };
+          } catch (e) {
+            s.msg = { err: true, text: "Datei nicht lesbar: " + e.message };
+          }
+          this._render();
+        };
+        f.click();
+        return;
+      }
+      case "bk_do": {
+        // Einspielen ohne Abgleich (jede Remote genau ihr Stand), danach die gewaehlten gemeinsamen Bereiche ueber ihre
+        // normalen Speicherwege (gleiche Pruefung wie in den Einstellungen)
+        const m = s.modal, T = m.teile, fehler = [], fertig = [];
+        let n = 0;
+        for (const [z, q] of Object.entries(m.ziel)) {
+          if (!q) continue;
+          const src = m.daten.remotes[q], auftrag = { type: "esphomeremote_konfig/einspielen", device: z, abgleich: !!T.abgleich };
+          if (T.belegung) { auftrag.config = src.config; auftrag.enabled = !!src.enabled; }
+          if (T.einst && src.einst) auftrag.einst = src.einst;
+          if (!auftrag.config && !auftrag.einst) continue;
+          try {
+            await this._hass.callWS(auftrag);
+            n++;
+            this._neuLaden(z);
+          } catch (e) { fehler.push(`${devName(z)}: ${e.message || e.code}`); }
+        }
+        const G = m.daten.global || {};
+        const WEGE = { dock: ["dock_save", "dock"], jetzt: ["jetzt_save", "jetzt"], streamer: ["streamer_save", "streamer"],
+          klingel: ["klingel_save", "klingel"], licht: ["licht_set", "werte"], anzeige: ["anzeige_set", "werte"], dockscan: ["dockscan_save", "cfg"] };
+        for (const [k, [ws, feld]] of Object.entries(WEGE)) {
+          if (!T[k] || G[k] == null) continue;
+          try { await this._hass.callWS({ type: `esphomeremote_konfig/${ws}`, [feld]: G[k] }); fertig.push(BK_NAMEN[k]); }
+          catch (e) { fehler.push(`${BK_NAMEN[k]}: ${e.message || e.code}`); }
+        }
+        if (T.sync && G.sync) {
+          try { await this._hass.callWS({ type: "esphomeremote_konfig/sync_set", ...G.sync }); fertig.push(BK_NAMEN.sync); }
+          catch (e) { fehler.push(`${BK_NAMEN.sync}: ${e.message || e.code}`); }
+        }
+        s.modal = null; s.mitem = null; s.key = null;
+        s.msg = fehler.length ? { err: true, text: `Einspielen teilweise fehlgeschlagen: ${fehler.join("; ")}` }
+          : { text: `Sicherung eingespielt: ${n} Remote${n === 1 ? "" : "s"}${fertig.length ? " + " + fertig.join(", ") : ""}. Die Remotes holen sich den Stand gleich bzw. beim Aufwachen.` };
+        await this._load();
+        return;
+      }
+      case "reload": {
+        const d = s.dev;
+        if (!confirm(`Alle ungespeicherten Änderungen an ${devName(d)} verwerfen?`)) return;
+        s.cfg[d] = JSON.parse(s.saved[d]);
+        s.enabled[d] = !!(s.savedEn || {})[d];
+        this._histReset(d);
+        s.dirty[d] = false; s.undo = null; s.key = null; s.mitem = null;
+        if (s.act >= this.cfg.activities.length) s.act = 0;
+        if (s.modus != null && !this.cfg.modi?.[s.modus]) s.modus = null;
+        s.msg = { text: `Änderungen an ${devName(d)} verworfen.` };
+        break;
+      }
+      case "add": {
+        // (2026-10-27) Erst die Art waehlen - vorher kam sofort die HA-Entitaetsauswahl, auch wenn man IR o. ae. wollte
+        if (g === "long" && s.key === 45) { const kc = this._steps(g); kc[g].push({ t: "int", fn: "voice_ptt" }); this._commit(kc); break; }
+        s.modal = { type: "addart", g };
+        break;
+      }
+      case "addart_w": {
+        const g2 = s.modal?.g;
+        if (g2 == null) break;
+        const kc = this._steps(g2);
+        kc[g2].push(this._neuerSchritt(t.dataset.v, g2));
+        this._commit(kc);
+        const i2 = kc[g2].length - 1;
+        s.modal = t.dataset.v === "ha" ? { type: "pick", g: g2, i: i2, domain: "", q: "" }
+          : t.dataset.v === "regeln" ? { type: "pick", g: g2, i: i2, domain: "", q: "", domains: ["light", "fan"] } : null;
+        break;
+      }
+      case "del": { const kc = this._steps(g); kc[g].splice(i, 1); this._commit(kc); break; }
+      case "up": { const kc = this._steps(g); [kc[g][i - 1], kc[g][i]] = [kc[g][i], kc[g][i - 1]]; this._commit(kc); break; }
+      case "clearkey":
+        if (!confirm(`„${KEYNAME[s.key]}“ in dieser Aktivität komplett leeren?`)) return;
+        this.setKeyCfg(s.key, {});
+        break;
+      case "pick": {
+        const st0 = this._steps(g)[g]?.[i];
+        s.modal = { type: "pick", g, i, domain: "", q: "", ...(istRegeln(st0) ? { domains: ["light", "fan"] } : {}) };
+        break;
+      }
+      case "dom": s.modal.domain = t.dataset.d; break;
+      case "pickent": {
+        const e = t.dataset.e, d = e.split(".")[0];
+        if (s.modal.ment) {
+          const alt = this.mitem.entity, pg = this.mpage;
+          this.mitem.entity = e;
+          // Lautstaerke-Regler umgestellt: Lauter/Leiser/Stumm der Seite gehen mit (2026-10-26, sonst regelten die
+          // Tasten weiter den alten Player)
+          if (this.mitem.t === "number" && e.startsWith("media_player.") && pg?.vol && pg.vol === alt) pg.vol = e;
+          s.modal = null; this._touch(); break;
+        }
+        if (s.modal.mgent) { for (const j of s.msel || []) this.mpage.items[j].entity = e; s.modal = null; this._touch(); break; }
+        if (s.modal.mk) { this._mkSetzen(s.modal.mk, e); s.modal = null; this._touch(); break; }
+        if (s.modal.modvor) { this._modVorlage(s.modal.modvor, e); s.modal = null; break; }
+        if (s.modal.trig) { const tr = this.mpage.popup[s.modal.trig.art][s.modal.trig.i]; tr.entity = e;
+          const st = this._hass.states[e]; if (st && !["on", "off"].includes(st.state) && !(st.attributes.options || []).length) tr.to = st.state;
+          s.modal = null; this._touch(); break; }
+        const kc = this._steps(s.modal.g);
+        const st = kc[s.modal.g][s.modal.i];
+        st.entity = e;
+        if (st.svc === REGELN_SVC) {   // Schrittweise regeln: Dienst bleibt, Art passend zum Geraet
+          const arten = REGELN_ARTEN.filter(([, , dom]) => dom === d);
+          if (arten.length && !arten.some(([a]) => a === st.data?.art)) st.data = { art: arten[0][0], schritt: String(arten[0][3]) };
+          this._commit(kc); s.modal = null; break;
+        }
+        const svcs = Object.keys(this._hass.services[d] || {});
+        const pref = d === "script" ? "turn_on" : d === "scene" ? "turn_on" : ["button", "input_button"].includes(d) ? "press"
+          : d === "automation" ? "trigger" : d === "media_player" ? "media_play_pause" : "toggle";
+        st.svc = `${d}.${svcs.includes(pref) ? pref : svcs[0] || "turn_on"}`;
+        this._commit(kc);
+        s.modal = null;
+        break;
+      }
+      case "modalbg": if (ev.target !== t) return; s.modal = null; break;
+      case "modalx": s.modal = null; break;
+      case "copyact": s.modal = { type: "copyact", src: null }; break;
+      case "docopyact": {
+        const v = this.shadowRoot.querySelector('input[name="src"]:checked')?.value;
+        if (!v) return;
+        let keys;
+        if (v === "default") keys = (await this._hass.callWS({ type: "esphomeremote_konfig/default" })).config.activities[s.act]?.keys || {};
+        else { const [d, j] = v.split("|"); keys = this.s.cfg[d].activities[Number(j)].keys; }
+        this.activity.keys = clone(keys);
+        this._touch();
+        s.modal = null;
+        s.msg = { text: `Layout nach „${this.activity.name}“ kopiert – noch nicht gespeichert.` };
+        break;
+      }
+      case "copykey": s.modal = { type: "copykey" }; break;
+      case "docopykey": {
+        const kc = clone(this.keyCfg());
+        const dsts = [...this.shadowRoot.querySelectorAll('input[name="dst"]:checked')].map((x) => x.value);
+        for (const v of dsts) {
+          const [d, j] = v.split("|");
+          const keys = this.s.cfg[d].activities[Number(j)].keys;
+          if (Object.keys(kc).length) keys[String(s.key)] = clone(kc); else delete keys[String(s.key)];
+          this._touch(d);
+        }
+        s.modal = null;
+        s.msg = { text: `Taste in ${dsts.length} Aktivität(en) übertragen – noch nicht gespeichert.` };
+        break;
+      }
+      default: return;
+    }
+    this._render();
+  }
+
+  _change(ev) {
+    const t = ev.target;
+    const s = this.s;
+    if ("syvon" in t.dataset) { s.syncVon = t.value; this._render(); return; }
+    if (t.dataset.vgl) { if (t.dataset.vgl === "a") s.vglA = t.value; else s.vglB = t.value; if (s.vglA === s.vglB) s[t.dataset.vgl === "a" ? "vglB" : "vglA"] = null; this._render(); return; }
+    if (t.dataset.kl) {
+      const k = s.klingel.klingel[Number(t.dataset.ki)];
+      k[t.dataset.kl] = t.dataset.kl === "warten" ? Math.max(0, Math.min(30, Number(t.value) || 0)) : t.value;
+      this._klingelSpeichern(); return;
+    }
+    if (t.dataset.st) {
+      s.strm.streamer[Number(t.dataset.si)][t.dataset.st] = t.value;
+      this._strmSpeichern(); return;
+    }
+    if (t.dataset.jz) {
+      const j = s.jetzt.jetzt[Number(t.dataset.ji)];
+      j[t.dataset.jz] = t.type === "checkbox" ? t.checked : t.value;
+      this._jetztSpeichern(); return;
+    }
+    if (t.dataset.bgr != null) {
+      // Begruessungstext (cfg.begruessung, 2026-10-20) - leer = "Hallo <Name>"
+      const v = t.value.trim().slice(0, 40);
+      if (v) this.cfg.begruessung = v; else delete this.cfg.begruessung;
+      this._touch(); return this._render();
+    }
+    if (t.dataset.ausw) { try { localStorage.setItem("erk_ausweichen", t.checked ? "1" : "0"); } catch (e) { /* egal */ } return this._render(); }
+    if (t.dataset.entm) {   // Mehrfachauswahl (Timer)
+      const ents = (this.cfg.ents ||= {}), k = t.dataset.entm;
+      const l = new Set(Array.isArray(ents[k]) ? ents[k] : ents[k] ? [ents[k]] : []);
+      if (t.checked) l.add(t.value); else l.delete(t.value);
+      if (l.size) ents[k] = [...l]; else delete ents[k];
+      this._touch(); return this._render();
+    }
+    if (t.dataset.ent) {
+      const ents = (this.cfg.ents ||= {});
+      if (t.value) ents[t.dataset.ent] = t.value; else delete ents[t.dataset.ent];
+      this._touch(); return this._render();
+    }
+    if (t.id === "enabled") { s.enabled[s.dev] = t.checked; s.dirty[s.dev] = true; return this._render(); }
+    if (t.dataset.mod) {
+      const mo = this.cfg.modi[s.modus];
+      if (t.dataset.mod === "name") mo.name = t.value.slice(0, 24) || mo.id;
+      else mo.s = Math.max(2, Math.min(60, Number(t.value) || 7));
+      this._touch(); return this._render();
+    }
+    if (t.dataset.akt) {
+      if (t.dataset.akt === "dock") {
+        // Fehlende Angaben festschreiben (Standard: die ersten vier), dann umschalten
+        this.cfg.activities.forEach((a, i) => { if (a.dock == null) a.dock = i < 4; });
+        this.activity.dock = t.checked;
+      } else if (t.dataset.akt === "name") this.activity.name = t.value.slice(0, 16) || "Aktivität";
+      else this.activity.slot = Number(t.value);
+      this._touch(); return this._render();
+    }
+    if (t.dataset.a === "haltmodus") {
+      const kc = clone(this.keyCfg()); delete kc.hold; delete kc.repeat; delete kc.lrepeat;
+      if (t.value === "hold") { kc.hold = true; delete kc.double; delete kc.long; }
+      if (t.value === "repeat") kc.repeat = 200;
+      if (t.value === "lrepeat") { kc.lrepeat = 500; if (!kc.long?.length) this.s.msg = { text: "Jetzt unter „Lang“ eine Aktion eintragen – sie wird beim Halten wiederholt." }; }
+      this.setKeyCfg(s.key, kc); return this._render();
+    }
+    if (t.dataset.a === "modzeit") { const kc = clone(this.keyCfg()); if (Number(t.value)) kc.s = Number(t.value); else delete kc.s; this.setKeyCfg(s.key, kc); return this._render(); }
+    if (t.dataset.a === "wdhms") { const kc = clone(this.keyCfg()); kc[kc.lrepeat ? "lrepeat" : "repeat"] = Number(t.value); this.setKeyCfg(s.key, kc); return this._render(); }
+    if (t.name === "src") { s.modal.src = t.value; return; }
+    if (t.dataset.bk) { s.modal.ziel[t.dataset.bk] = t.value; return; }
+    if (t.dataset.bkt) { s.modal.teile[t.dataset.bkt] = t.checked; this._render(); return; }
+    if (t.dataset.neu) { this.s.modal[t.dataset.neu] = t.value; return; }
+    if (this._fwChange(t)) return this._render();
+    if (t.dataset.einst) return this._einstChange(t);
+    if (t.dataset.li) return this._lichtChange(t);
+    if (t.dataset.anz) return this._anzChange(t);
+    if (t.dataset.btm != null) return this._btModus(t);
+    if (this._gestenChange(t)) return this._render();
+    if (this._dockChange(t)) return this._render();
+    if (this._ircChange(t)) return this._render();
+    if (this._irChange(t)) return this._render();
+    if (this._btChange(t)) return this._render();
+    if (this._dbtChange(t)) return this._render();
+    if (this._scanChange(t)) return;
+    if (this._rfChange(t)) return this._render();
+    if (this._hChange(t)) return this._render();
+    if (this._mChange(t)) return this._render();
+    const f = t.dataset.f;
+    if (!f || t.dataset.g == null) return;
+    const g = t.dataset.g, i = Number(t.dataset.i);
+    const kc = this._steps(g);
+    let st = kc[g][i];
+    const v = t.value;
+    switch (f) {
+      case "rg_art": { const a = REGELN_ARTEN.find(([x]) => x === v); st.data = { art: v, schritt: String(a ? a[3] : 0) }; break; }
+      case "rg_schritt": st.data = { ...(st.data || {}), schritt: String(Number(v) || 0) }; break;
+      case "t":
+        if (v === "regeln") { st = { t: "ha", svc: REGELN_SVC, entity: "", data: { art: "helligkeit", schritt: "10" } }; kc[g][i] = st; s.modal = { type: "pick", g, i, domain: "", q: "", domains: ["light", "fan"] }; break; }
+        st = this._neuerSchritt(v, g);
+        kc[g][i] = st;
+        if (v === "ha") s.modal = { type: "pick", g, i, domain: "", q: "" };
+        break;
+      case "dev":
+        if (v.startsWith("d:")) { const [, d, p] = v.split(":"); st.dock = d; st.dp = Number(p); st.dev = -1; delete st.w; }
+        else { st.dev = Number(v); delete st.dock; delete st.dp; }
+        break;
+      case "blew": if (v === "null") delete st.w; else st.w = Number(v); break;
+      case "mid": st.id = v; break;
+      case "blecmd":
+        if (v === "custom") { st.kind = "consumer"; st.code = 0x0001; }
+        else { const [kd, c] = v.split(":"); st.kind = kd; st.code = Number(c); }
+        break;
+      case "kind": st.kind = v; break;
+      case "code": st.code = parseNum(v); break;
+      case "svc": st.svc = v; break;
+      case "svcraw": if (/^[a-z0-9_]+\.[a-z0-9_]+$/.test(v.trim())) st.svc = v.trim(); break;
+      case "data": {
+        const d = {};
+        for (const line of v.split("\n")) {
+          const m = line.match(/^\s*([A-Za-z0-9_]+)\s*:\s*(.*?)\s*$/);
+          if (m) d[m[1]] = m[2];
+        }
+        st.data = d;
+        break;
+      }
+      case "fn": st.fn = v; if (v === "activity") st.arg = 0; else delete st.arg;
+        if (v === "popup_open") st.page = st.page || (this.cfg.menu?.pages || []).find((pg) => pg.popup)?.id || this.cfg.menu?.pages?.[0]?.id || ""; else delete st.page;
+        break;
+      case "page": st.page = v; break;
+      case "arg": st.arg = Number(v); break;
+      case "proto": st.proto = v; delete st.n; break;
+      case "addr": st.addr = parseNum(v); delete st.n; break;
+      case "cmd": st.cmd = parseNum(v); delete st.n; break;
+      case "ms": st.ms = Math.max(0, Math.min(10000, parseNum(v))); break;
+    }
+    this._commit(kc);
+    this._render();
+  }
+}
+
+// ===========================================================================
+// Menue-Editor (2026-10-03): konfigurierbares Menue der Remote, Raster 6 Spalten x 40 px.
+// Daten: cfg.menu = { on, start, pages: [{ id, title, remember, flow, items: [...] }] }
+// ===========================================================================
+
+const M_COLS = 6, M_ROW = 40, M_PAD = 6, M_GAP = 4, M_W = 240;
+// Zeichen der Remote-Schrift (glyphs in templates/remote.yaml) - alles andere bleibt auf dem Display leer
+const REMOTE_ZEICHEN = new Set([..."€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−›"]);
+const fremdeZeichen = (t) => [...new Set([...String(t || "")].filter((c) => c.charCodeAt(0) > 126 && !REMOTE_ZEICHEN.has(c)))];
+const M_ICONS = "air-conditioner alarm alert apple arrow-down arrow-left arrow-right arrow-up bathtub battery battery-charging bed bed-outline bell bell-outline blinds blinds-open bluetooth brightness-6 camera car cast cast-connected cctv ceiling-light cellphone check chevron-down chevron-left chevron-right chevron-up close coffee cog cog-outline controller-classic curtains desk desktop-tower-monitor door door-closed door-open doorbell doorbell-video dots-horizontal dots-vertical fan fast-forward flash flash-outline floor-lamp flower fridge gamepad-variant garage garage-open garage-variant google-chrome heart heat-wave home home-outline image information key key-variant keyboard-return kodi lamp laptop leaf led-strip lightbulb lightbulb-group lightbulb-on lock lock-open-variant menu microphone minus minus-circle movie movie-open music music-note netflix nintendo-switch palette pause pine-tree play play-pause plex plus plus-circle podcast power power-standby printer-3d radiator radio record remote remote-tv repeat rewind roller-shade set-top-box shower shuffle silverware-fork-knife skip-next skip-previous sleep snowflake sofa sony-playstation soundbar speaker speaker-multiple spotify star stop stove string-lights tablet television television-classic tent thermometer thermostat timer timer-outline video vlc volume-high volume-low volume-medium volume-minus volume-mute volume-off volume-plus washing-machine weather-night weather-partly-cloudy weather-sunny white-balance-sunny wifi window-closed-variant window-shutter window-shutter-open youtube youtube-tv".split(" ");
+const M_TYPES = [
+  ["page", "Unterseite", "mdi:folder-arrow-right-outline"],
+  ["special", "Eingebaute Seite", "mdi:application-outline"],
+  ["action", "Knopf (Aktion)", "mdi:gesture-tap-button"],
+  ["toggle", "Schalter", "mdi:toggle-switch-outline"],
+  ["light", "Licht (mit Regler)", "mdi:lightbulb-outline"],
+  ["number", "Zahl / Lautstärke (mit Regler)", "mdi:volume-high"],
+  ["select", "Auswahl (OK = nächste, ◀ ▶ blättern)", "mdi:form-dropdown"],
+  ["cover", "Rollo", "mdi:window-shutter"],
+  ["sensor", "Anzeige (Zustand)", "mdi:eye-outline"],
+  ["text", "Überschrift / Text", "mdi:format-title"],
+  ["camera", "Kamerabild (Klingel)", "mdi:cctv"],
+  ["setting", "Einstellung der Remote", "mdi:cog-outline"],
+  ["mtitel", "Medien: Titel & Interpret", "mdi:music-box-outline"],
+  ["mtaste", "Medien: Taste (⏯ ⏮ ⏭ Stumm …)", "mdi:play-pause"],
+  ["vpreset", "Medien: Lautstärke-Preset", "mdi:volume-medium"],
+  ["widget", "Widget (Uhr, Wetter, Medien, Timer, Kamera …)", "mdi:widgets-outline"],
+];
+// Widgets (2026-10-27, Firmware components/menue/widgets.cpp): [art, Name, Symbol, Domaene der Entitaet]
+const M_WIDGETS = [["uhr", "Uhr & Datum", "mdi:clock-outline", ""], ["wetter", "Wetter", "mdi:weather-partly-cloudy", "weather"],
+  ["akku", "Akku der Remote", "mdi:battery-70", ""], ["medien", "Medien", "mdi:play-box-outline", "media_player"],
+  ["timer", "Timer", "mdi:timer-outline", "timer"], ["kamera", "Kamera", "mdi:cctv", "camera"],
+  ["kombi", "Kombi (bis zu 3 nebeneinander)", "mdi:view-column-outline", ""]];
+const M_WTEILE = [["uhr", "Uhr"], ["wetter", "Wetter"], ["akku", "Akku"], ["medien", "Medien"]];
+const WETTER_TXT = { sunny: ["mdi:weather-sunny", "Sonnig"], "clear-night": ["mdi:weather-night", "Klar"], partlycloudy: ["mdi:weather-partly-cloudy", "Teils bewölkt"],
+  cloudy: ["mdi:weather-cloudy", "Bewölkt"], fog: ["mdi:weather-fog", "Nebel"], hail: ["mdi:weather-hail", "Hagel"], lightning: ["mdi:weather-lightning", "Gewitter"],
+  "lightning-rainy": ["mdi:weather-lightning-rainy", "Gewitter, Regen"], pouring: ["mdi:weather-pouring", "Starkregen"], rainy: ["mdi:weather-rainy", "Regen"],
+  snowy: ["mdi:weather-snowy", "Schnee"], "snowy-rainy": ["mdi:weather-snowy-rainy", "Schneeregen"], windy: ["mdi:weather-windy", "Windig"],
+  "windy-variant": ["mdi:weather-windy-variant", "Windig, bewölkt"], exceptional: ["mdi:weather-sunny-alert", "Unwetter"]};
+// Funktionen einer Medien-Taste (menue.cpp: PlayerTeil) - [fn, Name, Symbol]
+const M_MTASTEN = [["play_pause", "Play / Pause", "play-pause"], ["play", "Play", "play"], ["pause", "Pause", "pause"],
+  ["stop", "Stopp", "stop"], ["prev", "Zurück (vorheriger Titel)", "skip-previous"], ["next", "Weiter (nächster Titel)", "skip-next"],
+  ["mute", "Stumm", "volume-high"], ["vol_up", "Lauter", "volume-plus"], ["vol_down", "Leiser", "volume-minus"],
+  ["shuffle", "Zufall", "shuffle"], ["repeat", "Wiederholen", "repeat"], ["power", "Ein / Aus", "power"]];
+const M_MTASTE = Object.fromEntries(M_MTASTEN.map(([k, l, i]) => [k, { l, i }]));
+const M_MEDIEN = ["mtitel", "mtaste", "vpreset"];
+// Einstellungen der Remote (generiert aus den eingebauten Seiten: esphome/tools/einst_gen.py)
+// [Widget-ID, Art (b Schalter/Knopf, s Regler, i Anzeige), Name, Seite]
+const M_EINST = [["disp_bri_sld", "s", "Display", "Bildschirm"], ["h_bri", "i", "Hinweis (h_bri)", "Bildschirm"], ["kbd_light_btn", "b", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdon", "i", "Hinweis (h_kbdon)", "Bildschirm"], ["kbd_bri_sld", "s", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdbri", "i", "Hinweis (h_kbdbri)", "Bildschirm"], ["to_sld", "s", "Display aus nach", "Bildschirm"], ["h_to", "i", "Hinweis (h_to)", "Bildschirm"], ["ps_dim_sld", "s", "Abdunkeln nach", "Bildschirm"], ["ps_h_dim", "i", "Hinweis (ps_h_dim)", "Bildschirm"], ["ps_dimp_sld", "s", "Abdunkeln auf", "Bildschirm"], ["ps_h_dimp", "i", "Hinweis (ps_h_dimp)", "Bildschirm"], ["show_ble_btn", "b", "Bluetooth-Symbol", "Anzeige"], ["h_sh_ble", "i", "Hinweis (h_sh_ble)", "Anzeige"], ["show_wifi_btn", "b", "WLAN-Symbol", "Anzeige"], ["h_sh_wifi", "i", "Hinweis (h_sh_wifi)", "Anzeige"], ["show_batt_btn", "b", "Akkustand", "Anzeige"], ["h_sh_batt", "i", "Hinweis (h_sh_batt)", "Anzeige"], ["show_clock_btn", "b", "Uhrzeit", "Anzeige"], ["h_sh_clock", "i", "Hinweis (h_sh_clock)", "Anzeige"], ["show_assi_btn", "b", "Assistenten-Symbol", "Anzeige"], ["h_sh_assi", "i", "Hinweis (h_sh_assi)", "Anzeige"], ["show_motion_btn", "b", "Bewegungs-Symbol", "Anzeige"], ["show_ha_btn", "b", "Home-Assistant-Symbol", "Anzeige"], ["h_sh_ha", "i", "Hinweis (h_sh_ha)", "Anzeige"], ["cover_player_btn", "b", "Cover Player", "Anzeige"], ["h_cov_p", "i", "Hinweis (h_cov_p)", "Anzeige"], ["cover_home_btn", "b", "Cover Startseite", "Anzeige"], ["h_cov_h", "i", "Hinweis (h_cov_h)", "Anzeige"], ["mem_sld", "s", "Menü merken für", "Anzeige"], ["ps_h_mem", "i", "Hinweis (ps_h_mem)", "Anzeige"], ["menu_close_sld", "s", "Menü schließen nach", "Anzeige"], ["h_menu_close", "i", "Hinweis (h_menu_close)", "Anzeige"], ["sd_logos_btn", "b", "Logos von SD-Karte", "Anzeige"], ["h_sd_logos", "i", "Hinweis (h_sd_logos)", "Anzeige"], ["ps_wifi_btn", "b", "WLAN-Sparmodus", "Energie & Wecken"], ["ps_h_wifi", "i", "Hinweis (ps_h_wifi)", "Energie & Wecken"], ["ps_wifimax_btn", "b", "Sparmodus stark (Ruhe)", "Energie & Wecken"], ["ps_h_wifimax", "i", "Hinweis (ps_h_wifimax)", "Energie & Wecken"], ["ps_wifi_off_btn", "b", "WLAN aus im Ruhezustand", "Energie & Wecken"], ["ps_h_off", "i", "Hinweis (ps_h_off)", "Energie & Wecken"], ["ps_wifis_sld", "s", "WLAN aus nach", "Energie & Wecken"], ["ps_h_offs", "i", "Hinweis (ps_h_offs)", "Energie & Wecken"], ["ps_wifitv_sld", "s", "WLAN aus bei TV an", "Energie & Wecken"], ["ps_h_wifitv", "i", "Hinweis (ps_h_wifitv)", "Energie & Wecken"], ["ps_cpu_sld", "s", "Prozessor drosseln", "Energie & Wecken"], ["ps_h_cpu", "i", "Hinweis (ps_h_cpu)", "Energie & Wecken"], ["ps_light_btn", "b", "Leichtschlaf", "Energie & Wecken"], ["ps_wfest_btn", "b", "WLAN-Schnellstart", "Energie & Wecken"], ["ps_wfrueh_btn", "b", "WLAN früh einschalten", "Energie & Wecken"], ["ps_nurble_btn", "b", "Nur Bluetooth", "Energie & Wecken"], ["ps_nurble_h", "i", "WLAN bleibt aus, Home Assistant, Bilder und Sprache laufen über Bluetooth. Für Updates schaltet das Wartungsfenster das WLAN kurz ein.", "Energie & Wecken"], ["ps_bleidle_btn", "b", "BLE-Verbindung langsam", "Energie & Wecken"], ["ps_h_ble", "i", "Hinweis (ps_h_ble)", "Energie & Wecken"], ["ps_bles_sld", "s", "BLE langsam nach", "Energie & Wecken"], ["ps_h_bles", "i", "Hinweis (ps_h_bles)", "Energie & Wecken"], ["motion_mode_lbl", "i", "Aufwecken bei", "Energie & Wecken"], ["mm_0", "b", "Aus", "Energie & Wecken"], ["mm_1", "b", "Bewegung", "Energie & Wecken"], ["mm_2", "b", "Hochheben", "Energie & Wecken"], ["h_motion", "i", "Hinweis (h_motion)", "Energie & Wecken"], ["ms_sld", "s", "Empfindlichkeit", "Energie & Wecken"], ["h_sens", "i", "Hinweis (h_sens)", "Energie & Wecken"], ["keys_wake_btn", "b", "Tasten wecken", "Energie & Wecken"], ["h_keys", "i", "Hinweis (h_keys)", "Energie & Wecken"], ["menue_weckt_btn", "b", "Menütaste bei dunklem Display", "Energie & Wecken"], ["h_menue_weckt", "i", "Hinweis (h_menue_weckt)", "Energie & Wecken"], ["dim_wake_btn", "b", "Aufhellen bei Bewegung", "Energie & Wecken"], ["h_dim_wake", "i", "Hinweis (h_dim_wake)", "Energie & Wecken"], ["dim_hold_btn", "b", "Nicht abdunkeln bei Bewegung", "Energie & Wecken"], ["h_dim_hold", "i", "Hinweis (h_dim_hold)", "Energie & Wecken"], ["ds_sld", "s", "Empfindlichkeit (beide oben)", "Energie & Wecken"], ["h_dim_sens", "i", "Hinweis (h_dim_sens)", "Energie & Wecken"], ["klopf_btn", "b", "Doppelt klopfen weckt", "Energie & Wecken"], ["kl_sld", "s", "Klopf-Empfindlichkeit", "Energie & Wecken"], ["h_klopf", "i", "Hinweis (h_klopf)", "Energie & Wecken"], ["ps_touch_btn", "b", "Touch weckt", "Energie & Wecken"], ["ps_h_touch", "i", "Hinweis (ps_h_touch)", "Energie & Wecken"], ["ps_touchms_sld", "s", "Touch-Abfrage", "Energie & Wecken"], ["ps_h_touchms", "i", "Hinweis (ps_h_touchms)", "Energie & Wecken"], ["ps_deep_btn", "b", "Tiefschlaf im Ruhezustand", "Energie & Wecken"], ["ps_h_deep", "i", "Hinweis (ps_h_deep)", "Energie & Wecken"], ["ps_deepble_btn", "b", "Nur ohne Bluetooth", "Energie & Wecken"], ["ps_deeps_sld", "s", "Tiefschlaf nach", "Energie & Wecken"], ["ps_h_deeps", "i", "Hinweis (ps_h_deeps)", "Energie & Wecken"], ["ps_deeptv_sld", "s", "Tiefschlaf bei TV an", "Energie & Wecken"], ["ps_h_deeptv", "i", "Hinweis (ps_h_deeptv)", "Energie & Wecken"], ["ps_low_sld", "s", "Sparmodus bei Akku unter", "Energie & Wecken"], ["ps_h_low", "i", "Hinweis (ps_h_low)", "Energie & Wecken"], ["tile_assi", "b", "Assistent", "Sprache"], ["h_assi", "i", "Hinweis (h_assi)", "Sprache"], ["tile_google_mode", "b", "Google-Modus", "Sprache"], ["h_google_mode", "i", "Hinweis (h_google_mode)", "Sprache"], ["tile_tts", "b", "Antwort hörbar", "Sprache"], ["h_tts", "i", "Hinweis (h_tts)", "Sprache"], ["tile_mic", "b", "Mikrofon", "Sprache"], ["tile_mic_warm", "b", "Mikrofon vorwärmen", "Sprache"], ["h_mic_warm", "i", "Hinweis (h_mic_warm)", "Sprache"], ["ble_state_lbl", "i", "Nicht verbunden", "Bluetooth"], ["ble_slot0", "b", "Platz 1", "Bluetooth"], ["ble_slot1", "b", "Platz 2", "Bluetooth"], ["ble_slot2", "b", "Platz 3", "Bluetooth"], ["ble_slot3", "b", "Platz 4", "Bluetooth"], ["ble_target_lbl", "i", "Platz 1", "Bluetooth"], ["ble_connect", "b", "Verbinden", "Bluetooth"], ["ble_pair", "b", "Koppeln", "Bluetooth"], ["ble_forget", "b", "Löschen", "Bluetooth"], ["ble_eing0_btn", "b", "Eingabe Platz 1", "Bluetooth"], ["ble_eing1_btn", "b", "Eingabe Platz 2", "Bluetooth"], ["ble_eing2_btn", "b", "Eingabe Platz 3", "Bluetooth"], ["ble_eing3_btn", "b", "Eingabe Platz 4", "Bluetooth"], ["h_plaetze", "i", "Hinweis (h_plaetze)", "Bluetooth"], ["ble_par_btn", "b", "Parallel verbunden", "Bluetooth"], ["bt_weg_btn", "b", "Über das Dock", "Bluetooth"], ["h_bt_weg", "i", "Hinweis (h_bt_weg)", "Bluetooth"], ["maus_tempo_sld", "s", "Zeigertempo", "Bluetooth"], ["maus_dpad_btn", "b", "Steuerkreuz als Maus", "Bluetooth"], ["maus_dpad_sld", "s", "Tempo Steuerkreuz", "Bluetooth"], ["maus_zurueck_btn", "b", "Zurück-Taste", "Bluetooth"], ["h_maus_dpad", "i", "Hinweis (h_maus_dpad)", "Bluetooth"], ["ak_status", "i", "Status", "Akku"], ["ak_pct", "i", "Akkustand", "Akku"], ["ak_volt", "i", "Spannung", "Akku"], ["ak_rate", "i", "Rate jetzt (Chip)", "Akku"], ["ak_r1", "i", "Letzte Stunde", "Akku"], ["ak_r24", "i", "Letzte 24 h", "Akku"], ["ak_rest", "i", "Restlaufzeit", "Akku"], ["ak_geladen", "i", "Zuletzt geladen", "Akku"], ["ak_geladen2", "i", "ak_geladen2", "Akku"], ["ak_schlaf", "i", "Tiefschlaf seit Ladung", "Akku"], ["dock_an_btn", "b", "Smart Display im Dock", "Smart Display"], ["h_dock_an", "i", "Hinweis (h_dock_an)", "Smart Display"], ["dock_disp_btn", "b", "Display im Dock", "Smart Display"], ["h_dock_disp", "i", "Hinweis (h_dock_disp)", "Smart Display"], ["dock_von_sld", "s", "an ab", "Smart Display"], ["dock_bis_sld", "s", "an bis", "Smart Display"], ["musik_dock_btn", "b", "Im Dock bei Musik", "Smart Display"], ["h_musik_dock", "i", "Hinweis (h_musik_dock)", "Smart Display"], ["musik_player_btn", "b", "Nur wenn Player spielt", "Smart Display"], ["h_musik_player", "i", "Hinweis (h_musik_player)", "Smart Display"], ["ha_dock_btn", "b", "HA-Befehle über das Dock", "Smart Display"], ["h_ha_dock", "i", "Hinweis (h_ha_dock)", "Smart Display"], ["ha_link_btn", "b", "HA-Verbindung in Ruhe", "Smart Display"], ["h_ha_link", "i", "Hinweis (h_ha_link)", "Smart Display"], ["ha_linkm_btn", "b", "HA in Ruhe: Art", "Smart Display"], ["h_ha_linkm", "i", "Hinweis (h_ha_linkm)", "Smart Display"], ["tile_touchtest", "b", "Touch-Test", "Wartung & Tests"], ["h_touch", "i", "Hinweis (h_touch)", "Wartung & Tests"], ["tile_button_test", "b", "Tasten-Test", "Wartung & Tests"], ["h_btn", "i", "Hinweis (h_btn)", "Wartung & Tests"], ["clean_dur_sld", "s", "Reinigungsdauer", "Wartung & Tests"], ["h_cleandur", "i", "Hinweis (h_cleandur)", "Wartung & Tests"], ["tile_clean", "b", "Reinigungsmodus", "Wartung & Tests"], ["h_clean", "i", "Hinweis (h_clean)", "Wartung & Tests"], ["tile_sd", "b", "SD-Karte", "Wartung & Tests"], ["h_sd_tile", "i", "Hinweis (h_sd_tile)", "Wartung & Tests"], ["ps_log_btn", "b", "Debug-Modus", "Wartung & Tests"], ["ps_h_log", "i", "Hinweis (ps_h_log)", "Wartung & Tests"], ["testmod_btn", "b", "Testmodus (immer online)", "Wartung & Tests"], ["ps_h_test", "i", "Hinweis (ps_h_test)", "Wartung & Tests"], ["tile_update", "b", "Firmware aktualisieren", "Wartung & Tests"], ["h_update", "i", "Hinweis (h_update)", "Wartung & Tests"], ["tile_shutdown", "b", "Gerät herunterfahren", "Wartung & Tests"], ["tile_restart", "b", "Gerät neu starten", "Wartung & Tests"], ["h_restart", "i", "Hinweis (h_restart)", "Wartung & Tests"], ["ak_graph", "g", "Verlauf 24 h", "Akku"]];
+const M_EINST_K = Object.fromEntries(M_EINST.map((e) => [e[0], e]));
+// Bildquellen fuer Menue-Eintraege "Kamerabild": die beiden Klingel-Plaetze; Namen aus der Seite "Klingel" (_klingelLaden)
+const M_KAMERAS = [["klingel_haus", "Klingel 1"], ["klingel_wohnung", "Klingel 2"]];
+const M_TYPE = Object.fromEntries(M_TYPES.map(([k, l, i]) => [k, { l, i }]));
+// Nur Funktionsseiten der Remote - die Navigationsseiten des alten Menues gibt es seit 2026-10-06 nicht mehr.
+const M_SPECIAL = [
+  ["media", "Mediaplayer"], ["ziffern", "Ziffernblock"], ["tastatur", "Tastatur (Buchstaben)"],
+  ["cam_view", "Kamerabild auf der Remote"], ["cam_live", "Live-Bild auf der Remote"],
+  ["ble", "Bluetooth"], ["voice_set", "Sprache"], ["bright", "Bildschirm"], ["show", "Anzeige"],
+  ["power", "Energie & Wecken"], ["akku", "Akku"], ["service", "Wartung & Tests"], ["sd", "SD-Karte"],
+  ["touchpad", "Touchpad (Maus)"], ["dock", "Smart Display"], ["musik", "Musik-Anzeige"], ["extras", "Smart Display (Einstellungen)"], ["gesten", "Gesten (Seite der Remote)"],
+];
+const M_SPECIAL_L = Object.fromEntries(M_SPECIAL);
+// Eingebauter Inhalt eines Popups statt Eintraegen (2026-10-13 Tastatur, 2026-10-27 Ziffern/Touchpad)
+const M_INHALTE = [["tastatur", "Eingebaute Tastatur"], ["ziffern", "Eingebauter Ziffernblock"], ["touchpad", "Eingebautes Touchpad (Maus)"]];
+const M_INHALT_HINWEIS = {
+  tastatur: "Zeigt die eingebaute Tastatur statt der Einträge. Ist der Wert des Auslösers „zahlen“, kommt der Ziffernblock.",
+  ziffern: "Zeigt den eingebauten Ziffernblock statt der Einträge. Öffnen per Auslöser oder per Taste („Menüseite als Popup öffnen …“).",
+  touchpad: "Zeigt das eingebaute Touchpad (Maus für PC/Tablet) statt der Einträge. Öffnen per Auslöser oder per Taste („Menüseite als Popup öffnen …“).",
+};
+const M_DOMAINS = { toggle: ["switch", "input_boolean", "light", "fan", "automation", "script", "media_player", "climate", "siren", "lock"],
+  light: ["light"], mtitel: ["media_player"], mtaste: ["media_player"], vpreset: ["media_player"], number: ["number", "input_number", "media_player"], select: ["select", "input_select"], cover: ["cover"], sensor: ["sensor", "binary_sensor", "input_select", "input_number", "input_text", "climate", "media_player", "weather", "person", "device_tracker", "lock", "cover", "light", "switch", "input_boolean"] };
+
+// Aussehen eines Eintrags (bg/fg/align/size) als CSS fuer die Vorschau - wie gestalten_() in der Firmware
+const M_FARBEN = [["", "Standard"], ["#16a34a", "Grün"], ["#dc2626", "Rot"], ["#2563eb", "Blau"], ["#ea580c", "Orange"],
+  ["#ca8a04", "Gelb"], ["#7c3aed", "Lila"], ["#0e7490", "Türkis"], ["#374151", "Grau"], ["#000000", "Schwarz"]];
+// Rahmenfarbe, wenn der Eintrag per Steuerkreuz markiert ist ("" = Standard: blau)
+const M_FOKUSFARBEN = [["", "Standard (Blau)"], ["#f1f3f5", "Weiß"], ["#3b82f6", "Blau"], ["#22c55e", "Grün"], ["#facc15", "Gelb"],
+  ["#ef4444", "Rot"], ["#a855f7", "Lila"], ["#000000", "Schwarz"]];
+const M_TEXTFARBEN = [["", "Standard"], ["#f1f3f5", "Weiß"], ["#000000", "Schwarz"], ["#22c55e", "Grün"], ["#ef4444", "Rot"],
+  ["#3b82f6", "Blau"], ["#facc15", "Gelb"], ["#8b94a3", "Grau"]];
+function mStil(it) {
+  let s = "";
+  if (it.bg) s += `background:${it.bg};border-color:${it.bg};`;
+  if (it.fg) s += `--fg:${it.fg};`;
+  if (it.align) s += `--al:${{ l: "left", c: "center", r: "right" }[it.align]};--jc:${{ l: "flex-start", c: "center", r: "flex-end" }[it.align]};`;
+  if (it.size) s += `--fs:${{ xs: "9px", s: "11px", m: "13px", l: "16px", xl: "20px" }[it.size]};`;
+  if (it.ic) s += `--ic:${it.ic};`;
+  if (it.rad != null) s += `border-radius:${it.rad}px;`;
+  if (it.rc) s += `border-color:${it.rc};`;
+  if (it.transp) s += "background:transparent;";
+  return s;
+}
+
+// Gemeinsame Bereiche einer Sicherung (Version 2)
+const BK_NAMEN = { jetzt: "Wiedergabe („Jetzt läuft“)", streamer: "Streamer", klingel: "Klingel", licht: "Licht (Helligkeit)", anzeige: "Smart Display (Anzeige)",
+  dock: "Dock-Geräte (Infrarot)", dockscan: "Dock-Suche", sync: "Abgleich-Gruppe" };
+
+// Entitaet ueberall ersetzen (Eintraege, Quellen, Aktionen, Ausloeser) - nur exakt gleiche Texte. Rueckgabe: Anzahl
+function tiefErsetzen(o, von, nach) {
+  let n = 0;
+  if (Array.isArray(o)) o.forEach((v, i) => { if (v === von) { o[i] = nach; n++; } else if (v && typeof v === "object") n += tiefErsetzen(v, von, nach); });
+  else if (o && typeof o === "object") for (const k of Object.keys(o)) { const v = o[k]; if (v === von) { o[k] = nach; n++; } else if (v && typeof v === "object") n += tiefErsetzen(v, von, nach); }
+  return n;
+}
+// Entitaeten, die in einem Objekt vorkommen (fuer "Entitaet ersetzen")
+function entitaetenIn(o, out = new Set()) {
+  if (typeof o === "string") { if (/^[a-z_]+\.[a-z0-9_]+$/.test(o)) out.add(o); }
+  else if (o && typeof o === "object") for (const v of Object.values(o)) entitaetenIn(v, out);
+  return out;
+}
+const M_STIL_KEYS = ["bg", "fg", "fc", "ic", "align", "size", "ia", "rad", "rc", "transp", "lay", "rf"];
+
+// Ausweichen beim Ziehen (2026-10-26, wie Apps am Handy): rects[i] liegt fest, alle anderen, die ueberlappen, rutschen
+// nach unten (der Reihe nach, kaskadierend). false = passt nicht ins Raster (maxH Zeilen).
+function ausweichen(rects, i, maxH = 128) {
+  const ue = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+  const fest = [i];
+  const rest = rects.map((_, j) => j).filter((j) => j !== i && rects[j]).sort((a, b) => rects[a].y - rects[b].y || rects[a].x - rects[b].x);
+  for (const j of rest) {
+    const r = rects[j];
+    let hit, n = 0;
+    while ((hit = fest.find((k) => ue(r, rects[k]))) != null && n++ < 300) r.y = rects[hit].y + rects[hit].h;
+    if (r.y + r.h > maxH) return false;
+    fest.push(j);
+  }
+  return true;
+}
+const ausweichenAn = () => { try { return localStorage.getItem("erk_ausweichen") !== "0"; } catch (e) { return true; } };
+
+// Fluss-Layout wie in der Firmware (components/menue: bauen_)
+
+function mLayout(page) {
+  const used = Array.from({ length: 128 }, () => 0);
+  const free = (x, y, w, h) => { if (x + w > M_COLS || y + h > 128) return false;
+    for (let r = y; r < y + h; r++) for (let c = x; c < x + w; c++) if (used[r] & (1 << c)) return false; return true; };
+  let cur = 0;
+  return (page.items || []).map((it) => {
+    const w = Math.max(1, Math.min(6, it.w || 6));
+    const h = it.h === 0 ? 2 : Math.max(1, Math.min(8, it.h || 1));   // 0 = Hoehe nach Text
+    let x, y;
+    if (page.flow !== false) {
+      let pos = cur;
+      while (pos < 128 * M_COLS && !free(pos % M_COLS, Math.floor(pos / M_COLS), w, h)) pos++;
+      x = pos % M_COLS; y = Math.floor(pos / M_COLS); cur = pos + w;
+    } else { x = Math.max(0, Math.min(M_COLS - w, it.x || 0)); y = Math.max(0, Math.min(127, it.y || 0)); }
+    for (let r = y; r < y + h && r < 128; r++) for (let c = x; c < x + w; c++) used[r] |= 1 << c;
+    return { x, y, w, h };
+  });
+}
+
+const MenuEditor = {
+  get menu() {
+    const c = this.cfg;
+    if (!c.menu) c.menu = { on: false, start: "main", pages: [{ id: "main", title: "Menü", remember: true, flow: true, items: [] }] };
+    return c.menu;
+  },
+  get mpage() {
+    // Startseiten (2026-10-28) haben ihren eigenen Editor (Reiter Startseite) - der Menue-Editor zeigt sie nicht
+    const m = this.menu, start = this.s.mode === "home", passt = (x) => !!x.startseite === start;
+    let p = m.pages.find((x) => x.id === this.s.mpage && passt(x));
+    if (!p) {
+      p = start ? m.pages.find(passt) : m.pages.find((x) => x.id === m.start && passt(x)) || m.pages.find(passt) || m.pages[0];
+      this.s.mpage = p?.id;
+      this.s.mitem = null;
+    }
+    return p;
+  },
+  // Menue-Editor oder Startseiten-Editor mit eigener Seite offen: Eintraege gehoeren zu this.mpage (2026-10-28)
+  // Menue- und Startseiten-Editor merken sich ihre offene Seite getrennt (beide benutzen s.mpage)
+  _seiteMerken(neu) {
+    const s = this.s, alt = s.mode;
+    if (alt === neu) return;
+    if (alt === "menu" || alt === "home") (s.offen ||= {})[alt] = s.mpage;
+    if (neu === "menu" || neu === "home") s.mpage = s.offen?.[neu] ?? null;
+  },
+  _mEditor() { return this.s.mode === "menu" || (this.s.mode === "home" && !this.s.hstd && !!this.mpage); },
+  get mitem() { const p = this.mpage; return p && this.s.mitem != null ? p.items[this.s.mitem] : null; },
+
+  _mItemText(it) {
+    if (it.label) return it.label;
+    if (it.t === "widget") return M_WIDGETS.find(([a]) => a === (it.art || "uhr"))?.[1] || "Widget";
+    if (it.t === "camera") return M_KAMERAS.find(([k]) => k === it.src)?.[1] || "Kamerabild";
+    if (it.t === "mtaste") return M_MTASTE[it.fn || "play_pause"]?.l || it.fn;
+    if (it.t === "vpreset") return `${it.wert ?? 0} %`;
+    if (it.t === "setting") return M_EINST_K[it.src]?.[2] || it.src || "Einstellung";
+    if (it.t === "special") return M_SPECIAL_L[it.page] || it.page || "";
+    if (it.t === "page") return this.menu.pages.find((p) => p.id === it.target)?.title || it.target || "";
+    if (it.entity) return this._hass.states[it.entity]?.attributes.friendly_name || it.entity;
+    return "";
+  },
+  _mState(it) {
+    if (it.t === "setting") return M_EINST_K[it.src] ? (M_EINST_K[it.src][1] === "b" ? "an/aus" : "Wert") : "?";
+    const st = it.entity && this._hass.states[it.entity];
+    if (!st) return it.entity ? "–" : "";
+    if (it.t === "light") return st.state === "on" ? (st.attributes.brightness != null ? `an · ${Math.round(st.attributes.brightness / 2.55)} %` : "an") : st.state === "off" ? "aus" : st.state;
+    if (M_MEDIEN.includes(it.t)) return st.state;
+    if (it.t === "number") {
+      if (it.entity.startsWith("media_player.")) {
+        const v = st.attributes.volume_level;
+        return st.state === "off" ? "aus" : st.state === "unavailable" ? st.state
+          : v != null ? `${st.attributes.is_volume_muted ? "stumm · " : ""}${Math.round(v * 100)} %` : "an";
+      }
+      return `${st.state}${st.attributes.unit_of_measurement ? " " + st.attributes.unit_of_measurement : ""}`;
+    }
+    if (it.t === "cover") return st.attributes.current_position != null ? `${st.attributes.current_position} %` : st.state === "open" ? "offen" : st.state === "closed" ? "zu" : st.state;
+    if (it.t === "select") return st.state;
+    if (it.t === "sensor") return `${st.state}${st.attributes.unit_of_measurement ? " " + st.attributes.unit_of_measurement : ""}`;
+    return st.state === "on" ? "an" : st.state === "off" ? "aus" : st.state;
+  },
+
+  // -------------------------------------------------------------- Ansicht
+  _menuHtml() {
+    const s = this.s, m = this.menu, p = this.mpage;
+    // Seiten als Baum (Unterseiten-Verweise ab der Startseite), auf-/zuklappbar und sortierbar
+    const byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg]));
+    const kinder = (pg) => (pg.items || []).filter((it) => it.t === "page" && byId[it.target]).map((it) => it.target);
+    const zu = this._mZu();
+    const seen = new Set(), rows = [];
+    const walk = (id, depth, parent) => {
+      const pg = byId[id];
+      if (!pg || seen.has(id)) return;
+      seen.add(id);
+      const k = kinder(pg).filter((x) => !seen.has(x) || x === id);
+      const sib = parent ? kinder(byId[parent]) : [];
+      const pos = sib.indexOf(id);
+      rows.push(`<div class="pgr" draggable="${parent ? "true" : "false"}" data-pgid="${esc(id)}" data-pgpar="${esc(parent || "")}" style="margin-left:${Math.min(depth, 6) * 14}px">
+        ${k.length ? `<button class="icon sm tog" data-a="mtog" data-id="${esc(id)}" title="${zu.has(id) ? "aufklappen" : "zuklappen"}"><ha-icon icon="mdi:chevron-${zu.has(id) ? "right" : "down"}"></ha-icon></button>` : '<span class="tog0"></span>'}
+        <button class="pg ${pg.id === p?.id ? "on" : ""}" data-a="mpage" data-id="${esc(pg.id)}">
+          <span><b>${esc(pg.title || pg.id)}</b><small>${esc(pg.id)} · ${(pg.items || []).length} Einträge${k.length && zu.has(id) ? ` · ${k.length} Unterseiten` : ""}</small></span>
+          ${pg.id === m.start ? '<ha-icon icon="mdi:home" title="Startseite"></ha-icon>' : ""}${pg.remember !== false ? '<ha-icon icon="mdi:bookmark-outline" title="wird gemerkt"></ha-icon>' : ""}</button>
+        <button class="icon sm plus" data-a="maddsubvon" data-id="${esc(id)}" title="Unterseite von „${esc(pg.title || pg.id)}“ anlegen"><ha-icon icon="mdi:plus"></ha-icon></button>
+        ${parent ? `<span class="srt"><button class="icon sm" data-a="mpgup" data-id="${esc(id)}" data-p="${esc(parent)}" ${pos > 0 ? "" : "disabled"} title="nach oben"><ha-icon icon="mdi:arrow-up"></ha-icon></button><button class="icon sm" data-a="mpgdown" data-id="${esc(id)}" data-p="${esc(parent)}" ${pos < sib.length - 1 ? "" : "disabled"} title="nach unten"><ha-icon icon="mdi:arrow-down"></ha-icon></button></span>` : ""}
+      </div>`);
+      if (!zu.has(id)) for (const kid of k) walk(kid, depth + 1, id);
+    };
+    walk(m.start, 0, null);
+    // zugeklappte Aeste zaehlen als gesehen
+    const markiere = (id) => { const pg = byId[id]; if (!pg) return; for (const kid of kinder(pg)) if (!seen.has(kid)) { seen.add(kid); markiere(kid); } };
+    for (const id of zu) if (seen.has(id)) markiere(id);
+    const rest = m.pages.filter((pg) => pg.popup && !pg.startseite);
+    const lose = m.pages.filter((pg) => !seen.has(pg.id) && !pg.popup && !pg.startseite);
+    const pages = rows.join("")
+      + (lose.length ? '<div class="pgsep">Nicht im Menü – auf eine Seite oben ziehen oder „Einhängen“</div>' + lose.map((pg) => `<div class="pgr" draggable="true" data-pgid="${esc(pg.id)}" data-pgpar=""><span class="tog0"></span><button class="pg ${pg.id === p?.id ? "on" : ""}" data-a="mpage" data-id="${esc(pg.id)}">
+          <ha-icon class="pic" icon="mdi:link-variant-off"></ha-icon><span><b>${esc(pg.title || pg.id)}</b><small>${(pg.items || []).length} Einträge</small></span></button></div>`).join("") : "")
+      + '<div class="pgsep">Popups<span class="grow"></span><button class="btn small" data-a="maddpopup" title="Neues Popup – leer oder aus einer Vorlage"><ha-icon icon="mdi:plus"></ha-icon>Popup</button></div>'
+      + rest.map((pg) => `<div class="pgr"><span class="tog0"></span><button class="pg ${pg.id === p?.id ? "on" : ""}" data-a="mpage" data-id="${esc(pg.id)}">
+          <ha-icon class="pic" icon="${pg.popup ? "mdi:message-badge-outline" : "mdi:card-outline"}"></ha-icon><span><b>${esc(pg.title || pg.id)}</b><small>${pg.popup ? ((pg.popup.open || []).length ? `${pg.popup.open.length} Auslöser` : "ohne Auslöser") : "ohne Auslöser – nur per HA-Dienst"} · ${(pg.items || []).length} Einträge</small></span></button></div>`).join("");
+    return `<div class="mbar">
+        <label class="inl2" title="Erste Seite, wenn das Menü aufgeht">Menü beginnt mit <select data-mf="start">${m.pages.filter((pg) => !pg.startseite).map((pg) => `<option value="${esc(pg.id)}" ${pg.id === m.start ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}</select></label>
+        <button class="btn small ghost" data-a="werk_menu" title="Menü (alle Seiten und Popups) aus der Werkseinstellung übernehmen"><ha-icon icon="mdi:backup-restore"></ha-icon>Standardmenü laden</button>
+        <label class="inl2" title="Rahmen der Markierung, Regler und Zurück-Knopf im ganzen Menü">Hervorhebung
+          <select data-mf="hl">${M_FOKUSFARBEN.map(([v, n]) => `<option value="${v}" ${(m.hl || "") === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+      </div>
+      <div class="mmain ${s.mitem != null ? "editing" : ""}">
+        <div class="mpages"><h3>Seiten<span class="grow"></span>${this.s.clip?.type === "page" ? `<button class="btn small" data-a="mpastepage" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen</button>` : ""}<button class="btn small" data-a="maddpage"><ha-icon icon="mdi:plus"></ha-icon>Seite</button></h3>${pages}</div>
+        <div class="mprev">${p ? this._mPfadHtml(p) + this._mPageHead(p) + this._mPreview(p) + this._mList(p) : ""}</div>
+        <div class="editor">${this.mitem ? this._mItemEditor() : '<div class="empty"><ha-icon icon="mdi:cursor-default-click-outline"></ha-icon><p>Eintrag in der Vorschau oder Liste antippen.</p></div>'}</div>
+      </div>`;
+  },
+
+  // Seitenbaum (2026-10-27): Weg von der Startseite zur Seite (Elternseiten ueber die Unterseiten-Kacheln)
+  _mEltern() {
+    const m = this.menu, byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg])), eltern = {}, q = [m.start];
+    eltern[m.start] = null;
+    while (q.length) {
+      const id = q.shift();
+      for (const it of byId[id]?.items || []) if (it.t === "page" && byId[it.target] && !(it.target in eltern)) { eltern[it.target] = id; q.push(it.target); }
+    }
+    return eltern;
+  },
+  _mPfadHtml(p) {
+    const el = this._mEltern(), weg = [];
+    if (!(p.id in el)) return `<div class="mpfad"><ha-icon icon="mdi:${p.popup ? "message-badge-outline" : "link-variant-off"}"></ha-icon><b>${esc(p.title || p.id)}</b><small>${p.popup ? "Popup" : "nicht im Menü verlinkt"}</small></div>`;
+    for (let id = p.id; id != null; id = el[id]) weg.unshift(id);
+    const byId = Object.fromEntries(this.menu.pages.map((pg) => [pg.id, pg]));
+    return `<div class="mpfad"><ha-icon icon="mdi:home-outline"></ha-icon>${weg.map((id, k) => k === weg.length - 1 ? `<b>${esc(byId[id].title || id)}</b>`
+      : `<button class="lnk" data-a="mpage" data-id="${esc(id)}">${esc(byId[id].title || id)}</button><ha-icon icon="mdi:chevron-right"></ha-icon>`).join("")}</div>`;
+  },
+  // Seite id unter neue Elternseite haengen (Ziehen im Baum): Kachel bei der alten Elternseite entfernen, bei der neuen
+  // anhaengen (Name/Symbol der alten Kachel bleiben)
+  _mUmhaengen(id, alt, neu) {
+    const m = this.menu, byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg]));
+    if (!byId[id] || !byId[neu] || id === neu || alt === neu) return false;
+    // keine Schleife: neue Elternseite darf nicht unter der Seite haengen
+    const unter = new Set([id]), q = [id];
+    while (q.length) for (const it of byId[q.shift()]?.items || []) if (it.t === "page" && byId[it.target] && !unter.has(it.target)) { unter.add(it.target); q.push(it.target); }
+    if (unter.has(neu)) { this.s.msg = { err: true, text: "Eine Seite kann nicht unter ihre eigene Unterseite." }; return true; }
+    let kachel = null;
+    if (alt && byId[alt]) {
+      const j = byId[alt].items.findIndex((it) => it.t === "page" && it.target === id);
+      if (j >= 0) [kachel] = byId[alt].items.splice(j, 1);
+    }
+    (byId[neu].items ||= []).push(kachel || { t: "page", target: id, label: byId[id].title || id, w: 6, h: 1 });
+    this._touch();
+    this.s.msg = { text: `„${byId[id].title || id}“ hängt jetzt unter „${byId[neu].title || neu}“ (als letzter Eintrag).`, undo: true };
+    return true;
+  },
+  _mBaumBind() {
+    const r = this.shadowRoot;
+    r.querySelectorAll(".mpages .pgr").forEach((row) => {
+      row.ondragstart = (e) => { e.dataTransfer.setData("text/plain", row.dataset.pgid + "|" + row.dataset.pgpar); e.dataTransfer.effectAllowed = "move"; row.classList.add("drag"); };
+      row.ondragend = () => r.querySelectorAll(".pgr").forEach((x) => x.classList.remove("drag", "drop"));
+      row.ondragover = (e) => { if (!row.dataset.pgid) return; e.preventDefault(); row.classList.add("drop"); };
+      row.ondragleave = () => row.classList.remove("drop");
+      row.ondrop = (e) => {
+        e.preventDefault(); row.classList.remove("drop");
+        const [id, alt] = (e.dataTransfer.getData("text/plain") || "").split("|");
+        if (id && this._mUmhaengen(id, alt, row.dataset.pgid)) this._render();
+      };
+    });
+    // Unterseiten-Kachel doppelt antippen: in die Seite wechseln (wie auf der Remote)
+    r.querySelectorAll(".pgrid .pi.t-page").forEach((el) => {
+      el.ondblclick = () => { const it = this.mpage.items[Number(el.dataset.i)]; if (it?.target && this.menu.pages.some((pg) => pg.id === it.target)) { this.s.mpage = it.target; this.s.mitem = null; this.s.msel = []; this._render(); } };
+    });
+  },
+  _mReachable() {
+    const m = this.menu, byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg])), seen = new Set();
+    const walk = (id) => { const pg = byId[id]; if (!pg || seen.has(id)) return; seen.add(id); for (const it of pg.items || []) if (it.t === "page") walk(it.target); };
+    walk(m.start);
+    return seen;
+  },
+  _mTrigRows(p, art) {
+    return (p.popup[art] || []).map((tr, i) => {
+      if (tr.ev === "aktivitaet") {
+        const namen = (this.cfg.activities || []).map((a) => a.name);
+        return `<div class="trig"><span class="eq" style="flex:0 0 auto">Aktivität wechselt auf</span>
+          <select data-mt="to" data-art="${art}" data-i="${i}">${[...new Set([...namen, tr.to])].filter(Boolean).map((n) => `<option ${n === tr.to ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+          <button class="icon sm" data-a="mtrigdel" data-art="${art}" data-i="${i}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>`;
+      }
+      const st = this._hass.states[tr.entity];
+      const opts = st ? [...new Set([st.state, ...(st.attributes.options || []), "on", "off"].filter(Boolean))] : ["on", "off"];
+      return `<div class="trig">
+        <button class="entity sm" data-a="mtrigpick" data-art="${art}" data-i="${i}">${st ? `<span><b>${esc(st.attributes.friendly_name || tr.entity)}</b><small>${esc(tr.entity)}</small></span>` : tr.entity ? `<span><b>${esc(tr.entity)}</b><small>nicht gefunden</small></span>` : "<span><b>Entität wählen …</b></span>"}</button>
+        <input class="attr" data-mt="attr" data-art="${art}" data-i="${i}" value="${esc(tr.attr || "")}" placeholder="Zustand" title="leer = Zustand, sonst Attribut (z. B. app_id)">
+        ${art === "if" ? `<select data-mt="neg" data-art="${art}" data-i="${i}" style="width:auto"><option value="">=</option><option value="1" ${tr.neg ? "selected" : ""}>≠</option></select>` : '<span class="eq">=</span>'}
+        <input data-mt="to" data-art="${art}" data-i="${i}" value="${esc(tr.to || "")}" list="dl-${art}-${i}" placeholder="z. B. on">
+        <datalist id="dl-${art}-${i}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
+        <button class="icon sm" data-a="mtrigdel" data-art="${art}" data-i="${i}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>`;
+    }).join("") || '<div class="none">keine</div>';
+  },
+  // Lauter/Leiser/Stumm der Remote auf dieser Seite (Seiten-Option "vol", 2026-10-26) und welche Tasten das Popup oeffnen
+  _mLautHtml(p) {
+    const lp = p.popup ? this._mLautPopups(p) : [];
+    // "Lauter / Leiser / Stumm steuern hier" (Seiten-Option vol) seit 2026-10-28 nicht mehr im Editor (Nutzer: braucht
+    // es nicht - die Tasten folgen der Belegung); die Firmware wertet ein altes vol weiter aus.
+    if (!p.popup) return "";
+    return `<div class="popedit">
+      ${p.popup ? `<div class="inl"><span>${lp.length ? `<b>Öffnet mit:</b> ${lp.map(esc).join(", ")}` : "Keine Taste öffnet dieses Popup."}</span>
+        <button class="btn small" data-a="mlautlang" title="In allen Aktivitäten: Lauter und Leiser lang drücken öffnet dieses Popup"><ha-icon icon="mdi:volume-plus"></ha-icon>Lauter/Leiser lang → dieses Popup</button></div>
+        <small class="note">Jede andere Taste: unter „Tasten“ den Schritt „Menüseite als Popup öffnen …“ wählen.</small>` : ""}</div>`;
+  },
+
+  // Popup-Vorlagen (2026-10-26): legen nur normale Eintraege mit fester Position an - alles bleibt verschieb-,
+  // vergroesser- und loeschbar
+  _mVorlageModal() {
+    const m = this.s.modal, st = this._hass.states;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const liste = (dom, filt = () => true) => Object.keys(st).filter((e) => e.startsWith(dom + ".") && filt(e)).sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const sel = (k, opts, leer) => `<select data-vl="${k}">${leer ? `<option value="">${leer}</option>` : ""}${opts.map((e) => `<option value="${esc(e)}" ${m[k] === e ? "selected" : ""}>${esc(name(e))}</option>`).join("")}</select>`;
+    const V = [["leer", "Leer", "mdi:card-outline", "Überschrift und Schließen-Knopf"],
+      ["medien", "Medien-Steuerung", "mdi:play-box-multiple-outline", "Titel, ⏮ ⏯ ⏭, Stumm, Lautstärke-Regler und Presets"],
+      ["klingel", "Klingel mit Bild", "mdi:doorbell-video", "Kamerabild, Tür öffnen, Schließen"],
+      ["tastatur", "Tastatur (Streamer)", "mdi:keyboard-outline", "Geht auf, wenn am Streamer eine Eingabe offen ist"],
+      ["ziffern", "Ziffernblock", "mdi:numeric", "Eingebauter Ziffernblock – per Taste oder Auslöser"],
+      ["touchpad", "Touchpad (Maus)", "mdi:gesture-tap", "Eingebautes Touchpad – per Taste oder Auslöser"],
+      ["frage", "Frage (Ja / Nein)", "mdi:help-circle-outline", "Text und zwei Knöpfe"],
+      ["timer", "Timer abgelaufen", "mdi:timer-alert-outline", "Name, Dauer, Uhrzeit, +5 min, Nochmal, OK"]];
+    const mps = liste("media_player");
+    let opt = "";
+    if (m.art === "medien") {
+      m.play = m.play || mps[0] || ""; m.laut = m.laut ?? "";
+      opt = `<label>Wiedergabe (Titel, ⏮ ⏯ ⏭)${sel("play", mps)}</label>
+        <label>Lautstärke (Regler, Presets, Stumm, Tasten)${sel("laut", mps, "derselbe Player")}</label>
+        <label>Presets in %<input data-vl="presets" value="${esc(m.presets ?? "15, 25, 40")}"></label>`;
+    } else if (m.art === "klingel") {
+      m.src = m.src || "klingel_haus";
+      opt = `<label>Bild<select data-vl="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${m.src === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label>Öffnen, wenn eingeschaltet wird${sel("ausl", liste("input_boolean").concat(liste("binary_sensor")), "später festlegen")}</label>
+        <label>Tür öffnen${sel("lock", liste("lock"), "später festlegen")}</label>`;
+    } else if (m.art === "tastatur") {
+      const tk = liste("sensor", (e) => e.endsWith("_tastatur"));
+      m.ausl = m.ausl || tk[0] || "";
+      opt = `<label>Tastatur-Sensor des Streamers${sel("ausl", tk, tk.length ? "" : "keiner gefunden")}</label>
+        <small class="note">Zeigt die eingebaute Tastatur der Remote (Ziffernblock, wenn der Streamer eine Zahl erwartet).</small>`;
+    }
+    return `<div class="modal" data-a="modalbg"><div class="dlg">
+      <div class="dh"><h2>Neues Popup</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <div class="vorlagen">${V.map(([k, l, i, d]) => `<button class="vorl ${m.art === k ? "on" : ""}" data-a="mvorlage" data-v="${k}"><ha-icon icon="${i}"></ha-icon><span><b>${l}</b><small>${d}</small></span></button>`).join("")}</div>
+      <div class="form"><label>Titel<input data-vl="titel" value="${esc(m.titel || "")}" placeholder="${esc(V.find(([k]) => k === m.art)?.[1] || "Neues Popup")}"></label>${opt}</div>
+      <small class="note">Die Vorlage legt normale Einträge an – danach lässt sich alles verschieben, vergrößern, löschen und ergänzen.</small>
+      <div class="inl" style="justify-content:flex-end"><button class="btn primary" data-a="mvorlage_ok"><ha-icon icon="mdi:check"></ha-icon>Anlegen</button></div></div></div>`;
+  },
+
+  _mVorlageAnlegen() {
+    const s = this.s, m = s.modal, menu = this.menu;
+    const NAMEN = { leer: "Neues Popup", medien: "Medien", klingel: "Klingel", tastatur: "Tastatur", ziffern: "Ziffern", touchpad: "Touchpad", frage: "Frage", timer: "Timer" };
+    const titel = (m.titel || "").trim() || NAMEN[m.art];
+    const id = this._mNewId("popup_" + (titel.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "neu"));
+    const pg = { id, title: titel, remember: false, flow: false, popup: { open: [], close: [], timeout: 0, wake: true }, items: [] };
+    const zu = { t: "action", label: "Schließen", align: "c", steps: [{ t: "int", fn: "popup_close" }] };
+    const add = (it, x, y, w, h) => pg.items.push({ ...it, x, y, w, h });
+    if (m.art === "medien") {
+      const play = m.play || "", laut = m.laut || play;
+      const pre = [...new Set(String(m.presets ?? "15, 25, 40").split(/[^0-9]+/).filter(Boolean).map((v) => Math.max(0, Math.min(100, Number(v)))))].slice(0, 6);
+      add({ t: "mtitel", entity: play }, 0, 0, 4, 2);
+      add({ t: "mtaste", fn: "mute", label: "Stumm", entity: laut }, 4, 0, 2, 2);
+      ["prev", "play_pause", "next"].forEach((fn, n) => add({ t: "mtaste", fn, entity: play }, n * 2, 2, 2, 1));
+      add({ t: "number", label: "Lautstärke", entity: laut, ok: "mute", st: 5 }, 0, 3, 6, 2);
+      pre.forEach((v, n) => add({ t: "vpreset", wert: v, entity: laut }, (n % 3) * 2, 5 + Math.floor(n / 3), 2, 1));
+    } else if (m.art === "klingel") {
+      add({ t: "text", label: `${titel}: es hat geklingelt` }, 0, 0, 6, 1);
+      add({ t: "camera", src: m.src || "klingel_haus" }, 0, 1, 6, 3);
+      add(zu, 0, 4, 3, 1);
+      add({ t: "action", label: "Tür öffnen", bg: "#16a34a", fg: "#ffffff", align: "c", steps: m.lock ? [{ t: "ha", svc: "lock.open", entity: m.lock, data: {} }] : [] }, 3, 4, 3, 1);
+      pg.popup.excl = true;
+      if (m.ausl) { pg.popup.open.push({ entity: m.ausl, to: "on" }); pg.popup.close.push({ entity: m.ausl, to: "off" }); }
+    } else if (m.art === "tastatur") {
+      pg.inhalt = "tastatur";
+      if (m.ausl) {
+        pg.popup.open.push({ entity: m.ausl, to: "text" }, { entity: m.ausl, to: "zahlen" });
+        pg.popup.close.push({ entity: m.ausl, to: "aus" });
+      }
+    } else if (m.art === "ziffern" || m.art === "touchpad") {
+      pg.inhalt = m.art;
+    } else if (m.art === "timer") {   // wie __init__.py _timer_popup
+      const t = "sensor.esphomeremote_timer_abgelaufen";
+      pg.popup = { open: [{ entity: t, attr: "status", to: "abgelaufen" }], close: [{ entity: t, attr: "status", to: "aus" }], timeout: 0, wake: true, excl: true };
+      add({ t: "sensor", entity: t, label: "Abgelaufen", lay: "g", icon: "timer-outline", bg: "#7c2d12" }, 0, 0, 6, 2);
+      add({ t: "action", label: "Dauer", sub: { e: t, a: "dauer" } }, 0, 2, 6, 1);
+      add({ t: "action", label: "Abgelaufen um", sub: { e: t, a: "abgelaufen_um" } }, 0, 3, 6, 1);
+      add({ t: "action", label: "+5 min", icon: "plus", align: "c", steps: [{ t: "ha", svc: "esphomeremote_konfig.timer_verlaengern", data: { minuten: "5" } }, { t: "int", fn: "popup_close" }] }, 0, 4, 3, 1);
+      add({ t: "action", label: "Nochmal", icon: "timer-outline", align: "c", steps: [{ t: "ha", svc: "esphomeremote_konfig.timer_neu_starten", data: {} }, { t: "int", fn: "popup_close" }] }, 3, 4, 3, 1);
+      add({ t: "action", label: "OK", align: "c", size: "l", bg: "#16a34a", fg: "#ffffff", steps: [{ t: "int", fn: "popup_close" }] }, 0, 5, 6, 2);
+    } else if (m.art === "frage") {
+      add({ t: "text", label: "Frage?" }, 0, 0, 6, 2);
+      add({ t: "action", label: "Nein", align: "c", steps: [{ t: "int", fn: "popup_close" }] }, 0, 5, 3, 2);
+      add({ t: "action", label: "Ja", bg: "#16a34a", fg: "#ffffff", align: "c", size: "l", steps: [{ t: "int", fn: "popup_close" }] }, 3, 5, 3, 2);
+    } else {
+      add({ t: "text", label: titel }, 0, 0, 6, 1);
+      add(zu, 0, 6, 6, 1);
+    }
+    menu.pages.push(pg);
+    s.mpage = id; s.mitem = null; s.modal = null; this._touch();
+    s.msg = { text: `Popup „${titel}“ angelegt.${m.art === "medien" ? " Mit „Lauter/Leiser lang → dieses Popup“ öffnest du es per Taste." : m.art === "frage" ? " Text und die Aktion von „Ja“ anpassen." : " Lege fest, wann es aufgeht (Auslöser)."} Speichern nicht vergessen.` };
+  },
+
+  _mPopupEditor(p) {
+    if (!p.popup) return `<label class="sw small"><input type="checkbox" data-ppg="on"><span>Diese Seite ist ein Popup (mit Auslösern)</span></label>`;
+    const pp = p.popup;
+    return `<div class="popedit"><label class="sw small"><input type="checkbox" data-ppg="on" checked><span><b>Popup</b> – öffnet sich von selbst</span></label>
+      <div class="inl"><label class="inl2">Inhalt <select data-ppg="inhalt"><option value="">Einträge dieser Seite</option>
+        ${M_INHALTE.map(([k, l]) => `<option value="${k}" ${p.inhalt === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+      ${p.inhalt ? `<small class="note">${M_INHALT_HINWEIS[p.inhalt] || ""}</small>` : ""}
+      <div class="ph">Öffnen, wenn … <button class="btn small" data-a="mtrigadd" data-art="open"><ha-icon icon="mdi:plus"></ha-icon>Auslöser</button>
+        <button class="btn small" data-a="mtrigakt" data-art="open"><ha-icon icon="mdi:plus"></ha-icon>Aktivität</button></div>
+      ${this._mTrigRows(p, "open")}
+      <div class="ph">Nur wenn … <button class="btn small" data-a="mtrigadd" data-art="if"><ha-icon icon="mdi:plus"></ha-icon>Bedingung</button></div>
+      ${(p.popup.if || []).length ? this._mTrigRows(p, "if") : '<div class="none">immer</div>'}
+      <div class="ph">Schließen, wenn … <button class="btn small" data-a="mtrigadd" data-art="close"><ha-icon icon="mdi:plus"></ha-icon>Auslöser</button></div>
+      ${this._mTrigRows(p, "close")}
+      <div class="inl"><label class="inl2">Automatisch schließen nach <input type="number" min="0" max="3600" data-ppg="timeout" value="${pp.timeout || 0}" style="width:80px"> s (0 = nie)</label></div>
+      <label class="sw small"><input type="checkbox" data-ppg="wake" ${pp.wake !== false ? "checked" : ""}><span>Display einschalten, wenn es aufgeht</span></label>
+      <div class="inl"><label class="inl2">Knopf oben links <select data-mp="pknopf">
+        <option value="" ${p.pknopf !== "min" ? "selected" : ""}>X – schließen (kommt nicht wieder)</option>
+        <option value="min" ${p.pknopf === "min" ? "selected" : ""}>_ – minimieren (die Menütaste holt es zurück)</option></select></label></div>
+      <small class="note">Die <b>Menütaste</b> minimiert ein offenes Popup immer – ein zweiter Druck holt es zurück, solange die Zeit „Menü-Position merken für“ (Einstellungen) läuft. Der Knopf oben links (und die Zurück-Taste) macht, was hier eingestellt ist. Geschlossen kommt es erst beim nächsten Auslöser wieder${p.inhalt === "tastatur" ? " – die Tastatur also, wenn sie am Fernseher neu aufgeht (spätestens nach 30 min)" : ""}.</small>
+      ${p.inhalt ? "" : `<label class="sw small"><input type="checkbox" data-ppg="excl" ${pp.excl ? "checked" : ""}><span>Vorrang – solange es offen ist, warten andere Popups und gehen erst danach auf</span></label>`}
+      <small class="note">Ein Auslöser greift beim <b>Wechsel</b> auf den Wert (z. B. Skript → on, Schalter → on, App → com.netflix.ninja). Ein Knopf mit „Popup schließen“ schließt es nach einer Auswahl.</small>
+    </div>`;
+  },
+  _mZu() {
+    if (!this._zu) { try { this._zu = new Set(JSON.parse(localStorage.getItem("erk_zu") || "[]")); } catch (e) { this._zu = new Set(); } }
+    return this._zu;
+  },
+  // Kameras der Seiten "Kamerabild"/"Live-Bild" (gilt fuer die ganze Remote, cfg.kameras)
+  _mKameras() {
+    const ks = this.cfg.kameras || [];
+    const alle = Object.keys(this._hass.states).filter((e) => e.startsWith("camera.")).sort();
+    return `<label>Kameras (Links/Rechts auf der Remote blättert)</label>${ks.map((k, j) => `<div class="trig">
+        <input data-kam="n" data-i="${j}" value="${esc(k.n)}" placeholder="Name" style="flex:0 0 32%">
+        <select data-kam="e" data-i="${j}">${[...new Set([k.e, ...alle])].map((e) => `<option ${e === k.e ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>
+        <button class="icon sm" data-a="mkamdel" data-i="${j}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("") || '<div class="none">keine</div>'}
+      <button class="btn small" data-a="mkamadd" ${alle.length && ks.length < 10 ? "" : "disabled"}><ha-icon icon="mdi:plus"></ha-icon>Kamera</button>`;
+  },
+
+  _mPageHead(p) {
+    const slug = this.s.meta[this.s.dev]?.slug, erreichbar = this._mReachable();
+    return `<div class="phd">
+      <div class="inl"><input data-mp="title" value="${esc(p.title || "")}" placeholder="Titel" ${fremdeZeichen(p.title).length ? `title="Zeichen ohne Schrift auf der Remote: ${esc(fremdeZeichen(p.title).join(" "))}" style="border-color:var(--gelb)"` : ""}><input data-mp="id" value="${esc(p.id)}" title="Kennung (für Verweise und HA-Popup)" class="mono"></div>
+      <div class="chk">
+        ${p.popup ? "" : `<label class="sw small"><input type="checkbox" data-mp="remember" ${p.remember !== false ? "checked" : ""}><span>Seite merken (Menü öffnet wieder hier)</span></label>`}
+        <label class="sw small"><input type="checkbox" data-mp="flow" ${p.flow !== false ? "checked" : ""}><span>Automatisch anordnen (nach Reihenfolge)</span></label>
+        ${p.flow === false ? `<label class="sw small" title="Beim Verschieben oder Vergrößern rutschen getroffene Karten nach unten statt überdeckt zu werden"><input type="checkbox" data-ausw="1" ${ausweichenAn() ? "checked" : ""}><span>Andere ausweichen lassen</span></label>` : ""}
+      </div>
+      <details class="mpopt"><summary>Weitere Seiten-Optionen (Markierung, Zurück/X, Farben)</summary><div class="inl"><label class="inl2">Markierung beim Öffnen
+        <select data-mp="focus">
+          <option value="" ${!p.focus ? "selected" : ""}>Standard (${p.popup ? "Popup: keine" : "erster Eintrag"})</option>
+          <option value="first" ${p.focus === "first" ? "selected" : ""}>Erster bedienbarer Eintrag</option>
+          <option value="none" ${p.focus === "none" ? "selected" : ""}>Keine (erst beim ersten Druck aufs Steuerkreuz)</option>
+          <option value="back" ${p.focus === "back" ? "selected" : ""}>Zurück / X oben links</option>
+          ${(p.items || []).map((it, j) => it.t === "text" ? "" : `<option value="i:${j}" ${p.focus === "i:" + j ? "selected" : ""}>Eintrag ${j + 1}: ${esc(this._mItemText(it) || it.t)}</option>`).join("")}
+        </select></label>
+        <label class="inl2">Markierung Zurück / X
+        <select data-mp="bfc">${[["", "Weiß (Standard)"], ...M_FOKUSFARBEN.filter(([v]) => v && v !== "#f1f3f5")].map(([v, n]) => `<option value="${v}" ${(p.bfc || "") === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        <label class="inl2">Zurück / X zeigt
+        <select data-mp="bsym"><option value="">Automatisch (X auf der Startseite und bei Popups, sonst Zurück)</option>
+          <option value="x" ${p.bsym === "x" ? "selected" : ""}>X – schließt das Menü bzw. Popup</option>
+          <option value="back" ${p.bsym === "back" ? "selected" : ""}>Zurück – eine Seite zurück</option></select></label>
+        <label class="inl2">Farbe Zurück / X
+        <select data-mp="bc">${[["", "Blau (Standard)"], ...M_FOKUSFARBEN.filter(([v]) => v && v !== "#3b82f6")].map(([v, n]) => `<option value="${v}" ${(p.bc || "") === v ? "selected" : ""}>${n}</option>`).join("")}</select></label></div></details>
+      <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
+        <button class="btn small" data-a="maddsub" title="Neue Seite anlegen und hier verlinken"><ha-icon icon="mdi:file-tree"></ha-icon>Unterseite</button>
+        ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
+        <button class="btn small ghost" data-a="mclippage" title="Seite samt Unterseiten kopieren – einfügen bei jeder Remote unter „Seiten“"><ha-icon icon="mdi:content-copy"></ha-icon>Seite in Zwischenablage</button>
+        <button class="btn small ghost" data-a="mers" title="Eine Entität überall durch eine andere ersetzen (z. B. anderer Media Player)"><ha-icon icon="mdi:find-replace"></ha-icon>Entität ersetzen</button>
+        <button class="btn small" data-a="mtest" title="Diese Seite jetzt auf ${esc(devName(this.s.dev))} anzeigen (als Popup) – ohne die Auslöser abzuwarten"><ha-icon icon="mdi:cellphone-play"></ha-icon>Auf der Remote zeigen</button>
+        <button class="btn small ghost" data-a="mcopypage"><ha-icon icon="mdi:content-duplicate"></ha-icon>Seite kopieren</button>
+        <button class="btn small ghost" data-a="mdelpage"><ha-icon icon="mdi:delete-outline"></ha-icon>Seite löschen</button></div>
+      ${this._mLautHtml(p)}
+      ${this._mPopupEditor(p)}
+      ${erreichbar.has(p.id) || p.popup ? "" : `<div class="lose"><ha-icon icon="mdi:link-variant-off"></ha-icon><span><b>Nicht im Menü verlinkt</b> – auf der Remote nur als Popup aus HA erreichbar.</span>
+        <div class="inl">Einhängen auf <select id="linkto">${this.menu.pages.filter((pg) => pg.id !== p.id && erreichbar.has(pg.id)).map((pg) => `<option value="${esc(pg.id)}" ${pg.id === this.menu.start ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}</select>
+        <button class="btn small primary" data-a="mlink"><ha-icon icon="mdi:link-variant"></ha-icon>Einhängen</button></div></div>`}
+      <small class="note">Als Popup aus HA: Dienst <code>esphome.${esc(slug)}_menue_popup</code> mit <code>seite: ${esc(p.id)}</code></small>
+    </div>`;
+  },
+
+  _mPreview(p) {
+    const L = mLayout(p);
+    const rows = Math.max(7, ...L.map((l) => l.y + l.h));
+    const cell = (M_W - 2 * M_PAD + M_GAP) / M_COLS;
+    const items = (p.items || []).map((it, i) => {
+      const l = L[i];
+      let st = this._mWertText(it, this._mState(it));
+      const txt = this._mItemText(it);
+      const small = l.w <= 2, tall = l.h >= 2;
+      const sub = it.sub && !M_MEDIEN.includes(it.t) ? this._mQuelle(it.sub, it) : "";
+      if (sub && st) st += " · " + sub;
+      const ic = it.icon ? `<ha-icon icon="mdi:${esc(it.icon)}"></ha-icon>` : "";
+      let inner;
+      if (it.t === "text") inner = `<span class="tx ${it.h === 0 || l.h >= 2 ? "wrap" : ""}">${esc(txt)}</span>`;
+      else if (it.t === "setting" && M_EINST_K[it.src]?.[1] === "i" && !it.label) inner = `<span class="tx wrap">Hinweis der Remote (Text je nach Einstellung, Höhe automatisch)</span>`;
+      else if (it.t === "camera") {   // 2026-10-25: zuletzt aufgenommenes Klingelbild (wie auf der Remote)
+        const datei = { klingel_haus: "esphomeremote_doorbell_haus.jpg", klingel_wohnung: "esphomeremote_doorbell_wohnung.jpg" }[it.src];
+        inner = datei ? `<img class="kambild" src="/local/${datei}?v=${this._kamV ||= Date.now()}" alt="" onerror="this.remove()"><i class="kamname">${esc(M_KAMERAS.find(([k]) => k === it.src)?.[1] || "Kamerabild")}</i>`
+          : `<ha-icon icon="mdi:cctv"></ha-icon><i>${esc(M_KAMERAS.find(([k]) => k === it.src)?.[1] || "Kamerabild")}</i>`;
+      }
+      else if (M_MEDIEN.includes(it.t)) inner = this._mMedienVorschau(it, l);
+      else if (it.t === "widget") inner = this._mWidgetVorschau(it, l);
+      else if (tall && it.t === "setting" && M_EINST_K[it.src]?.[1] === "s") inner = `<span class="row1"><b>${esc(txt)}</b><i>Wert</i></span><span class="sl"><span style="width:50%"></span></span>`;
+      else if (tall && (it.t === "light" || it.t === "cover" || it.t === "number")) inner = `<span class="row1"><b>${esc(txt)}</b><i>${esc(st)}</i></span>${it.t === "light" || it.t === "number" ? '<span class="sl"><span style="width:' + (parseInt(st.replace(/\D+/g, "")) || 0) + '%"></span></span>' : '<span class="cb"><em>Zu</em><em>Stop</em><em>Auf</em></span>'}`;
+      else if (it.lay === "i") inner = ic || `<b class="c">${esc(txt)}</b>`;
+      else if (it.lay === "2") inner = `${ic}<span class="zz"><b>${esc(txt)}</b><i>${esc(st || sub)}</i></span>`;
+      else if (it.lay === "g") inner = `<span class="gw ${tall ? "hoch" : ""}"><small>${esc(txt)}</small><b>${esc(st || sub || "–")}</b></span>${ic}`;
+      else if (it.lay === "1") inner = `${ic}<b>${esc(txt)}</b><span class="grow"></span>${st ? `<i>${esc(st)}</i>` : ""}`;
+      else if (tall || small || it.lay === "k") inner = `${ic}<b class="c">${esc(txt)}</b>${st && (tall || it.lay === "k") ? `<i>${esc(st)}</i>` : ""}`;
+      else inner = `${ic}<b>${esc(txt)}</b><span class="grow"></span>${st ? `<i>${esc(st)}</i>` : it.t === "page" || it.t === "special" ? "<i>&gt;</i>" : ""}`;
+      if (sub && !st && !["2", "g"].includes(it.lay) && !M_MEDIEN.includes(it.t)) inner += `<i class="sub">${esc(sub)}</i>`;
+      const badge = it.badge ? this._mQuelle(it.badge, it) : "";
+      if (badge && !["0", "off", "unknown", "unavailable"].includes(badge)) inner += `<em class="badge" style="${it.badge.bg ? `background:${it.badge.bg}` : ""}">${esc(badge)}</em>`;
+      const zs = this._mZstStil(it), sperre = this._mGesperrt(it);
+      const kachel = it.lay === "1" ? "row" : it.lay === "k" || it.lay === "i" || it.lay === "g" && tall ? "tile" : it.lay === "2" ? "row" : small || tall ? "tile" : "row";
+      return `<div class="pi t-${it.t} ${kachel} ${sperre ? "gesperrt " + (it.wenn?.art === "weg" ? "weg" : "") : ""} ${this.s.mitem === i ? "sel" : ""} ${(this.s.msel || []).includes(i) ? "msel" : ""} ${st === "an" || st.startsWith("an ") || st === "offen" ? "is-on" : ""}"
+        data-a="mitem" data-i="${i}" style="left:${M_PAD + l.x * cell}px;top:${M_PAD + l.y * M_ROW}px;width:${l.w * cell - M_GAP}px;height:${l.h * M_ROW - M_GAP}px;${mStil(it)}${zs}">${inner}
+        ${this.s.mitem === i ? `<span class="rs" data-rs="${i}" title="Größe ziehen"></span>` : ""}</div>`;
+    }).join("");
+    const grid = Array.from({ length: rows * M_COLS }, (_, k) => `<span style="left:${M_PAD + (k % M_COLS) * cell}px;top:${M_PAD + Math.floor(k / M_COLS) * M_ROW}px;width:${cell - M_GAP}px;height:${M_ROW - M_GAP}px"></span>`).join("");
+    const isStart = p.id === this.menu.start;
+    // Displayrand (2026-10-25): unter der Kopfzeile zeigt die Remote 7 Rasterzeilen (konf_root 280 px), der Rest wird
+    // gescrollt - Linie je Bildschirmhoehe, darunter abgedunkelt
+    const inhalt = Math.max(0, ...L.map((l) => l.y + l.h));
+    // Eigene Startseite: nur der Platz zwischen Statusleiste und Aktivitaeten-Leiste (230 px, tasten::startseite_anwenden)
+    const sicht = p.startseite ? 230 / 40 : 7, sichtZ = Math.floor(sicht);
+    const screens = Math.ceil(Math.max(rows, sicht) / sicht);
+    const rand = Array.from({ length: screens - 1 }, (_, k) => { const y = M_PAD + (k + 1) * sicht * M_ROW - M_GAP / 2;
+      return `<div class="pscr" style="top:${y}px"><span>${k === 0 ? "Displayende – ab hier scrollen" : `Ende Bildschirm ${k + 1}`}</span></div>`; }).join("")
+      + (rows > sicht ? `<div class="pdunkel" style="top:${M_PAD + sicht * M_ROW - M_GAP / 2}px;height:${(rows - sicht) * M_ROW + M_PAD}px"></div>` : "");
+    if (p.inhalt === "touchpad") {
+      return `<div class="phone"><div class="phead"><span class="pback">${p.pknopf === "min" ? "_" : "X"}</span><b>Touchpad</b></div>
+        <div class="pinfo" style="text-align:center;padding:40px 8px"><ha-icon icon="mdi:gesture-tap" style="--mdc-icon-size:64px"></ha-icon><br>Eingebautes Touchpad der Remote</div></div>`;
+    }
+    if (p.inhalt === "tastatur" || p.inhalt === "ziffern") {
+      const z = p.inhalt === "ziffern" || this.s.kbdZahlen;
+      return `<div class="phone"><div class="phead"><span class="pback" title="${p.pknopf === "min" ? "Minimieren" : "Schließen"}">${p.pknopf === "min" ? "_" : "X"}</span><b>${z ? "Ziffern" : "Tastatur"}</b></div>
+        ${this._mTastaturVorschau(z)}
+        ${p.inhalt === "tastatur" ? `<div class="pinfo"><div class="seg sm"><button class="${z ? "" : "on"}" data-a="mkbdz" data-v="">Buchstaben (Wert „text“)</button><button class="${z ? "on" : ""}" data-a="mkbdz" data-v="1">Ziffern (Wert „zahlen“)</button></div></div>` : ""}</div>`;
+    }
+    return `<div class="phone"><div class="phead"><span class="pback">${p.popup && p.pknopf === "min" ? "_" : isStart ? "X" : "&lt;"}</span><b>${esc(p.title || p.id)}</b></div>
+      <div class="pgrid ${p.flow === false ? "free" : ""}" style="height:${rows * M_ROW + M_PAD * 2}px"><div class="gl">${grid}</div>${items}${rand}</div>
+      <div class="pinfo">${inhalt <= sichtZ ? `<ha-icon icon="mdi:check"></ha-icon>Passt auf einen Bildschirm (${inhalt} von ${sichtZ} Zeilen)` : `<ha-icon icon="mdi:arrow-expand-vertical"></ha-icon>${inhalt} Zeilen – ${inhalt - sichtZ} werden gescrollt (${Math.ceil(inhalt / sicht)} Bildschirme)`}</div></div>`;
+  },
+
+  // Widget-Vorschau (wie widgets.cpp, vereinfacht) mit den Zustaenden aus HA
+  _mWidgetVorschau(it, l) {
+    const gross = l.h >= 2, H = this._hass.states, jetzt = new Date();
+    const teil = (a) => {
+      if (a === "uhr") {
+        const z = jetzt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+        const d = jetzt.toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "short" });
+        return `<span class="wt wuhr ${gross ? "g" : ""}">${it.datum === "vor" && it.datum !== "aus" ? `<i>${esc(d)}</i>` : ""}<b>${z}</b>${it.datum !== "aus" && it.datum !== "vor" ? `<i>${esc(d)}</i>` : ""}</span>`;
+      }
+      if (a === "wetter") {
+        const st = H[it.art === "kombi" ? it.we : it.entity], [ic, tx] = WETTER_TXT[st?.state] || ["mdi:weather-cloudy", st ? st.state : "Wetter-Entität wählen"];
+        const t = st?.attributes.temperature;
+        return `<span class="wt wwet ${gross ? "g" : ""}"><ha-icon icon="${ic}"></ha-icon><b>${t != null ? String(t).replace(".", ",") + "°" : "–"}</b><i>${esc(tx)}</i></span>`;
+      }
+      if (a === "akku") return `<span class="wt ${gross ? "g" : ""}"><ha-icon icon="mdi:battery-70"></ha-icon><b>${esc(this.s.meta[this.s.dev]?.akku ?? 70)} %</b></span>`;
+      if (a === "medien") {
+        const st = H[it.art === "kombi" ? it.me : it.entity], laeuft = ["playing", "paused"].includes(st?.state);
+        return `<span class="wt wmed ${gross ? "g" : ""}"><ha-icon icon="mdi:play-pause"></ha-icon><span><b>${esc(laeuft ? st.attributes.media_title || "Wiedergabe" : "Nichts läuft")}</b><i>${esc(laeuft ? st.attributes.media_artist || st.attributes.app_name || "" : "")}</i></span></span>`;
+      }
+      if (a === "timer") {
+        const st = H[it.entity];
+        return `<span class="wt ${gross ? "g" : ""}"><ha-icon icon="mdi:timer-outline"></ha-icon><b>${esc(st?.attributes.remaining || st?.attributes.duration || "--:--")}</b><i>${esc(it.label || st?.attributes.friendly_name || "Timer")}</i></span>`;
+      }
+      if (a === "kamera") return `<span class="wt"><ha-icon icon="mdi:cctv"></ha-icon><i>${esc(H[it.entity]?.attributes.friendly_name || "Kamera wählen")}</i></span>`;
+      return "";
+    };
+    const art = it.art || "uhr";
+    if (art !== "kombi") return `<span class="wbox">${teil(art)}</span>`;
+    let tl = (it.teile || ["uhr", "wetter"]).slice(0, 3);
+    const laeuft = ["playing", "paused"].includes(H[it.me]?.state);
+    if (tl.includes("medien") && it.mz === "ueber" && laeuft) tl = ["medien"];
+    else if (tl.includes("medien") && (it.mz === "nur" || it.mz === "ueber") && !laeuft && tl.length > 1) tl = tl.filter((x) => x !== "medien");
+    return `<span class="wbox kombi">${tl.map(teil).join("")}</span>`;
+  },
+  // Tasten, die diese Seite als Popup oeffnen ("Aktivitaet · Taste lang")
+  _mLautPopups(p) {
+    const out = [];
+    (this.cfg.activities || []).forEach((a) => Object.entries(a.keys || {}).forEach(([k, kc]) => GESTURES.forEach(([g, gl]) => {
+      if ((kc[g] || []).some((st) => st.t === "int" && st.fn === "popup_open" && st.page === p.id)) out.push(`${a.name} · ${KEYNAME[k] || k} ${gl}`);
+    })));
+    return out;
+  },
+
+  // Kachel-Optionen in der Vorschau (wie menue.cpp quelle_/extras_zustand_)
+  _mQuelle(q, it) {
+    if (!q) return "";
+    if (q.t != null) return q.t;
+    const st = this._hass.states[q.e || it.entity];
+    if (!st) return "";
+    if (q.a) { const v = st.attributes[q.a]; return v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); }
+    return `${st.state}${st.attributes.unit_of_measurement ? " " + st.attributes.unit_of_measurement : ""}`;
+  },
+  _mWertText(it, txt) {
+    const st = it.entity && this._hass.states[it.entity];
+    if (!st || M_MEDIEN.includes(it.t)) return txt;
+    if (it.nk != null || it.eh != null) {
+      const v = parseFloat(st.state), eh = it.eh ?? st.attributes.unit_of_measurement ?? "";
+      if (!isNaN(v) && it.nk != null) txt = v.toFixed(it.nk).replace(".", ",") + (eh ? " " + eh : "");
+      else if (it.eh != null) txt = st.state + (eh ? " " + eh : "");
+    }
+    if (it.map && it.map[st.state] != null) txt = it.map[st.state];
+    return txt;
+  },
+  _mZstStil(it) {
+    const st = it.entity && this._hass.states[it.entity];
+    const z = st && (it.zst || []).find((x) => x.w.toLowerCase() === st.state.toLowerCase());
+    if (!z) return "";
+    return `${z.bg ? `background:${z.bg};border-color:${z.bg};` : ""}${z.fg ? `--fg:${z.fg};` : ""}${z.ic ? `--ic:${z.ic};` : ""}`;
+  },
+  _mGesperrt(it) {
+    const w = it.wenn; if (!w) return false;
+    const st = this._hass.states[w.e || it.entity]; if (!st) return false;
+    const ist = w.a ? String(st.attributes[w.a] ?? "") : st.state;
+    const ok = ist.toLowerCase() === String(w.to ?? "").toLowerCase();
+    return w.neg ? ok : !ok;
+  },
+
+  // Medien-Elemente in der Vorschau (wie menue.cpp player_karte_/player_zustand_)
+  _mMedienVorschau(it, l) {
+    const st = it.entity && this._hass.states[it.entity], a = st?.attributes || {};
+    if (it.t === "mtitel") {
+      const DE = { playing: "spielt", paused: "pausiert", idle: "bereit", off: "aus", on: "an", standby: "Standby", unavailable: "nicht da" };
+      const kopf = [it.label, st ? DE[st.state] || st.state : "Media Player wählen"].filter(Boolean).join(" · ");
+      const titel = a.media_title || (st?.state === "off" ? "Ausgeschaltet" : "Nichts läuft");
+      const z2 = it.z2 === "app" ? a.app_name : it.z2 === "source" ? a.source : it.z2 === "none" ? "" : (a.media_artist || a.media_series_title || a.app_name);
+      let zeit = "", anteil = 0;
+      if (it.bar && a.media_duration > 0 && a.media_position != null) {
+        const pos = Math.min(a.media_duration, a.media_position), mm = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}`;
+        zeit = ` · ${mm(pos)} / ${mm(a.media_duration)}`; anteil = pos / a.media_duration * 100;
+      }
+      return `<span class="mti"><small class="${st?.state === "playing" ? "an" : ""}">${esc(kopf + zeit)}</small><b class="${it.lauf ? "lauf" : ""}">${esc(titel)}</b>${l.h >= 2 ? `<small>${esc(z2 || "")}</small>` : ""}${it.bar ? `<span class="mbar"><span style="width:${anteil}%;${it.rf ? `background:${it.rf}` : ""}"></span></span>` : ""}</span>`;
+    }
+    const vol = a.volume_level != null ? Math.round(a.volume_level * 100) : null;
+    let ic = it.icon, an = false, rot = false, label = it.label || "";
+    if (it.t === "vpreset" && (it.werte || []).length >= 2)
+      return `<span class="mseg">${it.werte.map((v) => `<span class="${vol != null && Math.abs(vol - v) <= 2 ? "an" : ""}">${v}</span>`).join("")}</span>`;
+    if (it.t === "vpreset") { an = vol != null && Math.abs(vol - (it.wert ?? 0)) <= 2; if (!label && !ic) label = `${it.wert ?? 0} %`; }
+    else {
+      const fn = it.fn || "play_pause";
+      if (!ic) ic = fn === "play_pause" ? (st?.state === "playing" ? "pause" : "play") : fn === "mute" && a.is_volume_muted ? "volume-off" : M_MTASTE[fn]?.i;
+      if (fn === "mute") rot = !!a.is_volume_muted;
+      if (fn === "shuffle") an = !!a.shuffle;
+      if (fn === "repeat") an = a.repeat === "all" || a.repeat === "one";
+      if (fn === "power") an = !!st && !["off", "standby", "unavailable"].includes(st.state);
+    }
+    const nebeneinander = l.h < 2 && l.w > 2;
+    return `<span class="mtk ${an ? "an" : ""} ${rot ? "rot" : ""} ${nebeneinander ? "neben" : ""}">${ic ? `<ha-icon icon="mdi:${esc(ic)}"></ha-icon>` : ""}${label ? (ic ? `<small>${esc(label)}</small>` : `<b>${esc(label)}</b>`) : ""}</span>`;
+  },
+
+  // Eingebaute Tastatur in der Vorschau (esphomeremote-eingabe.h: QWERTZ bzw. Ziffernblock)
+  _mTastaturVorschau(zahlen) {
+    const R = zahlen ? [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["<–", "0", "OK"]]
+      : [["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], ["q", "w", "e", "r", "t", "z", "u", "i", "o", "p"],
+        ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ö"], ["^", "y", "x", "c", "v", "b", "n", "m", ["<–", 2]], ["ä", "ü", ["Leer", 4], ".", ",", ["Ent", 2]]];
+    return `<div class="kbd ${zahlen ? "zahlen" : ""}">${R.map((r) => `<div>${r.map((k) => Array.isArray(k)
+      ? `<span style="flex:${k[1]}">${esc(k[0])}</span>` : `<span>${esc(k)}</span>`).join("")}</div>`).join("")}</div>`;
+  },
+
+  _mKopierKnoepfe(g, n) {
+    const c = this.s.clip, passt = c && ["gest", "steps", "key"].includes(c.type);
+    return `<button class="icon sm" data-a="copyg" data-g="${g}" title="Aktionen kopieren" ${n ? "" : "disabled"}><ha-icon icon="mdi:content-copy"></ha-icon></button>
+      ${passt ? `<button class="icon sm" data-a="pasteg" data-g="${g}" title="Hier einfügen: ${esc(c.label)}"><ha-icon icon="mdi:content-paste"></ha-icon></button>` : ""}`;
+  },
+  // Kachel-Optionen (2026-10-26): Pfad "sub.a", "zst.0.bg" ... ; leer/false = entfernen
+  _mkSetzen(pfad, v, typ) {
+    const it = this.mitem; if (!it) return;
+    if (typ === "num") v = v === "" || v == null ? undefined : Number(v);
+    if (typ === "list") { const l = String(v).split(/[^0-9]+/).filter(Boolean).map((x) => Math.max(0, Math.min(100, Number(x)))).slice(0, 6); v = l.length ? l : undefined; }
+    if (v === "" || v === false || v == null) v = undefined;
+    const teile = pfad.split("."), last = teile.pop(), kette = [];
+    let o = it;
+    teile.forEach((k, n) => { kette.push([o, k]); if (o[k] == null) o[k] = /^\d+$/.test(teile[n + 1] ?? last) ? [] : {}; o = o[k]; });
+    if (v === undefined) delete o[last]; else o[last] = v;
+    for (const [par, k] of kette.reverse()) { const x = par[k]; if (x && typeof x === "object" && !Array.isArray(x) && !Object.keys(x).length) delete par[k]; }
+  },
+  _mQuelleHtml(it, k, titel, hinweis) {
+    const q = it[k], art = !q ? "" : q.t != null ? "text" : q.e ? "ent" : "attr";
+    const ent = q?.e || it.entity, st = ent && this._hass.states[ent];
+    const attrs = st ? Object.keys(st.attributes).filter((a) => !["friendly_name", "icon", "entity_picture"].includes(a)) : [];
+    let felder = "";
+    if (art === "text") felder = `<input data-mk="${k}.t" value="${esc(q.t || "")}" placeholder="Text">`;
+    if (art === "ent") felder = `<button class="entity sm" data-a="mkpick" data-k="${k}.e">${q.e ? esc(this._hass.states[q.e]?.attributes.friendly_name || q.e) : "Entität wählen …"}</button>`;
+    if (art === "attr" || art === "ent") felder += `<input data-mk="${k}.a" value="${esc(q?.a || "")}" list="dl-${k}" placeholder="${art === "ent" ? "Attribut (leer = Zustand)" : "Attribut, z. B. temperature"}"><datalist id="dl-${k}">${attrs.map((a) => `<option value="${esc(a)}">${esc(String(st.attributes[a]).slice(0, 30))}</option>`).join("")}</datalist>`;
+    return `<label class="col">${titel}<div class="inl"><select data-mkq="${k}">${[["", "keine"], ["attr", "Attribut dieser Entität"], ["ent", "andere Entität"], ["text", "fester Text"]].map(([v, l]) => `<option value="${v}" ${art === v ? "selected" : ""}>${l}</option>`).join("")}</select>${felder}</div></label>
+      ${hinweis && art ? `<small class="note">${hinweis}</small>` : ""}`;
+  },
+  _mKachelHtml(it) {
+    if (["text", "camera", "setting"].includes(it.t)) return "";
+    const st = it.entity && this._hass.states[it.entity];
+    const zustaende = st ? [...new Set([st.state, "on", "off", ...(st.attributes.options || []), ...(it.entity.startsWith("cover.") ? ["open", "closed"] : []), ...(it.entity.startsWith("media_player.") ? ["playing", "paused", "idle"] : [])])] : ["on", "off"];
+    const seg = (k, opts) => `<div class="seg sm">${opts.map(([v, n]) => `<button class="${(it[k] || "") === v ? "on" : ""}" data-a="mstil" data-k="${k}" data-v="${v}">${n}</button>`).join("")}</div>`;
+    const farbe = (pfad, wert, titel) => `<label class="farbe" title="${titel}"><input type="color" data-mk="${pfad}" value="${wert || "#1a1f27"}"><span>${titel}</span>${wert ? `<button class="icon sm" data-a="mkweg" data-k="${pfad}" title="zurücksetzen"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</label>`;
+    const medien = M_MEDIEN.includes(it.t);
+    let h = "";
+    if (!medien) h += `<label class="col">Anordnung${seg("lay", [["", "Automatisch"], ["1", "Einzeilig"], ["2", "Zweizeilig"], ["k", "Kachel"], ["g", "Großer Wert"], ["i", "Nur Symbol"]])}</label>`;
+    if (it.t === "mtitel") h += `<label class="col">Zweite Zeile<select data-mk="z2">${[["", "Interpret"], ["app", "App"], ["source", "Quelle"], ["none", "nichts"]].map(([v, l]) => `<option value="${v}" ${(it.z2 || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label class="sw small"><input type="checkbox" data-mk="lauf" ${it.lauf ? "checked" : ""}><span>Laufschrift für lange Titel</span></label>
+      <label class="sw small"><input type="checkbox" data-mk="bar" ${it.bar ? "checked" : ""}><span>Fortschrittsbalken mit Zeit (z. B. 1:23 / 4:56)</span></label>`;
+    if (it.t === "vpreset") h += `<label class="col">Mehrere Werte als Leiste (2–6, mit Komma)<input data-mk="werte" data-typ="list" value="${esc((it.werte || []).join(", "))}" placeholder="z. B. 15, 25, 40"></label>
+      <small class="note">Leer = ein Knopf mit dem Wert oben. Leiste: jeder Wert antippbar, OK = nächster, ◀ ▶ = Nachbar.</small>`;
+    if (!medien) h += this._mQuelleHtml(it, "sub", "Zweite Zeile", "Mit Wert: steht hinter dem Wert („21 °C · 45 %“), sonst als eigene Zeile.");
+    h += this._mQuelleHtml(it, "badge", "Abzeichen oben rechts", "Leer, 0 oder „off“ = ausgeblendet.");
+    if (it.badge) h += farbe("badge.bg", it.badge.bg, "Farbe des Abzeichens");
+    if (st && !medien) {
+      const map = Object.entries(it.map || {});
+      h += `<label class="col">Werte umbenennen</label>${map.map(([k, v], j) => `<div class="inl"><input data-mmap="k|${j}" value="${esc(k)}" list="dl-zst" placeholder="Wert"><span>→</span><input data-mmap="v|${j}" value="${esc(v)}" placeholder="Anzeige"><button class="icon sm" data-a="mmapdel" data-i="${j}"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")}
+        <button class="btn small" data-a="mmapadd"><ha-icon icon="mdi:plus"></ha-icon>Umbenennung</button>
+        ${!isNaN(parseFloat(st.state)) ? `<div class="inl"><label class="inl2">Nachkommastellen<select data-mk="nk" data-typ="num"><option value="">wie HA</option>${[0, 1, 2, 3].map((n) => `<option ${it.nk === n ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          <label class="inl2">Einheit<input data-mk="eh" value="${esc(it.eh ?? "")}" placeholder="${esc(st.attributes.unit_of_measurement || "")}" style="width:70px"></label></div>` : ""}`;
+    }
+    if (st) {
+      const zst = it.zst || [];
+      h += `<label class="col">Aussehen je Zustand</label><datalist id="dl-zst">${zustaende.map((z) => `<option value="${esc(z)}">`).join("")}</datalist>
+        ${zst.map((z, j) => `<div class="zst"><input data-mk="zst.${j}.w" value="${esc(z.w)}" list="dl-zst" placeholder="Zustand">
+          ${farbe(`zst.${j}.bg`, z.bg, "Hintergrund")}${farbe(`zst.${j}.fg`, z.fg, "Schrift")}${farbe(`zst.${j}.ic`, z.ic, "Symbol")}
+          <input data-mk="zst.${j}.icon" value="${esc(z.icon || "")}" list="dl-icons" placeholder="anderes Symbol" style="width:120px">
+          <button class="icon sm" data-a="mzstdel" data-i="${j}"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")}
+        <datalist id="dl-icons">${M_ICONS.map((n) => `<option value="${n}">`).join("")}</datalist>
+        <button class="btn small" data-a="mzstadd" ${zst.length >= 6 ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon>Zustand</button>`;
+    }
+    if (["number", "light"].includes(it.t)) h += `<label class="col">Regler</label><div class="inl">
+        <label class="inl2">Min<input type="number" data-mk="vmin" data-typ="num" value="${esc(it.vmin ?? "")}" style="width:70px"></label>
+        <label class="inl2">Max<input type="number" data-mk="vmax" data-typ="num" value="${esc(it.vmax ?? "")}" style="width:70px" placeholder="${(it.entity || "").startsWith("media_player.") ? "z. B. 60" : ""}"></label>
+        ${farbe("rf", it.rf, "Reglerfarbe")}</div>
+      <label class="sw small"><input type="checkbox" data-mk="live" ${it.live ? "checked" : ""}><span>Schon beim Ziehen senden (live), nicht erst beim Loslassen</span></label>
+      ${(it.entity || "").startsWith("media_player.") ? '<small class="note">Max gilt auch für Presets, Lauter-Taste und Regler-Schritte dieses Players auf der Seite.</small>' : ""}`;
+    if (it.t === "mtitel" && it.bar) h += farbe("rf", it.rf, "Farbe des Balkens");
+    const w = it.wenn;
+    h += `<label class="col">Nur bedienbar, wenn …</label>${w ? `<div class="inl">
+        <button class="entity sm" data-a="mkpick" data-k="wenn.e">${esc(w.e ? (this._hass.states[w.e]?.attributes.friendly_name || w.e) : "diese Entität")}</button>
+        <input data-mk="wenn.a" value="${esc(w.a || "")}" placeholder="Attribut (leer = Zustand)" style="width:130px">
+        <select data-mk="wenn.neg"><option value="">=</option><option value="1" ${w.neg ? "selected" : ""}>≠</option></select>
+        <input data-mk="wenn.to" value="${esc(w.to ?? "")}" list="dl-zst" placeholder="z. B. on" style="width:100px">
+        <select data-mk="wenn.art"><option value="">sonst ausgegraut</option><option value="weg" ${w.art === "weg" ? "selected" : ""}>sonst ausgeblendet</option></select>
+        <button class="icon sm" data-a="mkweg" data-k="wenn"><ha-icon icon="mdi:close"></ha-icon></button></div>`
+      : '<button class="btn small" data-a="mwennadd"><ha-icon icon="mdi:plus"></ha-icon>Bedingung</button>'}
+      <label class="col">Rahmen</label><div class="inl">
+        <label class="inl2">Rundung<select data-mk="rad" data-typ="num"><option value="">Standard</option>${[0, 4, 8, 14, 20].map((n) => `<option ${it.rad === n ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        ${farbe("rc", it.rc, "Rahmenfarbe")}
+        <label class="sw small"><input type="checkbox" data-mk="transp" ${it.transp ? "checked" : ""}><span>Durchsichtig</span></label></div>`;
+    const kachelAnders = ["lay", "sub", "badge", "map", "zst", "rad", "rc", "transp", "nk", "eh", "z2", "lauf", "bar", "werte"].some((k) => it[k] != null && it[k] !== "" && !(Array.isArray(it[k]) && !it[k].length));
+    return this._mGrp("kachel", "mdi:view-dashboard-edit-outline", "Kachel: Anordnung, Werte, Rahmen", kachelAnders ? "angepasst" : "Standard", h, false);
+  },
+  _mErsetzenModal() {
+    const m = this.s.modal, st = this._hass.states, p = this.mpage;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const ents = [...entitaetenIn(p)].sort();
+    const dom = (m.von || "").split(".")[0];
+    const kandidaten = Object.keys(st).filter((e) => e.startsWith(dom + ".") && e !== m.von).sort((a, b) => name(a).localeCompare(name(b), "de"));
+    return `<div class="modal" data-a="modalbg"><div class="dlg">
+      <div class="dh"><h2>Entität ersetzen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <label class="col">Ersetzen<select data-ers="von">${ents.map((e) => `<option value="${esc(e)}" ${e === m.von ? "selected" : ""}>${esc(name(e))} (${esc(e)})</option>`).join("")}</select></label>
+      <label class="col">durch<select data-ers="nach"><option value="">– wählen –</option>${kandidaten.map((e) => `<option value="${esc(e)}" ${e === m.nach ? "selected" : ""}>${esc(name(e))}</option>`).join("")}</select></label>
+      <div class="seg sm">${[["seite", "Nur diese Seite"], ["menue", "Ganzes Menü"], ["alles", "Ganze Remote (auch Tasten)"]].map(([v, l]) => `<button class="${m.bereich === v ? "on" : ""}" data-a="mersb" data-v="${v}">${l}</button>`).join("")}</div>
+      <small class="note">Ersetzt überall: Einträge, zweite Zeilen, Bedingungen, Aktionen und Popup-Auslöser.</small>
+      <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><button class="btn primary" data-a="mers_do" ${m.nach ? "" : "disabled"}><ha-icon icon="mdi:find-replace"></ha-icon>Ersetzen</button></div></div></div>`;
+  },
+  _mSelToggle(i) {
+    const s = this.s;
+    s.msel = s.msel || [];
+    if (!s.msel.length && s.mitem != null && s.mitem !== i) s.msel.push(s.mitem);
+    const k = s.msel.indexOf(i);
+    if (k >= 0) s.msel.splice(k, 1); else s.msel.push(i);
+    s.mitem = s.msel.length === 1 ? s.msel[0] : null;
+    if (s.msel.length < 2) s.msel = [];
+  },
+  _mStilSetzen(it, stil) {
+    for (const k of M_STIL_KEYS) delete it[k];
+    Object.assign(it, clone(stil));
+  },
+  // Gruppe kopieren: Eintraege mit ihrer Anordnung zueinander (Abstand zur linken oberen Ecke der Gruppe)
+  _mGruppeKopieren() {
+    const s = this.s, p = this.mpage, L = mLayout(p);
+    const sel = [...(s.msel.length ? s.msel : [s.mitem])].filter((j) => j != null).sort((a, b) => L[a].y - L[b].y || L[a].x - L[b].x);
+    const x0 = Math.min(...sel.map((j) => L[j].x)), y0 = Math.min(...sel.map((j) => L[j].y));
+    const data = sel.map((j) => ({ ...clone(p.items[j]), w: L[j].w, h: L[j].h, _rx: L[j].x, _ry: L[j].y - y0 }));
+    this._setClip({ type: "mitems", data, x0, label: `${sel.length} Einträge · ${p.title}` });
+    s.msg = { text: `${sel.length} Einträge kopiert – auf jeder Seite (auch anderer Remotes) „Einfügen“: sie kommen als Block an die erste freie Stelle, nichts wird überschrieben.` };
+  },
+  // Gruppe einfuegen: feste Anordnung -> erste Zeile, ab der alle Teile frei sind; Fluss -> am Ende in Reihenfolge
+  _mGruppeEinfuegen(p) {
+    const c = this.s.clip, items = clone(c.data);
+    p.items = p.items || [];
+    if (p.flow !== false) {
+      const at = p.items.length;
+      for (const it of items) { delete it._rx; delete it._ry; delete it.x; delete it.y; p.items.push(it); }
+      return at;
+    }
+    const L = mLayout(p), belegt = new Set();
+    L.forEach((l) => { for (let r = l.y; r < l.y + l.h; r++) for (let x = l.x; x < l.x + l.w; x++) belegt.add(r * 8 + x); });
+    const passt = (y0) => items.every((it) => { for (let r = 0; r < it.h; r++) for (let x = 0; x < it.w; x++) if (belegt.has((y0 + it._ry + r) * 8 + it._rx + x) || it._rx + x > 5) return false; return true; });
+    let y0 = 0;
+    while (y0 < 120 && !passt(y0)) y0++;
+    const at = p.items.length;
+    for (const it of items) { it.x = it._rx; it.y = y0 + it._ry; delete it._rx; delete it._ry; p.items.push(it); }
+    return at;
+  },
+
+  _mList(p) {
+    const ms = this.s.msel || [];
+    const bar = ms.length >= 2 ? `<div class="mgbar"><b>${ms.length} markiert</b>
+      <button class="btn small" data-a="mgcopy"><ha-icon icon="mdi:content-copy"></ha-icon>Kopieren</button>
+      ${this.s.clip?.type === "stil" ? '<button class="btn small" data-a="mgstil"><ha-icon icon="mdi:format-paint"></ha-icon>Aussehen einfügen</button>' : ""}
+      <button class="btn small" data-a="mggross" title="Breite und Höhe des zuerst markierten für alle"><ha-icon icon="mdi:arrow-expand-all"></ha-icon>Gleiche Größe</button>
+      <button class="btn small" data-a="mgent" title="Allen markierten dieselbe Entität geben"><ha-icon icon="mdi:link-variant"></ha-icon>Entität für alle</button>
+      <button class="btn small ghost" data-a="mgdel"><ha-icon icon="mdi:delete-outline"></ha-icon>Löschen</button>
+      <button class="btn small ghost" data-a="mgnone">Aufheben</button></div>`
+      : '<small class="note">Mehrere markieren: Strg- oder Umschalt-Klick (Vorschau oder Liste).</small>';
+    return bar + `<div class="mlist">${(p.items || []).map((it, i) => `<div class="mli ${this.s.mitem === i ? "sel" : ""} ${ms.includes(i) ? "msel" : ""}" data-drag="${i}">
+      <ha-icon class="hd" icon="mdi:drag"></ha-icon><button class="ml" data-a="mitem" data-i="${i}"><ha-icon icon="${M_TYPE[it.t]?.i || "mdi:help"}"></ha-icon>
+      <span><b>${esc(this._mItemText(it) || "(ohne Namen)")}</b><small>${esc(M_TYPE[it.t]?.l || it.t)} · ${it.w || 6}×${it.h || 1}</small></span></button>
+      <button class="icon sm" data-a="mup" data-i="${i}" ${i ? "" : "disabled"}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+      <button class="icon sm" data-a="mdown" data-i="${i}" ${i < p.items.length - 1 ? "" : "disabled"}><ha-icon icon="mdi:arrow-down"></ha-icon></button></div>`).join("")
+      || '<div class="none">Noch keine Einträge.</div>'}</div>`;
+  },
+
+  // Widget-Einstellungen (2026-10-27): alles waehlbar - Art, Groesse, Entitaeten (auch Wetter), Optionen
+  _mWidgetEditor(it) {
+    const art = it.art || "uhr", W = M_WIDGETS.find(([a]) => a === art) || M_WIDGETS[0];
+    const ent = (k, dom, titel) => {
+      const e = it[k], st = e && this._hass.states[e];
+      return `<label>${titel}</label><button class="entity sm" data-a="mkpick" data-k="${k}" data-dom="${dom}">${st ? `<span><b>${esc(st.attributes.friendly_name || e)}</b><small>${esc(e)}</small></span>`
+        : e ? `<span><b>${esc(e)}</b><small>nicht gefunden</small></span>` : `<span><b>${dom === "weather" ? "Wetter-Entität wählen …" : "Entität wählen …"}</b></span>`}</button>`;
+    };
+    const sel = (k, opts, std, titel) => `<label>${titel}<select data-mk="${k}">${opts.map(([v, l]) => `<option value="${v}" ${(it[k] ?? std) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
+    let h = `<label>Widget<select data-mk="art">${M_WIDGETS.map(([a, l]) => `<option value="${a}" ${a === art ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <div class="seg sm" style="margin:6px 0"><button class="${(it.h || 1) >= 2 ? "on" : ""}" data-a="mwgr" data-v="g">Groß (3 Zeilen)</button><button class="${(it.h || 1) < 2 ? "on" : ""}" data-a="mwgr" data-v="s">Schmal (1 Zeile)</button></div>
+      <small class="note">Höhe und Breite lassen sich auch frei ziehen – ab 2 Zeilen gilt die große Darstellung.</small>`;
+    if (W[3]) h += ent("entity", W[3], { weather: "Wetter-Entität", media_player: "Media Player", timer: "Timer", camera: "Kamera" }[W[3]]);
+    if (art === "uhr" || (art === "kombi" && (it.teile || ["uhr", "wetter"]).includes("uhr"))) h += sel("datum", [["nach", "Datum unter / rechts neben der Uhrzeit"], ["vor", "Datum über / links vor der Uhrzeit"], ["aus", "Ohne Datum"]], "nach", "Datum");
+    if (art === "medien") h += sel("leer", [["", "Immer zeigen („Nichts läuft“)"], ["weg", "Nur während der Wiedergabe – sonst rückt die Seite zusammen"]], "", "Wenn nichts läuft");
+    if (art === "kamera") h += `<label>Neu laden alle (Sekunden)<input type="number" min="3" max="600" data-mk="takt" data-typ="num" value="${esc(it.takt ?? 10)}"></label>
+      ${sel("bild", [["", "Randlos (füllt die Kachel, Ränder abgeschnitten)"], ["ganz", "Ganzes Bild (mit schwarzen Balken)"]], "", "Bild")}
+      <small class="note">Höchstens zwei Bild-Widgets (Kamera oder Cover) je Seite.</small>`;
+    if (art === "kombi") {
+      const tl = it.teile || ["uhr", "wetter"];
+      h += `<label>Teile (bis zu 3, in dieser Reihenfolge)</label><div class="chips">${M_WTEILE.map(([v, l]) => `<button class="chip ${tl.includes(v) ? "on" : ""}" data-a="mwteil" data-v="${v}">${tl.includes(v) ? tl.indexOf(v) + 1 + ". " : ""}${l}</button>`).join("")}</div>`;
+      if (tl.includes("wetter")) h += ent("we", "weather", "Wetter-Entität");
+      if (tl.includes("medien")) h += ent("me", "media_player", "Media Player") + sel("mz", [["immer", "Medien immer zeigen"], ["nur", "Medien nur während der Wiedergabe (die anderen teilen sich sonst den Platz)"], ["ueber", "Medien übernimmt das ganze Widget, solange etwas läuft"]], "immer", "Medien");
+    }
+    if (art === "medien" || art === "timer" || (art === "kombi" && (it.teile || []).includes("medien"))) h += `<small class="note">${art === "timer" ? "OK / Antippen: Timer starten bzw. anhalten." : "OK / Antippen: Wiedergabe/Pause, ⏮ ⏭ auf dem Display."}</small>`;
+    return h;
+  },
+  // Gruppe im Eintrags-Editor (2026-10-28): auf-/zuklappbar, zugeklappt mit Kurzinfo; offen/zu gilt fuer alle Eintraege
+  _mGrp(key, icon, titel, info, inhalt, auf) {
+    const offen = this.s.mgrp?.[key] ?? auf;
+    return `<details class="gest mgrp" data-grp="${key}" ${offen ? "open" : ""}><summary><ha-icon icon="${icon}"></ha-icon><b>${titel}</b>${info ? `<small>${info}</small>` : ""}</summary>
+      <div class="mgrpi">${inhalt}</div></details>`;
+  },
+  _mItemEditor() {
+    const it = this.mitem, p = this.mpage, i = this.s.mitem;
+    const f = (k, v, ph = "", t = "text") => `<input type="${t}" data-mi="${k}" value="${esc(v ?? "")}" placeholder="${esc(ph)}">`;
+    let body = "";
+    if (it.t === "widget") body += this._mWidgetEditor(it);
+    if (it.t === "page") {
+      body += `<label>Zielseite<select data-mi="target">${this.menu.pages.filter((pg) => pg.id !== p.id).map((pg) => `<option value="${esc(pg.id)}" ${pg.id === it.target ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}<option value="__neu">+ neue Seite …</option></select></label>`;
+      const ziel = this.menu.pages.find((pg) => pg.id === it.target);
+      if (ziel) body += `<button class="btn small" data-a="mpage" data-id="${esc(ziel.id)}"><ha-icon icon="mdi:arrow-right-bold-box-outline"></ha-icon>„${esc(ziel.title || ziel.id)}“ bearbeiten</button>`;
+      if (ziel && !ziel.popup) body += `<label class="sw small"><input type="checkbox" data-mi="tremember" ${ziel.remember !== false ? "checked" : ""}><span>Diese Seite selbst merken (sonst öffnet das Menü wieder auf „${esc(p.title)}“)</span></label>
+        <small class="note">Gleicher Haken wie „Seite merken“ an der Seite „${esc(ziel.title || ziel.id)}“ – gilt für alle Wege dorthin, so lange wie „Menü-Position merken für“ in den Einstellungen.</small>`;
+    } else if (it.t === "special") {
+      body += `<label>Eingebaute Seite<select data-mi="page">${M_SPECIAL.map(([k, l]) => `<option value="${k}" ${k === it.page ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        <label class="sw small"><input type="checkbox" data-mi="remember" ${it.remember ? "checked" : ""}><span>Diese Seite selbst merken (sonst öffnet das Menü wieder auf „${esc(p.title)}“)</span></label>
+        <small class="note">Gilt so lange wie „Menü-Position merken für“ in den Einstellungen. Weggelegt mit der Menütaste, holt der nächste Druck sie zurück.</small>`;
+      if (it.page === "cam_view" || it.page === "cam_live") body += this._mKameras();
+    }
+    if (it.t === "setting") {
+      const gruppen = [...new Set(M_EINST.map((e) => e[3]))];
+      const art = { b: "Schalter", s: "Regler", i: "Anzeige", g: "Diagramm" };
+      body += `<label>Einstellung<select data-mi="src">${it.src && !M_EINST_K[it.src] ? `<option selected>${esc(it.src)} (unbekannt)</option>` : ""}${gruppen.map((g) => `<optgroup label="${esc(g)}">${M_EINST.filter((e) => e[3] === g).map((e) => `<option value="${e[0]}" ${it.src === e[0] ? "selected" : ""}>${esc(e[2])} · ${art[e[1]]}</option>`).join("")}</optgroup>`).join("")}</select></label>
+        <small class="note">Bedient direkt die Einstellung der Remote (gleiche Wirkung und Speicherung wie die eingebaute Seite). Regler: ab Höhe 2 mit Schieber, sonst Links/Rechts bzw. Antippen zum Weiterschalten.</small>`;
+    }
+    if (it.t === "camera") {
+      body += `<label>Bildquelle<select data-mi="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${it.src === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <small class="note">Zeigt das Foto, das HA beim Klingeln an die Remote schickt (216×112 px – passt in Breite 6, Höhe 3).</small>`;
+    }
+    if (["toggle", "light", "number", "select", "cover", "sensor", ...M_MEDIEN].includes(it.t)) {
+      const ent = it.entity && this._hass.states[it.entity];
+      body += `<label>Entität</label><button class="entity" data-a="mpick">${ent ? `<ha-icon icon="${esc(ent.attributes.icon || "mdi:shape")}"></ha-icon><span><b>${esc(ent.attributes.friendly_name || it.entity)}</b><small>${esc(it.entity)} · ${esc(ent.state)}</small></span>` : '<ha-icon icon="mdi:magnify"></ha-icon><span><b>Entität wählen …</b></span>'}</button>`;
+    }
+    if (it.t === "mtaste") {
+      body += `<label>Funktion<select data-mi="fn">${M_MTASTEN.map(([k, l]) => `<option value="${k}" ${(it.fn || "play_pause") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        <small class="note">Das Symbol zeigt den Zustand: ⏯ wird zu ⏸, solange etwas spielt; Stumm rot, Zufall/Wiederholen/Ein grün, wenn an. Eigenes Symbol und Beschriftung sind möglich.</small>`;
+    }
+    if (it.t === "vpreset") {
+      body += `<label>Lautstärke in %<input type="number" min="0" max="100" data-mi="wert" value="${esc(it.wert ?? 25)}"></label>
+        <small class="note">Leuchtet grün, wenn diese Lautstärke eingestellt ist. Hebt Stumm auf.</small>`;
+    }
+    if (it.t === "mtitel") body += `<small class="note">Zustand (grün, solange etwas spielt), Titel und ab Höhe 2 Interpret bzw. App. Die Beschriftung steht vor dem Zustand.</small>`;
+    if (it.t === "number" && (it.entity || "").startsWith("media_player.")) {
+      body += `<label class="sw small"><input type="checkbox" data-mi="okmute" ${it.ok === "mute" ? "checked" : ""}><span>OK / Antippen schaltet stumm (sonst Gerät an/aus)</span></label>
+        <label class="inl2">◀ ▶ ändern um <select data-mi="st"><option value="">Schritt des Geräts</option>${[1, 2, 3, 5, 10].map((n) => `<option value="${n}" ${it.st === n ? "selected" : ""}>${n} %</option>`).join("")}</select></label>`;
+    }
+    const canSteps = ["action", "toggle", "light", "number", "select", "cover", "sensor", "mtaste", "vpreset"].includes(it.t);
+    const steps = it.steps || [];
+    const anz = (n, leer) => (n ? `${n} Aktion${n > 1 ? "en" : ""}` : leer);
+    const stdTipp = { toggle: "umschalten", light: "an/aus", number: "Media Player an/aus, Zahl nichts", select: "nächste Option", cover: "auf/zu", sensor: "nichts" }[it.t];
+    const stepsHtml = canSteps ? this._mGrp("tap", "mdi:gesture-tap", "Beim Antippen", anz(steps.length, it.t === "action" ? "nichts" : "Standard: " + stdTipp),
+      `<div class="grpbar">${this._mKopierKnoepfe("item", steps.length)}<button class="btn small" data-a="add" data-g="item"><ha-icon icon="mdi:plus"></ha-icon>Aktion</button></div>
+        ${steps.map((st, j) => this._stepHtml("item", j, st, steps.length)).join("") || `<div class="none">${it.t === "action" ? "nichts" : "leer = Standard: " + stdTipp}</div>`}`, true) : "";
+    const lang = it.lang || [];
+    const langHtml = canSteps || ["mtaste", "vpreset"].includes(it.t) ? this._mGrp("lang", "mdi:gesture-tap-hold", "Lang drücken", [anz(lang.length, "wie kurz"), it.sicher ? "mit Sicherheitsabfrage" : ""].filter(Boolean).join(" · "),
+      `<div class="grpbar"><small class="note">Touch oder OK halten</small><span class="grow"></span>${this._mKopierKnoepfe("lang", lang.length)}<button class="btn small" data-a="add" data-g="lang"><ha-icon icon="mdi:plus"></ha-icon>Aktion</button></div>
+        ${lang.map((st, j) => this._stepHtml("lang", j, st, lang.length)).join("") || '<div class="none">nichts – lang drücken wirkt wie kurz</div>'}
+        <label class="sw small"><input type="checkbox" data-mk="sicher" ${it.sicher ? "checked" : ""}><span><b>Sicherheitsabfrage</b> – erst der zweite Druck innerhalb von 3 s löst aus (z. B. Tür öffnen)</span></label>`, lang.length > 0 || !!it.sicher) : "";
+    const rel = it.release || [];
+    const TASTEN = [[0, "keine"], ...[14, 35, 15, 32, 34, 3, 31, 41, 5, 4, 2, 11, 33, 43, 44, 42, 22, 45, 23, 25, 24, 21, 102].map((k) => [k, KEYNAME[k]])];
+    const haltInfo = [it.hold ? "nur solange gedrückt" : "", it.key ? `Taste ${KEYNAME[it.key] || it.key}` : "", it.modus ? "Folgemodus" : ""].filter(Boolean).join(" · ") || "aus";
+    const haltHtml = canSteps ? this._mGrp("halt", "mdi:gesture-double-tap", "Halten, Tasten & Folgemodus", haltInfo, `
+        <label class="sw small"><input type="checkbox" data-mi="hold" ${it.hold ? "checked" : ""}><span><b>Nur solange gedrückt</b> – „Beim Antippen“ läuft beim Drücken, „Beim Loslassen“ beim Loslassen (z. B. Kamera schwenken → Stopp)</span></label>
+        ${it.hold ? `<div class="ph">Beim Loslassen<span class="grow"></span><button class="btn small" data-a="add" data-g="release"><ha-icon icon="mdi:plus"></ha-icon>Aktion</button></div>
+        ${rel.map((st, j) => this._stepHtml("release", j, st, rel.length)).join("") || '<div class="none">nichts</div>'}` : ""}
+        <label class="inl2">Im Tastenmodus folgt dieser Eintrag der Taste <select data-mi="key">${TASTEN.map(([k, l]) => `<option value="${k}" ${(it.key || 0) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <small class="note">Tastenmodus: ein Knopf auf der Seite mit der Funktion „Tastenmodus an/aus“. Ist er an (blau umrandet), drücken die Hardware-Tasten die zugeordneten Einträge, Zurück beendet den Tastenmodus.</small>
+        <label class="inl2">Danach Folgemodus <select data-mi="modus"><option value="">keiner</option>${(this.cfg.modi || []).map((mo) => `<option value="${esc(mo.id)}" ${it.modus === mo.id ? "selected" : ""}>${esc(mo.name)}</option>`).join("")}</select></label>
+        <small class="note">Nach dem Bedienen dieses Eintrags gelten für ein paar Sekunden die Tasten des Folgemodus (z. B. Ventilator: Kanal +/− ändert die Stufe). Anlegen unter „Tasten“ → Folgemodi.</small>
+      `, haltInfo !== "aus") : "";
+    const sw = (k, liste) => `<div class="swatches">${liste.map(([v, n]) => `<button class="swatch ${(it[k] || "") === v ? "on" : ""}" data-a="mstil" data-k="${k}" data-v="${v}" title="${n}" style="${v ? `background:${v}` : ""}">${v ? "" : "–"}</button>`).join("")}
+      <label class="swatch eigen" title="eigene Farbe"><input type="color" data-mi="${k}" value="${it[k] || "#1a1f27"}"><ha-icon icon="mdi:eyedropper"></ha-icon></label></div>`;
+    const seg = (k, opts) => `<div class="seg sm">${opts.map(([v, n]) => `<button class="${(it[k] || "") === v ? "on" : ""}" data-a="mstil" data-k="${k}" data-v="${v}">${n}</button>`).join("")}</div>`;
+    const stilAnders = ["bg", "fg", "fc", "align", "size", "ic", "ia"].some((k) => it[k]);
+    const stilHtml = it.t !== "camera" ? this._mGrp("stil", "mdi:palette-outline", "Aussehen", stilAnders ? "angepasst" : "Standard", `<div class="grpbar"><span class="grow"></span>
+        <button class="icon sm" data-a="mstilcopy" title="Aussehen kopieren (Farben, Größe, Anordnung, Rahmen)"><ha-icon icon="mdi:format-paint"></ha-icon></button>
+        ${this.s.clip?.type === "stil" ? `<button class="icon sm" data-a="mstilpaste" title="Aussehen einfügen: ${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon></button>` : ""}</div>
+        <label class="col">Hintergrund${sw("bg", M_FARBEN)}</label>
+        <label class="col">Schrift${sw("fg", M_TEXTFARBEN)}</label>
+        ${["text", "sensor"].includes(it.t) ? "" : `<label class="col">Markierung (Rahmen bei Auswahl per Steuerkreuz)${sw("fc", M_FOKUSFARBEN)}</label>
+        <small class="note">Standard: blauer Rahmen – auch bei Knöpfen mit eigener Hintergrundfarbe.</small>`}
+        <div class="inl"><label class="col">Ausrichtung${seg("align", [["", "Standard"], ["l", "Links"], ["c", "Mitte"], ["r", "Rechts"]])}</label>
+          <label class="col">Größe${seg("size", [["", "Standard"], ["xs", "Sehr klein"], ["s", "Klein"], ["m", "Normal"], ["l", "Groß"], ["xl", "Sehr groß"]])}</label></div>
+        ${it.icon ? `<label class="col">Farbe des Symbols${sw("ic", M_TEXTFARBEN)}</label>
+        <label class="col">Symbol${seg("ia", [["", "Standard"], ["l", "Links"], ["c", "Mitte"], ["r", "Rechts"]])}</label>
+        <small class="note">Kacheln: Symbol oben links, mittig oder rechts. Zeilen: links vor dem Namen oder rechts am Ende.</small>` : ""}
+      `, false) : "";
+    const L = mLayout(p)[i];
+    const groesseHtml = this._mGrp("groesse", "mdi:resize", "Größe & Position", `${it.w || 6} × ${it.h === 0 ? "auto" : it.h ?? 1}${p.flow === false ? ` · Spalte ${L.x + 1}, Zeile ${L.y + 1}` : ""}`, `
+        <div class="inl"><label>Breite<select data-mi="w">${[1, 2, 3, 4, 5, 6].map((n) => `<option ${(it.w || 6) === n ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          <label>Höhe<select data-mi="h">${["text", "setting"].includes(it.t) ? `<option value="0" ${it.h === 0 ? "selected" : ""}>auto (nach Text)</option>` : ""}${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option ${(it.h ?? 1) === n ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          ${p.flow === false ? `<label>Spalte<select data-mi="x">${[0, 1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${L.x === n ? "selected" : ""}>${n + 1}</option>`).join("")}</select></label>
+          <label>Zeile<input type="number" min="1" max="128" data-mi="y" value="${L.y + 1}"></label>` : ""}</div>
+        <small class="note">Auch in der Vorschau: Eintrag ziehen = verschieben, Ecke unten rechts = Größe.</small>`, false);
+    return `<div class="edhead"><button class="icon back" data-a="mclose"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
+        <div><h2>${esc(this._mItemText(it) || "Eintrag")}</h2><small>${esc(M_TYPE[it.t]?.l)} · Seite „${esc(p.title)}“</small></div><span class="grow"></span>
+        <button class="btn ghost" data-a="mcopy" title="Kopieren"><ha-icon icon="mdi:content-copy"></ha-icon></button>
+        <button class="btn ghost" data-a="mdup" title="Duplizieren"><ha-icon icon="mdi:content-duplicate"></ha-icon></button>
+        <button class="btn ghost" data-a="mdel" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
+      <div class="form mgrpform">${this._mGrp("eintrag", "mdi:card-text-outline", "Eintrag", esc(M_TYPE[it.t]?.l || it.t), `
+        <label>Art<select data-mi="t">${M_TYPES.map(([k, l]) => `<option value="${k}" ${k === it.t ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label>Beschriftung${f("label", it.label, this._mItemText({ ...it, label: "" }) || "Text")}</label>
+        ${fremdeZeichen(it.label).length ? `<small class="note warnz">Die Remote kann ${fremdeZeichen(it.label).map((c) => `„${esc(c)}“`).join(" ")} nicht anzeigen (fehlt in ihrer Schrift).</small>` : ""}
+        ${it.t !== "text" && it.t !== "mtitel" ? `<label>Symbol <button class="iconpick" data-a="micon">${it.icon ? `<ha-icon icon="mdi:${esc(it.icon)}"></ha-icon> ${esc(it.icon)}` : "kein Symbol"}</button></label>` : ""}
+        ${body}`, true)}
+      </div>${stepsHtml}${langHtml}${groesseHtml}${this._mKachelHtml(it)}${stilHtml}${haltHtml}`;
+  },
+
+  _mIconModal() {
+    const q = (this.s.modal.q || "").toLowerCase();
+    const list = M_ICONS.filter((n) => !q || n.includes(q));
+    return `<div class="modal" data-a="modalbg"><div class="dlg pick">
+      <div class="dh"><h2>Symbol wählen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <input id="q" type="search" placeholder="Suchen …" value="${esc(this.s.modal.q || "")}" autocomplete="off">
+      <div class="list icons"><button class="ico" data-a="micon_set" data-n=""><ha-icon icon="mdi:cancel"></ha-icon><small>keins</small></button>
+      ${list.map((n) => `<button class="ico" data-a="micon_set" data-n="${n}"><ha-icon icon="mdi:${n}"></ha-icon><small>${n}</small></button>`).join("")}</div>
+      <small class="note">Nur diese Symbole sind in der Remote eingebaut.</small></div></div>`;
+  },
+
+  // -------------------------------------------------------------- Aktionen
+  _mNewId(base) { let id = base, n = 2; while (this.menu.pages.some((p) => p.id === id)) id = `${base}_${n++}`; return id; },
+
+  _mClick(a, t, ev) {
+    if (!this.s.loaded || !a.startsWith("m") || ["menu", "msgx", "modalbg", "modalx"].includes(a)) return false;
+    const s = this.s, p = this.mpage, m = this.menu, i = Number(t.dataset.i);
+    switch (a) {
+      case "mode": this._seiteMerken(t.dataset.m); s.mode = t.dataset.m; s.mitem = null; return true;
+      case "mkamadd": {
+        const e = Object.keys(this._hass.states).find((x) => x.startsWith("camera."));
+        (this.cfg.kameras = this.cfg.kameras || []).push({ n: (this._hass.states[e]?.attributes.friendly_name || e).slice(0, 24), e });
+        this._touch(); return true;
+      }
+      case "mkamdel": this.cfg.kameras.splice(i, 1); this._touch(); return true;
+      case "mlautlang": {   // 2026-10-26: Lauter/Leiser lang oeffnen die Medien-Steuerung - in allen Aktivitaeten
+        let wdh = 0;
+        for (const a of this.cfg.activities || []) {
+          a.keys = a.keys || {};
+          for (const k of ["33", "43"]) {
+            const kc = a.keys[k] = a.keys[k] || {};
+            if (kc.hold || kc.repeat) wdh++;
+            delete kc.hold; delete kc.repeat; delete kc.lrepeat;   // "Lang" braucht den Haltemodus "Lang auslösen"
+            kc.long = [{ t: "int", fn: "popup_open", page: p.id }];
+          }
+        }
+        s.msg = { text: `Lauter und Leiser lang öffnen jetzt „${p.title || p.id}“.${wdh ? " Gehaltenes Wiederholen der Lautstärke ist dabei entfallen – im Popup wiederholen Lauter/Leiser beim Halten." : ""} Speichern nicht vergessen.` };
+        this._touch(); return true;
+      }
+      case "mpage": s.mpage = t.dataset.id; s.mitem = null; s.msel = []; s.hstd = false; return true;
+      case "mtest": {   // 2026-10-25: Seite als Popup auf der Remote zeigen (direkt oder ueber das Dock)
+        const d = s.dev, gespeichert = (JSON.parse(s.saved[d] || "{}").menu?.pages || []).some((pg) => pg.id === p.id);
+        if (!gespeichert) { s.msg = { err: true, text: `„${p.title || p.id}“ ist noch nicht gespeichert – erst speichern, dann kennt die Remote die Seite.` }; return true; }
+        this._hass.callWS({ type: "esphomeremote_konfig/test_zeigen", device: d, seite: p.id }).then((r) => {
+          this._kamV = Date.now();   // Klingelbild ggf. neu aufgenommen: Vorschau nachladen
+          s.msg = { text: r.direkt ? `„${p.title || p.id}“ wird auf ${devName(d)} gezeigt.`
+            : `„${p.title || p.id}“ liegt ${r.sekunden} s am Dock bereit – ${devName(d)} kurz benutzen (Taste drücken), dann geht es auf.` };
+          this._render();
+        }).catch((e) => { s.msg = { err: true, text: "Anzeigen ging nicht: " + (e.message || e.code) }; this._render(); });
+        if (s.dirty[d]) s.msg = { text: "Hinweis: Die Remote zeigt den gespeicherten Stand – ungespeicherte Änderungen fehlen noch." };
+        return true;
+      }
+      case "maddpopup": s.modal = { type: "vorlage", art: "leer", titel: "" }; return true;
+      case "mvorlage": s.modal.art = t.dataset.v; s.modal.titel = ""; return true;
+      case "mvorlage_ok": this._mVorlageAnlegen(); return true;
+      case "mkbdz": s.kbdZahlen = !!t.dataset.v; return true;
+      case "mtrigadd": { const art = t.dataset.art; p.popup[art] = p.popup[art] || []; p.popup[art].push({ entity: "", to: "on" }); this._touch();
+        s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", trig: { art, i: p.popup[art].length - 1 } }; return true; }
+      case "mtrigakt": { const art = t.dataset.art; p.popup[art] = p.popup[art] || [];
+        p.popup[art].push({ ev: "aktivitaet", to: (this.cfg.activities || [])[0]?.name || "" }); this._touch(); return true; }
+      case "mtrigdel": p.popup[t.dataset.art].splice(Number(t.dataset.i), 1); this._touch(); return true;
+      case "mtrigpick": s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", trig: { art: t.dataset.art, i: Number(t.dataset.i) } }; return true;
+      case "mtog": {
+        const zu = this._mZu(), id = t.dataset.id;
+        if (zu.has(id)) zu.delete(id); else zu.add(id);
+        try { localStorage.setItem("erk_zu", JSON.stringify([...zu])); } catch (e) { /* egal */ }
+        return true;
+      }
+      case "mpgup": case "mpgdown": {
+        const par = m.pages.find((pg) => pg.id === t.dataset.p), id = t.dataset.id;
+        const idx = par.items.map((it, j) => (it.t === "page" ? j : -1)).filter((j) => j >= 0 && m.pages.some((pg) => pg.id === par.items[j].target));
+        const k = idx.findIndex((j) => par.items[j].target === id);
+        const k2 = a === "mpgup" ? k - 1 : k + 1;
+        if (k < 0 || k2 < 0 || k2 >= idx.length) return false;
+        [par.items[idx[k]], par.items[idx[k2]]] = [par.items[idx[k2]], par.items[idx[k]]];
+        this._touch(); return true;
+      }
+      case "mitem": {
+        if (ev && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) { this._mSelToggle(i); return true; }
+        s.msel = []; s.mitem = i; return true;
+      }
+      case "mgnone": s.msel = []; return true;
+      case "mvolgleich": p.vol = t.dataset.e; this._touch(); return true;
+      case "mkweg": this._mkSetzen(t.dataset.k, undefined); this._touch(); return true;
+      case "mkpick": s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", mk: t.dataset.k, ...(t.dataset.dom ? { domains: [t.dataset.dom] } : {}) }; return true;
+      case "mwgr": { const it = this.mitem; it.w = 6; it.h = t.dataset.v === "g" ? 3 : 1; this._touch(); return true; }
+      case "mwteil": {   // Kombi: Teil an/aus (hoechstens 3)
+        const it = this.mitem, v = t.dataset.v, l = [...(it.teile || ["uhr", "wetter"])];
+        const j = l.indexOf(v);
+        if (j >= 0) l.splice(j, 1); else if (l.length < 3) l.push(v); else { s.msg = { err: true, text: "Höchstens drei Teile – erst einen abwählen." }; return true; }
+        it.teile = l; this._touch(); return true;
+      }
+      case "mmapadd": { const it = this.mitem; it.map = { ...(it.map || {}), [""]: "" }; this._touch(); return true; }
+      case "mmapdel": { const it = this.mitem, e = Object.entries(it.map || {}); e.splice(i, 1); if (e.length) it.map = Object.fromEntries(e); else delete it.map; this._touch(); return true; }
+      case "mzstadd": { const it = this.mitem; it.zst = [...(it.zst || []), { w: "on", bg: "#16a34a" }]; this._touch(); return true; }
+      case "mzstdel": { const it = this.mitem; it.zst.splice(i, 1); if (!it.zst.length) delete it.zst; this._touch(); return true; }
+      case "mwennadd": { this.mitem.wenn = { to: "on" }; this._touch(); return true; }
+      case "mersb": s.modal.bereich = t.dataset.v; return true;
+      case "mgcopy": this._mGruppeKopieren(); return true;
+      case "mgdel": { const weg = new Set(s.msel); p.items = p.items.filter((_, j) => !weg.has(j)); s.msel = []; s.mitem = null; this._touch(); return true; }
+      case "mggross": {   // Groesse des zuerst gewaehlten fuer alle
+        const L = mLayout(p), a = L[s.msel[0]];
+        for (const j of s.msel) { p.items[j].w = a.w; p.items[j].h = a.h; }
+        this._touch(); return true;
+      }
+      case "mgstil": {
+        if (s.clip?.type !== "stil") return false;
+        for (const j of s.msel.length ? s.msel : [s.mitem]) this._mStilSetzen(p.items[j], s.clip.data);
+        this._touch(); return true;
+      }
+      case "mgent": s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", mgent: true }; return true;
+      case "mstilcopy": {
+        const it = this.mitem; if (!it) return false;
+        this._setClip({ type: "stil", data: Object.fromEntries(M_STIL_KEYS.filter((k) => it[k] != null).map((k) => [k, clone(it[k])])), label: `Aussehen von ${this._mItemText(it) || it.t}` });
+        s.msg = { text: "Aussehen kopiert – bei einem anderen Eintrag (oder mehreren markierten) „Aussehen einfügen“." }; return true;
+      }
+      case "mstilpaste": if (s.clip?.type !== "stil" || !this.mitem) return false; this._mStilSetzen(this.mitem, s.clip.data); this._touch(); return true;
+      case "mclippage": {   // Seite (mit Unterseiten) in die Zwischenablage - auch fuer andere Remotes
+        const ids = [p.id], byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg]));
+        for (let k = 0; k < ids.length; k++) for (const it of byId[ids[k]]?.items || []) if (it.t === "page" && byId[it.target] && !ids.includes(it.target)) ids.push(it.target);
+        this._setClip({ type: "page", data: ids.map((id) => clone(byId[id])), label: `${p.title || p.id}${ids.length > 1 ? ` + ${ids.length - 1} Unterseiten` : ""} · ${devName(s.dev)}` });
+        s.msg = { text: `„${p.title || p.id}“${ids.length > 1 ? ` mit ${ids.length - 1} Unterseite(n)` : ""} kopiert – bei jeder Remote unter „Seiten“ → „Einfügen“.` }; return true;
+      }
+      case "mpastepage": {
+        if (s.clip?.type !== "page") return false;
+        const neu = clone(s.clip.data), umbenannt = {};
+        for (const pg of neu) { const id = m.pages.some((x) => x.id === pg.id) ? this._mNewId(pg.id) : pg.id; umbenannt[pg.id] = id; pg.id = id; m.pages.push(pg); }
+        for (const pg of neu) for (const it of pg.items || []) if (it.t === "page" && umbenannt[it.target]) it.target = umbenannt[it.target];
+        s.mpage = neu[0].id; s.mitem = null; s.msel = []; this._touch();
+        s.msg = { text: `${neu.length} Seite(n) eingefügt${Object.entries(umbenannt).some(([a, b]) => a !== b) ? " (Kennung wegen Doppelung angepasst)" : ""}.` }; return true;
+      }
+      case "mers": {
+        const ents = [...entitaetenIn(p)].filter((e) => this._hass.states[e] || e.includes(".")).sort();
+        s.modal = { type: "mers", von: ents[0] || "", nach: "", bereich: "seite" }; return true;
+      }
+      case "mers_do": {
+        const md = s.modal; if (!md.von || !md.nach || md.von === md.nach) return false;
+        const ziel = md.bereich === "seite" ? p : md.bereich === "menue" ? m : this.cfg;
+        const n = tiefErsetzen(ziel, md.von, md.nach);
+        s.modal = null; this._touch();
+        s.msg = { text: `${n}× ersetzt: ${md.von} → ${md.nach}.`, undo: true }; return true;
+      }
+      case "mstil": { const it = this.mitem; if (!it) return false; if (t.dataset.v) it[t.dataset.k] = t.dataset.v; else delete it[t.dataset.k]; this._touch(); return true; }
+      case "mclose": s.mitem = null; return true;
+      case "maddpage": {   // (2026-10-27) neue Seite haengt immer im Menue: unter der offenen Seite, sonst unter der Startseite
+        const imMenue = this._mReachable();
+        const par = p && !p.popup && !p.startseite && imMenue.has(p.id) ? p : m.pages.find((pg) => pg.id === m.start);
+        const title = prompt(`Titel der neuen Seite (kommt als Kachel auf „${par.title || par.id}“):`, "Neue Seite");
+        if (!title) return false;
+        const id = this._mNewId(title.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "seite");
+        m.pages.push({ id, title, remember: true, flow: true, items: [] });
+        (par.items ||= []).push({ t: "page", target: id, label: title, w: 6, h: 1 });
+        this._mZu().delete(par.id);
+        s.mpage = id; s.mitem = null; s.msel = []; this._touch();
+        s.msg = { text: `„${title}“ angelegt – als Kachel auf „${par.title || par.id}“. Woanders hin: im Baum links auf eine andere Seite ziehen.` };
+        return true;
+      }
+      case "mcopypage": {
+        const id = this._mNewId(p.id + "_kopie");
+        m.pages.push({ ...clone(p), id, title: p.title + " (Kopie)" });
+        // Kopie einer Menueseite: Kachel gleich hinter der des Originals (Popups bleiben Popups)
+        const par = this._mEltern()[p.id];
+        const pp = par != null && m.pages.find((pg) => pg.id === par);
+        if (pp) { const j = pp.items.findIndex((it) => it.t === "page" && it.target === p.id); pp.items.splice(j + 1, 0, { ...clone(pp.items[j]), target: id, label: p.title + " (Kopie)" }); }
+        s.mpage = id; s.mitem = null; this._touch(); return true;
+      }
+      case "mdelpage": {
+        if (m.pages.length <= 1) { alert("Die letzte Seite kann nicht gelöscht werden."); return false; }
+        const refs = m.pages.filter((pg) => (pg.items || []).some((it) => it.t === "page" && it.target === p.id));
+        if (!confirm(`Seite „${p.title}“ löschen?${refs.length ? "\nVerweise darauf werden ebenfalls entfernt (" + refs.map((r) => r.title).join(", ") + ")." : ""}`)) return false;
+        for (const pg of m.pages) pg.items = (pg.items || []).filter((it) => !(it.t === "page" && it.target === p.id));
+        m.pages = m.pages.filter((pg) => pg !== p);
+        if (m.start === p.id) m.start = (m.pages.find((pg) => !pg.startseite) || m.pages[0]).id;
+        for (const a of this.cfg.activities || []) if (a.home === p.id) delete a.home;
+        s.mpage = p.startseite ? null : m.start; s.mitem = null; this._touch(); return true;
+      }
+      case "mlink": {
+        const to = this.shadowRoot.querySelector("#linkto")?.value;
+        const tp = m.pages.find((pg) => pg.id === to);
+        if (!tp) return false;
+        tp.items = tp.items || [];
+        tp.items.push({ t: "page", target: p.id, label: p.title || p.id, w: 6, h: 1 });
+        this._touch();
+        s.msg = { text: `„${p.title}“ ist jetzt als letzter Eintrag auf „${tp.title}“ verlinkt – nach dem Speichern auf der Remote erreichbar.` };
+        return true;
+      }
+      case "maddsub": {
+        const title = prompt("Titel der neuen Unterseite:", "Neue Seite");
+        if (!title) return false;
+        const id = this._mNewId(title.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "seite");
+        m.pages.push({ id, title, remember: true, flow: true, items: [] });
+        p.items = p.items || [];
+        const at = s.mitem != null ? s.mitem + 1 : p.items.length;
+        p.items.splice(at, 0, { t: "page", target: id, label: title, w: 6, h: 1 });
+        s.mpage = id; s.mitem = null; s.msel = []; this._touch();
+        s.msg = { text: `Unterseite „${title}“ angelegt und auf „${p.title}“ verlinkt – du bist jetzt drin. Zurück über den Pfad oben.` };
+        return true;
+      }
+      case "maddsubvon": {   // "+" im Seitenbaum (2026-10-27)
+        const par = m.pages.find((pg) => pg.id === t.dataset.id);
+        if (!par) return false;
+        const title = prompt(`Titel der neuen Unterseite von „${par.title || par.id}“:`, "Neue Seite");
+        if (!title) return false;
+        const id = this._mNewId(title.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "seite");
+        m.pages.push({ id, title, remember: true, flow: true, items: [] });
+        (par.items ||= []).push({ t: "page", target: id, label: title, w: 6, h: 1 });
+        this._mZu().delete(par.id);
+        s.mpage = id; s.mitem = null; s.msel = []; this._touch();
+        s.msg = { text: `„${title}“ angelegt und als Kachel auf „${par.title || par.id}“ verlinkt.` };
+        return true;
+      }
+      case "madditem": {
+        p.items = p.items || [];
+        const at = s.mitem != null ? s.mitem + 1 : p.items.length;
+        p.items.splice(at, 0, { t: "action", label: "Neu", w: 6, h: 1, steps: [] });
+        s.mitem = at; this._touch(); return true;
+      }
+      case "mcopy": this._setClip({ type: "mitem", data: clone(this.mitem), label: `${this._mItemText(this.mitem)} · ${p.title}` });
+        s.msg = { text: "Eintrag kopiert – auf einer beliebigen Seite „Einfügen“ tippen." }; return true;
+      case "mpaste": {
+        if (s.clip?.type === "mitems") { const at = this._mGruppeEinfuegen(p); s.msel = s.clip.data.length > 1 ? s.clip.data.map((_, k) => at + k) : []; s.mitem = s.msel.length ? null : at; this._touch(); return true; }
+        if (s.clip?.type !== "mitem") return false;
+        p.items = p.items || [];
+        const at = s.mitem != null ? s.mitem + 1 : p.items.length;
+        p.items.splice(at, 0, clone(s.clip.data)); s.mitem = at; this._touch(); return true;
+      }
+      case "mdup": p.items.splice(s.mitem + 1, 0, clone(this.mitem)); s.mitem++; this._touch(); return true;
+      case "mdel": p.items.splice(s.mitem, 1); s.mitem = null; this._touch(); return true;
+      case "mup": case "mdown": {
+        const j = a === "mup" ? i - 1 : i + 1;
+        [p.items[i], p.items[j]] = [p.items[j], p.items[i]];
+        if (s.mitem === i) s.mitem = j; else if (s.mitem === j) s.mitem = i;
+        this._touch(); return true;
+      }
+      case "mpick": {
+        s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", ment: true, domains: M_DOMAINS[this.mitem.t] };
+        return true;
+      }
+      case "micon": s.modal = { type: "icon", q: "" }; return true;
+      case "micon_set": if (t.dataset.n) this.mitem.icon = t.dataset.n; else delete this.mitem.icon; s.modal = null; this._touch(); return true;
+    }
+    return false;
+  },
+
+  _mChange(t) {
+    if (t.dataset.kam) {
+      const k = this.cfg.kameras[Number(t.dataset.i)];
+      k[t.dataset.kam] = t.value.trim();
+      this._touch(); return true;
+    }
+    if (t.dataset.vl && this.s.modal?.type === "vorlage") { this.s.modal[t.dataset.vl] = t.value; return t.tagName === "SELECT"; }
+    if (t.dataset.mk && this.mitem) {
+      let v = t.type === "checkbox" ? t.checked : t.value;
+      if (t.dataset.mk === "wenn.neg") v = !!t.value;
+      this._mkSetzen(t.dataset.mk, v, t.dataset.typ); this._touch(); return true;
+    }
+    if (t.dataset.mkq && this.mitem) {
+      const k = t.dataset.mkq, it = this.mitem;
+      if (!t.value) delete it[k]; else it[k] = { ...(t.value === "text" ? { t: it[k]?.t || "" } : t.value === "ent" ? { e: it[k]?.e || "" } : { a: it[k]?.a || "" }), ...(k === "badge" && it[k]?.bg ? { bg: it[k].bg } : {}) };
+      if (t.value === "ent" && !it[k].e) this.s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", mk: k + ".e" };
+      this._touch(); return true;
+    }
+    if (t.dataset.mmap && this.mitem) {
+      const [art, j] = t.dataset.mmap.split("|"), it = this.mitem, e = Object.entries(it.map || {});
+      if (e[j]) e[j][art === "k" ? 0 : 1] = t.value;
+      it.map = Object.fromEntries(e); this._touch(); return true;
+    }
+    if (t.dataset.ek && this.s.modal?.type === "einfkey") { this.s.modal.sel[t.dataset.ek] = t.checked; return false; }
+    if (t.dataset.ers && this.s.modal?.type === "mers") { this.s.modal[t.dataset.ers] = t.value; return true; }
+    if (t.dataset.tl && this.s.modal?.type === "teile") { const [b, k] = t.dataset.tl.split("|"); (this.s.modal.sel[b] = this.s.modal.sel[b] || {})[k] = t.checked; return true; }
+    if (t.dataset.tq && this.s.modal?.type === "teile") { this.s.modal.quelle = t.value; this.s.modal.sel = {}; return true; }
+    if (t.dataset.ppg) {
+      const p = this.mpage, k = t.dataset.ppg;
+      if (k === "on") { if (t.checked) p.popup = p.popup || { open: [], close: [], timeout: 0, wake: true }; else delete p.popup; }
+      else if (k === "timeout") p.popup.timeout = Math.max(0, Number(t.value) || 0);
+      else if (k === "wake") p.popup.wake = t.checked;
+      else if (k === "excl") { if (t.checked) p.popup.excl = true; else delete p.popup.excl; }
+      else if (k === "inhalt") { if (t.value) p.inhalt = t.value; else delete p.inhalt; }
+      this._touch(); return true;
+    }
+    if (t.dataset.mt) {
+      const tr = this.mpage.popup[t.dataset.art][Number(t.dataset.i)];
+      if (t.dataset.mt === "neg") { if (t.value) tr.neg = true; else delete tr.neg; }
+      else if (t.value.trim()) tr[t.dataset.mt] = t.value.trim(); else delete tr[t.dataset.mt];
+      this._touch(); return true;
+    }
+    if (!t.dataset.mf && !t.dataset.mp && !t.dataset.mi) return false;
+    const s = this.s, m = this.menu, p = this.mpage;
+    if (t.dataset.mf) {
+      if (t.dataset.mf === "start") m.start = t.value;
+      if (t.dataset.mf === "hl") { if (t.value) m.hl = t.value; else delete m.hl; }
+      this._touch(); return true;
+    }
+    if (t.dataset.mp) {
+      const k = t.dataset.mp;
+      if (k === "id") {
+        const nid = t.value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+        if (!nid || m.pages.some((pg) => pg !== p && pg.id === nid)) { alert("Kennung leer oder schon vergeben."); return true; }
+        for (const pg of m.pages) for (const it of pg.items || []) if (it.t === "page" && it.target === p.id) it.target = nid;
+        if (m.start === p.id) m.start = nid;
+        p.id = nid; s.mpage = nid;
+      } else if (k === "remember" || k === "flow") {
+        if (k === "flow" && !t.checked) mLayout(p).forEach((l, j) => { p.items[j].x = l.x; p.items[j].y = l.y; });
+        p[k] = t.checked;
+      } else if (k === "focus" || k === "bfc" || k === "bc" || k === "bsym" || k === "vol" || k === "pknopf") {
+        if (t.value) p[k] = t.value; else delete p[k];
+      } else if (k === "vst") p.vst = Number(t.value) || 5;
+      else p[k] = t.value;
+      this._touch(); return true;
+    }
+    if (t.dataset.mi) {
+      const it = this.mitem, k = t.dataset.mi;
+      if (k === "t") {
+        it.t = t.value;
+        if (it.t === "page" && !it.target) it.target = m.pages.find((pg) => pg.id !== p.id)?.id || "";
+        if (it.t === "special" && !it.page) it.page = "media";
+        if (it.t === "camera") { it.src = it.src || "klingel_haus"; it.w = 6; it.h = Math.max(it.h || 1, 3); }
+        if (it.t === "setting" && !M_EINST_K[it.src]) { it.src = M_EINST[0][0]; }
+        if (it.t === "mtaste") { it.fn = it.fn || "play_pause"; delete it.steps; }
+        if (it.t === "vpreset") { it.wert = it.wert ?? 25; delete it.steps; }
+        if (it.t === "mtitel") { it.h = Math.max(it.h || 1, 2); delete it.steps; delete it.icon; }
+        if (it.t === "widget") { it.art = it.art || "uhr"; it.w = 6; it.h = it.h >= 2 ? it.h : 3; delete it.steps; delete it.icon; }
+        if (["toggle", "light", "number", "select", "cover", "sensor", ...M_MEDIEN].includes(it.t) && !it.entity) { this.s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", ment: true, domains: M_DOMAINS[it.t] }; }
+      } else if (k === "fn") it.fn = t.value;
+      else if (k === "wert") it.wert = Math.max(0, Math.min(100, Number(t.value) || 0));
+      else if (k === "okmute") { if (t.checked) it.ok = "mute"; else delete it.ok; }
+      else if (k === "st") { if (t.value) it.st = Number(t.value); else delete it.st; }
+      else if (k === "w" || k === "h") it[k] = Number(t.value);
+      else if (k === "x") it.x = Number(t.value);
+      else if (k === "y") it.y = Math.max(0, Number(t.value) - 1);
+      else if (k === "remember") it.remember = t.checked;
+      else if (k === "tremember") { const ziel = m.pages.find((pg) => pg.id === it.target); if (ziel) ziel.remember = t.checked; }
+      else if (k === "hold") { if (t.checked) it.hold = true; else { delete it.hold; delete it.release; } }
+      else if (k === "key") { if (Number(t.value)) it.key = Number(t.value); else delete it.key; }
+      else if (k === "modus") { if (t.value) it.modus = t.value; else delete it.modus; }
+      else if (k === "target" && t.value === "__neu") {
+        const title = prompt("Titel der neuen Seite:", it.label || "Neue Seite");
+        if (title) { const id = this._mNewId(title.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "seite");
+          m.pages.push({ id, title, remember: true, flow: true, items: [] }); it.target = id; if (!it.label) it.label = title; }
+      } else if (t.value) it[k] = t.value; else delete it[k];
+      this._touch(); return true;
+    }
+    return false;
+  },
+
+  // Ziehen: Liste umsortieren (HTML5 drag & drop) und in der Vorschau verschieben/Groesse aendern
+  _mBindDrag() {
+    const r = this.shadowRoot;
+    // Umsortieren am Griff: Zeiger-Ereignisse (funktionieren auch mit dem Finger)
+    r.querySelectorAll(".mli .hd").forEach((hd) => {
+      hd.onpointerdown = (e) => {
+        e.preventDefault();
+        const row = hd.closest(".mli"), list = row.parentElement, from = Number(row.dataset.drag);
+        const rows = [...list.querySelectorAll(".mli")];
+        let to = from;
+        row.classList.add("drag");
+        hd.setPointerCapture(e.pointerId);
+        const mark = (y) => {
+          to = rows.length - 1;
+          for (let k = 0; k < rows.length; k++) {
+            const b = rows[k].getBoundingClientRect();
+            if (y < b.top + b.height / 2) { to = k; break; }
+          }
+          rows.forEach((x, k) => { x.classList.toggle("over-top", k === to && to !== from && to < from); x.classList.toggle("over-bot", k === to && to !== from && to > from); });
+        };
+        hd.onpointermove = (ev) => mark(ev.clientY);
+        hd.onpointerup = hd.onpointercancel = () => {
+          hd.onpointermove = hd.onpointerup = hd.onpointercancel = null;
+          rows.forEach((x) => x.classList.remove("over-top", "over-bot", "drag"));
+          if (to === from) return;
+          const items = this.mpage.items;
+          const [x] = items.splice(from, 1); items.splice(to, 0, x);
+          this.s.mitem = to; this._touch(); this._render();
+        };
+      };
+    });
+    const grid = r.querySelector(".pgrid");
+    if (!grid) return;
+    grid.onpointerdown = (e) => {
+      const rs = e.target.closest("[data-rs]"), pi = e.target.closest(".pi");
+      if (!pi) return;
+      const i = Number(pi.dataset.i), p = this.mpage, it = p.items[i];
+      if (e.ctrlKey || e.metaKey || e.shiftKey) { this._mSelToggle(i); this._render(); e.preventDefault(); return; }
+      this.s.msel = [];
+      const cell = (M_W - 2 * M_PAD + M_GAP) / M_COLS;
+      const box = grid.getBoundingClientRect(), scale = box.width / M_W;
+      const basis = mLayout(p), L = basis[i];
+      const start = { x: e.clientX, y: e.clientY };
+      let moved = false;
+      const mode = rs ? "size" : p.flow === false ? "move" : "order";
+      // Feste Anordnung + "Ausweichen": die anderen ausgehend von ihrer Lage beim Anfassen verschieben
+      const weichen = () => {
+        if (p.flow !== false || !ausweichenAn()) return;
+        const rects = basis.map((r) => ({ ...r }));
+        rects[i] = { x: it.x ?? L.x, y: it.y ?? L.y, w: it.w || L.w, h: it.h || L.h };
+        if (!ausweichen(rects, i)) return;
+        rects.forEach((r, j) => { if (j !== i) { p.items[j].x = r.x; p.items[j].y = r.y; } });
+      };
+      const onMove = (ev) => {
+        const dx = (ev.clientX - start.x) / scale, dy = (ev.clientY - start.y) / scale;
+        if (!moved && Math.abs(dx) + Math.abs(dy) < 6) return;
+        moved = true;
+        if (mode === "size") {
+          it.w = Math.max(1, Math.min(M_COLS - (p.flow === false ? L.x : 0), Math.round((L.w * cell + dx) / cell)));
+          it.h = Math.max(1, Math.min(8, Math.round((L.h * M_ROW + dy) / M_ROW)));
+          weichen();
+        } else if (mode === "move") {
+          it.x = Math.max(0, Math.min(M_COLS - L.w, L.x + Math.round(dx / cell)));
+          it.y = Math.max(0, Math.min(127, L.y + Math.round(dy / M_ROW)));
+          weichen();
+        } else {
+          // Fluss: an die Position des Eintrags unter dem Finger setzen
+          const px = (ev.clientX - box.left) / scale, py = (ev.clientY - box.top) / scale;
+          const cx = Math.floor((px - M_PAD) / cell), cy = Math.floor((py - M_PAD) / M_ROW);
+          const Ls = mLayout(p);
+          const to = Ls.findIndex((l) => cx >= l.x && cx < l.x + l.w && cy >= l.y && cy < l.y + l.h);
+          if (to >= 0 && to !== this.s.mitem) { const [x] = p.items.splice(this.s.mitem, 1); p.items.splice(to, 0, x); this.s.mitem = to; }
+        }
+        this._touch(); this._render();
+      };
+      this.s.mitem = i;
+      if (mode !== "size") this._render();
+      const up = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", up); };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", up);
+      e.preventDefault();
+    };
+  },
+};
+
+const MENU_CSS = `
+.irname { display:flex; align-items:center; gap:6px; font-size:14px; }
+.irbtns { flex-wrap:wrap; } .irbtns > * { flex:0 0 auto; }
+.weg { flex-wrap:wrap; font-size:13px; } .weg > * { flex:0 0 auto; } .weg select { flex:1 1 180px; }
+.weg { display:flex; align-items:center; gap:6px 10px; margin-top:6px; padding:6px 8px; border-radius:10px; background:color-mix(in srgb, var(--acc) 8%, transparent); }
+.weg.eigen { background:transparent; border:1px dashed var(--div); }
+.weg .wl { color:var(--secondary-text-color); } .weg .vgchk { font-weight:600; }
+.weg .vg { display:inline-flex; align-items:center; gap:4px; flex:1 1 auto; } .weg .vg ha-icon { --mdc-icon-size:16px; opacity:.7; }
+.irgeraet { flex-wrap:wrap; } .irgeraet select { flex:1 1 160px; } .irgeraet > ha-icon { flex:0 0 auto; opacity:.7; }
+.irname .btn { margin-left:auto; }
+.weg .docks { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; flex:1 1 100%; } .weg .docks small { opacity:.7; }
+.btplatz { border:1px solid var(--div); border-radius:10px; padding:8px; margin:6px 0; display:flex; flex-direction:column; gap:6px; }
+.btplatz .inl > b.nr { flex:0 0 26px; height:26px; border-radius:50%; background:var(--acc-s,rgba(59,130,246,.15)); color:var(--acc,#3b82f6); display:inline-flex; align-items:center; justify-content:center; }
+.btplatz .chip { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--div); white-space:nowrap; }
+.btplatz .chip.ok { color:var(--success-color,#2e7d32); border-color:currentColor; font-weight:600; } .btplatz .chip.aus { opacity:.6; } .btplatz .chip.warn { color:var(--warning-color,#b26a00); border-color:currentColor; font-weight:600; }
+.btplatz .btzeile { flex-wrap:wrap; gap:8px 12px; } .btplatz .btzeile .akt { flex:1 1 120px; color:var(--sec); }
+.btplatz .aktionen { display:inline-flex; gap:4px; margin-left:auto; }
+.lbl { display:inline-flex; gap:6px; align-items:center; font-size:13px; color:var(--sec); } .lbl select { width:auto; }
+.btopt { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin:4px 0; }
+details.btprox { margin-top:12px; } details.btprox summary { cursor:pointer; font-weight:600; padding:6px 0; }
+.btplatz .inl > b { flex:0 0 18px; } .btplatz .inl > small { flex:0 0 auto; white-space:nowrap; opacity:.8; } .btplatz small.ok { color:var(--success-color,#2e7d32); opacity:1; font-weight:600; }
+.weg .chk { display:inline-flex; gap:4px; align-items:center; white-space:nowrap; cursor:pointer; }
+.irrow { display:flex; align-items:center; gap:4px; } .irrow .ent { flex:1; } .ent:disabled { opacity:.45; cursor:default; }
+.dlg.neu { max-width:640px; }
+.neuschritte { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px; } .neuschritte span { font-size:12px; padding:3px 8px; border-radius:12px; background:rgba(127,127,127,.15); }
+.neuschritte span.on { background:var(--primary-color); color:#fff; } .neuschritte span.ok { color:var(--success-color, #22c55e); }
+.neubody { overflow:auto; display:flex; flex-direction:column; gap:10px; }
+.neulog pre { background:#0e1116; color:#cbd5e1; font-size:11px; padding:8px; border-radius:8px; max-height:220px; overflow:auto; white-space:pre-wrap; margin:6px 0 0; }
+.neust .ok { color:#22c55e; } .neust .err { color:#ef4444; }
+.spin { display:inline-block; width:12px; height:12px; border:2px solid var(--primary-color); border-right-color:transparent; border-radius:50%; animation:sp 0.8s linear infinite; vertical-align:-2px; }
+@keyframes sp { to { transform:rotate(360deg); } }
+.neuweg { border:1px solid var(--div); border-radius:10px; padding:8px 12px; display:flex; flex-direction:column; gap:8px; } .neuweg h3 { margin:0; font-size:15px; display:flex; gap:6px; align-items:center; }
+.hmain { display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; padding:12px 0; }
+.hprev { background:#0e1116; border-radius:18px; padding:10px; box-shadow:0 6px 20px rgba(0,0,0,.35); }
+.hprev.inaktiv .hgrid { opacity:.45; }
+.hprev .hint { color:#8b94a3; max-width:300px; font-size:12px; }
+.hgrid { position:relative; width:240px; height:320px; zoom:1.25; touch-action:none; }
+.ha { position:absolute; box-sizing:border-box; border-radius:10px; background:#1a1f27; border:2px solid #2a3240; color:#f1f3f5; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; font-size:11px; cursor:grab; user-select:none; touch-action:none; overflow:hidden; text-align:center; }
+.ha b { font-weight:500; } .ha i { font-style:normal; color:#8b94a3; font-size:10px; } .ha ha-icon { --mdc-icon-size:16px; color:#3b82f6; }
+.ha.fix { cursor:pointer; flex-direction:row; border-style:dashed; } .ha.sel { border-color:#3b82f6; }
+.ha.a-dock { background:#232a35; } .ha.a-medien { background:#141a22; }
+.ha .rs { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, #3b82f6 50%); border-bottom-right-radius:8px; }
+.hlist { flex:1 1 260px; max-width:420px; } .hlist h3 { margin:0 0 8px; }
+.hl { padding:8px 10px; border-radius:10px; border:1px solid var(--div); margin-bottom:6px; } .hl.sel { border-color:var(--primary-color); }
+.hl small { display:block; color:var(--secondary-text-color); margin:2px 0 0 34px; }
+.pgsep { display:flex; align-items:center; }
+.seg { display:inline-flex; border:1px solid var(--div); border-radius:18px; overflow:hidden; }
+.seg button { border:0; background:transparent; color:var(--primary-text-color); padding:6px 14px; cursor:pointer; font:inherit; font-size:14px; }
+.seg button.on { background:var(--acc); color:#fff; }
+.mbar { display:flex; flex-wrap:wrap; gap:10px 20px; align-items:center; padding:12px 16px 0; }
+.inl2 { display:inline-flex; gap:8px; align-items:center; } .inl2 select { width:auto; }
+.mmain { display:grid; grid-template-columns:220px 340px 1fr; gap:16px; padding:16px; align-items:start; }
+.mpages h3 { display:flex; align-items:center; font-size:15px; font-weight:500; margin:0 0 8px; }
+.pg { display:flex; align-items:center; gap:6px; width:100%; text-align:left; border:1px solid var(--div); background:var(--card); color:inherit; border-radius:10px; padding:8px 10px; margin-bottom:6px; cursor:pointer; font:inherit; }
+.pg.on { border-color:var(--acc); box-shadow:0 0 0 2px rgba(3,169,244,.25); }
+.pg span { display:flex; flex-direction:column; flex:1; min-width:0; } .pg small { color:var(--sec); font-size:12px; }
+.pg ha-icon { --mdc-icon-size:16px; color:var(--sec); }
+.pgsep { font-size:12px; color:var(--sec); margin:12px 0 6px; }
+.pgr { display:flex; align-items:center; gap:2px; margin-bottom:6px; } .pgr .pg { margin:0; flex:1; min-width:0; }
+.pgr[draggable="true"] { cursor:grab; } .pgr.drag { opacity:.4; } .pgr.drop .pg { outline:2px dashed var(--acc); outline-offset:2px; }
+.pgr .plus { opacity:.45; } .pgr:hover .plus { opacity:1; }
+.pgr select.hsel { max-width:110px; font-size:12px; padding:2px 4px; margin-left:4px; }
+.hzus { display:flex; flex-direction:column; gap:6px; margin-bottom:6px; }
+.hzu { display:flex; flex-direction:column; gap:3px; font-size:13px; } .hzu > span { display:flex; align-items:center; gap:6px; font-weight:600; }
+.hzu > span ha-icon { --mdc-icon-size:18px; color:var(--acc); } .hzu select { width:100%; }
+.mmain.hstdmain { grid-template-columns:250px minmax(0,1fr); } .hstdw .mbar { padding-top:0; } .hstdw .hmain { padding-left:0; padding-right:0; }
+@media (max-width: 760px) { .mmain.hstdmain { grid-template-columns:1fr; } }
+.mpfad { display:flex; flex-wrap:wrap; align-items:center; gap:2px; font-size:13px; margin:0 0 8px; color:var(--sec); }
+.mpfad ha-icon { --mdc-icon-size:16px; } .mpfad b { color:var(--primary-text-color); } .mpfad small { margin-left:6px; }
+.mpfad .lnk { background:none; border:0; color:var(--acc); cursor:pointer; font:inherit; padding:2px 4px; border-radius:6px; } .mpfad .lnk:hover { background:var(--acc-s); }
+.mpopt > summary { cursor:pointer; font-size:13px; color:var(--sec); margin:4px 0; }
+.pgrid .pi.t-page { cursor:pointer; }
+.hakts .hakt { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; } .hakts .hakt b { min-width:110px; } .hakts .hakt select { width:auto; flex:1 1 200px; }
+.pgrid .pi.t-widget { padding:0; overflow:hidden; } .wbox { display:flex; width:100%; height:100%; align-items:stretch; }
+.wbox .wt { flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; font-size:10px; }
+.wbox.kombi .wt + .wt { border-left:1px solid #2e3643; }
+.wbox .wt:not(.g) { flex-direction:row; gap:5px; } .wbox .wt b { font-size:12px; } .wbox .wt.g b { font-size:20px; } .wbox .wuhr.g b { font-size:28px; }
+.wbox .wt i { color:#8b94a3; font-style:normal; font-size:9px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+.wbox .wt ha-icon { --mdc-icon-size:16px; } .wbox .wt.g ha-icon { --mdc-icon-size:26px; }
+.wbox .wmed > span { display:flex; flex-direction:column; min-width:0; }
+.tog { padding:4px; flex:0 0 auto; } .tog0 { width:26px; flex:0 0 auto; }
+.srt { display:flex; flex-direction:column; } .srt .icon.sm { padding:1px; } .srt ha-icon { --mdc-icon-size:16px; }
+.pg.aus { opacity:.55; } .pg .pic { --mdc-icon-size:18px; color:var(--sec); }
+.popedit { display:flex; flex-direction:column; gap:6px; border:1px solid var(--acc); border-radius:10px; padding:10px; }
+.popedit .ph { display:flex; align-items:center; justify-content:space-between; font-size:13px; color:var(--sec); margin-top:4px; }
+.trig { display:flex; align-items:center; gap:4px; } .trig .entity.sm { flex:1; padding:4px 8px; min-width:0; } .trig .entity small { font-size:11px; }
+.trig input { width:96px; flex:0 0 auto; padding:6px; font-size:13px; } .trig .attr { width:70px; } .trig .eq { color:var(--sec); }
+.lose { display:flex; flex-direction:column; gap:6px; border:1px dashed var(--warning-color,#f57c00); border-radius:8px; padding:8px 10px; font-size:13px; }
+.lose > ha-icon { color:var(--warning-color,#f57c00); } .lose .inl select { width:auto; flex:1; } .lose .inl { flex-wrap:wrap; }
+.phd { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+.phd .chk { display:flex; flex-direction:column; gap:2px; } .phd .sw.small { margin-top:0; }
+.phd .btns { flex-wrap:wrap; } .phd .btns > * { flex:0 0 auto; }
+.mono { font-family:monospace; font-size:13px; max-width:130px; }
+code { font-size:12px; background:rgba(127,127,127,.15); padding:1px 4px; border-radius:4px; }
+.phone { width:300px; margin:0 auto; background:#0e1116; border-radius:18px; padding:8px 0 12px; box-shadow:0 6px 20px rgba(0,0,0,.35); color:#f1f3f5; font-size:15px; }
+.phead { display:flex; align-items:center; gap:10px; margin:0 8px 0; height:50px; background:#0e1116; }
+.phead b { font-size:20px; font-weight:500; } .pback { background:#1a1f27; border-radius:20px; width:56px; height:36px; display:flex; align-items:center; justify-content:center; color:#8b94a3; }
+.pgrid { position:relative; width:240px; zoom:1.25; }
+.pgrid .pi.t-camera { overflow:hidden; } .pgrid .kambild { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.pgrid .kamname { position:absolute; left:4px; bottom:3px; font-size:9px; background:rgba(0,0,0,.55); padding:0 4px; border-radius:4px; font-style:normal; }
+.pgrid .pscr { position:absolute; left:-4px; right:-4px; height:0; border-top:2px dashed #f59e0b; z-index:3; pointer-events:none; }
+.pgrid .pscr span { position:absolute; right:4px; top:-15px; font-size:9px; line-height:12px; padding:0 5px; border-radius:6px; background:#f59e0b; color:#111; font-weight:600; }
+.pgrid .pdunkel { position:absolute; left:0; right:0; background:repeating-linear-gradient(135deg, rgba(0,0,0,.28) 0 6px, rgba(0,0,0,.12) 6px 12px); z-index:2; pointer-events:none; }
+.phone .pinfo { display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; color:#8b94a3; margin-top:10px; } .phone .pinfo ha-icon { --mdc-icon-size:16px; }
+.gl span { position:absolute; border:1px dashed rgba(255,255,255,.06); border-radius:6px; }
+.pi { position:absolute; background:#1a1f27; border:2px solid #1a1f27; border-radius:10px; display:flex; align-items:center; gap:4px; padding:0 8px; overflow:hidden; cursor:pointer; user-select:none; touch-action:none; box-sizing:border-box; }
+.pi.tile { flex-direction:column; justify-content:center; padding:2px; text-align:center; }
+.pi b { font-weight:400; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .pi.tile b { font-size:11px; white-space:normal; line-height:1.15; }
+.pi i { font-style:normal; color:#8b94a3; font-size:11px; white-space:nowrap; } .pi.is-on i { color:#22c55e; } .pi.is-on.tile b { color:#22c55e; }
+.pi ha-icon { --mdc-icon-size:16px; color:var(--ic, inherit); } .pi.t-text { background:transparent; border-color:transparent; align-items:flex-end; padding:0 2px 2px; }
+.pi b, .pi .tx { color:var(--fg, inherit); text-align:var(--al, inherit); } .pi.row b { flex:1 1 auto; }
+.pi b { font-size:var(--fs, 13px); } .pi.tile b { font-size:var(--fs, 11px); }
+.swatches { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+.swatch { width:28px; height:28px; border-radius:8px; border:2px solid var(--div); background:#1a1f27; color:#8b94a3; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center; font:inherit; }
+.swatch.on { border-color:var(--primary-color); box-shadow:0 0 0 2px rgba(3,169,244,.35); }
+.swatch.eigen { position:relative; overflow:hidden; } .swatch.eigen input { position:absolute; inset:0; opacity:0; cursor:pointer; } .swatch.eigen ha-icon { --mdc-icon-size:16px; }
+.seg.sm button { padding:4px 10px; font-size:13px; }
+.pi .tx { color:var(--fg, #8b94a3); font-size:var(--fs, 11px); text-align:var(--al, left); } .pi .tx.wrap { white-space:normal; align-self:flex-start; line-height:1.25; }
+.pi .row1 { display:flex; width:100%; justify-content:space-between; position:absolute; top:4px; left:0; padding:0 8px; box-sizing:border-box; }
+.pi .sl { position:absolute; bottom:8px; left:5%; width:90%; height:6px; background:#4b5563; border-radius:3px; } .pi .sl span { display:block; height:100%; background:#3b82f6; border-radius:3px; }
+.pi .cb { position:absolute; bottom:3px; left:0; width:100%; display:flex; justify-content:space-between; padding:0 6px; box-sizing:border-box; }
+.pi .cb em { font-style:normal; font-size:10px; background:#232a35; border-radius:6px; width:31%; text-align:center; padding:4px 0; }
+.pi.t-camera { background:#000; flex-direction:column; justify-content:center; }
+.pi.t-mtitel { background:#16202e; border-color:#16202e; }
+.pi .mti { display:flex; flex-direction:column; justify-content:space-between; width:100%; height:100%; min-width:0; padding:1px 2px; box-sizing:border-box; }
+.pi .mti b { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .pi .mti small { color:#8b94a3; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .pi .mti small.an { color:#22c55e; }
+.pi .mtk { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; width:100%; height:100%; color:var(--fg, #f1f3f5); }
+.pi .mtk.neben { flex-direction:row; justify-content:flex-start; gap:8px; padding-left:4px; }
+.pi .mtk ha-icon { --mdc-icon-size:20px; color:var(--ic, inherit); } .pi .mtk small { font-size:9px; color:#8b94a3; } .pi .mtk b { font-size:12px; }
+.pi .mtk.an, .pi .mtk.an ha-icon, .pi .mtk.an small, .pi .mtk.an b { color:#22c55e; } .pi .mtk.rot, .pi .mtk.rot ha-icon, .pi .mtk.rot small { color:#f87171; }
+.pi.msel { outline:2px dashed #f59e0b; outline-offset:1px; } .mli.msel { background:color-mix(in srgb, #f59e0b 14%, transparent); }
+.pi.gesperrt { opacity:.4; } .pi.gesperrt.weg { opacity:.25; border-style:dashed; }
+.pi .zz { display:flex; flex-direction:column; min-width:0; } .pi .zz b, .pi .zz i { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pi .gw { display:flex; flex:1; align-items:center; justify-content:space-between; min-width:0; } .pi .gw.hoch { flex-direction:column; align-items:flex-start; justify-content:space-between; height:100%; }
+.pi .gw small { color:#8b94a3; font-size:10px; } .pi .gw b { font-size:18px; } .pi .gw.hoch b { font-size:22px; }
+.pi i.sub { position:absolute; bottom:2px; left:0; right:0; text-align:center; font-size:9px; color:#8b94a3; }
+.pi em.badge { position:absolute; top:-4px; right:-4px; background:#dc2626; color:#fff; font-style:normal; font-size:9px; border-radius:7px; padding:0 4px; line-height:14px; }
+.pi .mbar { display:block; height:3px; background:#2e3643; border-radius:2px; } .pi .mbar span { display:block; height:100%; background:#3b82f6; border-radius:2px; }
+.pi .mseg { display:flex; gap:3px; width:100%; height:100%; } .pi .mseg span { flex:1; display:flex; align-items:center; justify-content:center; background:#232a35; border-radius:7px; font-size:12px; }
+.pi .mseg span.an { background:#14532d; color:#22c55e; }
+.pi b.lauf { text-overflow:clip; }
+.mgbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:6px 8px; margin:6px 0; border-radius:10px; background:color-mix(in srgb, #f59e0b 12%, transparent); }
+.teile { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; max-height:55vh; overflow:auto; }
+.teile h3 { margin:6px 0; font-size:14px; } .teile i.neu { color:#22c55e; font-style:normal; } .teile i.ers { color:#f59e0b; font-style:normal; }
+.dlg.wide { max-width:860px; width:calc(100vw - 32px); }
+.farbe { display:inline-flex; align-items:center; gap:4px; font-size:12px; } .farbe input[type=color] { width:28px; height:24px; padding:0; border:none; background:none; }
+.zst { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:4px 0; } .zst > input:first-child { width:110px; }
+.kbd { display:flex; flex-direction:column; gap:5px; padding:8px; } .kbd > div { display:flex; gap:4px; }
+.kbd span { flex:1; background:#232a35; border-radius:6px; color:#f1f3f5; text-align:center; font-size:11px; padding:9px 0; }
+.kbd.zahlen span { font-size:18px; padding:14px 0; }
+.haweg { display:flex; gap:12px; align-items:flex-start; padding:12px 14px; margin:0 0 12px; border-radius:14px; background:color-mix(in srgb, #f59e0b 14%, transparent); border:1px solid color-mix(in srgb, #f59e0b 40%, transparent); }
+.haweg > ha-icon { color:#f59e0b; flex:0 0 auto; --mdc-icon-size:26px; } .haweg > div { display:flex; flex-direction:column; gap:4px; } .haweg ol { margin:4px 0; padding-left:20px; }
+.haweg.klein { margin:8px 0 0; padding:8px 10px; } .haweg.klein > ha-icon { --mdc-icon-size:20px; }
+.neuversion { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; margin:8px 0; border-radius:12px; background:color-mix(in srgb, #22c55e 14%, transparent); }
+.neuversion ha-icon { color:#22c55e; flex:0 0 auto; }
+.feldok { color:var(--ok, #22c55e); flex:0 0 auto; }
+.appbox { margin-top:10px; padding:10px 12px; border-radius:12px; border:1px solid var(--div); }
+.appbox ol { margin:6px 0; padding-left:20px; } .appbox ol li { margin:3px 0; }
+.appst { list-style:none; padding:0; margin:8px 0; } .appst li { display:flex; gap:6px; align-items:center; margin:3px 0; }
+.appst li.gut ha-icon { color:#22c55e; } .appst li.schlecht { color:#f87171; } .appst ha-icon { --mdc-icon-size:18px; }
+.vorlagen { display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:8px; margin:8px 0 12px; }
+.vorl { display:flex; gap:10px; align-items:center; text-align:left; padding:10px; border-radius:12px; border:1px solid var(--div); background:transparent; color:inherit; cursor:pointer; font:inherit; }
+.vorl.on { border-color:var(--acc); background:color-mix(in srgb, var(--acc) 12%, transparent); }
+.vorl span { display:flex; flex-direction:column; } .vorl small { color:var(--secondary-text-color); }
+.pi.sel { border-color:#3b82f6; background:#2a3340; z-index:2; }
+.pgrid.free .pi { cursor:move; }
+.rs { position:absolute; right:0; bottom:0; width:14px; height:14px; background:#3b82f6; border-radius:4px 0 8px 0; cursor:nwse-resize; }
+.mlist { margin-top:12px; }
+.mli { display:flex; align-items:center; gap:4px; border:1px solid var(--div); border-radius:8px; margin-bottom:4px; background:var(--card); }
+.mli.sel { border-color:var(--acc); } .mli.drag { opacity:.4; }
+.mli .hd { cursor:grab; color:var(--sec); padding:10px 4px 10px 8px; touch-action:none; }
+.mli.over-top { box-shadow:0 -3px 0 var(--acc); } .mli.over-bot { box-shadow:0 3px 0 var(--acc); }
+.mli .ml { flex:1; display:flex; align-items:center; gap:8px; background:none; border:0; color:inherit; text-align:left; padding:6px; cursor:pointer; font:inherit; min-width:0; }
+.mli .ml span { display:flex; flex-direction:column; min-width:0; } .mli small { color:var(--sec); font-size:12px; } .mli b { font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.form { display:flex; flex-direction:column; gap:10px; padding-top:12px; }
+.form label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--sec); }
+.form label.sw { flex-direction:row; }
+.iconpick { display:flex; align-items:center; gap:8px; border:1px solid var(--div); background:transparent; color:var(--primary-text-color); border-radius:8px; padding:8px; cursor:pointer; font:inherit; }
+.list.icons { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:4px; }
+.ico { display:flex; flex-direction:column; align-items:center; gap:2px; border:1px solid var(--div); background:transparent; color:inherit; border-radius:8px; padding:6px 2px; cursor:pointer; }
+.ico small { font-size:10px; color:var(--sec); overflow:hidden; text-overflow:ellipsis; max-width:100%; white-space:nowrap; }
+@media (max-width: 1100px) { .mmain { grid-template-columns:200px 1fr; } .mmain .editor { grid-column:1 / -1; } }
+@media (max-width: 870px) {
+  .mmain { grid-template-columns:1fr; padding:12px; }
+  .mpages { max-height:45vh; overflow-y:auto; border:1px solid var(--div); border-radius:10px; padding:8px; }
+  .mmain.editing .editor { position:fixed; inset:0; z-index:10; border-radius:0; border:0; overflow-y:auto; padding-top:0; display:block; }
+  .mmain:not(.editing) .editor { display:none; }
+}
+`;
+
+const DOMAIN_ICON = {
+  script: "mdi:script-text", input_boolean: "mdi:toggle-switch", light: "mdi:lightbulb", switch: "mdi:power-socket-eu",
+  scene: "mdi:palette", cover: "mdi:window-shutter", media_player: "mdi:television", fan: "mdi:fan",
+  automation: "mdi:robot", button: "mdi:gesture-tap-button", input_button: "mdi:gesture-tap-button", climate: "mdi:thermostat", remote: "mdi:remote",
+};
+
+// Design-Ebene (2026-10-17): kommt als letztes Stylesheet und vereinheitlicht Farben, Flaechen und Abstaende
+// fuer alle Bereiche. Nur Optik - Aufbau und Logik bleiben in den Bereichs-Stylesheets.
+const THEME_CSS = `
+:host { --r:14px; --r-s:10px; --acc-s:color-mix(in srgb, var(--acc) 14%, transparent); --acc-m:color-mix(in srgb, var(--acc) 30%, transparent);
+  --flaeche:color-mix(in srgb, var(--primary-text-color) 4%, var(--card)); --rand:color-mix(in srgb, var(--primary-text-color) 11%, transparent);
+  --schatten:0 1px 2px rgba(0,0,0,.05), 0 4px 18px rgba(0,0,0,.06); --ok:var(--success-color,#16a34a); --fehler:var(--error-color,#dc2626);
+  --div:var(--rand); -webkit-font-smoothing:antialiased; }
+button, .btn, .chip, .key, .pg, .ent, .entity, .opt, .mli { transition:background-color .15s, border-color .15s, box-shadow .15s, color .15s, transform .1s; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+select, input, textarea { border-radius:var(--r-s); background:var(--card); border-color:var(--rand); }
+select:hover, input:hover, textarea:hover { border-color:color-mix(in srgb, var(--primary-text-color) 25%, transparent); }
+select:focus, input:focus, textarea:focus { outline:0; border-color:var(--acc); box-shadow:0 0 0 3px var(--acc-s); }
+::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background:var(--rand); border-radius:5px; border:2px solid transparent; background-clip:padding-box; }
+
+/* Knoepfe */
+.btn { border-radius:999px; border-color:var(--rand); font-weight:500; padding:7px 14px; }
+.btn:not(:disabled):hover { background:var(--flaeche); border-color:color-mix(in srgb, var(--primary-text-color) 22%, transparent); }
+.btn.primary:not(:disabled):hover { background:color-mix(in srgb, var(--acc) 88%, #000); }
+.btn:not(:disabled):active, .chip:active { transform:scale(.97); }
+.btn.small { padding:5px 11px; }
+.icon:hover { background:var(--flaeche); }
+.chip { border-color:var(--rand); font-weight:500; }
+.chip:hover { background:var(--flaeche); }
+.chip.on, .seg button.on { box-shadow:0 2px 8px var(--acc-m); }
+
+/* Umschalter */
+.seg { background:var(--flaeche); border:1px solid var(--rand); border-radius:12px; padding:3px; gap:2px; }
+.seg button { border-radius:9px; padding:6px 14px; color:var(--sec); font-weight:500; }
+.seg button:hover { color:var(--primary-text-color); }
+.seg button.on { background:var(--card); color:var(--acc); box-shadow:0 1px 3px rgba(0,0,0,.12); }
+.seg.sm { padding:2px; } .seg.sm button { padding:3px 10px; }
+
+/* Schalter statt Kaestchen */
+.sw input[type=checkbox] { appearance:none; -webkit-appearance:none; position:relative; width:38px; height:22px; flex:0 0 38px; margin:0; padding:0;
+  border-radius:11px; background:color-mix(in srgb, var(--primary-text-color) 22%, transparent); border:0; cursor:pointer; transition:background-color .2s; }
+.sw input[type=checkbox]::after { content:""; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff;
+  box-shadow:0 1px 2px rgba(0,0,0,.3); transition:transform .2s; }
+.sw input[type=checkbox]:checked { background:var(--acc); } .sw input[type=checkbox]:checked::after { transform:translateX(16px); }
+.sw input[type=checkbox]:disabled { opacity:.4; cursor:default; } .sw input[type=checkbox]:focus { box-shadow:0 0 0 3px var(--acc-s); }
+.sw.small { margin-top:0; }
+
+/* Meldungen und Status */
+.msg { border-radius:12px; padding:10px 14px; background:var(--acc-s); border:1px solid var(--acc-m); }
+.msg.err { background:color-mix(in srgb, var(--fehler) 10%, transparent); border-color:color-mix(in srgb, var(--fehler) 30%, transparent); }
+.xfer { border-radius:12px; border-color:var(--rand); box-shadow:var(--schatten); }
+.xfer.ok { border-color:color-mix(in srgb, var(--ok) 45%, transparent); } .xfer.err { border-color:color-mix(in srgb, var(--fehler) 45%, transparent); }
+
+/* Aktivitaet: Name, Bluetooth-Geraet, Leiste */
+.aktset { padding:10px 16px 0; gap:10px 16px; }
+.aktset > :is(.inl2, .sw) { background:var(--card); border:1px solid var(--rand); border-radius:12px; padding:4px 6px 4px 12px; min-height:42px; }
+.aktset input, .aktset select { border:0; background:var(--flaeche); padding:6px 8px; }
+
+/* Fernbedienung */
+.main { gap:20px; padding:16px 16px 40px; }
+.remote-wrap { top:76px; }
+.remote { position:relative; background:linear-gradient(160deg,#3a3f47 0%,#24272d 40%,#18191d 100%); border-radius:42px 42px 56px 56px; padding:20px 16px 30px; gap:9px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12), inset 0 -2px 6px rgba(0,0,0,.5), 0 2px 4px rgba(0,0,0,.2), 0 18px 40px rgba(0,0,0,.28); }
+.row.r2 { grid-template-columns:1fr 1fr; }
+.row.aktev { margin-top:6px; padding-top:10px; border-top:1px dashed rgba(255,255,255,.12); }
+.row.aktev .key { height:52px; background:transparent; border:1px dashed rgba(255,255,255,.18); }
+.screen { border:0; cursor:pointer; font:inherit; padding:8px 10px; min-height:118px; color:#e8eaed; gap:4px; border-radius:14px;
+  background:radial-gradient(120% 90% at 30% 0%, #1d2635 0%, #0b0d10 70%); box-shadow:inset 0 0 0 2px #0a0b0d, inset 0 0 0 3px #3a3f48, inset 0 8px 20px rgba(0,0,0,.6); }
+.screen:hover { box-shadow:inset 0 0 0 2px #0a0b0d, inset 0 0 0 3px var(--acc), inset 0 8px 20px rgba(0,0,0,.6); }
+.screen .sbar { display:flex; align-items:center; gap:4px; width:100%; font-size:10px; color:#8b94a3; } .screen .sbar i { font-style:normal; margin-right:auto; }
+.screen .sbar ha-icon { --mdc-icon-size:12px; }
+.screen b { font-size:15px; font-weight:600; margin:auto 0 0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.screen small { display:inline-flex; align-items:center; gap:3px; font-size:11px; color:#8b94a3; opacity:1; margin-bottom:auto; } .screen small ha-icon { --mdc-icon-size:12px; }
+.screen:hover small { color:var(--acc); }
+.key { background:linear-gradient(180deg,#464c56,#383d46); border:2px solid transparent; border-radius:15px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.1), 0 2px 0 #15171b, 0 3px 6px rgba(0,0,0,.25); }
+.key:hover { background:linear-gradient(180deg,#505762,#414752); }
+.key:active { transform:translateY(1px); box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 1px 0 #15171b; }
+.key.sel { border-color:var(--acc); box-shadow:0 0 0 4px var(--acc-m), inset 0 1px 0 rgba(255,255,255,.1); }
+.key.ok { background:radial-gradient(circle at 50% 35%, #555c67, #3a3f48); }
+.row.power .key { background:linear-gradient(180deg,#7a2e2e,#5a2222); } .row.power .key:hover { background:linear-gradient(180deg,#8a3434,#682828); }
+.key ha-icon { --mdc-icon-size:22px; }
+.key .kl { color:#b4bbc6; }
+.key .dots { bottom:4px; }
+.hint { line-height:1.7; margin-top:14px; }
+.clip { border-radius:12px; }
+
+/* Bearbeitungs-Flaeche */
+.editor { border:1px solid var(--rand); border-radius:18px; box-shadow:var(--schatten); padding:4px 20px 20px; }
+.edhead { top:60px; padding:14px 0 12px; border-bottom-color:var(--rand); }
+.edhead h2 { font-weight:600; }
+.gest h3 { font-weight:600; font-size:14px; letter-spacing:.01em; margin:20px 0 10px; }
+.gest h3 > ha-icon { color:var(--acc); background:var(--acc-s); border-radius:8px; padding:4px; --mdc-icon-size:18px; }
+.step { border-color:var(--rand); border-radius:12px; background:var(--card); box-shadow:0 1px 2px rgba(0,0,0,.04); }
+.step:hover { border-color:color-mix(in srgb, var(--primary-text-color) 20%, transparent); }
+.sh { background:var(--flaeche); padding:5px 5px 5px 12px; border-bottom:1px solid var(--rand); }
+.sb { padding:12px; gap:10px; }
+.none { font-style:italic; padding:10px 12px; border:1px dashed var(--rand); border-radius:12px; text-align:center; }
+.haltmodus { border-color:var(--rand); border-radius:12px; background:var(--flaeche); padding:12px; }
+.empty { padding:80px 16px; } .empty ha-icon { --mdc-icon-size:56px; opacity:.35; color:var(--acc); } .empty p { margin:12px auto 0; max-width:420px; line-height:1.5; }
+.entity, .opt, .iconpick { border-color:var(--rand); border-radius:12px; }
+.entity:hover, .opt:hover, .iconpick:hover { border-color:var(--acc); background:var(--acc-s); }
+.ent:hover { background:var(--flaeche); }
+details summary { user-select:none; } details summary:hover { color:var(--primary-text-color); }
+.weg { border-radius:12px; }
+
+/* Dialoge */
+.modal { background:rgba(10,12,16,.45); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); animation:einblenden .15s ease-out; }
+.dlg { border-radius:20px; padding:10px 20px 20px; box-shadow:0 24px 60px rgba(0,0,0,.35); animation:hoch .18s ease-out; }
+.dh h2 { font-weight:600; }
+.dfoot { padding-top:16px; border-top:1px solid var(--rand); margin-top:8px; }
+@keyframes einblenden { from { opacity:0; } }
+@keyframes hoch { from { opacity:0; transform:translateY(12px) scale(.98); } }
+
+/* Menue- und Startseiten-Editor */
+.mbar { padding:14px 16px 0; }
+.pg { border-color:var(--rand); border-radius:12px; }
+.pg:hover { background:var(--flaeche); }
+.pg.on { border-color:var(--acc); background:var(--acc-s); box-shadow:none; }
+.mli { border-color:var(--rand); border-radius:12px; } .mli:hover { border-color:color-mix(in srgb, var(--primary-text-color) 20%, transparent); }
+.mli.sel { border-color:var(--acc); background:var(--acc-s); }
+.phone, .hprev { border-radius:28px; box-shadow:inset 0 0 0 2px #23272e, 0 18px 40px rgba(0,0,0,.28); }
+.hl { border-color:var(--rand); border-radius:12px; } .hl.sel { background:var(--acc-s); }
+.swatch { border-radius:10px; }
+.ico { border-color:var(--rand); border-radius:10px; } .ico:hover { border-color:var(--acc); background:var(--acc-s); }
+
+/* Dock, Firmware, Einstellungen: Karten */
+.dock, .fw, .einst { margin:0 auto; padding:16px 16px 48px; }
+.dock .karte, .fw .karte, .einst .karte, .dock .karte.hw { border-color:var(--rand); border-radius:18px; padding:16px 18px; box-shadow:var(--schatten); }
+.dock .dkopf h2, .fw h3 { font-weight:600; }
+.dock .zeile input, .dock .zeile select, .hw select { border-color:var(--rand); border-radius:var(--r-s); background:var(--card); }
+.dock table { border-collapse:separate; border-spacing:0; } .dock td { border-top-color:var(--rand); padding:7px 8px; }
+.dock tr:hover td { background:var(--flaeche); }
+.badge, .dock .badge { border-radius:999px; padding:2px 8px; font-weight:600; background:var(--flaeche); border:1px solid var(--rand); }
+.badge.ok, .badge.warn, .badge.blau, .badge.rot, .dock .badge.eigen { border-color:transparent; }
+.balken, .xbar { height:8px; border-radius:4px; background:var(--flaeche); }
+.joblog, .neulog pre { border-radius:12px; }
+.einst .egrid { gap:16px; }
+.einst h3 { font-weight:600; font-size:15px; margin:0 0 10px; }
+.einst h3 > ha-icon { color:var(--acc); background:var(--acc-s); border-radius:8px; padding:4px; --mdc-icon-size:18px; }
+.einst .ez { border-top-color:var(--rand); min-height:42px; padding:4px 0; }
+.einst .ez.anders > span { font-weight:500; }
+
+@media (max-width: 870px) {
+  .main { padding:12px 12px 32px; }
+  .editor { border-radius:0; box-shadow:none; }
+  .main.editing .editor, .mmain.editing .editor { padding:0 16px 24px; }
+  .dlg { border-radius:0; }
+  .aktset > :is(.inl2, .sw) { flex:1 1 auto; }
+}
+
+/* Speichern-Leiste: erscheint unten mittig, sobald etwas ungespeichert ist */
+.savebar { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:15; display:flex; align-items:center; gap:8px;
+  max-width:calc(100% - 24px); padding:8px 8px 8px 16px; border-radius:999px; background:var(--card); border:1px solid var(--rand);
+  box-shadow:0 10px 36px rgba(0,0,0,.25), 0 0 0 4px var(--acc-s); animation:hochmitte .2s ease-out; }
+.savebar > ha-icon { color:var(--acc); flex:0 0 auto; }
+.savebar .sbt { font-size:14px; font-weight:500; margin-right:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.savebar .btn { flex:0 0 auto; }
+.savebar-platz { height:84px; }
+@keyframes hochmitte { from { opacity:0; transform:translate(-50%, 16px); } }
+
+/* Kopf je Abschnitt (Dock, Firmware) */
+.dkopf { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:26px 0 8px; }
+.dock > .dkopf:first-of-type, .fw > .dkopf:first-child { margin-top:4px; }
+.dkopf h2, .dkopf h3 { margin:0; display:flex; align-items:center; gap:8px; font-weight:600; }
+.dkopf h2 { font-size:20px; } .dkopf h3 { font-size:16px; }
+.dkopf h2 > ha-icon { color:var(--acc); }
+.dkopf + .hint { text-align:left; max-width:none; margin:0 0 8px; }
+.fw > .hint, .dock > .hint { text-align:left; max-width:none; }
+.dockleiste { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:4px 0 8px; padding:10px 12px; border-radius:14px; background:var(--flaeche); border:1px solid var(--rand); }
+.dockleiste .dl { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:500; padding:4px 10px 4px 8px; border-radius:999px; background:var(--card); border:1px solid var(--rand); }
+.dockleiste .dl ha-icon { --mdc-icon-size:16px; color:var(--sec); }
+.dockleiste .dl i { font-style:normal; font-weight:400; font-size:12px; color:var(--sec); }
+.dockleiste .dl.on i { color:var(--ok); } .dockleiste .dl.on ha-icon { color:var(--ok); }
+.dockleiste .dl b { font-size:11px; padding:1px 6px; border-radius:999px; background:#d97706; color:#fff; }
+.dockleiste .btn { margin-left:auto; }
+.dockleiste + .dkopf { margin-top:18px; }
+.main.editing:has(~ .savebar) .editor { padding-bottom:96px; }
+
+@media (max-width: 870px) {
+  .savebar { left:12px; right:12px; bottom:12px; transform:none; border-radius:18px; animation:none; }
+  .savebar .sbt { flex:1; font-size:13px; }
+  .savebar .btn { padding:7px 10px; }
+  .dockleiste .btn { margin-left:0; }
+}
+@media (max-width: 520px) { .savebar .sbt { display:none; } .savebar { justify-content:flex-end; } }
+@media (prefers-reduced-motion: reduce) { *, *::after { transition:none !important; animation:none !important; } }
+`;
+
+const CSS = `
+.addart .opts .opt { width:100%; text-align:left; cursor:pointer; border:1px solid var(--div); border-radius:10px; background:var(--card); color:var(--primary-text-color); font:inherit; }
+.addart .opts .opt:hover { border-color:var(--acc, var(--primary-color)); }
+option, optgroup { background:var(--card-background-color, var(--primary-background-color)); color:var(--primary-text-color); }
+:host { display:block; min-height:100vh; background:var(--primary-background-color); color:var(--primary-text-color);
+  font-family:var(--paper-font-body1_-_font-family, Roboto, system-ui, sans-serif); --acc:var(--primary-color,#03a9f4);
+  --card:var(--card-background-color,#fff); --div:var(--divider-color,rgba(127,127,127,.25)); --sec:var(--secondary-text-color,#888); }
+* { box-sizing:border-box; }
+ha-icon { --mdc-icon-size:20px; }
+.grow { flex:1; }
+.icon { background:none; border:0; color:inherit; padding:8px; border-radius:50%; cursor:pointer; display:inline-flex; }
+.icon:hover { background:rgba(127,127,127,.15); }
+.btn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--div); background:var(--card); color:var(--primary-text-color);
+  padding:7px 12px; border-radius:18px; font-size:14px; cursor:pointer; white-space:nowrap; }
+.btn.primary { background:var(--acc); color:#fff; border-color:transparent; }
+.btn.ghost { background:transparent; }
+.btn.small { padding:4px 10px; font-size:13px; }
+.btn:disabled { opacity:.45; cursor:default; }
+.sw { display:inline-flex; align-items:center; gap:8px; cursor:pointer; }
+.sw input { width:18px; height:18px; accent-color:var(--acc); }
+.sw.small { font-size:13px; color:var(--sec); margin-top:8px; }
+.st { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--sec); }
+.st.ok { color:var(--success-color,#43a047); }
+.xfer { border:1px solid var(--div); border-radius:10px; padding:8px 12px; background:var(--card); display:flex; flex-direction:column; gap:6px; }
+.xfer.ok { border-color:var(--success-color,#43a047); } .xfer.err { border-color:var(--error-color,#db4437); }
+.xsteps { display:flex; align-items:center; gap:4px; flex-wrap:wrap; font-size:12px; color:var(--sec); }
+.xs { display:inline-flex; align-items:center; gap:3px; } .xs ha-icon { --mdc-icon-size:16px; }
+.xs.ok { color:var(--success-color,#43a047); } .xs.cur { color:var(--acc); font-weight:500; } .xs.err { color:var(--error-color,#db4437); font-weight:500; }
+.xl { flex:0 1 18px; height:1px; background:var(--div); }
+.xbar { height:6px; border-radius:3px; background:rgba(127,127,127,.2); overflow:hidden; }
+.xbar span { display:block; height:100%; background:var(--acc); transition:width .4s; }
+.xfer.ok .xbar span { background:var(--success-color,#43a047); } .xfer.err .xbar span { background:var(--error-color,#db4437); }
+.xbar.busy span { animation:xpulse 1.2s ease-in-out infinite; }
+@keyframes xpulse { 0%,100% { opacity:.45; } 50% { opacity:1; } }
+.xtxt { font-size:13px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; } .st.warn { color:var(--warning-color,#f57c00); }
+.msg { margin:10px 16px 0; padding:10px 12px; border-radius:8px; background:rgba(3,169,244,.12); display:flex; align-items:center; gap:8px; }
+.msg.err { background:rgba(219,68,55,.15); color:var(--error-color,#db4437); }
+.msg .icon { margin-left:auto; padding:2px; }
+.main { display:grid; grid-template-columns:minmax(300px,380px) 1fr; gap:16px; padding:16px; align-items:start; }
+.remote-wrap { position:sticky; top:72px; }
+.remote { background:linear-gradient(#2b2f36,#1d2026); border-radius:36px 36px 48px 48px; padding:18px 14px 26px; box-shadow:0 6px 24px rgba(0,0,0,.35);
+  display:flex; flex-direction:column; gap:8px; max-width:360px; margin:0 auto; }
+.row { display:grid; gap:8px; }
+.row.r3 { grid-template-columns:repeat(3,minmax(0,1fr)); } .row.r4 { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.row.power { grid-template-columns:1fr 64px; align-items:stretch; margin-bottom:6px; }
+.screen { border-radius:14px; background:#0b0d10; border:2px solid #3a3f48; color:#6b7380; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:110px; font-size:13px; gap:2px; }
+.screen small { font-size:11px; opacity:.7; }
+.key { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; min-height:58px; padding:6px 3px 10px;
+  background:#3a3f48; color:#e8eaed; border:2px solid transparent; border-radius:14px; cursor:pointer; font:inherit; }
+.key:hover { background:#454b55; }
+.key.sel { border-color:var(--acc); box-shadow:0 0 0 3px rgba(3,169,244,.35); }
+.key.ok { border-radius:50%; aspect-ratio:1; min-height:0; justify-self:center; align-self:center; }
+.key .okt { font-weight:700; font-size:16px; }
+.key .kl { font-size:10px; line-height:1.15; color:#aab1bb; max-width:100%; overflow:hidden; padding:0 2px; text-align:center;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; min-height:2.3em; }
+.key { height:72px; min-height:0; }
+.haltmodus { display:flex; flex-direction:column; gap:6px; margin-top:12px; padding:10px; border:1px solid var(--div); border-radius:10px; }
+.haltmodus b { display:flex; align-items:center; gap:6px; font-weight:500; } .haltmodus .inl2 select { width:auto; }
+.gest.aus { opacity:.45; }
+.aktset { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding:8px 16px 0; font-size:13px; color:var(--sec); }
+.aktset input { width:140px; } .aktset select { width:auto; }
+.key.ok .kl { display:none; }
+.key .dots { position:absolute; bottom:3px; display:flex; gap:3px; }
+.key .lock { position:absolute; top:3px; left:5px; --mdc-icon-size:11px; opacity:.45; }
+.key .mstar { position:absolute; top:3px; right:5px; --mdc-icon-size:12px; color:#ffca28; }
+.cdot { width:22px; height:10px; border-radius:5px; }
+.row.power .key { background:#5a2a2a; }
+.dot { display:inline-block; width:6px; height:6px; border-radius:50%; vertical-align:middle; }
+.modstart { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:6px 0 2px; } .modstart b { display:flex; align-items:center; gap:6px; margin-right:4px; }
+.dot.short { background:#4fc3f7; } .dot.double { background:#ffb74d; } .dot.long { background:#ba68c8; }
+.key .offl { --mdc-icon-size:11px; color:#90a4ae; }
+.ohneha { margin-top:14px; border:1px dashed var(--divider-color,#555); border-radius:12px; padding:4px 10px 8px; }
+.ohneha .ohkopf { all:unset; display:flex; align-items:center; gap:8px; width:100%; padding:8px 0; cursor:pointer; }
+.ohneha .ohkopf[disabled] { cursor:default; }
+.ohneha .note.warn { color:var(--warning-color,#ffa000); display:block; }
+.gest.off h3 { opacity:.9; }
+.hint { font-size:12px; color:var(--sec); text-align:center; line-height:1.6; max-width:360px; margin:10px auto 0; }
+.hint ha-icon.sm { --mdc-icon-size:13px; }
+.editor { background:var(--card); border-radius:12px; border:1px solid var(--div); padding:4px 16px 16px; min-height:300px; }
+.empty { text-align:center; color:var(--sec); padding:60px 10px; } .empty ha-icon { --mdc-icon-size:48px; opacity:.5; }
+.edhead { display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--div); position:sticky; top:56px; background:var(--card); z-index:2; }
+.edhead h2 { margin:0; font-size:18px; font-weight:500; } .edhead small { color:var(--sec); }
+.edhead .back { display:none; }
+.gest h3 { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:500; margin:16px 0 8px; }
+.none { color:var(--sec); font-size:13px; padding:4px 2px; }
+.note { display:block; color:var(--sec); font-size:12px; margin-top:4px; }
+.step { border:1px solid var(--div); border-radius:10px; margin-bottom:8px; overflow:hidden; }
+.sh { display:flex; align-items:center; gap:6px; padding:4px 4px 4px 10px; background:rgba(127,127,127,.08); }
+.sh select { border:0; background:transparent; font-weight:500; }
+.sb { padding:10px; display:flex; flex-direction:column; gap:8px; }
+select, input, textarea { font:inherit; font-size:15px; color:var(--primary-text-color); background:var(--card); border:1px solid var(--div); border-radius:8px; padding:8px; width:100%; }
+.sh select { width:auto; }
+.inl { display:flex; gap:8px; align-items:center; } .inl > * { flex:1; } .inl span { flex:0; }
+details summary { cursor:pointer; color:var(--sec); font-size:13px; margin-bottom:6px; }
+details textarea, details input { margin-top:4px; font-family:monospace; font-size:13px; }
+.entity, .ent { display:flex; align-items:center; gap:10px; width:100%; text-align:left; background:transparent; border:1px solid var(--div); border-radius:8px; padding:8px 10px; color:inherit; cursor:pointer; font:inherit; }
+.entity span, .ent span { display:flex; flex-direction:column; min-width:0; }
+.entity small, .ent small { color:var(--sec); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ent { border:0; border-bottom:1px solid var(--div); border-radius:0; }
+.ent:hover { background:rgba(127,127,127,.1); }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:20; display:flex; align-items:center; justify-content:center; padding:16px; }
+.dlg { background:var(--card); border-radius:14px; width:100%; max-width:520px; max-height:90vh; display:flex; flex-direction:column; padding:8px 16px 16px; }
+.dlg.pick { height:80vh; }
+.dh { display:flex; align-items:center; } .dh h2 { margin:8px 0; font-size:18px; font-weight:500; flex:1; }
+.chips { display:flex; gap:6px; overflow-x:auto; padding:8px 0; flex-shrink:0; }
+.chip { border:1px solid var(--div); background:transparent; color:inherit; border-radius:16px; padding:5px 12px; white-space:nowrap; cursor:pointer; font-size:13px; }
+.chip.on { background:var(--acc); color:#fff; border-color:transparent; }
+.list { overflow-y:auto; flex:1; }
+.opts { overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
+.opt { display:flex; gap:10px; align-items:center; border:1px solid var(--div); border-radius:8px; padding:8px 10px; cursor:pointer; }
+.opt select { width:auto; margin-left:auto; }
+.opt input { width:18px; height:18px; flex:0 0 auto; accent-color:var(--acc); }
+.opt span { display:flex; flex-direction:column; } .opt small { color:var(--sec); }
+.dfoot { display:flex; justify-content:flex-end; gap:8px; padding-top:12px; }
+.clip { display:flex; align-items:center; gap:10px; max-width:360px; margin:0 auto 10px; padding:8px 6px 8px 12px; border-radius:10px;
+  border:1px dashed var(--acc); background:rgba(3,169,244,.08); }
+.clip span { display:flex; flex-direction:column; flex:1; min-width:0; } .clip small { color:var(--sec); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.swaps { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:10px 0 0; font-size:13px; color:var(--sec); }
+.icon.sm { padding:5px; } .icon.sm ha-icon { --mdc-icon-size:18px; } .icon:disabled { opacity:.35; cursor:default; }
+.msg .btn.small { margin-left:auto; } .msg .btn.small + .icon { margin-left:0; }
+@media (max-width: 870px) {
+  .wide { display:none; }
+  .main { grid-template-columns:1fr; padding:12px; }
+  .remote-wrap { position:static; }
+  .main.editing .editor { position:fixed; inset:0; z-index:10; border-radius:0; border:0; overflow-y:auto; padding-top:0; }
+  .main.editing .edhead { top:0; }
+  .edhead .back { display:inline-flex; }
+  .main:not(.editing) .editor { display:none; }
+  .dlg { max-height:100%; height:100%; border-radius:0; max-width:none; }
+  .modal { padding:0; }
+}
+`;
+
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(MenuEditor));
+// ---------------------------------------------------------------- Startseite
+// Raster wie im Menü: 6 Spalten x 8 Zeilen à 40 px (240 x 320). Ohne "custom" bleibt die Firmware-Anordnung.
+const H_AREAS = [
+  ["status", "Statusleiste", "mdi:wifi", "Uhrzeit, WLAN, Akku – immer oben, nur ein-/ausblendbar", { x: 0, y: 0, w: 6, h: 1 }, { fix: true }],
+  ["medien", "Medien", "mdi:play-box-multiple-outline", "Player-Karte und Kamerabilder (ab 4 Zeilen Höhe beide, sonst nur der Player)", { x: 0, y: 1, w: 6, h: 5 }, { minw: 3, minh: 2 }],
+  ["menu", "Menü-Knopf", "mdi:menu", "Öffnet das Menü", { x: 0, y: 6, w: 3, h: 1 }, { minw: 1, minh: 1 }],
+  ["apps", "Apps-Knopf", "mdi:apps", "Öffnet die App-Auswahl", { x: 3, y: 6, w: 3, h: 1 }, { minw: 1, minh: 1 }],
+  ["dock", "Aktivitäten-Leiste", "mdi:dock-bottom", "Umschalten der Aktivitäten", { x: 0, y: 7, w: 6, h: 1 }, { minw: 3, minh: 1, maxh: 1 }],
+];
+const H_DEF = () => ({ custom: false, areas: Object.fromEntries(H_AREAS.map(([k, , , , d]) => [k, { ...d, on: true }])) });
+
+const HomeEditor = {
+  get home() {
+    const c = this.cfg;
+    if (!c.home || !c.home.areas) c.home = H_DEF();
+    for (const [k, , , , d] of H_AREAS) if (!c.home.areas[k]) c.home.areas[k] = { ...d, on: true };
+    return c.home;
+  },
+  _hFrei(k, r) {
+    // Ueberlappung mit anderen eingeschalteten Bereichen?
+    const hm = this.home;
+    if (r.x < 0 || r.y < 0 || r.x + r.w > 6 || r.y + r.h > 8) return false;
+    return H_AREAS.every(([o]) => {
+      if (o === k) return true;
+      const b = hm.areas[o];
+      if (!b.on) return true;
+      return r.x + r.w <= b.x || b.x + b.w <= r.x || r.y + r.h <= b.y || b.y + b.h <= r.y;
+    });
+  },
+  _homeHtml() {
+    const hm = this.home, sel = this.s.harea;
+    const cells = Array.from({ length: 48 }, (_, i) => `<span style="left:${(i % 6) * 40 + 2}px;top:${Math.floor(i / 6) * 40 + 2}px;width:36px;height:36px"></span>`).join("");
+    const boxes = H_AREAS.filter(([k]) => hm.areas[k].on).map(([k, l, ic, , , o]) => {
+      const b = hm.areas[k];
+      return `<div class="ha ${sel === k ? "sel" : ""} ${o.fix ? "fix" : ""} a-${k}" data-h="${k}" style="left:${b.x * 40 + 2}px;top:${b.y * 40 + 2}px;width:${b.w * 40 - 4}px;height:${b.h * 40 - 4}px">
+        <ha-icon icon="${ic}"></ha-icon><b>${esc(l)}</b>${k === "medien" && b.h >= 4 ? '<i>Kameras · Player</i>' : ""}
+        ${o.fix ? "" : '<span class="rs" data-hrs="1"></span>'}</div>`;
+    }).join("");
+    const liste = H_AREAS.map(([k, l, ic, txt, , o]) => {
+      const b = hm.areas[k];
+      // Menue-/Apps-Knopf (2026-10-26): Ziel und Beschriftung frei
+      const seiten = (this.cfg.menu?.pages || []);
+      const knopf = k === "menu" || k === "apps" ? `<div class="inl hziel"><label class="inl2">Öffnet <select data-hz="${k}">
+          <option value="">${k === "apps" ? "Popup „apps“ (Standard)" : "das Menü (Standard)"}</option>
+          ${seiten.map((pg) => `<option value="${esc(pg.id)}" ${b.ziel === pg.id ? "selected" : ""}>${esc(pg.title || pg.id)}${pg.popup ? " (Popup)" : ""}</option>`).join("")}</select></label>
+        <label class="inl2">Text <input data-hl="${k}" value="${esc(b.label || "")}" maxlength="12" placeholder="${k === "apps" ? "Apps" : "Menü"}" style="width:90px"></label></div>` : "";
+      return `<div class="hl ${sel === k ? "sel" : ""}"><label class="sw small"><input type="checkbox" data-hon="${k}" ${b.on ? "checked" : ""}><span><b>${esc(l)}</b></span></label>
+        <small>${esc(txt)}${b.on && !o.fix ? ` · Spalte ${b.x + 1}, Zeile ${b.y + 1}, ${b.w}×${b.h}` : ""}</small>${knopf}</div>`;
+    }).join("");
+    const s = this.s, p = s.hstd ? null : this.mpage;
+    const links = this._hSeitenHtml(p);
+    if (p) return `<div class="mmain ${s.mitem != null ? "editing" : ""}">
+        <div class="mpages">${links}</div>
+        <div class="mprev">${this._hPageHead(p)}${this._mPreview(p)}${this._mList(p)}</div>
+        <div class="editor">${this.mitem ? this._mItemEditor() : '<div class="empty"><ha-icon icon="mdi:cursor-default-click-outline"></ha-icon><p>Eintrag in der Vorschau oder Liste antippen.</p></div>'}</div>
+      </div>`;
+    return `<div class="mmain hstdmain"><div class="mpages">${links}</div><div class="hstdw"><div class="mbar">
+        <label class="sw"><input type="checkbox" data-hf="custom" ${hm.custom ? "checked" : ""}><span>Eigene Anordnung der Startseite benutzen</span></label>
+        <label class="sw small" title="Beim Verschieben oder Vergrößern rutschen getroffene Karten nach unten statt überdeckt zu werden"><input type="checkbox" data-ausw="1" ${ausweichenAn() ? "checked" : ""}><span>Andere ausweichen lassen</span></label>
+        <span class="grow"></span><button class="btn small" data-a="hstd"><ha-icon icon="mdi:restore"></ha-icon>Standard</button>
+      </div>
+      <div class="hmain">
+        <div class="hprev ${hm.custom ? "" : "inaktiv"}"><div class="hgrid"><div class="gl">${cells}</div>${boxes}</div>
+          <p class="hint">Bereich ziehen = verschieben, Ecke unten rechts = Größe. Bereiche dürfen sich nicht überlappen – mit „Andere ausweichen lassen“ rutschen sie zur Seite.${hm.custom ? "" : "<br><b>Aus:</b> Die Remote zeigt die eingebaute Anordnung."}</p></div>
+        <div class="hlist"><h3>Bereiche</h3>${liste}
+          <small class="note">Die Statusleiste bleibt oben (Zeile 1). Ist sie ausgeblendet, kann ein anderer Bereich dorthin.
+          Die Medien-Karte zeigt ab 4 Zeilen Höhe oben die Kameras (wenn eingeschaltet) und unten den Player, sonst nur den Player.</small></div>
+      </div></div></div>`;
+  },
+  // Startseiten-Editor (2026-10-28): links welche Aktivitaet welche Startseite zeigt und die Seiten selbst - wie der
+  // Seitenbaum im Menue-Editor; Mitte/rechts derselbe Seiten- und Eintrags-Editor wie im Menue.
+  _hSeitenHtml(p) {
+    const akts = this.cfg.activities || [], starts = this.menu.pages.filter((pg) => pg.startseite);
+    const fuer = (id) => akts.filter((a) => (id ? a.home === id : !starts.some((pg) => pg.id === a.home))).map((a) => a.name || "?");
+    const zuordnung = akts.map((a, i) => {
+      const id = starts.some((pg) => pg.id === a.home) ? a.home : "";
+      return `<label class="hzu"><span><ha-icon icon="${aktIcon(a.name || "")}"></ha-icon>${esc(a.name || "Aktivität " + (i + 1))}</span>
+        <select data-hakt="${i}"><option value="">Standard (eingebaut)</option>${starts.map((pg) => `<option value="${esc(pg.id)}" ${pg.id === id ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}
+          <option value="__neu">+ Neue aus Vorlage</option><option value="__leer">+ Neue leere Seite</option></select></label>`;
+    }).join("");
+    const zeile = (on, a, id, icon, titel, unter) => `<div class="pgr"><span class="tog0"></span><button class="pg ${on ? "on" : ""}" data-a="${a}" ${id ? `data-id="${esc(id)}"` : ""}>
+        <ha-icon class="pic" icon="${icon}"></ha-icon><span><b>${esc(titel)}</b><small>${esc(unter)}</small></span></button></div>`;
+    const std = fuer("");
+    return `<h3>Aktivitäten</h3><div class="hzus">${zuordnung || '<div class="none">Keine Aktivitäten.</div>'}</div>
+      <div class="pgsep">Seiten<span class="grow"></span><button class="btn small" data-a="hneuseite" title="Neue Startseite aus der Vorlage (Uhr, Wetter, Medien, Menü/Apps)"><ha-icon icon="mdi:plus"></ha-icon>Startseite</button></div>
+      ${zeile(!p, "hstdsel", "", "mdi:home-outline", "Standard (eingebaut)", std.length ? "für " + std.join(", ") : "von keiner Aktivität benutzt")}
+      ${starts.map((pg) => { const f = fuer(pg.id); return zeile(p?.id === pg.id, "mpage", pg.id, "mdi:home-variant-outline", pg.title || pg.id, `${f.length ? "für " + f.join(", ") : "keiner Aktivität zugeordnet"} · ${(pg.items || []).length} Einträge`); }).join("")}
+      <small class="note">Eigene Startseiten zeigt die Remote zwischen Statusleiste und Aktivitäten-Leiste – mit allen Einträgen und Widgets wie im Menü.</small>`;
+  },
+  _hPageHead(p) {
+    return `<div class="phd">
+      <div class="inl"><input data-mp="title" value="${esc(p.title || "")}" placeholder="Titel (nur hier im Konfigurator)"></div>
+      <div class="chk">
+        <label class="sw small"><input type="checkbox" data-mp="flow" ${p.flow !== false ? "checked" : ""}><span>Automatisch anordnen (nach Reihenfolge)</span></label>
+        ${p.flow === false ? `<label class="sw small" title="Beim Verschieben oder Vergrößern rutschen getroffene Karten nach unten statt überdeckt zu werden"><input type="checkbox" data-ausw="1" ${ausweichenAn() ? "checked" : ""}><span>Andere ausweichen lassen</span></label>` : ""}
+      </div>
+      <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
+        ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
+        <button class="btn small ghost" data-a="mers" title="Eine Entität überall durch eine andere ersetzen (z. B. anderer Media Player)"><ha-icon icon="mdi:find-replace"></ha-icon>Entität ersetzen</button>
+        <button class="btn small ghost" data-a="mcopypage"><ha-icon icon="mdi:content-duplicate"></ha-icon>Seite kopieren</button>
+        <button class="btn small ghost" data-a="mdelpage"><ha-icon icon="mdi:delete-outline"></ha-icon>Seite löschen</button></div>
+    </div>`;
+  },
+  _hAktHtml() {
+    const seiten = this.cfg.menu?.pages || [];
+    const zeilen = (this.cfg.activities || []).map((a, i) => {
+      const id = a.home || "", pg = seiten.find((x) => x.id === id);
+      return `<div class="hakt"><b>${esc(a.name || "Aktivität " + (i + 1))}</b>
+        <select data-hakt="${i}"><option value="">Standard-Startseite (eingebaut)</option>
+          ${seiten.filter((x) => !x.popup).map((x) => `<option value="${esc(x.id)}" ${x.id === id ? "selected" : ""}>Eigene: ${esc(x.title || x.id)}</option>`).join("")}</select>
+        ${pg ? `<button class="btn small" data-a="hakt_edit" data-id="${esc(id)}"><ha-icon icon="mdi:pencil"></ha-icon>Bearbeiten</button>` : ""}
+        <button class="btn small ghost" data-a="hakt_neu" data-i="${i}" title="Neue Startseite mit Uhr, Wetter, Medien und Menü/Apps – danach frei änderbar"><ha-icon icon="mdi:auto-fix"></ha-icon>Neu aus Vorlage</button></div>`;
+    }).join("");
+    return `<div class="karte hakts"><h3>Startseite je Aktivität</h3>
+      <small class="note">„Standard“ ist die eingebaute Startseite (darunter anpassbar). Eine eigene Startseite ist eine Seite aus dem Menü-Editor mit allen Elementen und Widgets – zwischen Statusleiste und Aktivitäten-Leiste (beide unten ein-/ausblendbar). „Neu aus Vorlage“ legt sie fertig bestückt an, damit du nicht bei null anfängst.</small>
+      ${zeilen || '<div class="none">Keine Aktivitäten.</div>'}</div>`;
+  },
+  _hVorlage(i, leer = false) {
+    const c = this.cfg, a = c.activities[i] || {}, m = this.menu, H = this._hass.states;
+    const wetter = Object.keys(H).find((e) => e.startsWith("weather."));
+    // Media Player: der in der Belegung schon benutzte, sonst der erste
+    const benutzt = JSON.stringify(c).match(/"(media_player\.[a-z0-9_]+)"/);
+    const player = benutzt ? benutzt[1] : Object.keys(H).find((e) => e.startsWith("media_player."));
+    const base = "start_" + (a.name || (i >= 0 ? "akt" + (i + 1) : "seite")).toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const id = this._mNewId(base || "start");
+    const items = [{ t: "widget", art: "kombi", teile: ["uhr", "wetter"], ...(wetter ? { we: wetter } : {}), w: 6, h: 2 }];   // 2 + 2 + 1 Zeilen passen ohne Scrollen
+    if (player) items.push({ t: "widget", art: "medien", entity: player, leer: "weg", w: 6, h: 2 });
+    items.push({ t: "action", label: "Menü", icon: "menu", w: 3, h: 1, steps: [{ t: "int", fn: "menu_open" }] });
+    if (m.pages.some((p) => p.id === "apps")) items.push({ t: "action", label: "Apps", icon: "dots-horizontal", w: 3, h: 1, steps: [{ t: "int", fn: "popup_open", page: "apps" }] });
+    if (leer) items.length = 0;
+    m.pages.push({ id, title: a.name ? "Start " + a.name : "Neue Startseite", startseite: true, remember: false, flow: true, items });
+    if (i >= 0) a.home = id;
+    return id;
+  },
+  _hClick(a, t) {
+    if (a === "hstdsel") { this.s.hstd = true; this.s.mitem = null; return true; }
+    if (a === "hneuseite") { const id = this._hVorlage(-1); Object.assign(this.s, { hstd: false, mpage: id, mitem: null }); this.s.msg = { text: "Startseite angelegt – links einer Aktivität zuordnen. Speichern nicht vergessen." }; this._touch(); return true; }
+    if (a === "hakt_neu") { const id = this._hVorlage(Number(t.dataset.i)); this.s.msg = { text: "Startseite angelegt – „Bearbeiten“ öffnet sie im Menü-Editor. Speichern nicht vergessen." }; this.s.hneu = id; this._touch(); return true; }
+    if (a === "hakt_edit") { Object.assign(this.s, { mode: "home", hstd: false, mpage: t.dataset.id, mitem: null }); this._nachOben = true; return true; }
+    if (a === "hstd") { const c = this.home.custom; this.cfg.home = H_DEF(); this.cfg.home.custom = c; this.s.harea = null; this._touch(); return true; }
+    return false;
+  },
+  _hChange(t) {
+    if (t.dataset.hakt != null) {
+      const i = Number(t.dataset.hakt), a = this.cfg.activities[i];
+      if (t.value === "__neu" || t.value === "__leer") {
+        const id = this._hVorlage(i, t.value === "__leer");
+        Object.assign(this.s, { hstd: false, mpage: id, mitem: null });
+        this.s.msg = { text: `Startseite für „${a.name || ""}“ angelegt – frei änderbar wie eine Menüseite. Speichern nicht vergessen.` };
+      } else if (t.value) { a.home = t.value; Object.assign(this.s, { hstd: false, mpage: t.value, mitem: null }); }
+      else { delete a.home; Object.assign(this.s, { hstd: true, mitem: null }); }
+      this._touch(); return true;
+    }
+    if (t.dataset.hf) { this.home.custom = t.checked; this._touch(); return true; }
+    if (t.dataset.hz) { const b = this.home.areas[t.dataset.hz]; if (t.value) b.ziel = t.value; else delete b.ziel; this._touch(); return true; }
+    if (t.dataset.hl) { const b = this.home.areas[t.dataset.hl], v = t.value.trim().slice(0, 12); if (v) b.label = v; else delete b.label; this._touch(); return true; }
+    if (t.dataset.hon) {
+      const k = t.dataset.hon, b = this.home.areas[k];
+      if (t.checked) {
+        // Wieder einschalten: Platz suchen (zuerst die alte Stelle, sonst irgendwo)
+        const o = H_AREAS.find((x) => x[0] === k)[5];
+        let r = { x: b.x, y: b.y, w: b.w, h: b.h };
+        if (!this._hFrei(k, r)) {
+          r = null;
+          for (const h of [b.h, o.minh || 1]) for (const w of [b.w, o.minw || 1]) for (let y = 0; y + h <= 8 && !r; y++) for (let x = 0; x + w <= 6 && !r; x++)
+            if ((!o.fix || (x === 0 && y === 0)) && this._hFrei(k, { x, y, w, h })) r = { x, y, w, h };
+        }
+        if (!r) { this.s.msg = { text: "Kein freier Platz – verkleinere oder blende erst einen anderen Bereich aus.", err: true }; return true; }
+        Object.assign(b, r, { on: true });
+      } else b.on = false;
+      this.home.custom = true; this._touch(); return true;
+    }
+    return false;
+  },
+  _hBindDrag() {
+    const grid = this.shadowRoot.querySelector(".hgrid");
+    if (!grid) return;
+    grid.onpointerdown = (e) => {
+      const box = e.target.closest(".ha");
+      if (!box) return;
+      const k = box.dataset.h, o = H_AREAS.find((x) => x[0] === k)[5], b = this.home.areas[k];
+      this.s.harea = k;
+      if (o.fix) { this._render(); return; }
+      const size = !!e.target.closest("[data-hrs]");
+      const sc = grid.getBoundingClientRect().width / 240, st = { x: e.clientX, y: e.clientY }, b0 = { ...b };
+      const start0 = Object.fromEntries(Object.entries(this.home.areas).map(([o, v]) => [o, { ...v }]));
+      const onMove = (ev) => {
+        const dx = Math.round((ev.clientX - st.x) / sc / 40), dy = Math.round((ev.clientY - st.y) / sc / 40);
+        const r = size
+          ? { x: b0.x, y: b0.y, w: Math.max(o.minw || 1, b0.w + dx), h: Math.min(o.maxh || 8, Math.max(o.minh || 1, b0.h + dy)) }
+          : { x: b0.x + dx, y: b0.y + dy, w: b0.w, h: b0.h };
+        if (r.x === b.x && r.y === b.y && r.w === b.w && r.h === b.h) return;
+        if (this._hFrei(k, r)) { Object.assign(b, r); this.home.custom = true; this._touch(); this._render(); return; }
+        // Ausweichen (2026-10-26): getroffene Bereiche rutschen nach unten, solange alles in die 8 Zeilen passt
+        if (!ausweichenAn() || r.x < 0 || r.y < 1 || r.x + r.w > 6 || r.y + r.h > 8) return;
+        const keys = H_AREAS.map(([o]) => o).filter((o) => o === k || (this.home.areas[o]?.on && !H_AREAS.find((x) => x[0] === o)[5].fix));
+        const rects = keys.map((o) => o === k ? { ...r } : { ...(start0[o] || this.home.areas[o]) });
+        const fixe = H_AREAS.filter(([o, , , , , oo]) => oo.fix && this.home.areas[o]?.on).map(([o]) => ({ ...this.home.areas[o] }));
+        if (fixe.some((f) => !(r.x + r.w <= f.x || f.x + f.w <= r.x || r.y + r.h <= f.y || f.y + f.h <= r.y))) return;
+        const ki = keys.indexOf(k);
+        if (!ausweichen(rects, ki, 8)) return;
+        keys.forEach((o, j) => Object.assign(this.home.areas[o], rects[j]));
+        this.home.custom = true; this._touch(); this._render();
+      };
+      const up = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", up); this._render(); };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", up);
+      e.preventDefault();
+    };
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(HomeEditor));
+// ---------------------------------------------------------------- Neue Fernbedienung (2026-10-04)
+// 1 Name/IP  ->  2 Firmware bauen (ESPHome-Add-on)  ->  3 Flashen (USB am PC im Browser oder USB am HA-Server)  ->  4 in HA einbinden
+const NEU_SCHRITTE = ["Name", "Firmware bauen", "Flashen", "In HA einbinden"];
+const NeuEditor = {
+  async _neuClick(a, t) {
+    const s = this.s, m = s.modal;
+    if (a === "entfernen") {
+      const dev = t?.dataset?.dev || s.dev;
+      if (!confirm(`${devName(dev)} wirklich entfernen?\n\nWeg sind danach: Belegung und Menü, die YAML-Datei im ESPHome-Add-on, die feste IP und der ESPHome-Eintrag in Home Assistant. Die Remote selbst behält ihre Firmware, bis sie neu geflasht wird.`)) return true;
+      try {
+        const r = await this._hass.callWS({ type: "esphomeremote_konfig/entfernen", device: dev });
+        await this._load();
+        s.msg = { text: `${devName(dev)} entfernt (${r.entfernt.join(", ")}).` };
+      } catch (e) { s.msg = { err: true, text: e.message || String(e) }; }
+      return true;
+    }
+    if (a === "neu") {
+      s.modal = { type: "neu", schritt: 0, name: "", ip: "", vorlage: s.dev, job: null };
+      return true;
+    }
+    if (a === "neu_fortsetzen") {   // angelegt, aber noch nicht fertig eingerichtet (Fenster zu, HA neu gestartet ...)
+      const dev = t.dataset.dev;
+      s.modal = { type: "neu", schritt: 1, dev, name: devName(dev), ip: "", job: null };
+      try { s.modal.job = await this._hass.callWS({ type: "esphomeremote_konfig/job", device: dev }); } catch (e) { s.modal.fehler = e.message; }
+      const j = s.modal.job;
+      if (j?.phase === "einbinden") s.modal.schritt = 3;
+      else if (j?.phase === "upload") { s.modal.schritt = 2; await this._neuFlashInfo(); }
+      else if (j?.phase === "compile" && !j.running && j.exit === 0) { s.modal.schritt = 2; await this._neuFlashInfo(); }
+      if (j?.running) this._neuPoll();
+      return true;
+    }
+    if (!m || m.type !== "neu" || !a.startsWith("neu_")) return false;
+    const R = this.shadowRoot;
+    try {
+      if (a === "neu_anlegen") {
+        // "Remote" steckt schon im Geraetenamen (Remote WZ <Name>) - sonst entsteht remote-wz-remote...
+        m.name = R.querySelector('[data-neu="name"]').value.trim().replace(/^remote\s+/i, "");
+        m.ip = R.querySelector('[data-neu="ip"]').value.trim();
+        m.vorlage = R.querySelector('[data-neu="vorlage"]').value;
+        if (!m.name) { m.fehler = "Bitte einen Namen eingeben."; return true; }
+        m.fehler = null; m.busy = true; this._render();
+        const r = await this._hass.callWS({ type: "esphomeremote_konfig/neu", name: m.name, ip: m.ip, vorlage: m.vorlage || undefined });
+        m.dev = r.device; m.busy = false; m.schritt = 1;
+        await this._neuJob("compile");
+      } else if (a === "neu_bauen") await this._neuJob("compile");
+      else if (a === "neu_usb") { m.port = R.querySelector('[data-neu="port"]')?.value || m.port; await this._neuJob("usb", { port: m.port }); }
+      else if (a === "neu_weiter") { m.schritt = 3; await this._neuJob("einbinden"); }
+      else if (a === "neu_zumflashen") { m.schritt = 2; await this._neuFlashInfo(); }
+      else if (a === "neu_einbinden") await this._neuJob("einbinden");
+      else if (a === "neu_fertig") {
+        const dev = m.dev; s.modal = null;
+        await this._load();
+        if (s.order.includes(dev)) { s.dev = dev; try { localStorage.setItem("erk_dev", dev); } catch (e) { /* egal */ } }
+        s.msg = { text: `${devName(dev)} ist eingerichtet. Belegung und Menü kannst du jetzt hier anpassen – Speichern schickt sie an die Remote.` };
+      }
+    } catch (e) {
+      m.busy = false; m.fehler = e.message || e.code || String(e);
+    }
+    return true;
+  },
+  async _neuJob(start, extra = {}) {
+    const m = this.s.modal;
+    m.job = await this._hass.callWS({ type: "esphomeremote_konfig/job", device: m.dev, start, ...extra });
+    if (m.schritt === 1 || start === "compile") m.schritt = 1;
+    this._neuPoll();
+  },
+  async _neuFlashInfo() {
+    const m = this.s.modal;
+    try { const f = await this._hass.callWS({ type: "esphomeremote_konfig/flash_info", device: m.dev }); m.manifest = f.manifest; m.ports = f.ports || []; } catch (e) { m.fehler = e.message; }
+  },
+  _neuPoll() {
+    clearTimeout(this._neuT);
+    const m = this.s.modal;
+    if (!m || m.type !== "neu" || !m.dev) return;
+    this._neuT = setTimeout(async () => {
+      const mm = this.s.modal;
+      if (!mm || mm.type !== "neu") return;
+      try { mm.job = await this._hass.callWS({ type: "esphomeremote_konfig/job", device: mm.dev }); } catch (e) { /* naechster Versuch */ }
+      const j = mm.job;
+      if (j && !j.running && j.exit === 0 && j.phase === "compile" && mm.schritt === 1) {
+        mm.schritt = 2;
+        await this._neuFlashInfo();
+        this._render();   // neuer Schritt: ganzes Fenster neu
+      } else this._neuTeilweise();
+      if (j && j.running) this._neuPoll();
+    }, 2000);
+  },
+  // Waehrend ein Auftrag laeuft, nur Protokoll und Knoepfe des Fensters erneuern - nicht die ganze Seite
+  // (2026-10-18: alle 2 s neu aufgebaut, das Fenster "zuckte"; der USB-Knopf im Browser waere dabei neu entstanden).
+  _neuTeilweise() {
+    const R = this.shadowRoot, dlg = R.querySelector(".dlg.neu");
+    if (!dlg) { this._render(); return; }
+    const tmp = document.createElement("div");
+    tmp.innerHTML = this._neuHtml();
+    const neuLog = tmp.querySelector(".neulog"), altLog = dlg.querySelector(".neulog");
+    if (neuLog && altLog) {
+      const st = altLog.querySelector(".neust"), nst = neuLog.querySelector(".neust");
+      if (st && nst && st.innerHTML !== nst.innerHTML) st.innerHTML = nst.innerHTML;
+      const pre = altLog.querySelector("pre"), npre = neuLog.querySelector("pre");
+      if (npre && !pre) altLog.appendChild(npre);
+      else if (pre && npre && pre.textContent !== npre.textContent) {
+        const unten = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+        pre.textContent = npre.textContent;
+        if (unten) pre.scrollTop = pre.scrollHeight;
+      }
+    } else if (neuLog || altLog) { this._render(); return; }
+    const fuss = dlg.querySelector(".dfoot"), nfuss = tmp.querySelector(".dfoot");
+    if (fuss && nfuss && fuss.innerHTML !== nfuss.innerHTML) fuss.innerHTML = nfuss.innerHTML;
+    const fehler = tmp.querySelector(".neubody > .msg.err"), afehler = dlg.querySelector(".neubody > .msg.err");
+    if (!!fehler !== !!afehler) this._render();
+  },
+  _neuLog(j) {
+    if (!j) return "";
+    const l = (j.lines || []).slice(-40).map(esc).join("\n");
+    const pct = typeof j.progress === "number" ? ` ${Math.round(j.progress)} %` : "";
+    const stand = j.running ? `<span class="spin"></span> ${esc(j.schritt || "läuft")}${pct} …` : j.exit === 0 ? '<b class="ok">fertig</b>' : j.exit != null ? '<b class="err">fehlgeschlagen</b>' : "";
+    return `<div class="neulog"><div class="neust">${stand} ${esc(j.msg || "")}</div>${l ? `<pre>${l}</pre>` : ""}</div>`;
+  },
+  _neuHtml() {
+    const m = this.s.modal, j = m.job;
+    const kopf = `<div class="neuschritte">${NEU_SCHRITTE.map((n, i) => `<span class="${i === m.schritt ? "on" : i < m.schritt ? "ok" : ""}">${i < m.schritt ? "✓" : i + 1} ${n}</span>`).join("")}</div>`;
+    let body = "", fuss = "";
+    if (m.schritt === 0) {
+      body = `<p>Die neue Remote bekommt dieselbe Firmware wie die anderen. Nur der Name ist anders („Hallo …“, Gerätename, Bluetooth-Name).</p>
+        <label class="col">Name (bis 14 Zeichen, ohne „Remote“ davor)<input data-neu="name" maxlength="14" value="${esc(m.name)}" placeholder="z. B. Gast"></label>
+        <label class="col">IP-Adresse im WLAN (leer lassen = automatisch)<input data-neu="ip" value="${esc(m.ip)}" placeholder="automatisch vom Router"></label>
+        <small class="note">Leer: Die Remote holt sich beim ersten Start eine IP vom Router. Ich lese sie aus, mache sie zur festen IP und spiele das per WLAN auf. Im Router kannst du sie danach reservieren.</small>
+        <label class="col">Belegung und Menü übernehmen von<select data-neu="vorlage">${this.s.order.map((d) => `<option value="${esc(d)}" ${d === m.vorlage ? "selected" : ""}>${esc(devName(d))}</option>`).join("")}<option value="" ${m.vorlage === "" ? "selected" : ""}>Standard (wie neu)</option></select></label>
+        <small class="note">Gerätename wird <code>remote-wz-${esc((m.name || "name").replace(/^remote\s+/i, "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]/g, ""))}</code>. Das Bauen dauert beim ersten Mal etwa 10 Minuten.</small>`;
+      fuss = `<button class="btn primary" data-a="neu_anlegen" ${m.busy ? "disabled" : ""}><ha-icon icon="mdi:hammer-wrench"></ha-icon>Anlegen und Firmware bauen</button>`;
+    } else if (m.schritt === 1) {
+      const neuStart = !j || (!j.running && j.exit == null);   // z. B. nach einem Neustart von Home Assistant
+      body = `<p>Die Firmware für <b>${esc(devName(m.dev))}</b> wird im ESPHome-Add-on gebaut (beim ersten Mal etwa 10 Minuten).
+        Du kannst das Fenster auch schließen – weiter geht es dann unter Firmware &amp; Geräte › „Einrichten fortsetzen“.</p>${neuStart ? "" : this._neuLog(j)}`;
+      fuss = j && j.running ? ""
+        : j && j.exit === 0 ? `<button class="btn primary" data-a="neu_zumflashen"><ha-icon icon="mdi:arrow-right"></ha-icon>Weiter zum Flashen</button>`
+        : `<button class="btn primary" data-a="neu_bauen"><ha-icon icon="mdi:${neuStart ? "hammer-wrench" : "refresh"}"></ha-icon>${neuStart ? "Firmware bauen" : "Nochmal bauen"}</button>`;
+    } else if (m.schritt === 2) {
+      const web = "serial" in navigator && window.isSecureContext;
+      const extern = this._hass.config?.external_url;
+      if (web && m.manifest && !this._ewt) this._ewt = import("https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module").catch(() => null);
+      body = `<p>Remote per <b>USB-Kabel</b> anschließen. Zwei Wege:</p>
+        <section class="neuweg"><h3><ha-icon icon="mdi:laptop"></ha-icon>USB an diesem Computer</h3>
+        ${web ? `<esp-web-install-button manifest="${esc(m.manifest)}"><button slot="activate" class="btn primary"><ha-icon icon="mdi:usb"></ha-icon>Verbinden &amp; flashen</button>
+          <span slot="unsupported">Dieser Browser kann kein USB – bitte Chrome oder Edge am PC.</span></esp-web-install-button>
+          <small class="note">Im Fenster des Browsers den Port der Remote wählen (meist „USB JTAG/serial debug unit“). Löschen bestätigen.</small>`
+        : `<p class="note">Geht nur in <b>Chrome oder Edge am PC</b> und über https.${extern ? ` Öffne dafür <a href="${esc(extern)}/fernbedienung" target="_blank">${esc(extern)}/fernbedienung</a>.` : ""}</p>`}
+        </section>
+        <section class="neuweg"><h3><ha-icon icon="mdi:server"></ha-icon>USB am Home-Assistant-Server</h3>
+          <label class="col">Port<select data-neu="port">${(m.ports || []).map((p) => `<option value="${esc(p.port)}" ${p.port === m.port ? "selected" : ""}>${esc(p.port)} – ${esc(p.desc || "")}</option>`).join("") || "<option value=''>keine Remote gefunden – per USB einstecken und Fenster neu öffnen</option>"}</select></label>
+          <small class="note">Es erscheinen nur ESP32-Geräte (die Remote), andere USB-Geräte wie der Zigbee-Stick werden nie angeboten.</small>
+          <button class="btn" data-a="neu_usb" ${(m.ports || []).length && !(j && j.running) ? "" : "disabled"}><ha-icon icon="mdi:upload"></ha-icon>Über den Server flashen</button>
+          ${j && j.phase === "upload" ? this._neuLog(j) : ""}
+        </section>`;
+      fuss = `<button class="btn primary" data-a="neu_weiter" ${j && j.running ? "disabled" : ""}><ha-icon icon="mdi:arrow-right"></ha-icon>Geflasht – weiter</button>`;
+    } else {
+      body = `<p>Die Remote startet und verbindet sich mit dem WLAN. Danach lege ich sie in Home Assistant an (ESPHome-Integration mit Schlüssel)${m.ip ? "" : ", mache die IP vom Router fest und spiele das per WLAN auf – die Remote dafür bitte wach halten (z. B. ans Ladekabel)"}.</p>${this._neuLog(j)}`;
+      fuss = j && j.running ? "" : j && j.exit === 0 ? `<button class="btn primary" data-a="neu_fertig"><ha-icon icon="mdi:check"></ha-icon>Fertig</button>`
+        : `<button class="btn" data-a="neu_einbinden"><ha-icon icon="mdi:refresh"></ha-icon>${j && j.exit != null ? "Nochmal versuchen" : "In Home Assistant einbinden"}</button>`;
+    }
+    return `<div class="modal"><div class="dlg neu">
+      <div class="dh"><h2>Neue Fernbedienung</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      ${kopf}<div class="neubody">${body}${m.fehler ? `<div class="msg err">${esc(m.fehler)}</div>` : ""}</div>
+      <div class="dfoot">${fuss}</div></div></div>`;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(NeuEditor));
+
+// ===========================================================================
+// Infrarot (2026-10-11): IR-Schritte aus der IR-Datenbank (Flipper-IRDB, liegt in HA), Test,
+// Sendeweg Remote/Dock wie beim OpenRemote-Original. Daten: cfg.ir = { route: 0..3, docks: ["<esphome-slug>", ..] }
+// als Vorgabe; jeder Schritt kann sie mit r (Route) und d (Docks) ueberschreiben (2026-10-11).
+// ===========================================================================
+const IR_ROUTES = [
+  [0, "Nur Remote", "Die Remote sendet selbst."],
+  [1, "Remote und Dock", "Beide senden. Deckt den Raum aus zwei Richtungen ab."],
+  [2, "Nur Dock", "Das Dock sendet. Erreicht die Remote das Dock weder direkt noch über HA, sendet sie selbst."],
+  [3, "Remote, dann Dock (nacheinander)", "Zwei saubere Signale hintereinander, keine Überlagerung. Jeder Befehl kommt doppelt an – nicht für Umschalt-Befehle wie Power (an/aus) verwenden."],
+];
+const IrEditor = {
+  _irDocks() {
+    // ESPHome-Geraete mit der Aktion <slug>_ir_roh (dock-*.yaml)
+    return Object.keys(this._hass.services.esphome || {}).filter((x) => x.endsWith("_ir_roh")).map((x) => x.slice(0, -7));
+  },
+  // Fremde Sender (2026-10-28, blaster.py): infrared-Entitaeten anderer Integrationen und remote-Entitaeten, deren
+  // send_command rohe Codes annimmt (Broadlink: IR + 433 MHz, Xiaomi Miio: IR). [{id, name, rf, art}]
+  _irBlaster() {
+    const H = this._hass, eigene = this._irDocks(), plat = (e) => H.entities?.[e]?.platform || "";
+    const RP = { broadlink: ["Broadlink", true], xiaomi_miio: ["Xiaomi", false] };
+    return Object.keys(H.states).filter((e) => {
+      if (e.startsWith("infrared.")) return !eigene.some((d) => e === `infrared.${d}_ir_sender`);
+      return e.startsWith("remote.") && plat(e) in RP;
+    }).map((e) => ({ id: e, name: H.states[e].attributes.friendly_name || e, rf: !!RP[plat(e)]?.[1],
+      art: e.startsWith("infrared.") ? `IR-Sender (${plat(e) || "infrared"})` : `${RP[plat(e)][0]} (remote.send_command)` }))
+      .sort((a, b) => a.name.localeCompare(b.name, "de"));
+  },
+  _irVorgabeDocks() {
+    const ir = this.cfg.ir || {};
+    return ir.docks || (ir.dock ? [ir.dock] : []);
+  },
+  // Anzeigename eines Docks (esphome-Slug -> Name des IR-Senders in HA)
+  _dockLabel(d) {
+    if (d.includes(".")) return this._hass.states[d]?.attributes.friendly_name || d;   // fremder Sender
+    const st = this._hass.states[`infrared.${d}_ir_sender`] || Object.values(this._hass.states).find((x) => x.entity_id.startsWith(`infrared.${d}_`));
+    return (st?.attributes.friendly_name || d.replace(/^dock_/, "Dock ").replace(/_/g, " ")).replace(/\s*IR-Sender$/, "");
+  },
+  // Sendeweg-Zeile eines Schritts (2026-10-16): Haken "Vorgabe" = Route und Docks kommen aus der Vorgabe der Remote
+  // (Knopf Infrarot oben) und aendern sich mit ihr; ohne Haken eigener Sendeweg nur fuer diesen Befehl.
+  _wegHtml(st, id, mitRoute) {
+    const vorgabeR = this.cfg.ir?.route || 0;
+    const vd = this._irVorgabeDocks();
+    const eigen = (mitRoute && st.r !== undefined) || Array.isArray(st.d);
+    const r = mitRoute ? (st.r !== undefined ? st.r : vorgabeR) : 2;
+    const docks = Array.isArray(st.d) ? st.d : vd;
+    const namen = (l) => l.length ? l.map((d) => this._dockLabel(d)).join(", ") : "kein Dock";
+    const vorgabeText = mitRoute ? IR_ROUTES[vorgabeR][1] + (vorgabeR ? ` · ${namen(vd)}` : "") : namen(vd);
+    let inhalt;
+    if (!eigen) {
+      inhalt = `<span class="vg" title="Kommt aus der Vorgabe dieser Remote und ändert sich mit ihr"><ha-icon icon="mdi:link-variant"></ha-icon>${esc(vorgabeText)}</span>`;
+    } else {
+      const alle = [...new Set([...this._irDocks(), ...this._irBlaster().filter((b) => mitRoute || b.rf).map((b) => b.id), ...vd, ...docks])];
+      const routeSel = mitRoute ? `<select data-f="weg_r" ${id} title="Sendeweg dieses Befehls">
+          ${IR_ROUTES.map(([v, l]) => `<option value="${v}" ${r === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>` : "";
+      const dockTeil = r === 0 ? "" : alle.length
+        ? `<span class="docks">${alle.map((d) => `<label class="chk"><input type="checkbox" data-f="weg_d" ${id} value="${esc(d)}" ${docks.includes(d) ? "checked" : ""}>${esc(this._dockLabel(d))}</label>`).join("")}</span>`
+        : `<small class="note">Kein Dock in Home Assistant gefunden.</small>`;
+      inhalt = routeSel + dockTeil;
+    }
+    const warn = r !== 0 && !docks.length ? `<div class="msg err">${mitRoute ? "Kein Dock gewählt – die Remote sendet selbst." : "Kein Dock gewählt – 433 MHz kann nur ein Dock senden."}</div>` : "";
+    return `<div class="weg ${eigen ? "eigen" : ""}"><span class="wl">${mitRoute ? "Senden über" : "Docks"}</span>
+        <label class="chk vgchk" title="An: wie für alle Befehle dieser Remote eingestellt. Aus: eigener Sendeweg nur für diesen Befehl."><input type="checkbox" data-f="weg_v" ${id} ${eigen ? "" : "checked"}>Vorgabe</label>
+        ${inhalt}<button class="chip" data-a="ir_einst" title="Vorgabe für alle Befehle dieser Remote">Vorgabe ändern</button></div>${warn}`;
+  },
+  _wegChange(t) {
+    const f = t.dataset.f;
+    if (!["weg_r", "weg_d", "weg_v"].includes(f) || t.dataset.g == null) return false;
+    const g = t.dataset.g, i = Number(t.dataset.i);
+    const st = { ...this._irStep(g, i) };
+    if (f === "weg_v") {
+      if (t.checked) { delete st.r; delete st.d; }
+      else { if (st.t === "ir") st.r = this.cfg.ir?.route || 0; st.d = [...this._irVorgabeDocks()]; }
+    } else if (f === "weg_r") { if (t.value === "") delete st.r; else st.r = Number(t.value); }
+    else {
+      const set = new Set(Array.isArray(st.d) ? st.d : this._irVorgabeDocks());
+      if (t.checked) set.add(t.value); else set.delete(t.value);
+      st.d = [...set];
+    }
+    const kc = this._steps(g); kc[g][i] = st; this._commit(kc);
+    return true;
+  },
+  _irStepBody(st, id) {
+    const raw = Array.isArray(st.raw);
+    const art = `<select data-f="irart" ${id}><option value="p" ${raw ? "" : "selected"}>Protokoll</option><option value="r" ${raw ? "selected" : ""}>Rohsignal</option></select>`;
+    const felder = raw
+      ? `<div class="inl">${art}<input type="number" data-f="irf" ${id} value="${st.f || 38000}" min="10000" max="100000" step="1000" title="Trägerfrequenz (Hz)"><span>Hz</span></div>
+        <details><summary>${st.raw.length} Zeiten in µs (+ an / − aus)</summary><textarea data-f="irraw" ${id} rows="3">${esc(st.raw.join(" "))}</textarea></details>`
+      : `<div class="inl">${art}<select data-f="proto" ${id}>${[...new Set([...IR_PROTOS, st.proto || "NEC"])].map((p) => `<option ${st.proto === p ? "selected" : ""}>${p}</option>`).join("")}</select>
+        <input data-f="addr" ${id} value="${hex(st.addr || 0)}" title="Adresse"><input data-f="cmd" ${id} value="${hex(st.cmd || 0)}" title="Befehl"></div>`;
+    // Schnellwahl (2026-10-16): eigene Geraete (Dockingstation) - Befehl per Auswahl wechseln, ohne neu zu suchen
+    if (this.s.dock === undefined) { this.s.dock = null; this._dockLaden(); }
+    const geraete = this.s.dock?.geraete || [];
+    const q = this._irQuelle(st);
+    const gw = geraete.find((x) => x.id === (q?.g ?? st._g));
+    const schnell = geraete.length ? `<div class="inl irgeraet"><ha-icon icon="mdi:remote-tv"></ha-icon>
+        <select data-f="ir_g" ${id} title="Eigene Geräte (Dockingstation)"><option value="">${st.db != null ? "Gerät aus der IR-Datenbank" : "Eigener Code"}</option>
+          <optgroup label="Meine Geräte">${geraete.map((x) => `<option value="${esc(x.id)}" ${gw?.id === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</optgroup></select>
+        ${gw ? `<select data-f="ir_b" ${id} title="Befehl">${q ? "" : `<option value="" selected>Befehl wählen …</option>`}${this._dockBefehle(gw).map((b) => `<option value="${esc(b.n)}" ${q?.b === b.n ? "selected" : ""}>${esc(this._dockName(b.n))}</option>`).join("")}</select>` : ""}</div>` : "";
+    const erk = raw ? irErkennen(st.raw) : null;
+    const erkannt = erk ? `<div class="irname"><ha-icon icon="mdi:auto-fix"></ha-icon><span>Erkannt: <b>${esc(irErkanntText(erk))}</b></span>
+        <button class="btn small" data-a="ir_alsproto" ${id} title="Als Protokoll senden – z. B. Sony 3x, wie die Original-Fernbedienung">Als Protokoll übernehmen</button></div>` : "";
+    const dbKnopf = st.db != null && !q ? `<button class="btn small" data-a="ir_dbgeraet" ${id} title="Anderen Befehl desselben Geräts aus der Datenbank wählen"><ha-icon icon="mdi:swap-horizontal"></ha-icon>Anderer Befehl …</button>` : "";
+    return `${schnell}${st.n && !q ? `<div class="irname"><ha-icon icon="mdi:database-outline"></ha-icon><b>${esc(st.n)}</b>${dbKnopf}</div>` : ""}${felder}${erkannt}
+      <div class="inl irbtns"><button class="btn small" data-a="ir_db" ${id}><ha-icon icon="mdi:database-search"></ha-icon>Aus IR-Datenbank …</button>
+        <button class="btn small" data-a="lern_ir" ${id}><ha-icon icon="mdi:school-outline"></ha-icon>Anlernen</button>
+        <button class="btn small" data-a="ir_test" ${id}><ha-icon icon="mdi:play"></ha-icon>Testen</button>
+        ${(st.raw?.length || st.proto) ? `<button class="btn small ghost" data-a="ir_meine" ${id} title="Diesen Code unter IR-Codes > Meine Codes ablegen"><ha-icon icon="mdi:account-star-outline"></ha-icon>In Meine Codes</button>` : ""}</div>
+      ${this._wegHtml(st, id, true)}`;
+  },
+  _irStep(g, i) { return this._steps(g)[g][i]; },
+  // Gehoert der Code eines Schritts zu einem eigenen Geraet? -> {g: Geraete-Id, b: Befehlsname}
+  _irQuelle(st) {
+    const gleich = (a, b) => (a.raw || b.raw) ? (Array.isArray(a.raw) && Array.isArray(b.raw) && a.raw.length === b.raw.length && a.raw.every((v, k) => v === b.raw[k]))
+      : (a.proto || "NEC") === (b.proto || "NEC") && (a.addr || 0) === (b.addr || 0) && (a.cmd || 0) === (b.cmd || 0);
+    const geraete = this.s.dock?.geraete || [];
+    const reihe = st._g ? [...geraete.filter((x) => x.id === st._g), ...geraete.filter((x) => x.id !== st._g)] : geraete;
+    for (const x of reihe) for (const b of this._dockBefehle(x)) if (gleich(st, b.st)) return { g: x.id, b: b.n };
+    return null;
+  },
+  _irSetStep(g, i, st) {
+    const kc = this._steps(g);
+    const alt = kc[g][i] || {};
+    // eigener Sendeweg bleibt, wenn das Signal ersetzt wird (Datenbank, Anlernen)
+    if (alt.t === st.t) for (const k of ["r", "d"]) if (alt[k] !== undefined && st[k] === undefined) st[k] = alt[k];
+    kc[g][i] = st;
+    this._commit(kc);
+  },
+  // Testen ueber den eingestellten Sendeweg (2026-10-26): "Nur Dock" schickt HA direkt ans Dock (Remote muss nicht
+  // wach/verbunden sein), "Nur Remote" ueber die Remote, die beiden anderen Wege wie die Taste: beide bzw. nacheinander.
+  async _irTest(st) {
+    const route = st.r ?? this.cfg.ir?.route ?? 0;
+    const docks = Array.isArray(st.d) ? st.d : this._irVorgabeDocks();
+    const remote = async () => {
+      const slug = this.s.meta[this.s.dev].slug;
+      try { await this._esphome(`${slug}_ir_test`, { schritt: JSON.stringify({ ...st, r: 0 }) }); return null; }
+      catch (e) { return `Remote: ${e.message || e.code} – Remote wach und mit WLAN verbunden?`; }
+    };
+    const dock = async () => {
+      const f = [];
+      for (const d of docks) {
+        const sender = d.includes(".") ? d : this._hass.states[`infrared.${d}_ir_sender`] ? `infrared.${d}_ir_sender`
+          : Object.keys(this._hass.states).find((k) => k.startsWith(`infrared.${d}_`));
+        if (!sender) { f.push(`${this._dockLabel(d)}: kein IR-Sender in HA`); continue; }
+        if (this._hass.states[sender].state === "unavailable") { f.push(`${this._dockLabel(d)}: offline`); continue; }
+        try { await this._hass.callWS({ type: "esphomeremote_konfig/dock_senden", sender, schritt: st }); }
+        catch (e) { f.push(`${this._dockLabel(d)}: ${e.message || e.code}`); }
+      }
+      return f.length ? f.join(", ") : null;
+    };
+    const fehler = [];
+    const merk = (x) => { if (x) fehler.push(x); };
+    if (route === 0 || !docks.length) merk(await remote());
+    else if (route === 2) merk(await dock());
+    else if (route === 1) (await Promise.all([dock(), remote()])).forEach(merk);
+    else { merk(await remote()); await new Promise((r) => setTimeout(r, 150)); merk(await dock()); }
+    const weg = route === 0 || !docks.length ? "Remote" : route === 2 ? "Dock" : route === 1 ? "Remote und Dock" : "Remote, dann Dock";
+    this.s.msg = fehler.length ? { err: true, text: `Test (${weg}): ${fehler.join("; ")}` }
+      : { text: `Gesendet (${weg}): ${this.stepText(st)}` };
+  },
+  async _irStatus() {
+    const m = this.s.modal;
+    try { m.st = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_status" }); } catch (e) { m.fehler = e.message; }
+    if (m.st?.job && !["fertig", "fehler"].includes(m.st.job.phase)) {
+      clearTimeout(this._irPoll);
+      this._irPoll = setTimeout(async () => {
+        if (this.s.modal !== m) return;
+        await this._irStatus();
+        if (m.st?.installiert && m.type === "irdb" && !m.res) await this._irSuchen();
+        this._render();
+      }, 1000);
+    }
+  },
+  async _irSuchen() {
+    const m = this.s.modal;
+    const q = m.q || "";
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_suchen", q, limit: 80, ...(m.quelle ? { quelle: m.quelle } : {}) });
+      if (this.s.modal === m && (m.q || "") === q) m.res = r;
+    } catch (e) { m.fehler = e.message; }
+  },
+  _irBind() {
+    const q = this.shadowRoot.querySelector("#irq");
+    if (!q) return;
+    q.oninput = () => {
+      const m = this.s.modal;
+      m.q = q.value;
+      clearTimeout(this._irT);
+      this._irT = setTimeout(async () => {
+        await this._irSuchen();
+        const pos = this.shadowRoot.querySelector("#irq")?.selectionStart ?? m.q.length;
+        this._render();
+        const nq = this.shadowRoot.querySelector("#irq");
+        if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); }
+      }, 250);
+    };
+    if (!this._narrow && !this.s.modal.dev) setTimeout(() => q.focus(), 0);
+  },
+  // Alle Quellen auf einen Blick (Infrarot-Dialog, 2026-10-28) - verwaltet werden sie auf der Seite IR-Codes
+  _irDbListeHtml(st) {
+    if (!st) return `<p class="note">Lade …</p>`;
+    const datum = (x) => (x ? new Date(x.length <= 10 ? x + "T12:00" : x.replace(" ", "T")).toLocaleDateString("de-DE") : "?");
+    const zeilen = Object.entries(st.quellen || {}).map(([k, q]) => {
+      const j = q.job, laeuft = j && !["fertig", "fehler"].includes(j.phase);
+      const txt = laeuft ? esc(j.text) : !q.installiert ? "nicht installiert"
+        : `${Number(q.meta.anzahl).toLocaleString("de-DE")} Geräte · Stand ${datum(q.meta.stand || q.meta.geladen)}${q.neu ? ` · <b style="color:#b45309">neu auf GitHub (${datum(q.neu.datum)})</b>` : ""}${q.auto ? " · aktualisiert sich selbst" : ""}`;
+      return `<div class="opt"><ha-icon icon="${IRC_QUELLEN[k]?.[1] || "mdi:database"}"></ha-icon><span><b>${esc(q.name)}</b><small>${txt}</small></span></div>`;
+    }).join("");
+    return zeilen + `<div class="opt"><ha-icon icon="${IRC_QUELLEN.eigen[1]}"></ha-icon><span><b>Meine Codes</b><small>${st.eigen ? `${st.eigen} Codes` : "noch keine"}</small></span></div>`;
+  },
+  _irDbStatusHtml(st) {
+    if (!st) return `<p class="note">Lade …</p>`;
+    const j = st.job;
+    if (j && !["fertig", "fehler"].includes(j.phase))
+      return `<div class="xbar ${j.pct < 0 ? "busy" : ""}"><span style="width:${Math.max(5, j.pct)}%"></span></div><p class="note">${esc(j.text)}</p>`;
+    const fehler = j?.phase === "fehler" ? `<div class="msg err">${esc(j.text)}</div>` : "";
+    if (!st.installiert)
+      return `${fehler}<p>Noch keine IR-Datenbank installiert. Quelle wie beim OpenRemote-Original: <b>Flipper-IRDB</b> (GitHub, ca. 9 000 Geräte, Download ca. 21 MB).
+        Weitere (Logitech Harmony) und deine eigenen Codes verwaltest du unter <b>IR-Codes</b>. Alles bleibt in Home Assistant – die SD-Karte der Remote wird nicht gebraucht.</p>
+        <button class="btn primary" data-a="ir_laden"><ha-icon icon="mdi:download"></ha-icon>Flipper-IRDB herunterladen</button>`;
+    const qs = Object.values(st.quellen || {}).filter((q) => q.installiert);
+    return `${fehler}<p class="note"><ha-icon icon="mdi:database-check" class="sm"></ha-icon> ${qs.map((q) => `${esc(q.name)}: ${Number(q.meta.anzahl).toLocaleString("de-DE")} Geräte`).join(" · ")}${st.eigen ? ` · Meine Codes: ${st.eigen}` : ""} – verwalten unter <b>IR-Codes</b></p>`;
+  },
+  _irModal() {
+    const m = this.s.modal;
+    if (m.type === "irset") {
+      const ir = this.cfg.ir || { route: 0 };
+      const gew = this._irVorgabeDocks();
+      const bl = this._irBlaster(), docks = [...new Set([...this._irDocks(), ...gew.filter((d) => !d.includes("."))])];
+      const fremd = [...new Set([...bl.map((b) => b.id), ...gew.filter((d) => d.includes("."))])];
+      const st = m.st;
+      return `<div class="modal" data-a="modalbg"><div class="dlg">
+        <div class="dh"><h2>Infrarot</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <div class="opts">
+          <label class="opt"><span><b>IR senden über</b><small>${esc(devName(this.s.dev))}</small></span>
+            <select data-ir="route">${IR_ROUTES.map(([v, l]) => `<option value="${v}" ${(ir.route || 0) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+          <small class="note">${esc(IR_ROUTES[ir.route || 0][2])}</small>
+          <h3>Docks</h3>
+          <small class="note">Über diese Docks gehen IR- und 433-MHz-Befehle, wenn ein Befehl nichts Eigenes eingestellt hat. Mehrere Docks senden alle.
+            Die Remote funkt die Befehle direkt ans Dock (ESP-NOW, ohne Home Assistant) – das geht auch, wenn HA gerade nicht läuft. Nur wenn das Dock nicht antwortet, nimmt sie den Weg über HA.</small>
+          ${docks.map((d) => `<label class="opt"><input type="checkbox" data-ir="dock" value="${esc(d)}" ${gew.includes(d) ? "checked" : ""}><span><b>${esc(this._dockLabel(d))}</b><small>${esc(d)} · ${this._irDocks().includes(d) ? "ESPHome-Dock" : "nicht in Home Assistant gefunden"}</small></span></label>`).join("")}
+          <h3>Andere IR-/RF-Sender aus Home Assistant</h3>
+          <small class="note">Senden wie ein Dock, aber immer über Home Assistant: jede <b>infrared</b>-Entität (HA-Standard für IR-Sender, z. B. ESPHome) und Geräte, deren <b>remote.send_command</b> rohe Codes annimmt – Broadlink (IR und 433 MHz) und Xiaomi (IR). Andere Fernbedienungs-Integrationen (Harmony, Android TV …) kennen nur ihre eigenen Befehlsnamen.</small>
+          ${fremd.map((d) => { const b = bl.find((x) => x.id === d); return `<label class="opt"><input type="checkbox" data-ir="dock" value="${esc(d)}" ${gew.includes(d) ? "checked" : ""}><span><b>${esc(this._dockLabel(d))}</b><small>${esc(d)} · ${b ? esc(b.art) + (b.rf ? " · IR + 433 MHz" : " · nur IR") : "nicht in Home Assistant gefunden"}${this._hass.states[d]?.state === "unavailable" ? " · offline" : ""}</small></span></label>`; }).join("")
+            || `<small class="note">Keiner gefunden. Einrichten in Home Assistant (z. B. Broadlink-Integration), dann taucht er hier auf.</small>`}
+          ${(ir.route || 0) && !gew.length ? `<div class="msg err">Kein Dock gewählt – die Remote sendet selbst.</div>` : ""}
+          ${!docks.length ? `<small class="note">Kein Dock in Home Assistant gefunden (Dock-Firmware flashen und in Home Assistant einbinden).</small>` : ""}
+          <h3>IR-Datenbanken</h3>
+          ${this._irDbListeHtml(st)}
+          <div class="inl irbtns"><button class="btn small" data-a="o_geh" data-b="ircodes"><ha-icon icon="mdi:remote-tv"></ha-icon>IR-Codes öffnen – laden, aktualisieren, eigene Codes</button></div>
+        </div>
+        <small class="note">Vorgabe für alle IR-Befehle dieser Remote (gilt nach dem Speichern). Einzelne Befehle können im Schritt einen eigenen Sendeweg und eigene Docks bekommen.</small>
+        <div class="dfoot"><button class="btn primary" data-a="modalx">Fertig</button></div>
+      </div></div>`;
+    }
+    // IR-Datenbank durchsuchen
+    const st = m.st;
+    let inhalt;
+    if (!st?.installiert) inhalt = this._irDbStatusHtml(st);
+    else if (m.dev) {
+      const d = m.dev;
+      inhalt = `<button class="ent" data-a="ir_zurueck"><ha-icon icon="mdi:arrow-left"></ha-icon><span><b>${esc(d.m ? d.m + " " : "")}${esc(d.n)}</b><small>${esc(d.k)} · ${d.befehle.length} Befehle – Befehl wählen</small></span></button>
+        <div class="list">${d.befehle.map((b, j) => `<div class="irrow"><button class="ent" data-a="ir_cmd" data-j="${j}" ${b.ok ? "" : "disabled"}>
+          <ha-icon icon="${b.raw ? "mdi:sine-wave" : "mdi:code-tags"}"></ha-icon><span><b>${esc(b.name)}</b>
+          <small>${b.raw ? `roh · ${b.raw.length} Werte · ${Math.round(b.f / 1000)} kHz` : `${esc(b.proto)} ${hex(b.addr)}/${hex(b.cmd)}`}${b.ok ? "" : " · von der Remote nicht sendbar"}</small></span></button>
+          <button class="icon sm" data-a="ir_cmdtest" data-j="${j}" title="Testen" ${b.ok ? "" : "disabled"}><ha-icon icon="mdi:play"></ha-icon></button></div>`).join("")}</div>`;
+    } else {
+      const r = m.res;
+      const f = m.quelle || "";
+      inhalt = `<input id="irq" type="search" placeholder="Marke, Modell oder Kategorie (z. B. samsung tv) …" value="${esc(m.q || "")}" autocomplete="off">
+        <div class="irfilter">${[["", "Alle"], ...Object.entries(IRC_QUELLEN).map(([k, [n]]) => [k, n])].map(([k, n]) => `<button class="chip sm ${f === k ? "on" : ""}" data-a="ir_filter" data-q="${k}">${esc(n)}</button>`).join("")}</div>
+        ${this._irDbStatusHtml(st)}
+        <div class="list">${r ? r.treffer.map((t) => `<button class="ent" data-a="ir_dev" data-id="${esc(String(t.id))}"><ha-icon icon="${IRC_QUELLEN[t.q]?.[1] || "mdi:remote"}"></ha-icon>
+          <span><b>${esc(t.m ? t.m + " " : "")}${esc(t.n)}</b><small><span class="qbadge ${t.q}">${esc(IRC_QUELLEN[t.q]?.[0] || "")}</span> ${esc(t.k)} · ${t.b} Befehle</small></span></button>`).join("")
+          + (r.gesamt > r.treffer.length ? `<div class="none">… ${r.gesamt - r.treffer.length} weitere – Suche verfeinern</div>` : "")
+          + (!r.gesamt ? `<div class="none">Nichts gefunden.</div>` : "") : `<div class="none">Suche …</div>`}</div>`;
+    }
+    return `<div class="modal" data-a="modalbg"><div class="dlg pick">
+      <div class="dh"><h2>IR-Datenbank</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      ${m.fehler ? `<div class="msg err">${esc(m.fehler)}</div>` : ""}${inhalt}
+      <small class="note">▶ testet direkt über die Remote (Sendeweg wie gespeichert). Tipp: mehrere Geräte derselben Marke ausprobieren.</small>
+    </div></div>`;
+  },
+  _irAusDb(b) {
+    const d = this.s.modal.dev;
+    const n = `${d.m ? d.m + " " : ""}${d.n}: ${b.name}`.slice(0, 48);
+    const db = this.s.modal.devId;
+    // Rohsignal mit bekanntem Protokoll (Harmony/Flipper roh): als Protokoll - kuerzer, wie die Original-Fernbedienung
+    const erk = b.raw ? irErkennen(b.raw) : null;
+    return { ...(erk ? { t: "ir", ...erk, n } : b.raw ? { t: "ir", raw: b.raw.slice(), f: b.f, n } : { t: "ir", proto: b.proto, addr: b.addr, cmd: b.cmd, n }), ...(db != null ? { db } : {}) };
+  },
+  async _irClick(a, t) {
+    const s = this.s, m = s.modal;
+    const g = t.dataset.g, i = Number(t.dataset.i);
+    switch (a) {
+      case "ir_einst":
+        s.modal = { type: "irset" };
+        this._render();
+        await this._irStatus();
+        return true;
+      case "ir_db":
+        s.modal = { type: "irdb", g, i, q: "" };
+        this._render();
+        await this._irStatus();
+        if (s.modal?.st?.installiert) await this._irSuchen();
+        return true;
+      case "ir_test": await this._irTest(this._irStep(g, i)); return true;
+      case "ir_meine": await this._ircAusSchritt(this._irStep(g, i)); return true;
+      case "ir_alsproto": {
+        const alt = this._irStep(g, i), erk = irErkennen(alt.raw);
+        if (!erk) return true;
+        const st = { ...alt, ...erk };
+        delete st.raw; delete st.f;
+        if (st.n === "angelernt") st.n = `angelernt (${IR_NAMEN[erk.proto] || erk.proto})`;
+        this._irSetStep(g, i, st);
+        this.s.msg = { text: `Übernommen: ${irErkanntText(erk)} – mit „Testen“ prüfen, dann speichern.` };
+        return true;
+      }
+      case "ir_laden":
+        try { m.st = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_laden" }); } catch (e) { m.fehler = e.message; return true; }
+        m.st.job = { phase: "laden", pct: 0, text: "Startet …" };
+        await this._irStatus();
+        return true;
+      case "ir_loeschen":
+        if (!confirm("IR-Datenbank aus Home Assistant entfernen?\nBereits belegte IR-Tasten bleiben erhalten.")) return true;
+        m.st = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_loeschen" });
+        return true;
+      case "ir_dev":
+        try { m.dev = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_geraet", geraet: irId(t.dataset.id) }); m.devId = irId(t.dataset.id); } catch (e) { m.fehler = e.message; }
+        return true;
+      case "ir_dbgeraet": {   // gleiches Datenbank-Geraet wieder oeffnen (Befehl wechseln)
+        const st = this._irStep(g, i);
+        const dn = String(st.n || "").split(":")[0];
+        s.modal = { type: "irdb", g, i, q: dn };
+        this._render();
+        await this._irStatus();
+        if (!s.modal?.st?.installiert) return true;
+        try {
+          const d = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_geraet", geraet: irId(st.db) });
+          if (`${d.m ? d.m + " " : ""}${d.n}`.slice(0, 40) === dn.slice(0, 40)) { s.modal.dev = d; s.modal.devId = irId(st.db); }
+        } catch (e) { /* Datenbank neu geladen: Id passt nicht mehr - Suche nach dem Namen */ }
+        if (!s.modal.dev) await this._irSuchen();
+        return true;
+      }
+      case "ir_zurueck": m.dev = null; return true;
+      case "ir_filter": m.quelle = t.dataset.q || ""; m.dev = null; await this._irSuchen(); return true;
+      case "ir_cmd": {
+        const st = this._irAusDb(m.dev.befehle[Number(t.dataset.j)]);
+        this._irSetStep(m.g, m.i, st);
+        s.modal = null;
+        s.msg = { text: `${this.stepText(st)} übernommen – noch nicht gespeichert.` };
+        return true;
+      }
+      case "ir_cmdtest": {
+        const alt = this._irStep(m.g, m.i) || {};
+        const st = this._irAusDb(m.dev.befehle[Number(t.dataset.j)]);
+        if (alt.r !== undefined) st.r = alt.r;
+        if (alt.d) st.d = alt.d;
+        await this._irTest(st);
+        return true;
+      }
+    }
+    return false;
+  },
+  _irChange(t) {
+    if (this._wegChange(t)) return true;
+    if ((t.dataset.f === "ir_g" || t.dataset.f === "ir_b") && t.dataset.g != null) {
+      const g = t.dataset.g, i = Number(t.dataset.i), alt = this._irStep(g, i);
+      const gid = t.dataset.f === "ir_g" ? t.value : (this._irQuelle(alt)?.g ?? alt._g);
+      const gw = (this.s.dock?.geraete || []).find((x) => x.id === gid);
+      if (!gw) { const st = { ...alt }; delete st._g; this._irSetStep(g, i, st); return true; }
+      // Geraet gewechselt: gleichen Befehl suchen (VolumeUp bleibt VolumeUp), sonst erst den Befehl waehlen lassen
+      const name = t.dataset.f === "ir_b" ? t.value : this._irQuelle(alt)?.b;
+      const b = this._dockBefehle(gw).find((x) => x.n === name);
+      if (!b) { this._irSetStep(g, i, { ...alt, _g: gw.id }); return true; }
+      this._irSetStep(g, i, { ...clone(b.st), t: "ir", n: `${gw.name}: ${this._dockName(b.n)}`.slice(0, 48) });
+      return true;
+    }
+    if (t.dataset.ir) {
+      const ir = { route: 0, ...(this.cfg.ir || {}) };
+      const set = new Set(this._irVorgabeDocks());
+      if (t.dataset.ir === "route") ir.route = Number(t.value);
+      else if (t.checked) set.add(t.value); else set.delete(t.value);
+      if (ir.route && !set.size && this._irDocks().length === 1) set.add(this._irDocks()[0]);
+      ir.docks = [...set];
+      delete ir.dock;
+      this.cfg.ir = ir;
+      this._touch();
+      return true;
+    }
+    const f = t.dataset.f;
+    if (!["irart", "irf", "irraw"].includes(f) || t.dataset.g == null) return false;
+    const g = t.dataset.g, i = Number(t.dataset.i);
+    const st = { ...this._irStep(g, i) };
+    if (f === "irart") {
+      if (t.value === "r") { delete st.proto; delete st.addr; delete st.cmd; st.raw = st.raw || [9000, -4500, 560, -560]; st.f = st.f || 38000; }
+      else { delete st.raw; delete st.f; st.proto = "NEC"; st.addr = 0; st.cmd = 0; }
+      delete st.n;
+    } else if (f === "irf") st.f = Math.max(10000, Math.min(100000, Number(t.value) || 38000));
+    else {
+      const w = t.value.split(/[\s,;]+/).map(Number).filter((x) => Number.isFinite(x) && x !== 0);
+      // Flipper-Rohdaten sind alle positiv: dann abwechselnd an/aus setzen
+      st.raw = w.every((x) => x > 0) ? w.map((x, j) => (j % 2 ? -x : x)) : w;
+      delete st.n;
+    }
+    this._irSetStep(g, i, st);
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(IrEditor));
+
+// ===========================================================================
+// Bluetooth (2026-10-11): Namen der vier Bluetooth-Plaetze (cfg.slots) und die Bluetooth-Proxys, ueber die
+// Home Assistant die Remote erreichen darf (cfg.bt.proxies, z. B. das Dock). Die Remote nimmt sie zusaetzlich
+// zu den fest einkompilierten Proxys an (nur Firmware mit HA-Link, remote-wz-*-halink.yaml).
+// ===========================================================================
+const BtEditor = {
+  _btModal() {
+    const m = this.s.modal;
+    const cfg = this.cfg;
+    const gew = new Set((cfg.bt?.proxies || []).map((x) => x.toUpperCase()));
+    const liste = [...(m.proxies || [])];
+    for (const mac of gew) if (!liste.some((p) => p.mac === mac)) liste.push({ mac, name: "nicht in HA gefunden", aktiv: false });
+    const zeilen = liste.map((p) => `<label class="opt"><input type="checkbox" data-bt="proxy" value="${esc(p.mac)}" ${gew.has(p.mac) ? "checked" : ""}>
+        <span><b>${esc(p.name)}${/dock/i.test(p.name) ? " · Dock" : ""}</b><small>${esc(p.mac)} · ${p.online === false ? "gerade nicht erreichbar" : p.aktiv ? "aktiver Proxy (kann verbinden)" : "nur Empfang – für den Link ungeeignet"}</small></span></label>`).join("");
+    const bs = m.bt;   // Status von der Remote (Ereignis esphome.remote_bt_status)
+    const belegt = bs ? String(bs.belegt || "").split(",").map((x) => x === "1") : [];
+    const ew = this.s.meta[this.s.dev]?.einst || {};
+    const EINGABE = [[0, "Nur Tasten"], [1, "Maus (Touchpad)"], [2, "Tastatur (Buchstaben)"], [3, "Maus + Tastatur"]];
+    const dockGer = this._dbtGeraete().filter((x) => x.belegt);
+    const platz = (i) => {
+      const verb = bs && bs.verbunden && Number(bs.aktiv) === i;
+      const st = !bs ? "" : verb ? `<span class="chip ok">verbunden</span>` : belegt[i] ? `<span class="chip">gekoppelt${Number(bs.aktiv) === i ? " · wartet" : ""}</span>` : `<span class="chip aus">frei</span>`;
+      const akts = (cfg.activities || []).filter((a) => Number(a.slot) === i).map((a) => a.name);
+      const modus = ((ew.maus_slots >> i) & 1) | (((ew.voll_slots >> i) & 1) << 1);
+      return `<div class="btplatz">
+        <div class="inl"><b class="nr">${i + 1}</b><input data-bt="slot" data-i="${i}" value="${esc((cfg.slots || [])[i] || "")}" maxlength="24" placeholder="Platz ${i + 1}"><button class="icon sm feldok" data-a="feld_ok" title="Übernehmen (oder Enter)"><ha-icon icon="mdi:check"></ha-icon></button>${st}</div>
+        <div class="inl btzeile">${"maus_slots" in ew ? `<label class="lbl">Eingabe <select data-btm="${i}" title="Nur Tasten: Fernseher/Streamer (Apps laden beim Verbinden nicht neu). Maus: Touchpad. Tastatur: Buchstaben, Makros. Danach das Gerät neu koppeln.">${EINGABE.map(([v, l]) => `<option value="${v}" ${v === modus ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}
+          <small class="akt">${akts.length ? `Aktivität: ${esc(akts.join(", "))}` : "keine Aktivität"}</small>
+          ${dockGer.length ? `<label class="lbl" title="Ist dasselbe Gerät auch am Dock gekoppelt, gehen Tasten und Touchpad übers Dock, solange die Remote selbst nicht verbunden ist (Einstellung „Über das Dock“).">Am Dock <select data-bt="dock" data-i="${i}">
+            <option value="">–</option>${dockGer.map((x) => `<option value="${x.slug}:${x.p}" ${cfg.bt?.dock?.[i]?.d === x.slug && cfg.bt?.dock?.[i]?.p === x.p ? "selected" : ""}>${esc(x.dockName)} · ${x.p + 1} ${esc(x.name)}${x.o & 1 ? "" : " (am Dock ohne Maus)"}</option>`).join("")}</select></label>` : ""}
+          <span class="aktionen"><button class="icon sm" data-a="bt_platz" data-x="verbinden" data-i="${i}" ${verb ? "disabled" : ""} title="Verbinden"><ha-icon icon="mdi:bluetooth-connect"></ha-icon></button>
+          <button class="icon sm" data-a="bt_platz" data-x="koppeln" data-i="${i}" ${verb ? "disabled title=\"Erst Kopplung löschen\"" : "title=\"Neu koppeln\""}><ha-icon icon="mdi:bluetooth-settings"></ha-icon></button>
+          <button class="icon sm" data-a="bt_platz" data-x="loeschen" data-i="${i}" ${bs && !belegt[i] ? "disabled" : ""} title="Kopplung löschen"><ha-icon icon="mdi:bluetooth-off"></ha-icon></button></span></div></div>`;
+    };
+    const TEMPO = [50, 75, 100, 125, 150, 200, 250];
+    const sel = (k, opts) => `<select data-einst="${k}">${opts.map(([v, l]) => `<option value='${JSON.stringify(v)}' ${ew[k] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    const optionen = "maus_tempo" in ew ? `
+        <h3>Verbindung</h3>
+        <label class="sw"><input type="checkbox" data-einst="ble_parallel" ${ew.ble_parallel ? "checked" : ""}><span>Parallel verbunden <small>– beim Aktivitätswechsel bleibt die Verbindung geparkt, kein Neuladen von Videos</small></span></label>
+        ${"bt_weg" in ew ? `<label class="lbl">Über das Dock ${sel("bt_weg", [[0, "Automatisch – Dock, wenn die Remote selbst nicht verbunden ist"], [1, "Nur Remote (wie früher)"], [2, "Dock zuerst"]])}</label>
+        <small class="note">Das Dock bleibt dauerhaft mit Fernseher, Tablet & Co. verbunden (Dockingstation › Bluetooth-Geräte am Dock). Tasten aus dem Tiefschlaf und für Geräte anderer Aktivitäten kommen so sofort an – auch das Touchpad.</small>` : ""}
+        ${"bt_notweg" in ew ? `<label class="lbl">Wenn das Dock nicht antwortet ${sel("bt_notweg", [[1, "Remote verbindet sich selbst, bis das Dock wieder antwortet"], [0, "Nichts tun – die Remote verbindet sich nie von selbst"]])}</label>
+        <small class="note">Notweg für Geräte am Dock. Geräte, die nur mit der Remote gekoppelt sind, verbindet sie immer selbst. „Nichts tun“ spart Akku, wenn die Remote selbst gar nicht gekoppelt ist.</small>` : ""}
+        <h3>Maus (Touchpad)</h3>
+        <div class="btopt"><label class="lbl">Zeigertempo ${sel("maus_tempo", TEMPO.map((v) => [v, v + " %"]))}</label>
+          <label class="sw small"><input type="checkbox" data-einst="maus_dpad" ${ew.maus_dpad ? "checked" : ""}><span>Steuerkreuz als Maus</span></label>
+          <label class="lbl">Tempo Steuerkreuz ${sel("maus_dpad_tempo", TEMPO.map((v) => [v, v + " %"]))}</label>
+          <label class="lbl">Zurück-Taste ${sel("maus_zurueck", [[0, "Schließt das Touchpad"], [1, "Zurück am Gerät"], [2, "Rechtsklick"]])}</label></div>
+        <small class="note">Im Touchpad: Pfeile = Zeiger, OK = Klick, OK lang = Rechtsklick, OK halten + Pfeile = Ziehen, Kanal +/- = Scrollen, Zurück lang = Knöpfe wählen. Öffnen über Menü › Touchpad oder eine Taste mit „Touchpad zeigen“ / „Maus ↔ Tastatur“.</small>` : "";
+    return `<div class="modal" data-a="modalbg"><div class="dlg">
+      <div class="dh"><h2>Bluetooth</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <div class="opts">
+        <h3>Geräte</h3>
+        <small class="note">Vier Plätze (Kopplungen). Neu koppeln: am Platz <ha-icon icon="mdi:bluetooth-settings" style="--mdc-icon-size:14px"></ha-icon>, dann am Gerät unter Bluetooth nach „${esc(devName(this.s.dev))}“ suchen.</small>
+        ${m.btWlan ? `<div class="msg"><ha-icon icon="mdi:wifi-sync"></ha-icon> ${m.btWlan.weg === "dock" ? "WLAN angefordert – sobald die Remote das Dock das nächste Mal fragt, schaltet sie es für 3 min ein. <b>Remote kurz anfassen oder eine Taste drücken.</b>" : "WLAN wird eingeschaltet …"} Die Plätze erscheinen dann von selbst.</div>`
+          : m.btFehler ? `<div class="msg warn"><b>Die Remote ist gerade nicht direkt mit Home Assistant verbunden</b> – sie läuft über das Dock oder schläft. Die Bluetooth-Plätze lassen sich nur abfragen und ändern, solange ihr WLAN an ist.
+            <div class="inl" style="margin-top:6px"><button class="btn small primary" data-a="bt_wlan"><ha-icon icon="mdi:wifi"></ha-icon>WLAN der Remote einschalten</button></div></div>`
+          : !bs ? `<small class="note">Frage die Remote nach dem Stand …</small>` : ""}
+        ${[0, 1, 2, 3].map(platz).join("")}
+        ${optionen}
+        ${(this.s.meta[this.s.dev]?.einst || {}).ha_link_modus === 3 ? "" : `<details class="btprox"><summary>Home Assistant über Bluetooth (Proxys)</summary>
+        <small class="note">Proxys, über die HA die Remote per Bluetooth erreichen darf (HA wählt den mit dem besten Empfang). Das Dock steht direkt am Ladeplatz und ist dafür ideal – seine Adresse steht im Dock unter „Bluetooth-Adresse“.</small>
+        ${m.proxies ? zeilen || `<div class="none">Keine Bluetooth-Proxys in Home Assistant gefunden.</div>` : `<div class="none">Lade …</div>`}
+        <div class="inl"><input id="btmac" placeholder="Adresse von Hand, z. B. AA:BB:CC:DD:EE:04" maxlength="17"><button class="btn small" data-a="bt_add"><ha-icon icon="mdi:plus"></ha-icon>Hinzufügen</button></div>
+        <small class="note">Gilt nach dem Speichern. Die fest in der Firmware eingetragenen Proxys bleiben immer erlaubt.</small></details>`}
+      </div>
+      <div class="dfoot"><button class="btn primary" data-a="modalx">Fertig</button></div>
+    </div></div>`;
+  },
+  // Eingabeart je Platz (Auswahl) -> Bitmasken maus_slots / voll_slots
+  async _btModus(t) {
+    const i = Number(t.dataset.btm), m = Number(t.value), w = this.s.meta[this.s.dev]?.einst || {};
+    const bit = 1 << i;
+    const maus = (Number(w.maus_slots || 0) & ~bit) | (m & 1 ? bit : 0), voll = (Number(w.voll_slots || 0) & ~bit) | (m & 2 ? bit : 0);
+    this.s.msg = { text: (Number(w.maus_slots || 0) === 0) !== (maus === 0)
+      ? "Die Remote startet dafür kurz neu. Danach das Gerät auf diesem Platz neu koppeln, damit es die Maus kennt."
+      : "Gilt nach dem Neukoppeln des Geräts auf diesem Platz." };
+    await this._einstSetzen({ werte: { maus_slots: maus, voll_slots: voll } });
+    this._render();
+  },
+  // Status der Bluetooth-Plaetze live von der Remote, solange das Fenster offen ist
+  _btAus() { const u = this._btUnsub; this._btUnsub = null; this._btM = null; if (u) u(); },
+  async _btAbo(m) {
+    const slug = this.s.meta[this.s.dev].slug, dev = this.s.dev;
+    this._btAus();
+    try {
+      const ab = await this._hass.connection.subscribeEvents((e) => {
+        if (this.s.modal !== m) { this._btAus(); return; }
+        if ((e.data || {}).geraet !== dev) return;
+        m.bt = e.data; m.btFehler = null;
+        this._render();
+      }, "esphome.remote_bt_status");
+      if (this.s.modal !== m) { ab(); return; }
+      this._btUnsub = ab; this._btM = m;
+      await this._esphome(`${slug}_bt_status`, {});
+    } catch (e) {
+      m.btFehler = "nicht_direkt";   // Text steht im Fenster (mit Knopf "WLAN einschalten")
+      this._render();
+    }
+    // Remote schlaeft: kein Ereignis
+    setTimeout(() => { if (this.s.modal === m && !m.bt && !m.btFehler && !m.btWlan) { m.btFehler = "nicht_direkt"; this._render(); } }, 8000);
+  },
+  _btSetProxies(set) {
+    this.cfg.bt = { ...(this.cfg.bt || {}), proxies: [...set] };
+    this._touch();
+  },
+  async _btClick(a, t) {
+    const s = this.s;
+    if (a === "bt_wlan") {   // WLAN der Remote an (2026-10-26) - dann alle 6 s nachfragen, bis die Plaetze kommen (max. 4 min)
+      const m = s.modal;
+      try { m.btWlan = await this._hass.callWS({ type: "esphomeremote_konfig/wlan_an", device: s.dev }); m.btFehler = null; }
+      catch (e) { s.msg = { err: true, text: "WLAN einschalten ging nicht: " + (e.message || e.code) }; return true; }
+      const bis = Date.now() + 240000, dev = s.dev;
+      const nochmal = async () => {
+        if (s.modal !== m || m.bt || s.dev !== dev) return;
+        if (Date.now() > bis) { m.btWlan = null; m.btFehler = "nicht_direkt"; this._render(); return; }
+        try { await this._esphome(`${s.meta[dev].slug}_bt_status`, {}); } catch (e) { /* noch nicht da */ }
+        setTimeout(nochmal, 6000);
+      };
+      if (!this._btUnsub) await this._btAbo(m).catch(() => {});
+      m.btFehler = null;
+      setTimeout(nochmal, 3000);
+      return true;
+    }
+    if (a === "bt_einst") {
+      const m = (s.modal = { type: "btset" });
+      this._render();
+      this._btAbo(m);
+      try { s.modal.proxies = (await this._hass.callWS({ type: "esphomeremote_konfig/bt_proxies" })).proxies; }
+      catch (e) { s.modal.proxies = []; s.msg = { err: true, text: "Proxy-Liste nicht verfügbar (HA neu starten?): " + (e.message || e.code) }; }
+      return true;
+    }
+    if (a === "bt_platz") {
+      const m = s.modal, x = t.dataset.x, i = Number(t.dataset.i);
+      const name = (this.cfg.slots || [])[i] || `Platz ${i + 1}`;
+      if (x === "loeschen" && !confirm(`Kopplung auf Platz ${i + 1} („${name}“) löschen?\nDas Gerät muss danach neu gekoppelt werden.`)) return true;
+      if (x === "koppeln" && !confirm(`Platz ${i + 1} („${name}“) neu koppeln?\nDie bisherige Kopplung auf diesem Platz wird gelöscht. Danach am Gerät unter Bluetooth nach der Remote suchen.`)) return true;
+      try {
+        await this._esphome(`${s.meta[s.dev].slug}_bt_platz`, { aktion: x, platz: i });
+        s.msg = { text: x === "koppeln" ? `Platz ${i + 1} ist bereit zum Koppeln – jetzt am Gerät „${devName(s.dev)}“ auswählen.` : x === "verbinden" ? `Remote verbindet sich mit Platz ${i + 1} („${name}“).` : `Kopplung auf Platz ${i + 1} gelöscht.` };
+        if (m) m.btFehler = null;
+      } catch (e) {
+        if (m) m.btFehler = "nicht_direkt";   // Remote nicht direkt verbunden: Hinweis + Knopf "WLAN einschalten"
+      }
+      return true;
+    }
+    if (a === "bt_add") {
+      const v = (this.shadowRoot.querySelector("#btmac")?.value || "").trim().toUpperCase();
+      if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(v)) { alert("Bitte eine Bluetooth-Adresse wie AA:BB:CC:DD:EE:04 eingeben."); return true; }
+      this._btSetProxies(new Set([...(this.cfg.bt?.proxies || []), v]));
+      return true;
+    }
+    return false;
+  },
+  _btChange(t) {
+    if (!t.dataset.bt) return false;
+    if (t.dataset.bt === "dock") {   // gleiches Geraet am Dock (cfg.bt.dock, 2026-10-22)
+      const dock = { ...(this.cfg.bt?.dock || {}) }, i = t.dataset.i;
+      if (t.value) { const [d, p] = t.value.split(":"); dock[i] = { d, p: Number(p) }; } else delete dock[i];
+      this.cfg.bt = { ...(this.cfg.bt || {}), dock };
+      this._touch();
+      return true;
+    }
+    if (t.dataset.bt === "slot") {
+      const sl = [0, 1, 2, 3].map((i) => (this.cfg.slots || [])[i] || "");
+      sl[Number(t.dataset.i)] = t.value.trim().slice(0, 24);
+      this.cfg.slots = sl.map((x, i) => x || `Platz ${i + 1}`);
+      this._touch();
+      return true;
+    }
+    const set = new Set(this.cfg.bt?.proxies || []);
+    if (t.checked) set.add(t.value); else set.delete(t.value);
+    this._btSetProxies(set);
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(BtEditor));
+
+// ===========================================================================
+// Bluetooth-Geraete am Dock (2026-10-22, components/dock_hid): das Dock bleibt dauerhaft mit bis zu 4 Geraeten
+// (Fernseher, Streamer, Tablet, Laptop) gekoppelt. Stand live aus sensor.<dock>_bluetooth_geraete (JSON), Bedienung
+// ueber die Dock-Aktionen esphome.<dock>_bt_koppeln / _bt_vergessen / _bt_optionen / _bt_senden.
+// ===========================================================================
+const DBT_OPT = [[0, "Nur Tasten (Fernseher, Streamer)"], [1, "Maus (Touchpad)"], [2, "Tastatur (Buchstaben)"], [3, "Maus + Tastatur (Tablet, Laptop)"]];
+const DockBt = {
+  // Alle Docks mit Bluetooth-Plaetzen: [{slug, dockName, online, k, ks, p: [...]}]
+  _dbtDocks() {
+    const S = this._hass.states, out = [];
+    for (const id of Object.keys(S)) {
+      const m = id.match(/^sensor\.(dock_[a-z0-9_]+)_bluetooth_geraete$/);
+      if (!m) continue;
+      let st = null;
+      try { st = JSON.parse(S[id].state); } catch (e) { /* offline/unbekannt */ }
+      const name = (S[id].attributes.friendly_name || m[1]).replace(/\s*Bluetooth-Ger(ae|ä)te$/i, "");
+      out.push({ slug: m[1], dockName: name, online: !!st, k: st ? st.k : -1, ks: st ? st.ks || 0 : 0, p: st ? st.p || [] : [] });
+    }
+    return out.sort((a, b) => a.dockName.localeCompare(b.dockName));
+  },
+  // Flache Liste aller Plaetze: [{slug, dockName, p, name, belegt, verbunden, o}]
+  _dbtGeraete() {
+    const out = [];
+    for (const d of this._dbtDocks())
+      d.p.forEach((x, p) => out.push({ slug: d.slug, dockName: d.dockName, p, name: x.n || `Platz ${p + 1}`, belegt: !!x.b, verbunden: !!x.v, o: x.o || 0 }));
+    return out;
+  },
+  _dbtName(slug, p) { return this._dbtGeraete().find((x) => x.slug === slug && x.p === p)?.name || `Dock-Platz ${(p || 0) + 1}`; },
+  _dbtHtml() {
+    const docks = this._dbtDocks();
+    if (!docks.length) return "";
+    const ent = (this.s.dbt ||= {});
+    const karten = docks.map((d) => {
+      if (!d.online) return `<div class="karte"><b>${esc(d.dockName)}</b> <span class="chip aus">offline oder alte Firmware</span></div>`;
+      const zeilen = [0, 1, 2, 3].map((p) => {
+        const x = d.p[p] || { b: 0 };
+        const e = ((ent[d.slug] ||= {})[p] ||= { n: "", o: 0 });
+        const koppelt = d.k === p;
+        const chip = koppelt ? `<span class="chip warn">sichtbar – noch ${d.ks} s</span>` : x.b ? (x.v ? `<span class="chip ok">verbunden</span>` : `<span class="chip">gekoppelt · nicht verbunden</span>`) : `<span class="chip aus">frei</span>`;
+        const name = x.b ? x.n : e.n;
+        const opt = x.b ? x.o : e.o;
+        return `<div class="btplatz"><div class="inl"><b class="nr">${p + 1}</b>
+            <input data-dbt="name" data-dock="${d.slug}" data-p="${p}" value="${esc(name || "")}" maxlength="20" placeholder="${x.b ? "" : "z. B. Tablet"}"><button class="icon sm feldok" data-a="feld_ok" title="Übernehmen (oder Enter)"><ha-icon icon="mdi:check"></ha-icon></button>${chip}</div>
+          <div class="inl btzeile"><label class="lbl">Eingabe <select data-dbt="opt" data-dock="${d.slug}" data-p="${p}" title="Gilt beim Koppeln – nach einer Änderung am Gerät neu koppeln">${DBT_OPT.map(([v, l]) => `<option value="${v}" ${v === opt ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+            <span class="aktionen">
+            ${koppelt ? `<button class="btn small" data-a="dbt" data-x="abbrechen" data-dock="${d.slug}" data-p="${p}">Abbrechen</button>`
+              : `<button class="icon sm" data-a="dbt" data-x="koppeln" data-dock="${d.slug}" data-p="${p}" title="${x.b ? "Neu koppeln (ersetzt das Gerät)" : "Koppeln"}"><ha-icon icon="mdi:bluetooth-settings"></ha-icon></button>`}
+            <button class="icon sm" data-a="dbt" data-x="test" data-dock="${d.slug}" data-p="${p}" ${x.v ? "" : "disabled"} title="Test: einmal lauter, dann leiser"><ha-icon icon="mdi:volume-plus"></ha-icon></button>
+            <button class="icon sm" data-a="dbt" data-x="vergessen" data-dock="${d.slug}" data-p="${p}" ${x.b ? "" : "disabled"} title="Vergessen"><ha-icon icon="mdi:bluetooth-off"></ha-icon></button></span></div></div>`;
+      }).join("");
+      return `<div class="karte"><div class="inl"><b>${esc(d.dockName)}</b>${d.k >= 0 ? `<small class="note"> Am Gerät unter Bluetooth „Gerät hinzufügen“ → <b>${esc(d.dockName)}</b> wählen.</small>` : ""}</div>${zeilen}</div>`;
+    }).join("");
+    const zuord = Object.keys(this.s.cfg || {}).length ? "" : "";
+    return `<div class="dkopf"><h2><ha-icon icon="mdi:bluetooth-connect"></ha-icon> Bluetooth-Geräte am Dock</h2></div>
+      <p class="hint">Das Dock hängt am Strom und bleibt dauerhaft mit bis zu 4 Geräten verbunden – Fernseher, Streamer, Tablet, Laptop. Die Remote schickt Tasten und Touchpad per Funk ans Dock:
+        sofort, auch direkt aus dem Tiefschlaf und für Geräte, mit denen die Remote gerade nicht verbunden ist. Der Bluetooth-Proxy des Docks läuft nebenher weiter.
+        Ist ein Gerät auch an der Remote gekoppelt, unter Fernbedienung › Bluetooth bei dem Platz „Am Dock“ wählen. Geräte nur am Dock stehen im Tasten-Editor unter „Nur am Dock gekoppelt“.</p>
+      ${karten}${zuord}`;
+  },
+  async _dbtClick(a, t) {
+    if (a !== "dbt") return false;
+    const d = t.dataset.dock, p = Number(t.dataset.p), x = t.dataset.x;
+    const st = this._dbtDocks().find((y) => y.slug === d)?.p[p] || {};
+    const e = (this.s.dbt ||= {})[d]?.[p] || { n: "", o: 0 };
+    try {
+      if (x === "koppeln") {
+        if (st.b && !confirm(`„${st.n}“ auf Platz ${p + 1} wird ersetzt. Weiter?`)) return true;
+        const name = (st.b ? st.n : e.n) || `Gerät ${p + 1}`, opt = st.b ? st.o : e.o;
+        await this._esphome(`${d}_bt_koppeln`, { platz: p + 1, name, optionen: opt });
+        this.s.msg = { text: `Dock 2 Minuten sichtbar: am Gerät unter Bluetooth nach dem Dock suchen und koppeln (Platz ${p + 1}, „${name}“).` };
+      } else if (x === "abbrechen") {
+        await this._esphome(`${d}_bt_koppeln_abbrechen`, {});
+      } else if (x === "vergessen") {
+        if (!confirm(`„${st.n}“ vom Dock entfernen? Am Gerät die Kopplung ebenfalls löschen.`)) return true;
+        await this._esphome(`${d}_bt_vergessen`, { platz: p + 1 });
+        // Name und Eingabe fuer das Neukoppeln merken (2026-10-23: sonst stand der freie Platz wieder auf "Nur Tasten")
+        Object.assign((((this.s.dbt ||= {})[d] ||= {})[p] ||= {}), { n: st.n || "", o: st.o || 0 });
+      } else if (x === "test") {
+        const s = (c) => this._esphome(`${d}_bt_senden`, { platz: p + 1, art: "consumer", code: c, mod: 0, aktion: "tipp" });
+        await s(0xE9);
+        setTimeout(() => s(0xEA), 700);
+        this.s.msg = { text: "Lauter und wieder leiser gesendet – am Gerät sollte die Lautstärke kurz springen." };
+      }
+    } catch (err) {
+      this.s.msg = { err: true, text: `Dock: ${err.message || err.code} (Firmware mit Bluetooth-Geräten aufgespielt?)` };
+    }
+    return true;
+  },
+  _dbtChange(t) {
+    const f = t.dataset.dbt;
+    if (!f) return false;
+    const d = t.dataset.dock, p = Number(t.dataset.p);
+    const st = this._dbtDocks().find((y) => y.slug === d)?.p[p] || {};
+    const e = (((this.s.dbt ||= {})[d] ||= {})[p] ||= { n: "", o: 0 });
+    if (f === "name") e.n = t.value.trim().slice(0, 20); else e.o = Number(t.value);
+    if (st.b) {   // gekoppelt: gleich am Dock speichern
+      this._esphome(`${d}_bt_optionen`, { platz: p + 1, name: f === "name" ? e.n : "", optionen: f === "opt" ? e.o : -1 })
+        .catch((err) => { this.s.msg = { err: true, text: `Dock: ${err.message || err.code}` }; this._render(); });
+      if (f === "opt") this.s.msg = { text: "Gilt erst nach dem Neukoppeln am Gerät (das Gerät merkt sich die Beschreibung beim Koppeln)." };
+    }
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(DockBt));
+
+// ===========================================================================
+// Suchtempo der Docks (2026-10-22, dockscan.py + dock_hid Scan-Stufen): der Proxy sucht schnell, solange eine Remote
+// fehlt (hoechstens X min), langsam, wenn alle da sind, und nach einem Weckruf der Remote kurz schnell.
+// Stand live aus sensor.<dock>_suchtempo (JSON {i, f, g, r, p}), Einstellungen esphomeremote_konfig/dockscan_get|save.
+// ===========================================================================
+const SCAN_MODI = [["adaptiv", "Automatisch (empfohlen)"], ["schnell", "Immer schnell (wie bisher)"], ["normal", "Immer normal"], ["langsam", "Immer langsam"]];
+const SCAN_STUFEN = [["schnell", "Schnell"], ["normal", "Normal"], ["langsam", "Langsam"]];
+const DockScan = {
+  _scanLaden() {
+    if (this._scanLaedt) return;
+    this._scanLaedt = true;
+    this._hass.callWS({ type: "esphomeremote_konfig/dockscan_get" })
+      .then((r) => { const neu = JSON.stringify(r); if (neu !== this._scanAlt) { this._scanAlt = neu; this.s.scan = r; this._render(); } },
+        (e) => { this.s.scan = { fehler: e.message || String(e) }; this._render(); })
+      .finally(() => { this._scanLaedt = false; this._scanZeit = Date.now(); });
+  },
+  _scanIst(slug) {
+    const st = this._hass.states[`sensor.${slug}_suchtempo`];
+    try { return st ? { ...JSON.parse(st.state), seit: new Date(st.last_updated).getTime() } : null; } catch (e) { return null; }
+  },
+  _scanSig() { return this._dbtDocks().map((d) => this._hass.states[`sensor.${d.slug}_suchtempo`]?.state).join("|"); },
+  _scanHtml() {
+    const S = this.s.scan;
+    if (!S || Date.now() - (this._scanZeit || 0) > 15000) this._scanLaden();
+    if (!S || S.fehler) return S?.fehler ? `<div class="dkopf"><h2><ha-icon icon="mdi:radar"></ha-icon> Suchtempo</h2></div><p class="hint">Nicht geladen: ${esc(S.fehler)}</p>` : "";
+    const c = S.cfg, pz = (x) => Math.round(100 * x.f / x.i);
+    const stufen = SCAN_STUFEN.map(([k, n]) => `<tr><td class="n"><b>${n}</b></td>
+        <td><label class="lbl">alle <input type="number" min="20" max="10000" step="10" data-ds="i" data-k="${k}" value="${c[k].i}" style="width:6em"> ms</label></td>
+        <td><label class="lbl">hinhören <input type="number" min="10" max="10000" step="5" data-ds="f" data-k="${k}" value="${c[k].f}" style="width:5em"> ms</label></td>
+        <td><small>${pz(c[k])} % der Funkzeit</small></td></tr>`).join("");
+    const docks = this._dbtDocks().map((d) => {
+      const ist = this._scanIst(d.slug), st = (S.stand || {})[d.slug];
+      const stufe = ist ? (SCAN_STUFEN.find(([k]) => c[k].i === ist.i && ist.f <= c[k].f) || [null, `${ist.f}/${ist.i} ms`])[1] : null;
+      const rest = ist && ist.r ? Math.max(0, ist.r - Math.round((Date.now() - ist.seit) / 1000)) : 0;
+      const chip = !ist ? `<span class="chip aus">offline oder alte Firmware</span>`
+        : ist.p ? `<span class="chip warn">pausiert (Kopplung)</span>`
+        : `<span class="chip ${/schnell/i.test(stufe) ? "warn" : "ok"}">${esc(stufe)}</span> <small>${esc(ist.g)}${rest ? ` · noch ${rest} s` : ""}</small>`;
+      const rem = (st?.remotes || []).map((r) => `<label class="sw small" title="Zählt für dieses Dock: fehlt sie, sucht das Dock schnell">
+          <input type="checkbox" data-ds="zaehlt" data-dock="${d.slug}" data-dev="${esc(r.dev)}" ${r.zaehlt ? "checked" : ""}><span>${esc(r.name)}
+          ${r.da ? `<small class="ok">verbunden</small>` : `<small>fehlt seit ${r.weg_s < 120 ? `${r.weg_s} s` : `${Math.round(r.weg_s / 60)} min`}</small>`}</span></label>`).join(" ");
+      return `<div class="karte"><div class="inl"><b>${esc(d.dockName)}</b> ${chip}</div>
+        ${rem ? `<div class="inl" style="flex-wrap:wrap;gap:10px;margin-top:6px"><small class="lbl">Remotes:</small> ${rem}</div>` : ""}</div>`;
+    }).join("");
+    return `<details class="dscan"><summary><h2><ha-icon icon="mdi:radar"></ha-icon> Bluetooth-Suche des Docks</h2><small>${esc(SCAN_MODI.find(([v]) => v === c.modus)?.[1] || c.modus)}</small></summary>
+      <p class="hint">Wie oft das Dock als Bluetooth-Proxy nach Geräten horcht – für die anderen Bluetooth-Geräte in Home Assistant (Thermometer, LED-Leisten …).
+        Die Remotes brauchen das nicht mehr: sie sprechen per Funk (ESP-NOW) mit dem Dock. Empfohlen: <b>Immer normal</b> (wie ein ESPHome-Proxy ab Werk) – schneller Suchen nimmt WLAN, ESP-NOW und den Geräten am Dock Funkzeit.
+        „Automatisch“ stammt aus der Zeit des Bluetooth-Tunnels (sucht schnell, solange eine Remote „fehlt“).</p>
+      <div class="karte">
+        <div class="inl"><label class="lbl">Modus <select data-ds="modus">${SCAN_MODI.map(([v, l]) => `<option value="${v}" ${v === c.modus ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+        <table class="ledtab">${stufen}</table>
+        <div class="inl" style="flex-wrap:wrap;gap:16px">
+          <label class="lbl">Schnell suchen, wenn eine Remote weg ist: höchstens <input type="number" min="0" max="240" data-ds="fehlt_min" value="${c.fehlt_min}" style="width:4.5em"> min</label>
+          <label class="lbl">Nach Weckruf schnell: <input type="number" min="0" max="600" data-ds="weck_s" value="${c.weck_s}" style="width:4.5em"> s <small>(0 = aus)</small></label>
+          <label class="lbl" title="Das Dock hat nur einen Funk für WLAN, Bluetooth-Suche und die Verbindungen zu Fernseher/Streamer. Hört es zu lange am Stück nach Remotes, kommt die Verbindung zum Gerät aus dem Takt – mit zu langen Pausen stürzte es beim Start ab. Kleiner = Geräte am Dock laufen ruhiger, Remotes werden etwas später gefunden.">Hinhören am Stück, solange ein Gerät am Dock verbunden ist: höchstens <input type="number" min="10" max="50" data-ds="fe_verbunden" value="${c.fe_verbunden ?? 30}" style="width:4em"> ms <small>(Standard 30)</small></label>
+          <button class="btn small" data-a="ds_std" title="Zeiten auf die Standardwerte">Standard</button>
+        </div>
+      </div>
+      ${docks}</details>`;
+  },
+  async _scanSetzen(cfg) {
+    try { const r = await this._hass.callWS({ type: "esphomeremote_konfig/dockscan_save", cfg }); this.s.scan = { ...this.s.scan, ...r }; this._scanAlt = null; }
+    catch (e) { this.s.msg = { err: true, text: "Suchtempo: " + (e.message || e.code || e) }; }
+    this._render();
+  },
+  _scanChange(t) {
+    const f = t.dataset.ds;
+    if (!f || !this.s.scan?.cfg) return false;
+    const c = clone(this.s.scan.cfg);
+    if (f === "modus") c.modus = t.value;
+    else if (f === "i" || f === "f") c[t.dataset.k][f] = Number(t.value);
+    else if (f === "fehlt_min" || f === "weck_s" || f === "fe_verbunden") c[f] = Number(t.value);
+    else if (f === "zaehlt") {
+      const d = t.dataset.dock, aus = (c.ohne[d] || []).filter((x) => x !== t.dataset.dev);
+      if (!t.checked) aus.push(t.dataset.dev);
+      c.ohne[d] = aus;
+    }
+    this._scanSetzen(c);
+    return true;
+  },
+  async _scanClick(a) {
+    if (a !== "ds_std") return false;
+    const c = clone(this.s.scan.cfg), std = this.s.scan.standard;
+    for (const k of ["schnell", "normal", "langsam", "fehlt_min", "weck_s", "fe_verbunden"]) c[k] = clone(std[k]);
+    await this._scanSetzen(c);
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(DockScan));
+
+// ===========================================================================
+// Anlernen + 433 MHz (2026-10-11)
+// IR: der IR-Empfaenger der Remote nimmt die Original-Fernbedienung auf (Aktion <remote>_ir_lernen,
+//     Ereignis esphome.remote_ir_gelernt). 433 MHz: das Dock (CC1101) lernt und sendet (Aktionen
+//     <dock>_rf_lernen / _rf_roh, Ereignis esphome.dock_rf_gelernt). Schritt: { t: "rf", raw, wdh, n }.
+// ===========================================================================
+const LERN_S = 20;
+const LernEditor = {
+  _rfDocks(st) { return Array.isArray(st.d) ? st.d : this._irVorgabeDocks(); },
+  _rfStepBody(st, id) {
+    const dock = this._rfDocks(st).find((d) => !d.includes(".")) || (this._rfDocks(st).length ? null : undefined);
+    const senden = this._rfDocks(st).length > 0;
+    const n = st.raw?.length || 0;
+    return `${st.n ? `<div class="irname"><ha-icon icon="mdi:radio-tower"></ha-icon><b>${esc(st.n)}</b></div>` : ""}
+      <div class="inl"><input data-f="rfname" ${id} value="${esc(st.n || "")}" placeholder="Name, z. B. Garagentor auf" maxlength="48">
+        <select data-f="rfwdh" ${id} title="Wiederholungen">${[1, 2, 3, 5, 8, 10, 15, 20].map((x) => `<option value="${x}" ${(st.wdh || 5) === x ? "selected" : ""}>${x}×</option>`).join("")}</select></div>
+      ${n ? `<details><summary>${n} Zeiten in µs (+ an / − aus)</summary><textarea data-f="rfraw" ${id} rows="3">${esc(st.raw.join(" "))}</textarea></details>`
+        : `<small class="note">Noch kein Signal – „Anlernen“ drücken und die alte Funk-Fernbedienung ans Dock halten.</small>`}
+      <div class="inl irbtns"><button class="btn small ${n ? "" : "primary"}" data-a="lern_rf" ${id} ${dock ? "" : "disabled"}><ha-icon icon="mdi:school-outline"></ha-icon>Anlernen</button>
+        <button class="btn small" data-a="rf_test" ${id} ${senden && n ? "" : "disabled"}><ha-icon icon="mdi:play"></ha-icon>Testen</button></div>
+      ${this._wegHtml(st, id, false)}
+      ${dock === null ? `<small class="note">Anlernen geht nur über ein Dock – fremde Sender (Broadlink) senden nur.</small>`
+        : this._rfDocks(st).length > 1 ? `<small class="note">Angelernt wird über ${esc(this._dockLabel(dock))}, senden tun alle gewählten.</small>` : ""}`;
+  },
+  _lernModal() {
+    const m = this.s.modal;
+    const rest = Math.max(0, Math.ceil((m.bis - Date.now()) / 1000));
+    const was = m.art === "ir"
+      ? "Original-Fernbedienung mit 2–5 cm Abstand auf die <b>Oberkante der Remote</b> (IR-Empfänger) richten und die Taste <b>kurz</b> drücken."
+      : "Alte Funk-Fernbedienung (Tor, Steckdose …) nah ans <b>Dock</b> halten und die Taste drücken – die LED am Dock blinkt schnell, solange es lauscht.";
+    return `<div class="modal"><div class="dlg">
+      <div class="dh"><h2>${m.art === "ir" ? "IR anlernen" : "433 MHz anlernen"}</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      ${m.fehler ? `<div class="msg err">${esc(m.fehler)}</div>
+        <div class="dfoot"><button class="btn ghost" data-a="modalx">Schließen</button><button class="btn primary" data-a="lern_nochmal">Nochmal</button></div>`
+        : `<p>${was}</p>
+        <div class="xbar busy"><span style="width:${Math.round((rest / LERN_S) * 100)}%"></span></div>
+        <p class="note">${m.start ? `Wartet auf das Signal … noch ${rest} s` : "Starte …"}</p>
+        <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button></div>`}
+    </div></div>`;
+  },
+  async _lernStart(art, g, i, ziel = null) {
+    const s = this.s;
+    const m = { type: "lernen", art, g, i, bis: Date.now() + LERN_S * 1000, ...(ziel ? { ziel } : {}) };
+    s.modal = m;
+    this._render();
+    const dock = art === "ir" ? null : this._rfDocks(this._irStep(g, i) || {}).find((d) => !d.includes("."));
+    const slug = s.meta[s.dev].slug;
+    const ev = art === "ir" ? "esphome.remote_ir_gelernt" : "esphome.dock_rf_gelernt";
+    try {
+      this._lernAus();
+      this._lernUnsub = await this._hass.connection.subscribeEvents((e) => this._lernEreignis(m, e.data || {}), ev);
+      await this._esphome(art === "ir" ? `${slug}_ir_lernen` : `${dock}_rf_lernen`, { sekunden: LERN_S });
+      m.start = true;
+      m.bis = Date.now() + LERN_S * 1000;
+      this._lernTimer = setInterval(() => {
+        if (this.s.modal !== m) return this._lernAus();
+        if (Date.now() > m.bis + 3000 && !m.fehler) m.fehler = "Nichts empfangen. Näher ran halten und nochmal versuchen.";
+        this._render();
+      }, 1000);
+    } catch (e) {
+      m.fehler = art === "ir" ? `Remote nicht erreichbar oder Firmware ohne „ir_lernen“: ${e.message || e.code}` : `Dock nicht erreichbar: ${e.message || e.code}`;
+    }
+    this._render();
+  },
+  _lernEreignis(m, d) {
+    if (this.s.modal !== m) return;
+    if (m.art === "ir" && d.geraet && d.geraet !== this.s.dev) return;   // andere Remote
+    if (d.fehler || !d.code) { m.fehler = d.fehler || "Nichts empfangen."; this._render(); return; }
+    const raw = String(d.code).split(",").map(Number).filter((x) => Number.isFinite(x) && x !== 0);
+    if (m.ziel) {   // IR-Codes > Meine Codes: in das Geraet ablegen, gleich weiter anlernen
+      const erk = irErkennen(raw), g = this.s.irc.eigen.geraete[m.ziel.gi];
+      const code = erk || { raw, f: 38000 };
+      const name = `Taste ${g.codes.length + 1}`;
+      const neu = this._ircAblegen(m.ziel.gi, name, code, "angelernt");
+      this._ircSpeichern();
+      this._lernAus();
+      this.s.modal = null;
+      this.s.msg = { text: neu ? `„${name}“ in „${g.name}“ angelernt${erk ? ` (${irErkanntText(erk)})` : ` (${raw.length} Werte)`} – Namen anpassen, mit ▶ testen. „Anlernen“ für die nächste Taste.` : "Diesen Code hat das Gerät schon." };
+      this._render();
+      return;
+    }
+    const kc = this._steps(m.g);
+    const alt = kc[m.g][m.i] || {};
+    const erk = m.art === "ir" ? irErkennen(raw) : null;
+    const neu = m.art !== "ir" ? { t: "rf", raw, wdh: alt.wdh || 5, ...(alt.n ? { n: alt.n } : {}) }
+      : erk ? { t: "ir", n: `angelernt (${IR_NAMEN[erk.proto] || erk.proto})`, ...erk }
+      : { t: "ir", raw, f: 38000, n: "angelernt" };
+    this._irSetStep(m.g, m.i, neu);
+    this._lernAus();
+    this.s.modal = null;
+    this.s.msg = { text: erk ? `IR-Signal angelernt und erkannt: ${irErkanntText(erk)} – wird als Protokoll gesendet. Mit „Testen“ prüfen, dann speichern.`
+      : `${m.art === "ir" ? "IR" : "433-MHz"}-Signal angelernt (${raw.length} Werte${m.art === "ir" ? ", kein bekanntes Protokoll – wird so gesendet, wie aufgenommen" : ""}) – mit „Testen“ prüfen, dann speichern.` };
+    this._render();
+  },
+  _lernAus() {
+    if (this._lernTimer) { clearInterval(this._lernTimer); this._lernTimer = null; }
+    if (this._lernUnsub) { const u = this._lernUnsub; this._lernUnsub = null; Promise.resolve(u).then((f) => f && f()).catch(() => {}); }
+  },
+  async _lernClick(a, t) {
+    const g = t.dataset.g, i = Number(t.dataset.i);
+    const m = this.s.modal;
+    switch (a) {
+      case "lern_ir": await this._lernStart("ir", g, i); return true;
+      case "lern_rf": await this._lernStart("rf", g, i); return true;
+      case "lern_nochmal": await this._lernStart(m.art, m.g, m.i); return true;
+      case "rf_test": {
+        const st = this._irStep(g, i);
+        const ok = [], fehler = [];
+        for (const d of this._rfDocks(st)) {
+          try {
+            if (d.includes(".")) await this._hass.callService("esphomeremote_konfig", "blaster_senden", { sender: d, code: st.raw.join(","), art: "rf", wiederholen: st.wdh || 5 });
+            else await this._esphome(`${d}_rf_roh`, { code: st.raw.join(","), wiederholen: st.wdh || 5 });
+            ok.push(this._dockLabel(d));
+          }
+          catch (e) { fehler.push(`${d}: ${e.message || e.code}`); }
+        }
+        this.s.msg = fehler.length ? { err: true, text: `Dock nicht erreichbar – ${fehler.join(", ")}` } : { text: `Gesendet über ${ok.join(", ")}: ${this.stepText(st)}` };
+        return true;
+      }
+    }
+    return false;
+  },
+  _rfChange(t) {
+    const f = t.dataset.f;
+    if (!["rfname", "rfwdh", "rfraw"].includes(f) || t.dataset.g == null) return false;
+    const g = t.dataset.g, i = Number(t.dataset.i);
+    const st = { ...this._irStep(g, i) };
+    if (f === "rfname") { if (t.value.trim()) st.n = t.value.trim().slice(0, 48); else delete st.n; }
+    else if (f === "rfwdh") st.wdh = Number(t.value);
+    else st.raw = t.value.split(/[\s,;]+/).map(Number).filter((x) => Number.isFinite(x) && x !== 0);
+    this._irSetStep(g, i, st);
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(LernEditor));
+
+
+// ===========================================================================
+// Dockingstation (2026-10-16): IR-Geraete, die Home Assistant ueber einen IR-Sender (infrared-Entitaet, z. B.
+// das Dock) steuert. Je Geraet entstehen ein Media-Player, eine Remote-Entitaet (remote.send_command mit den
+// Befehlsnamen wie bei Harmony) und je Befehl ein Button. Dazu die Aktivitaets-Schalter der Remotes.
+// Daten: esphomeremote_konfig/dock_get|dock_save|dock_senden (dock.py). Gilt fuer alle Remotes gemeinsam.
+// ===========================================================================
+const DOCK_CSS = `
+.dock { padding:12px 16px 40px; max-width:1100px; }
+.dock .dkopf { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.dock .dkopf h2 { margin:0; font-size:20px; }
+.dock .karte { border:1px solid var(--div); background:var(--card); border-radius:12px; padding:12px; margin:10px 0; }
+.dock .zeile { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.dock .zeile label { display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--secondary-text-color); }
+.dock .zeile input, .dock .zeile select { font-size:14px; padding:6px 8px; border-radius:8px; border:1px solid var(--div); background:var(--primary-background-color); color:var(--primary-text-color); }
+.dock .ents { font-size:12px; color:var(--secondary-text-color); margin-top:6px; }
+.dock .ents code { font-size:12px; }
+.dock table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+.dock td { border-top:1px solid var(--div); padding:4px 6px; vertical-align:middle; }
+.dock td.nm { white-space:nowrap; }
+.dock td.nm small { display:block; color:var(--secondary-text-color); }
+.dock td.cd { font-family:monospace; font-size:12px; color:var(--secondary-text-color); }
+.dock td.cd input, .dock td.cd select { font-size:12px; padding:3px 4px; width:7em; }
+.dock td.ak { white-space:nowrap; text-align:right; }
+.dock .badge { font-size:11px; padding:1px 6px; border-radius:8px; background:var(--div); }
+.dock .badge.eigen { background:var(--acc); color:#fff; }
+.dock .schalter td { padding:6px; }
+.dock .an { color:#22c55e; font-weight:600; }
+.dock .fehlerk h3 { display:flex; align-items:center; gap:8px; }
+.dock .fampel { display:flex; align-items:center; gap:8px; border-radius:10px; padding:8px 12px; margin:4px 0 8px; background:var(--flaeche, rgba(127,127,127,.12)); }
+.dock .fehlerk.gruen .fampel { background:rgba(34,197,94,.15); color:#15803d; } .dock .fehlerk.gelb .fampel { background:rgba(245,158,11,.14); color:#b45309; }
+.dock .fehlerk .ez { display:flex; justify-content:space-between; gap:12px; align-items:center; border-top:1px solid var(--div); padding:6px 0; }
+.dock .fehlerk .ez small { display:block; } .dock .fehlerk a.btn { text-decoration:none; }
+@media (max-width: 700px) { .dock td.cd { display:none; } }
+`;
+
+const DockEditor = {
+  async _dockLaden() {
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/dock_get" });
+      this.s.dock = { ...r, geraete: clone(r.geraete), dirty: false, offen: this.s.dock?.offen || {} };
+    } catch (e) {
+      this.s.dock = { fehler: e.message || String(e) };
+    }
+    this._render();
+  },
+  _dockName(n) { return this.s.dock.namen[n]?.[0] || n; },
+  _dockBefehle(g) {
+    const v = this.s.dock.vorlagen[g.vorlage] || { befehle: {} };
+    const out = Object.entries(v.befehle).map(([n, st]) => ({ n, st, eigen: false }));
+    for (const [n, st] of Object.entries(g.befehle || {})) {
+      const i = out.findIndex((b) => b.n === n);
+      if (i >= 0) out[i] = { n, st, eigen: true }; else out.push({ n, st, eigen: true });
+    }
+    return out;
+  },
+  _dockCode(st) {
+    return st.raw ? `roh · ${st.raw.length} Werte · ${Math.round((st.f || 38000) / 1000)} kHz` : `${esc(st.proto)} ${hex(st.addr)} / ${hex(st.cmd)}`;
+  },
+  _dockHtml() {
+    const d = this.s.dock;
+    if (!d) { this._dockLaden(); return `<div class="dock">Lade …</div>`; }
+    if (d.fehler) return `<div class="dock"><div class="msg err">${esc(d.fehler)}</div></div>`;
+    const senderOpt = (g) => {
+      const liste = [...d.sender];
+      if (g.sender && !liste.some((x) => x.entity_id === g.sender)) liste.push({ entity_id: g.sender, name: g.sender + " (nicht gefunden)" });
+      return liste.map((x) => `<option value="${esc(x.entity_id)}" ${x.entity_id === g.sender ? "selected" : ""}>${esc(x.name)}${x.online === false ? " – offline" : ""}</option>`).join("");
+    };
+    const karten = d.geraete.map((g, gi) => {
+      const bf = this._dockBefehle(g);
+      const ents = d.entitaeten[g.id] || {};
+      const offen = d.offen[g.id];
+      const zeilen = bf.map((b) => {
+        const st = b.st;
+        const code = b.eigen && !st.raw ? `<select data-dk="proto" data-gi="${gi}" data-n="${esc(b.n)}">${d.protokolle.map((p) => `<option ${p === st.proto ? "selected" : ""}>${p}</option>`).join("")}</select>
+            <input data-dk="addr" data-gi="${gi}" data-n="${esc(b.n)}" value="${hex(st.addr)}"> <input data-dk="cmd" data-gi="${gi}" data-n="${esc(b.n)}" value="${hex(st.cmd)}">`
+          : this._dockCode(st);
+        return `<tr><td class="nm"><b>${esc(this._dockName(b.n))}</b><small>${esc(b.n)}</small></td>
+          <td><span class="badge ${b.eigen ? "eigen" : ""}">${b.eigen ? "eigen" : "Vorlage"}</span></td>
+          <td class="cd">${code}</td>
+          <td class="ak"><button class="icon sm" data-a="dk_test" data-gi="${gi}" data-n="${esc(b.n)}" title="Jetzt senden"><ha-icon icon="mdi:play"></ha-icon></button>
+          ${b.eigen ? `<button class="icon sm" data-a="dk_bweg" data-gi="${gi}" data-n="${esc(b.n)}" title="Eigenen Befehl löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>` : ""}</td></tr>`;
+      }).join("");
+      return `<div class="karte">
+        <div class="zeile">
+          <label>Name<input data-dk="name" data-gi="${gi}" value="${esc(g.name)}" maxlength="32"></label>
+          <label>Gerät / Vorlage<select data-dk="vorlage" data-gi="${gi}">${Object.entries(d.vorlagen).map(([k, v]) => `<option value="${k}" ${k === g.vorlage ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>
+          <label>IR-Sender<select data-dk="sender" data-gi="${gi}">${senderOpt(g)}</select></label>
+          <span class="grow"></span>
+          <button class="icon sm" data-a="dk_weg" data-gi="${gi}" title="Gerät löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
+        </div>
+        <div class="ents">${ents.mp ? `Media-Player <code>${esc(ents.mp)}</code> · Remote <code>${esc(ents.remote)}</code> · je Befehl ein Button` : "Entitäten entstehen nach dem Speichern."}</div>
+        <div class="zeile" style="margin-top:8px">
+          <button class="btn small" data-a="dk_offen" data-gi="${gi}"><ha-icon icon="mdi:${offen ? "chevron-up" : "chevron-down"}"></ha-icon>Befehle (${bf.length})</button>
+          <button class="btn small" data-a="dk_db" data-gi="${gi}"><ha-icon icon="mdi:database-search"></ha-icon>Aus IR-Datenbank …</button>
+          <button class="btn small" data-a="dk_neu_b" data-gi="${gi}"><ha-icon icon="mdi:plus"></ha-icon>Eigener Befehl</button>
+        </div>
+        ${offen ? `<table>${zeilen || `<tr><td>Noch keine Befehle.</td></tr>`}</table>` : ""}
+      </div>`;
+    }).join("");
+    const schalter = Object.entries(d.schalter || {}).map(([dev, ids]) => {
+      const acts = this.s.cfg[dev]?.activities || [];
+      return `<tr><td class="nm"><b>${esc(devName(dev))}</b></td><td>${acts.map((a, i) => {
+        const id = ids[i];
+        const st = id ? this._hass.states[id] : null;
+        return `<span class="badge ${st?.state === "on" ? "eigen" : ""}" title="${esc(id || "nach dem Speichern")}">${esc(a.name)}${st ? ` · ${st.state === "on" ? "läuft" : st.state === "off" ? "aus" : "?"}` : ""}</span>`;
+      }).join(" ")}</td></tr>`;
+    }).join("");
+    // Sprungleiste (2026-10-26): die Dock-Seite ist lang - jeder Bereich als eigener Punkt (LED-Helligkeit u. a.)
+    const SPR = [["dk-zustand", "Zustand", "mdi:heart-pulse"], ["dk-bt", "Bluetooth", "mdi:bluetooth"], ["dk-led", "LED-Helligkeit", "mdi:led-on"],
+      ["dk-anz", "Smart Display", "mdi:monitor-dashboard"], ["dk-suche", "Suchtempo", "mdi:radar"], ["dk-ir", "IR-Geräte", "mdi:remote-tv"],
+      ["dk-fehler", "Bekannte Fehler", "mdi:bug-check-outline"]];
+    return `<div class="dock">
+      ${this._dockLeiste()}
+      <nav class="dkspr">${SPR.map(([id, l, i]) => `<button class="chip" data-a="dk_spring" data-z="${id}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</nav>
+      <div id="dk-zustand">${this._dockZustandHtml()}</div>
+      <div id="dk-bt">${this._dbtHtml()}</div>
+      <div id="dk-led">${this._lichtDockHtml()}</div>
+      <div id="dk-anz">${this._anzHtml()}</div>
+      <div id="dk-suche">${this._scanHtml()}</div>
+      <div class="dkopf" id="dk-ir"><h2><ha-icon icon="mdi:remote-tv"></ha-icon> IR-Geräte</h2><span class="grow"></span>
+        <button class="btn primary" data-a="dk_neu"><ha-icon icon="mdi:plus"></ha-icon>IR-Gerät</button></div>
+      <p class="hint">Geräte, die Home Assistant per Infrarot über das Dock steuert. Befehlsnamen wie bei der Harmony (PowerOn, VolumeUp, InputNext, DirectionUp, Select …):
+        <code>remote.send_command</code> mit <code>command: VolumeUp</code> an die Remote-Entität des Geräts. Eigene Befehle überschreiben die Vorlage; Befehle namens „Input…“ werden Quellen des Media-Players.</p>
+      ${d.sender.length ? "" : `<div class="msg err">Kein IR-Sender (infrared-Entität) in Home Assistant gefunden.</div>`}
+      ${karten || `<div class="karte">Noch kein IR-Gerät. „+ IR-Gerät“ legt eines an.</div>`}
+      <div class="dkopf"><h2><ha-icon icon="mdi:toggle-switch-outline"></ha-icon> Aktivitäts-Schalter</h2></div>
+      <p class="hint">Je Remote und Aktivität ein Schalter in Home Assistant (<code>switch.…_aktivitat_…</code>): an = läuft auf der Remote, einschalten startet sie, ausschalten beendet sie.
+        Was dabei passieren soll (z. B. TV einschalten, Eingang wählen), steht unter Fernbedienung › Tasten bei <b>Beim Starten</b> / <b>Beim Beenden</b> der Aktivität. Schläft die Remote, wird beim nächsten Verbinden nachgeholt.</p>
+      <div class="karte schalter"><table>${schalter}</table></div>
+      <div id="dk-fehler">${this._fehlerHtml()}</div>
+    </div>`;
+  },
+  // Bekannte Fehler fremder Software (2026-10-28, fehler.py): Link zum Fehlerbericht, Pruefen-Knopf und Antwort auf
+  // "lohnt es sich, die Umgehung abzuschalten?" - offen/geschlossen und ob die betroffene Bibliothek neu ist
+  _fehlerHtml() {
+    const s = this.s;
+    if (!s.bfehler && !s.bfehlerLaedt) {
+      s.bfehlerLaedt = true;
+      this._hass.callWS({ type: "esphomeremote_konfig/bekannte_fehler" }).then((r) => { s.bfehler = r.fehler; s.bfehlerLaedt = false; this._render(); })
+        .catch(() => { s.bfehlerLaedt = false; });
+    }
+    const dt = (x) => (x ? new Date(x.length <= 10 ? x + "T12:00" : x.replace(" ", "T")).toLocaleDateString("de-DE") : "–");
+    const karten = (s.bfehler || []).map((f) => {
+      const e = f.erg, i = e?.issue, url = `https://github.com/${f.issue}`;
+      const ampel = !e?.issue ? ["grau", "mdi:help-circle-outline", "Noch nicht geprüft"]
+        : e.lohnt ? ["gruen", "mdi:party-popper", "Es lohnt sich, die Umgehung testweise abzuschalten"]
+        : ["gelb", "mdi:timer-sand", "Noch nicht behoben – Umgehung bleibt an"];
+      const zeilen = !i ? "" : `<div class="ez"><span>Fehlerbericht bei Espressif<small class="vtext"><a href="${url}" target="_blank" rel="noopener">${esc(f.issue.replace("/issues/", " #"))}</a> · ${i.kommentare} Kommentare · zuletzt geändert ${dt(i.geaendert)}</small></span>
+          <b class="${i.offen ? "" : "an"}">${i.offen ? "offen" : `geschlossen${i.geschlossen ? " am " + dt(i.geschlossen) : ""}${i.grund ? ` (${i.grund === "completed" ? "erledigt" : i.grund === "not_planned" ? "wird nicht behoben" : esc(i.grund)})` : ""}`}</b></div>
+        ${(e.bibliothek || []).map((b) => `<div class="ez"><span>${esc(f.bibliothek.name)} in ESP-IDF ${esc(b.tag)}<small class="vtext">Unser Dock: ESP-IDF ${esc(f.bibliothek.idf)}, Fassung ${esc(f.bibliothek.stand.slice(0, 7))}</small></span>
+          <b class="${b.neu ? "an" : ""}">${b.neu ? `neue Fassung ${esc(b.sha.slice(0, 7))}` : "dieselbe – Update hilft nicht"}</b></div>`).join("")}`;
+      return `<div class="karte fehlerk ${ampel[0]}">
+        <h3><ha-icon icon="mdi:bug-outline"></ha-icon>${esc(f.titel)}</h3>
+        <div class="fampel"><ha-icon icon="${ampel[1]}"></ha-icon><b>${ampel[2]}</b></div>
+        <p class="hint">${esc(f.text)}</p>
+        <p class="hint"><b>Umgehung jetzt:</b> ${esc(f.umgehung)}</p>
+        ${zeilen}
+        ${e?.fehler ? `<div class="msg err">Letzte Prüfung (${esc(e.versuch || "")}) fehlgeschlagen: ${esc(e.fehler)}</div>` : ""}
+        <div class="inl"><button class="btn small" data-a="dk_fehlerpruefen" ${s.bfehlerPrueft ? "disabled" : ""}><ha-icon icon="mdi:refresh"></ha-icon>${s.bfehlerPrueft ? "Prüft …" : "Jetzt prüfen"}</button>
+          <a class="btn small ghost" href="${url}" target="_blank" rel="noopener"><ha-icon icon="mdi:github"></ha-icon>Fehlerbericht öffnen</a>
+          <small class="note">${e?.geprueft ? `Geprüft: ${esc(new Date(e.geprueft.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }))} · ` : ""}Home Assistant prüft einmal am Tag und meldet sich, wenn es sich lohnt.</small></div>
+      </div>`;
+    }).join("");
+    return `<div class="dkopf"><h2><ha-icon icon="mdi:bug-check-outline"></ha-icon> Bekannte Fehler</h2></div>
+      <p class="hint">Fehler in fremder Software, die wir nur umgehen können. Es lohnt sich, sie neu anzugehen, sobald der Fehlerbericht geschlossen ist oder Espressif eine neue Fassung der betroffenen Bibliothek herausbringt – vorher ändert auch ein Update nichts.</p>
+      ${karten || (s.bfehler ? "" : '<div class="karte">Lade …</div>')}`;
+  },
+  _dockDbModal() {
+    const m = this.s.modal;
+    let inhalt;
+    if (m.dev) {
+      const ok = m.dev.befehle.filter((b) => b.ok);
+      inhalt = `<button class="ent" data-a="dk_dbzurueck"><ha-icon icon="mdi:arrow-left"></ha-icon><span><b>${esc(m.dev.m ? m.dev.m + " " : "")}${esc(m.dev.n)}</b><small>${esc(m.dev.k)} · ${ok.length} sendbare Befehle</small></span></button>
+        <div class="inl"><button class="btn primary small" data-a="dk_dballe"><ha-icon icon="mdi:download"></ha-icon>Alle ${ok.length} als eigene Befehle übernehmen</button></div>
+        <div class="list">${m.dev.befehle.map((b, j) => `<div class="irrow"><button class="ent" data-a="dk_dbeins" data-j="${j}" ${b.ok ? "" : "disabled"}>
+          <ha-icon icon="${b.raw ? "mdi:sine-wave" : "mdi:code-tags"}"></ha-icon><span><b>${esc(b.name)}</b><small>${b.raw ? `roh · ${b.raw.length} Werte` : `${esc(b.proto)} ${hex(b.addr)}/${hex(b.cmd)}`}</small></span></button>
+          <button class="icon sm" data-a="dk_dbtest" data-j="${j}" title="Testen" ${b.ok ? "" : "disabled"}><ha-icon icon="mdi:play"></ha-icon></button></div>`).join("")}</div>`;
+    } else {
+      const r = m.res;
+      inhalt = `<input id="dockq" type="search" placeholder="Marke, Modell oder Kategorie (z. B. sony tv) …" value="${esc(m.q || "")}" autocomplete="off">
+        <div class="list">${r ? r.treffer.map((t) => `<button class="ent" data-a="dk_dbdev" data-id="${t.id}"><ha-icon icon="mdi:remote"></ha-icon>
+          <span><b>${esc(t.m ? t.m + " " : "")}${esc(t.n)}</b><small>${esc(t.k)} · ${t.b} Befehle</small></span></button>`).join("")
+          + (!r.gesamt ? `<div class="none">Nichts gefunden (IR-Datenbank unter „Infrarot“ laden).</div>` : "") : `<div class="none">Suche …</div>`}</div>`;
+    }
+    return `<div class="modal" data-a="modalbg"><div class="dlg pick">
+      <div class="dh"><h2>IR-Datenbank → ${esc(this.s.dock.geraete[m.gi]?.name || "")}</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      ${m.fehler ? `<div class="msg err">${esc(m.fehler)}</div>` : ""}${inhalt}
+      <small class="note">▶ sendet sofort über den IR-Sender des Geräts. Ein Befehl antippen = einzeln übernehmen.</small>
+    </div></div>`;
+  },
+  _dockAusDb(b) {
+    return b.raw ? { t: "ir", raw: b.raw.slice(), f: b.f } : { t: "ir", proto: b.proto, addr: b.addr, cmd: b.cmd };
+  },
+  _dockBefName(name) { return String(name).trim().replace(/\s+/g, "_").slice(0, 32); },
+  async _dockSuchen() {
+    const m = this.s.modal;
+    try { m.res = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_suchen", q: m.q || "", limit: 60 }); }
+    catch (e) { m.fehler = e.message || String(e); }
+    this._render();
+  },
+  _dockBind() {
+    const q = this.shadowRoot.querySelector("#dockq");
+    if (!q) return;
+    q.oninput = () => {
+      this.s.modal.q = q.value;
+      clearTimeout(this._dockT);
+      this._dockT = setTimeout(async () => {
+        await this._dockSuchen();
+        const nq = this.shadowRoot.querySelector("#dockq");
+        if (nq) { nq.focus(); nq.setSelectionRange(nq.value.length, nq.value.length); }
+      }, 250);
+    };
+    if (!this._narrow) setTimeout(() => q.focus(), 0);
+  },
+  async _dockSenden(g, st) {
+    try {
+      await this._hass.callWS({ type: "esphomeremote_konfig/dock_senden", sender: g.sender, schritt: st });
+      this.s.msg = { text: `Gesendet über ${g.sender}` };
+    } catch (e) { this.s.msg = { err: true, text: "Senden fehlgeschlagen: " + (e.message || e.code) }; }
+  },
+  async _dockClick(a, t) {
+    if (!a.startsWith("dk_")) return false;
+    const s = this.s, d = s.dock, m = s.modal;
+    const gi = Number(t.dataset.gi ?? m?.gi), g = d?.geraete[gi];
+    switch (a) {
+      case "dk_fehlerpruefen":
+        s.bfehlerPrueft = true; this._render();
+        try { s.bfehler = (await this._hass.callWS({ type: "esphomeremote_konfig/bekannte_fehler", pruefen: true })).fehler; }
+        catch (e) { s.msg = { err: true, text: e.message }; }
+        s.bfehlerPrueft = false;
+        return true;
+      case "dk_spring": { this.shadowRoot.getElementById(t.dataset.z)?.scrollIntoView({ behavior: "smooth", block: "start" }); return false; }
+      case "dk_neu": {
+        let n = 1;
+        while (d.geraete.some((x) => x.id === `geraet_${n}`)) n++;
+        d.geraete.push({ id: `geraet_${n}`, name: `IR-Gerät ${n}`, vorlage: "leer", sender: d.sender[0]?.entity_id || "", befehle: {} });
+        d.offen[`geraet_${n}`] = true;
+        d.dirty = true; return true;
+      }
+      case "dk_weg":
+        if (!confirm(`„${g.name}“ löschen? Seine Entitäten verschwinden nach dem Speichern.`)) return true;
+        d.geraete.splice(gi, 1); d.dirty = true; return true;
+      case "dk_offen": d.offen[g.id] = !d.offen[g.id]; return true;
+      case "dk_neu_b": {
+        const n = this._dockBefName(prompt("Name des Befehls (z. B. PowerOn, InputHdmi1, PicOff):") || "");
+        if (!n) return true;
+        g.befehle = { ...(g.befehle || {}), [n]: { t: "ir", proto: "NEC", addr: 0, cmd: 0 } };
+        d.offen[g.id] = true; d.dirty = true; return true;
+      }
+      case "dk_bweg": delete g.befehle[t.dataset.n]; d.dirty = true; return true;
+      case "dk_test": {
+        const b = this._dockBefehle(g).find((x) => x.n === t.dataset.n);
+        if (b) await this._dockSenden(g, b.st);
+        return true;
+      }
+      case "dk_save":
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/dock_save", dock: { geraete: d.geraete } });
+          s.msg = { text: `Gespeichert – ${r.geraete.length} IR-Gerät(e).` };
+          await this._dockLaden();
+        } catch (e) { s.msg = { err: true, text: "Speichern fehlgeschlagen: " + (e.message || e.code) }; }
+        return true;
+      case "dk_verwerfen": await this._dockLaden(); return true;
+      case "dk_db":
+        s.modal = { type: "dockdb", gi, q: g.name };
+        this._render();
+        await this._dockSuchen();
+        return true;
+      case "dk_dbdev":
+        try { m.dev = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_geraet", geraet: irId(t.dataset.id) }); } catch (e) { m.fehler = e.message; }
+        return true;
+      case "dk_dbzurueck": m.dev = null; return true;
+      case "dk_dbtest": await this._dockSenden(g, this._dockAusDb(m.dev.befehle[Number(t.dataset.j)])); return true;
+      case "dk_dbeins": case "dk_dballe": {
+        const liste = a === "dk_dballe" ? m.dev.befehle.filter((b) => b.ok) : [m.dev.befehle[Number(t.dataset.j)]];
+        g.befehle = { ...(g.befehle || {}) };
+        for (const b of liste) { const n = this._dockBefName(b.name); if (n) g.befehle[n] = this._dockAusDb(b); }
+        d.offen[g.id] = true; d.dirty = true;
+        s.modal = null;
+        s.msg = { text: `${liste.length} Befehl(e) übernommen – noch nicht gespeichert.` };
+        return true;
+      }
+    }
+    return false;
+  },
+  _dockChange(t) {
+    const f = t.dataset.dk;
+    if (!f) return false;
+    const d = this.s.dock, g = d.geraete[Number(t.dataset.gi)];
+    if (f === "name") g.name = t.value.slice(0, 32) || g.id;
+    else if (f === "vorlage") g.vorlage = t.value;
+    else if (f === "sender") g.sender = t.value;
+    else {
+      const st = { ...g.befehle[t.dataset.n] };
+      if (f === "proto") st.proto = t.value; else st[f] = parseNum(t.value);
+      g.befehle = { ...g.befehle, [t.dataset.n]: st };
+    }
+    d.dirty = true;
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(DockEditor));
+
+// ---------------------------------------------------------------------------------------------------------------
+// Firmware (2026-10-16): Remotes und Docks bauen/flashen - eigener Bereich "Firmware", Docks auch im Bereich
+// "Dockingstation". Daten: esphomeremote_konfig/fw_liste|fw_installieren|fw_job|fw_sperren (firmware.py),
+// docks_anlegen|docks_einbinden (docks.py), Firmware-Datei /api/esphomeremote_konfig/firmware/<datei>.
+// USB im Browser: Web Serial + esptool-js (lokal: esptool-0.5.4.js) - nur Chrome/Edge am PC und ueber https.
+const ESPTOOL_URL = new URL("esptool-0.5.4.js", import.meta.url).href;
+const CHIP = { dock: "ESP32-C3", remote: "ESP32-S3", test: "ESP32-S3" };
+// Anschluesse im Browser: eingebautes USB (Espressif) und die ueblichen USB-Seriell-Chips (CP210x, CH34x/CH9102, FTDI,
+// PL2303) - die Remote haengt an so einem. Vor dem Schreiben wird der Chip geprueft (CHIP), ein falsches Geraet bricht ab.
+const USB_VIDS = [0x303a, 0x10c4, 0x1a86, 0x0403, 0x067b];
+const FW_CSS = `
+.fw { padding:12px 16px 40px; max-width:1100px; }
+.fw .karte, .dock .karte.hw { border:1px solid var(--div); background:var(--card); border-radius:12px; padding:12px; margin:10px 0; }
+.hw { display:flex; flex-direction:column; gap:4px; }
+.hw .kopf { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.hw .kopf b { font-size:15px; } .hw .kopf small { color:var(--secondary-text-color); }
+.hw .zeile { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+.hw .zeile label { display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--secondary-text-color); }
+.hw select { font-size:14px; padding:6px 8px; border-radius:8px; border:1px solid var(--div); background:var(--primary-background-color); color:var(--primary-text-color); max-width:100%; }
+.hw .ents { font-size:12px; color:var(--secondary-text-color); }
+.badge { font-size:11px; padding:1px 6px; border-radius:8px; background:var(--div); white-space:nowrap; }
+.icon.rot:hover { color:var(--fehler, #dc2626); }
+.badge.ok { background:#16a34a; color:#fff; } .badge.warn { background:#d97706; color:#fff; } .badge.blau { background:#2563eb; color:#fff; } .badge.rot { background:#b91c1c; color:#fff; }
+.joblog { font-family:monospace; font-size:11px; white-space:pre-wrap; max-height:240px; overflow:auto; background:var(--primary-background-color);
+  border:1px solid var(--div); border-radius:8px; padding:6px 8px; margin-top:6px; }
+.balken { height:6px; border-radius:3px; background:var(--div); overflow:hidden; margin-top:6px; }
+.balken > i { display:block; height:100%; background:var(--acc); transition:width .4s; }
+.testerg { border-collapse:collapse; font-size:13px; margin:6px 0; }
+.testerg td { padding:2px 10px 2px 0; } .testerg tr.diag td { color:var(--secondary-text-color); font-size:12px; }
+.testerg .badge { font-size:12px; white-space:normal; }
+.hwgesamt { display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:12px; margin:6px 0 10px; background:var(--div); }
+.hwgesamt.ok { background:rgba(22,163,74,.15); } .hwgesamt.rot { background:rgba(185,28,28,.15); } .hwgesamt.warn { background:rgba(217,119,6,.13); }
+.hwliste { display:flex; flex-direction:column; }
+.hwzeile { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; align-items:baseline; padding:8px 0; border-top:1px solid var(--div); }
+.hwzeile:first-child { border-top:0; } .hwzeile .badge { grid-row:span 2; align-self:start; min-width:76px; text-align:center; font-size:12px; }
+.hwzeile small { color:var(--sec); line-height:1.4; grid-column:2; }
+.hwknoepfe { grid-column:2; display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+.hwtasten { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fill, minmax(70px, 1fr)); gap:5px; margin-top:6px; }
+.hwt { display:flex; flex-direction:column; align-items:center; padding:5px 2px; border-radius:8px; border:1px solid var(--div); font-size:12px; }
+.hwt small { font-size:10px; color:var(--sec); } .hwt.ok { background:#16a34a; color:#fff; border-color:transparent; } .hwt.ok small { color:#dcfce7; }
+.hwt.warn { background:#d97706; color:#fff; } .hwt.rot { background:#b91c1c; color:#fff; }
+.hwdiag { margin:8px 0; } .hwdiag summary { cursor:pointer; color:var(--sec); font-size:13px; }
+ol.schritte { margin:6px 0 0 18px; padding:0; font-size:13px; color:var(--secondary-text-color); }
+.fw h3 { margin:18px 0 4px; }
+`;
+const usbGeht = () => !!(window.isSecureContext && navigator.serial);
+// Offene Ports dieses Tabs. esptool-js disconnect() laesst den Port nach einem Fehler offen (Reader bleibt gesperrt),
+// der naechste Versuch scheitert dann mit "The port is already open" (2026-10-18). Deshalb selbst schliessen.
+const USB_OFFEN = new WeakMap();
+async function portZu(port) {
+  const t = USB_OFFEN.get(port);
+  try { await t?.reader?.cancel(); } catch (e) { /* */ }
+  try { t?.reader?.releaseLock(); } catch (e) { /* */ }
+  if (t) t.reader = undefined;
+  try { await Promise.race([port.close(), new Promise((_, n) => setTimeout(() => n(new Error("Zeit")), 3000))]); } catch (e) { /* schon zu */ }
+  if (!port.readable && !port.writable) USB_OFFEN.delete(port);
+}
+async function portFrei(port) {
+  if (port.readable || port.writable) await portZu(port);
+  if (port.readable || port.writable) throw new Error("Der Anschluss ist in diesem Tab noch belegt (z. B. vom „Verbinden & flashen“-Fenster). Seite neu laden (F5) und nochmal versuchen.");
+}
+const FirmwareTab = {
+  async _fwLaden() {
+    const fw = this.s.fw || (this.s.fw = { weg: {}, job: null, usb: null });
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_liste" });
+      Object.assign(fw, r, { fehlerWs: "", geladen: true, zeit: Date.now() });
+      if (!fw.job && r.jobs.length) this._fwFolgen(r.jobs[0].job_id);
+    } catch (e) { fw.fehlerWs = e.message || String(e); fw.geladen = true; }
+    this._render();
+  },
+  _fwWege(g) {
+    const w = [];
+    const usb = usbGeht();
+    const ota = g.art === "remote" ? (g.online ? "per WLAN" : g.ha_da ? "per WLAN (öffnet erst das Wartungsfenster)" : "per WLAN (Remote gerade nicht erreichbar)")
+      : "per WLAN" + (g.online ? "" : " (gerade offline)");
+    if (g.geflasht) w.push(["OTA", ota]);
+    w.push(["usb", usb ? "USB an diesem Computer (Browser)" : "USB an diesem Computer – nur Chrome/Edge über https", !usb]);
+    for (const p of this.s.fw.ports || []) w.push([p.port, `USB am Home-Assistant-Rechner: ${p.port}`]);
+    w.push(["", "Firmware-Datei herunterladen"]);
+    if (!g.geflasht) w.push(["OTA", "per WLAN (hat schon ESPHome)"]);
+    return w;
+  },
+  _fwStandardWeg(g) {
+    const w = this._fwWege(g).filter((x) => !x[2]);
+    return w[0][0];
+  },
+  _fwBadges(g) {
+    const b = [];
+    if (g.art === "remote") {
+      b.push(g.online ? `<span class="badge ok">WLAN${g.ip ? " · " + esc(g.ip) : ""}</span>` : g.ha_da ? `<span class="badge blau">über Bluetooth verbunden</span>` : `<span class="badge">nicht erreichbar</span>`);
+    } else {
+      b.push(g.online ? `<span class="badge ok">online${g.ip ? " · " + esc(g.ip) : ""}</span>` : `<span class="badge">${g.geflasht ? "offline" : "noch nicht geflasht"}</span>`);
+      b.push(g.in_ha ? `<span class="badge ok">in Home Assistant</span>` : `<span class="badge warn">nicht in Home Assistant</span>`);
+    }
+    if (g.geflasht) b.push(g.update ? `<span class="badge warn" title="Konfig-Hash auf dem Gerät ${esc(g.hash_ist)}, Datei ${esc(g.hash_soll)}">Update bereit</span>` : `<span class="badge ok" title="Konfig-Hash ${esc(g.hash_ist)}">aktuell</span>`);
+    if (g.version) b.push(`<span class="badge">ESPHome ${esc(g.version)}</span>`);
+    if (g.gesperrt) b.push(`<span class="badge rot">gesperrt</span>`);
+    if (g.vorgemerkt) b.push(`<span class="badge blau" title="Startet automatisch, sobald die Remote das nächste Mal online ist">Update vorgemerkt</span>`);
+    return b.join(" ");
+  },
+  _fwKarte(g, extra = "") {
+    const fw = this.s.fw;
+    const wege = this._fwWege(g);
+    let weg = fw.weg[g.datei];
+    if (weg == null || !wege.some((w) => w[0] === weg && !w[2])) weg = this._fwStandardWeg(g);
+    const beschaeftigt = (fw.job && !fw.job.fertig) || (fw.usb && !fw.usb.fertig);
+    const knopf = weg === "" ? ["download", "Bauen + herunterladen"] : weg === "usb" ? ["usb-port", "Per USB flashen"] : ["upload", "Installieren"];
+    const meins = (fw.job && fw.job.dateien?.includes(g.datei) && (fw.job.dateien.length === 1 || !fw.job.fertig)) || (fw.usb && fw.usb.datei === g.datei);
+    return `<div class="karte hw">
+      <div class="kopf"><ha-icon icon="${g.art === "dock" ? "mdi:dock-window" : g.art === "test" ? "mdi:clipboard-check-outline" : "mdi:remote"}"></ha-icon><b>${esc(g.friendly || g.name)}</b><small>${esc(g.datei)}${g.fw ? ` · Version ${esc(g.fw)}` : ""}</small><span class="grow"></span>${g.veraltet ? '<span class="badge warn">Neue Version</span>' : ""}${this._fwBadges(g)}</div>
+      ${extra}
+      ${g.alt ? `<div class="haweg klein"><ha-icon icon="mdi:file-alert-outline"></ha-icon><div><b>Datei in alter Form</b>
+        <span>${g.art === "dock" ? "Sie bindet <code>templates/dock-basis.yaml</code> ein – die gibt es nur beim Entwickler." : "Sie holt die Firmware von <code>@master</code> bzw. reicht die Passwörter nicht durch – das Bauen scheitert."}
+        Umstellen schreibt sie auf die Firmware von GitHub um (Zweig stabil); die alte bleibt als <code>${esc(g.datei)}.alt</code>.</span>
+        <div class="inl"><button class="btn small primary" data-a="fw_umstellen" data-datei="${esc(g.datei)}"><ha-icon icon="mdi:auto-fix"></ha-icon>Auf GitHub-Firmware umstellen</button></div></div></div>` : ""}
+      <div class="zeile" style="margin-top:6px">
+        <label>Firmware aufspielen<select data-fw="weg" data-datei="${esc(g.datei)}">${wege.map(([v, t, aus]) => `<option value="${esc(v)}" ${v === weg ? "selected" : ""} ${aus ? "disabled" : ""}>${esc(t)}</option>`).join("")}</select></label>
+        <button class="btn small primary" data-a="fw_los" data-datei="${esc(g.datei)}" data-weg="${esc(weg)}" ${beschaeftigt || (g.gesperrt && weg !== "") ? "disabled" : ""}><ha-icon icon="mdi:${knopf[0]}"></ha-icon>${knopf[1]}</button>
+        ${g.art === "remote" ? `<button class="btn small" data-a="fw_vormerken" data-datei="${esc(g.datei)}" ${g.gesperrt ? "disabled" : ""} title="Baut jetzt gleich und spielt die Firmware auf, sobald die Remote das nächste Mal benutzt wird (meldet sich über das Dock oder WLAN)."><ha-icon icon="mdi:${g.vorgemerkt ? "calendar-remove" : "calendar-clock"}"></ha-icon>${g.vorgemerkt ? "Vormerkung aufheben" : "Vormerken"}</button>` : ""}
+        <button class="btn small ghost" data-a="fw_nurbauen" data-datei="${esc(g.datei)}" ${beschaeftigt ? "disabled" : ""} title="Nur bauen, nicht aufspielen – danach geht „Installieren“ in Sekunden (nur noch Hochladen)"><ha-icon icon="mdi:hammer-wrench"></ha-icon>Nur bauen</button>
+        ${g.art !== "remote" && !g.in_ha ? `<button class="btn small" data-a="fw_ha" data-datei="${esc(g.datei)}"><ha-icon icon="mdi:home-plus"></ha-icon>In Home Assistant einbinden</button>` : ""}
+        <span class="grow"></span>
+        <button class="btn small" data-a="fw_usblog" data-datei="${esc(g.datei)}" ${usbGeht() && !beschaeftigt ? "" : "disabled"} title="Startmeldungen über USB mitlesen (Gerät wird dabei neu gestartet)"><ha-icon icon="mdi:console"></ha-icon>USB-Protokoll</button>
+        <button class="icon sm" data-a="fw_sperre" data-datei="${esc(g.datei)}" title="${g.gesperrt ? "Entsperren" : "Sperren (z. B. Platine defekt) – wird dann nie geflasht"}"><ha-icon icon="mdi:${g.gesperrt ? "lock" : "lock-open-variant-outline"}"></ha-icon></button>
+        ${this._fwLoeschbar(g) ? `<button class="icon sm rot" data-a="fw_loeschen" data-datei="${esc(g.datei)}" title="${g.art === "dock" ? "Dock" : "Remote"} löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>` : ""}
+      </div>
+      ${g.art === "remote" && !g.geflasht && this.s.order.includes(g.name) ? `<div class="zeile" style="margin-top:6px"><small class="note grow">Noch nicht eingerichtet: bauen, flashen, in Home Assistant einbinden.</small>
+        <button class="btn small primary" data-a="neu_fortsetzen" data-dev="${esc(g.name)}"><ha-icon icon="mdi:play"></ha-icon>Einrichten fortsetzen</button></div>` : ""}
+      ${g.art === "remote" && g.vorgemerkt ? `<small class="note">Vorgemerkt: Sobald die Remote online ist, baut Home Assistant die Firmware und spielt sie per WLAN auf. Auf der Remote selbst geht es jederzeit über Einstellungen › Wartung & Tests › Firmware aktualisieren.</small>` : ""}
+      ${weg === "usb" ? `<small class="note">Gerät per USB an diesen Computer stecken. Nach dem Bauen fragt der Browser nach dem Anschluss (z. B. „USB JTAG/serial debug unit“, „CP2102“ oder „USB Serial“).${g.art === "dock" ? " Klappt das Verbinden nicht: am Super Mini BOOT halten, RESET tippen, BOOT loslassen." : ""}</small>` : ""}
+      ${weg === "" ? `<small class="note">Die Datei (…factory.bin) lässt sich z. B. auf <a href="https://web.esphome.io" target="_blank" rel="noopener">web.esphome.io</a> installieren.</small>` : ""}
+      ${meins ? this._fwJobHtml() : ""}
+    </div>`;
+  },
+  // Remotes: nur die im Konfigurator angelegten (die aus der YAML-Konfiguration nicht). Docks: alle.
+  _fwLoeschbar(g) {
+    if (g.art === "dock") return true;
+    return g.art === "remote" && !!this.s.meta?.[g.name]?.entfernbar;
+  },
+  _fwJobHtml() {
+    const { job: j, usb: u } = this.s.fw;
+    const teile = [];
+    if (j) {
+      const pct = typeof j.progress === "number" ? Math.max(0, Math.min(100, Math.round(j.progress))) : null;
+      teile.push(`<div class="${j.fertig && j.status !== "fertig" ? "msg err" : ""}" style="margin-top:6px">
+        <b>${esc(j.titel || "")}:</b> ${esc(j.fertig ? (j.status === "fertig" ? "fertig" : "Fehler") : j.schritt || "läuft")}${pct != null && !j.fertig ? ` · ${pct} %` : ""}${j.fehler ? " – " + esc(j.fehler) : ""}
+        ${!j.fertig ? `<div class="balken"><i style="width:${pct ?? 5}%"></i></div>` : ""}</div>`);
+    }
+    if (u) {
+      teile.push(`<div class="${u.fehler ? "msg err" : ""}" style="margin-top:6px"><b>USB:</b> ${esc(u.text || "")}${u.fehler ? " – " + esc(u.fehler) : ""}
+        ${u.pct != null && !u.fertig ? `<div class="balken"><i style="width:${u.pct}%"></i></div>` : ""}</div>`);
+    }
+    const log = [...(j?.log || []), ...(u?.log || [])];
+    if (log.length) teile.push(`<div class="joblog">${esc(log.slice(-80).join("\n"))}</div>`);
+    return `<div class="fwjob">${teile.join("")}</div>`;
+  },
+  // Laufender Auftrag (2026-10-27): nur den Auftragskasten neu zeichnen statt der ganzen Seite - sonst sprang alle
+  // 1,5 s die ganze Seite (Fenster scrollte nach unten). false = es gibt keinen Kasten, ganz neu zeichnen.
+  _fwJobAuffrischen() {
+    const kaesten = this.shadowRoot.querySelectorAll(".fwjob");
+    if (!kaesten.length) return false;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = this._fwJobHtml();
+    const neu = tmp.firstElementChild;
+    kaesten.forEach((k) => {
+      const alt = k.querySelector(".joblog"), nlog = neu.querySelector(".joblog");
+      const unten = !alt || alt.scrollHeight - alt.scrollTop - alt.clientHeight < 24;
+      for (const el of [...k.children]) if (!el.classList.contains("joblog")) el.remove();
+      for (const el of [...neu.children]) if (!el.classList.contains("joblog")) k.insertBefore(el.cloneNode(true), k.querySelector(".joblog"));
+      if (nlog && !alt) k.appendChild(nlog.cloneNode(true));
+      else if (alt && nlog && alt.textContent !== nlog.textContent) {
+        alt.textContent = nlog.textContent;
+        if (unten) alt.scrollTop = alt.scrollHeight;
+      }
+    });
+    return true;
+  },
+  _fwFolgen(job_id) {
+    const fw = this.s.fw;
+    clearInterval(this._fwT);
+    return new Promise((fertig) => {
+      const tick = async () => {
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_job", job_id });
+          fw.job = r;
+          if (r.fertig) {
+            clearInterval(this._fwT);
+            fertig(r);
+            if (!fw.usb) {
+              this.s.msg = r.status === "fertig" ? { text: r.port === "" ? "Firmware gebaut." : `${r.titel}: installiert.` } : { err: true, text: `${r.titel}: ${r.fehler || "Fehler"} – siehe Protokoll.` };
+              setTimeout(() => this._fwLaden(), 2000);
+              if (r.port) setTimeout(() => this._fwLaden(), 25000);   // bis das Geraet wieder online meldet
+            }
+          }
+        } catch (e) { clearInterval(this._fwT); fw.job = { job_id, fertig: true, status: "fehler", fehler: e.message, log: [] }; fertig(fw.job); }
+        if (this.s.bereich !== "remote" && (fw.job?.fertig || !this._fwJobAuffrischen())) this._render();
+      };
+      this._fwT = setInterval(tick, 1500);
+      tick();
+    });
+  },
+  async _fwStarten(dateien, port) {
+    const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_installieren", dateien, port });
+    this.s.fw.job = { job_id: r.job_id, dateien, port, titel: "", status: "laeuft", fertig: false, log: [] };
+    return this._fwFolgen(r.job_id);
+  },
+  async _fwHolen(datei) {
+    const r = await this._hass.fetchWithAuth(`/api/esphomeremote_konfig/firmware/${encodeURIComponent(datei)}`);
+    if (!r.ok) throw new Error("Firmware holen: " + (await r.text()));
+    return new Uint8Array(await r.arrayBuffer());
+  },
+  async _fwDownload(datei) {
+    const daten = await this._fwHolen(datei);
+    const url = URL.createObjectURL(new Blob([daten], { type: "application/octet-stream" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = datei.replace(/\.yaml$/, "") + ".factory.bin";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  },
+  // USB im Browser: Port SOFORT im Klick waehlen lassen (Browser verlangt die Nutzergeste), dann bauen, dann flashen.
+  async _fwUsb(g) {
+    const fw = this.s.fw;
+    let port;
+    try { port = await navigator.serial.requestPort({ filters: USB_VIDS.map((v) => ({ usbVendorId: v })) }); }
+    catch (e) { this.s.msg = { err: true, text: "Kein USB-Gerät gewählt. Steckt es am Computer? Ist es noch in einem anderen Tab (z. B. ESPHome Web) verbunden?" }; return; }
+    const u = fw.usb = { datei: g.datei, text: "Firmware wird gebaut …", pct: null, log: [], fertig: false };
+    const log = (t) => { if (t) { u.log.push(String(t).trimEnd()); if (u.log.length > 200) u.log.shift(); } };
+    this._render();
+    let transport;
+    try {
+      const j = await this._fwStarten([g.datei], "");
+      if (j.status !== "fertig") throw new Error("Bauen fehlgeschlagen" + (j.fehler ? ": " + j.fehler : ""));
+      u.text = "Firmware wird geladen …"; this._render();
+      const daten = await this._fwHolen(g.datei);
+      u.text = "Verbinde mit dem Gerät …"; this._render();
+      const { ESPLoader, Transport } = await import(ESPTOOL_URL);
+      await portFrei(port);
+      transport = new Transport(port, false);
+      USB_OFFEN.set(port, transport);
+      const loader = new ESPLoader({ transport, baudrate: 460800, romBaudrate: 115200,
+        terminal: { clean() {}, writeLine: log, write: log } });
+      const chip = await loader.main();
+      log(`Chip: ${chip}`);
+      if (CHIP[g.art] && !String(chip).toUpperCase().startsWith(CHIP[g.art])) throw new Error(`Falsches Gerät: ${chip}, erwartet ${CHIP[g.art]} (${g.art === "dock" ? "Dock" : "Remote"})`);
+      let bin = "";
+      for (let i = 0; i < daten.length; i += 0x8000) bin += String.fromCharCode.apply(null, daten.subarray(i, i + 0x8000));
+      u.text = "Flashen …"; u.pct = 0; this._render();
+      await loader.writeFlash({ fileArray: [{ data: bin, address: 0 }], flashSize: "keep", flashMode: "keep", flashFreq: "keep",
+        eraseAll: false, compress: true,
+        reportProgress: (_i, w, t) => { const p = Math.round((w / t) * 100); if (p !== u.pct) { u.pct = p; u.text = `Flashen … ${p} %`; this._render(); } } });
+      await loader.after("hard_reset");
+      // Zusaetzlich selbst neu starten (Remote mit USB-Seriell-Chip blieb sonst im Download-Modus, Display schwarz,
+      // 2026-10-16): IO0 (DTR) loslassen, EN (RTS) kurz ziehen und loslassen.
+      try {
+        await transport.setDTR(false);
+        await transport.setRTS(true);
+        await new Promise((r) => setTimeout(r, 150));
+        await transport.setRTS(false);
+      } catch (e) { log("Neustart ueber RTS: " + e.message); }
+      u.text = "Fertig – das Gerät startet neu. Bleibt es dunkel: einmal die Reset-Taste drücken (oder USB kurz abziehen)."
+        + (g.art !== "remote" && !g.in_ha ? " Wenn es im WLAN ist: „In Home Assistant einbinden“." : "")
+        + (g.art === "test" ? " Der Test läuft nach dem Start von selbst (rund 15 s)." : "");
+      u.pct = null;
+      this.s.msg = { text: `${g.friendly || g.datei}: per USB geflasht.` };
+      setTimeout(() => this._fwLaden(), 20000);
+    } catch (e) {
+      u.fehler = e.message || String(e);
+      u.text = "abgebrochen";
+      if (/already open/i.test(u.fehler)) u.fehler += " – Seite neu laden (F5) und nochmal versuchen.";
+      else if (/open|Failed to open|in use|busy/i.test(u.fehler) && !/F5/.test(u.fehler)) u.fehler += " – ist der Anschluss noch in einem anderen Programm/Tab offen?";
+    } finally {
+      u.fertig = true;
+      if (transport) await portZu(port);
+      this._render();
+    }
+  },
+  // Startmeldungen ueber USB: Port waehlen, Geraet per RTS neu starten, 25 s mitlesen (115200 Baud = ROM-Bootloader/Abstuerze).
+  async _fwUsbLog(g) {
+    const fw = this.s.fw;
+    let port;
+    try { port = await navigator.serial.requestPort({ filters: USB_VIDS.map((v) => ({ usbVendorId: v })) }); }
+    catch (e) { this.s.msg = { err: true, text: "Kein USB-Gerät gewählt." }; return; }
+    const u = fw.usb = { datei: g.datei, text: "Lese Startmeldungen (25 s) …", pct: null, log: [], fertig: false };
+    this._render();
+    let reader;
+    try {
+      await portFrei(port);
+      await port.open({ baudRate: 115200 });
+      // Neustart in den normalen Start: IO0 (DTR) loslassen, EN (RTS) kurz ziehen
+      await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+      await new Promise((r) => setTimeout(r, 120));
+      await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+      reader = port.readable.getReader();
+      const dec = new TextDecoder();
+      let rest = "", letzt = 0;
+      const ende = Date.now() + 25000;
+      const stop = setTimeout(() => reader.cancel().catch(() => {}), 25000);
+      while (Date.now() < ende) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        rest += dec.decode(value, { stream: true }).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+        const zeilen = rest.split(/\r?\n/);
+        rest = zeilen.pop();
+        for (const z of zeilen) if (z.trim()) { u.log.push(z.slice(0, 300)); if (u.log.length > 400) u.log.shift(); }
+        if (Date.now() - letzt > 500) { letzt = Date.now(); this._render(); }
+      }
+      clearTimeout(stop);
+      if (rest.trim()) u.log.push(rest);
+      u.text = u.log.length ? `${u.log.length} Zeilen gelesen` : "Keine Ausgabe – hängt die Remote an diesem Anschluss? Ist sie eingeschaltet?";
+    } catch (e) {
+      u.fehler = e.message || String(e);
+    } finally {
+      u.fertig = true;
+      try { reader?.releaseLock(); } catch (e) { /* */ }
+      try { await port.close(); } catch (e) { /* */ }
+      this._render();
+    }
+  },
+  _fwHtml() {
+    const fw = this.s.fw;
+    if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return `<div class="fw">Lade …</div>`; }
+    if (fw.fehlerWs) return `<div class="fw"><div class="msg err">${esc(fw.fehlerWs)}</div></div>`;
+    const rem = fw.geraete.filter((g) => g.art === "remote");
+    // ausgeschaltete Docks nicht mitnehmen (Remotes schlafen dagegen oft - die weckt das Wartungsfenster)
+    const updates = fw.geraete.filter((g) => (g.update || g.veraltet) && !g.gesperrt && g.art !== "test" && !(g.art === "dock" && !g.online));
+    const alt = fw.geraete.filter((g) => g.veraltet);
+    const beschaeftigt = (fw.job && !fw.job.fertig) || (fw.usb && !fw.usb.fertig);
+    const sammel = fw.job && fw.job.dateien?.length > 1 ? `<div class="karte hw">${this._fwJobHtml()}</div>` : "";
+    return `<div class="fw">
+      <div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware &amp; Geräte</h2><span class="grow"></span>
+        <button class="btn small" data-a="fw_reload" title="Neu laden"><ha-icon icon="mdi:refresh"></ha-icon></button>
+        <button class="btn primary" data-a="fw_alle" ${updates.length && !beschaeftigt ? "" : "disabled"}><ha-icon icon="mdi:update"></ha-icon>Alle aktualisieren${updates.length ? ` (${updates.length})` : ""}</button></div>
+      <p class="hint">${fw.lokal ? `Eine Quelle für alle: Remotes entstehen aus <code>esphome/templates/remote.yaml</code> und <code>remote-halink.yaml</code> (vor jedem Bauen neu erzeugt), Docks aus <code>esphome/templates/dock-basis.yaml</code>.`
+          : `Remotes und Docks holen ihre Firmware beim Bauen von GitHub (Zweig <code>stabil</code> = letzter Release) – im ESPHome-Ordner liegt je Gerät nur eine kleine Datei mit Name und Passwörtern aus <code>secrets.yaml</code>.`}
+        „Update bereit“ = die Datei ergibt eine andere Firmware als die auf dem Gerät. Schläft eine Remote mit WLAN aus, wird vorher über Bluetooth das Wartungsfenster geöffnet.
+        ${usbGeht() ? "" : `<br><b>USB im Browser</b> geht nur in Chrome/Edge am PC und über ${this._hass.config?.external_url ? `<a href="${esc(this._hass.config.external_url)}/fernbedienung" target="_blank" rel="noopener">https</a>` : "https"}.`}</p>
+      ${fw.fehler ? `<div class="msg err">${esc(fw.fehler)}</div>` : ""}
+      ${alt.length ? `<div class="neuversion"><ha-icon icon="mdi:gift-outline"></ha-icon><span><b>Neue Version ${esc(fw.version)}</b> – ${alt.length} Gerät${alt.length === 1 ? "" : "e"} haben noch eine ältere Firmware: ${alt.map((g) => `${esc(g.friendly || g.name)} (${esc(g.fw || "ohne Versionsangabe")})`).join(", ")}.
+        „Alle aktualisieren“ baut und spielt sie auf – schlafende Remotes kurz anfassen.</span></div>` : fw.version ? `<small class="note">Version ${esc(fw.version)} – alle Geräte aktuell.</small>` : ""}
+      ${this._fwEntwicklerHtml()}
+      ${sammel}
+      <div class="dkopf"><h3>Fernbedienungen</h3><span class="grow"></span>
+        <button class="btn small" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
+      ${rem.map((g) => this._fwKarte(g, g.bruecke ? `<div class="ents">Feste IP <code>${esc(g.bruecke.ip || "per Router")}</code> · Bluetooth-Brücke in HA <code>127.0.0.1:${g.bruecke.port}</code>${g.bruecke.ota ? " · Updates auch über Bluetooth" : ""}${g.bruecke.aktiv ? "" : ` <span class="badge warn">Brücke läuft nicht</span>`}</div>` : "")).join("") || `<div class="karte">Keine.</div>`}
+      ${this._fwDockHtml()}
+      ${this._fwTestHtml()}
+    </div>`;
+  },
+  // Bereich Dockingstation oben: Kurzstatus der Docks; Anlegen/Flashen/Einbinden gibt es nur im Bereich Firmware
+  _dockLeiste() {
+    const fw = this.s.fw;
+    if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return ""; }
+    const docks = (fw.geraete || []).filter((g) => g.art === "dock");
+    return `<div class="dockleiste">${docks.map((g) => `<span class="dl ${g.online ? "on" : ""}" title="${esc(g.datei)}${g.ip ? " · " + esc(g.ip) : ""}">
+        <ha-icon icon="mdi:dock-window"></ha-icon>${esc(g.friendly || g.name)}<i>${g.online ? "online" : g.geflasht ? "offline" : "neu"}</i>${g.update && !g.gesperrt ? `<b title="Firmware-Update bereit">Update</b>` : ""}</span>`).join("")
+      || `<span class="dl">Noch kein Dock</span>`}
+      <button class="btn small ghost" data-a="o_geh" data-b="fw"><ha-icon icon="mdi:chip"></ha-icon>Docks einrichten &amp; flashen</button></div>`;
+  },
+  // Im Bereich Firmware: Docks mit Anlegen/Einbinden und denselben Firmware-Knoepfen
+  _fwDockHtml() {
+    const fw = this.s.fw;
+    if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return `<h3>Docks</h3><div class="karte">Lade …</div>`; }
+    if (fw.fehlerWs) return `<h3>Docks</h3><div class="msg err">${esc(fw.fehlerWs)}</div>`;
+    const karten = fw.geraete.filter((g) => g.art === "dock").map((g) => this._fwKarte(g,
+      `${g.sender ? `<div class="ents">IR-Sender <code>${esc(g.sender)}</code>${g.bt_mac ? ` · Bluetooth-Proxy <code>${esc(g.bt_mac)}</code>` : ""}</div>` : ""}
+       ${!g.geflasht ? `<ol class="schritte"><li>Dock per USB anstecken und „Per USB flashen“ (oder am Home-Assistant-Rechner einstecken).</li>
+         <li>Danach verbindet es sich mit dem WLAN – dann „In Home Assistant einbinden“.</li>
+         <li>Soll eine Remote über das Dock mit Home Assistant reden: Fernbedienung › Bluetooth › „Home Assistant über Bluetooth (Proxys)“ – dort das Dock anhaken.</li></ol>` : ""}`)).join("");
+    return `<div class="dkopf"><h3>Docks</h3><span class="grow"></span>
+        <button class="btn small" data-a="fw_neudock"><ha-icon icon="mdi:plus"></ha-icon>Neues Dock</button></div>
+      ${karten || `<div class="karte">Noch kein Dock. „+ Neues Dock“ legt die Konfiguration an.</div>`}`;
+  },
+  // Hardware-Test (2026-10-22, hardware-test.yaml; vorher nur Mikrofon): Platine Bauteil fuer Bauteil pruefen.
+  // Zustaende live aus hass.states (Entitaeten des Testgeraets), Knoepfe fuer Sichtpruefungen (OK/Fehler).
+  _fwTestHtml() {
+    const fw = this.s.fw;
+    const tests = (fw.geraete || []).filter((g) => g.art === "test");
+    if (!tests.length) return "";
+    const karten = tests.map((g) => this._fwKarte(g, g.test?.werte?.length ? this._hwTestHtml(g) : `<ol class="schritte">
+         <li>Platine per USB an diesen Computer stecken und „Per USB flashen“ (Chrome/Edge). Läuft schon eine Remote-Firmware darauf, geht es auch per WLAN.</li>
+         <li>Sie verbindet sich mit dem WLAN – dann „In Home Assistant einbinden“.</li>
+         <li>Der Test startet von selbst. Hier erscheinen danach alle Bauteile mit Ergebnis und was du jeweils tun musst.</li>
+         <li>Am Ende die Remote-Firmware wieder aufspielen (Fernbedienungen › Firmware, oder „Neue Fernbedienung“).</li></ol>`)).join("");
+    return `<div class="dkopf"><h3>Hardware-Test</h3></div>
+      <p class="hint">Prüft eine Remote-Platine Bauteil für Bauteil: Chips am I2C-Bus, Speicher, Akku und Laden, Mikrofon (je Pad), Speicherkarte,
+        Display, Beleuchtung, Touch, Bewegungssensor, alle 24 Tasten, Infrarot senden und empfangen, WLAN. Was nur du sehen kannst, bestätigst du hier mit OK oder Fehler.</p>
+      ${karten}`;
+  },
+  _hwTestHtml(g) {
+    const st = this._hass.states, T = g.test, kn = T.knoepfe || {};
+    const wert = (x) => st[x.entity]?.state ?? x.wert;
+    const nach = Object.fromEntries(T.werte.map((x) => [x.name, x]));
+    const farbe = (w) => /^OK/.test(w) ? "ok" : /^FEHLER/.test(w) ? "rot" : /^prüfen/.test(w) ? "warn" : "";
+    const kurz = (w) => /^OK/.test(w) ? "OK" : /^FEHLER/.test(w) ? "Fehler" : /^prüfen/.test(w) ? "Du bist dran" : w === "unavailable" ? "offline" : "läuft";
+    const text = (w) => String(w).replace(/^(OK|FEHLER|prüfen:)\s*-?\s*/, "");
+    const knopf = (name, icon, kl = "") => kn[name] ? `<button class="btn small ${kl}" data-a="hw_knopf" data-e="${esc(kn[name])}"><ha-icon icon="${icon}"></ha-icon>${esc(name.replace(/^(Display|Beleuchtung|IR-Sender) /, ""))}</button>` : "";
+    const EXTRA = {
+      "Display": () => knopf("Display OK", "mdi:check") + knopf("Display Fehler", "mdi:close", "ghost"),
+      "Beleuchtung": () => knopf("Beleuchtung zeigen", "mdi:brightness-6", "ghost") + knopf("Beleuchtung OK", "mdi:check") + knopf("Beleuchtung Fehler", "mdi:close", "ghost"),
+      "IR-Sender": () => knopf("IR senden", "mdi:remote", "ghost") + knopf("IR-Sender OK", "mdi:check") + knopf("IR-Sender Fehler", "mdi:close", "ghost"),
+      "IR-Empfänger": () => knopf("IR senden", "mdi:remote", "ghost"),
+    };
+    const REIHE = ["I2C-Bus", "Speicher", "Akku", "Laden", "Display", "Beleuchtung", "Touch", "Tasten", "Bewegungssensor", "Mikrofon", "Speicherkarte", "IR-Sender", "IR-Empfänger", "WLAN"];
+    const zeilen = REIHE.filter((n) => nach[n]).map((n) => {
+      const w = wert(nach[n]);
+      const extra = EXTRA[n] && !/^OK/.test(w) ? `<div class="hwknoepfe">${EXTRA[n]()}</div>` : "";
+      return `<div class="hwzeile ${farbe(w)}"><span class="badge ${farbe(w)}">${esc(kurz(w))}</span><b>${esc(n)}</b>
+        <small>${esc(text(w))}</small>${extra}${n === "Tasten" ? this._hwTastenHtml(wert(nach["Tasten-Stand"] || {})) : ""}</div>`;
+    }).join("");
+    const ges = nach["Gesamt"] ? wert(nach["Gesamt"]) : "";
+    const diag = T.werte.filter((x) => x.diag && x.name !== "Tasten-Stand").map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(wert(x))}</td></tr>`).join("");
+    return `${ges ? `<div class="hwgesamt ${farbe(ges)}"><ha-icon icon="mdi:clipboard-check-outline"></ha-icon><b>${esc(text(ges))}</b></div>` : ""}
+      <div class="hwliste">${zeilen}</div>
+      ${diag ? `<details class="hwdiag"><summary>Messwerte im Detail (Mikrofon je Pad, Akku, WLAN …)</summary><table class="testerg">${diag}</table></details>` : ""}
+      <div class="zeile"><button class="btn small" data-a="fw_test" data-datei="${esc(g.datei)}" ${g.online ? "" : "disabled"}><ha-icon icon="mdi:restart"></ha-icon>Test von vorn</button>
+        <small class="note">Startet die Platine neu (z. B. nach dem Nachlöten). Ergebnisse kommen nach rund 15 s.</small></div>`;
+  },
+  // Tasten-Raster: Stand je Taste (1 ok, 0 fehlt, w wackelt, k klemmt) in der Reihenfolge von hardware-test.h
+  _hwTastenHtml(stand) {
+    const T = [["S25", "Stop"], ["S24", "Rewind"], ["S22", "Play"], ["S16", "Forward"], ["S23", "Menü"], ["S6", "Info"],
+      ["S19", "▲"], ["S10", "▼"], ["S20", "◀"], ["S7", "▶"], ["S9", "OK"], ["S18", "Zurück"], ["S1", "Return"], ["S8", "Lauter"],
+      ["S3", "Leiser"], ["S4", "Stumm"], ["S2", "Kanal +"], ["S12", "Kanal −"], ["S5", "Aufnahme"], ["S13", "Rot"], ["S15", "Grün"],
+      ["S14", "Gelb"], ["S11", "Blau"], ["S17", "Ein/Aus"]];
+    const st = String(stand || "");
+    const KL = { "1": "ok", w: "warn", k: "rot" }, TIP = { "1": "gedrückt – ok", w: "nur zu kurze Drücke – Taster wackelt?", k: "klemmt", "0": "noch nicht gedrückt" };
+    return `<div class="hwtasten">${T.map(([n, l], i) => `<span class="hwt ${KL[st[i]] || ""}" title="${n} ${l}: ${TIP[st[i]] || TIP["0"]}"><b>${esc(l)}</b><small>${n}</small></span>`).join("")}</div>`;
+  },
+  // Entwicklermodus (2026-10-18): Testwerkzeuge (remote-dev-tests.yaml) in die Remote-Firmware mitbauen
+  _fwEntwicklerHtml() {
+    const fw = this.s.fw;
+    if (!fw?.geladen || fw.entwickler == null) return "";
+    return `<div class="karte hw entw"><label class="sw"><input type="checkbox" data-fw="entwickler" ${fw.entwickler ? "checked" : ""}>
+      <span><b>Entwicklermodus</b> – Testwerkzeuge in die Remote-Firmware mitbauen</span></label>
+      <small class="note">Tasten nachstellen, Bildschirmfotos, Zeitlupe, Mikrofon- und RAM-Test, sofortiger Tiefschlaf (Dienste <code>esphome.remote_wz_…</code>).
+        ${fw.entwickler ? "An, solange noch entwickelt wird." : "Aus: die Firmware enthält nur, was die Remote im Alltag braucht."} Gilt für alle Remotes ab dem nächsten Update.</small></div>`;
+  },
+  _fwChange(t) {
+    if (t.dataset.fw === "entwickler") {
+      const an = t.checked;
+      this._hass.callWS({ type: "esphomeremote_konfig/fw_entwickler", an })
+        .then(() => { this.s.msg = { text: `Entwicklermodus ${an ? "an" : "aus"} – die Remotes bekommen das beim nächsten Update.` }; return this._fwLaden(); })
+        .catch((e) => { this.s.msg = { err: true, text: "Entwicklermodus: " + (e.message || e.code) }; this._fwLaden(); });
+      return true;
+    }
+    if (t.dataset.fw !== "weg") return false;
+    this.s.fw.weg[t.dataset.datei] = t.value;
+    return true;
+  },
+  async _fwClick(a, t) {
+    if (!a.startsWith("fw_")) return false;
+    const fw = this.s.fw, datei = t.dataset.datei;
+    const g = fw?.geraete?.find((x) => x.datei === datei);
+    switch (a) {
+      case "fw_reload": await this._fwLaden(); return true;
+      case "fw_los": {
+        const weg = t.dataset.weg;
+        fw.usb = null;
+        if (weg === "usb") { await this._fwUsb(g); return true; }
+        try {
+          const j = await this._fwStarten([datei], weg);
+          if (weg === "" && j.status === "fertig") await this._fwDownload(datei);
+        } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
+      }
+      case "fw_alle": {
+        const liste = fw.geraete.filter((x) => (x.update || x.veraltet) && !x.gesperrt && x.art !== "test" && !(x.art === "dock" && !x.online));
+        if (!confirm(`Diese ${liste.length} Gerät(e) per WLAN aktualisieren?\n\n${liste.map((x) => "• " + (x.friendly || x.datei)).join("\n")}`)) return true;
+        fw.usb = null;
+        try { await this._fwStarten(liste.map((x) => x.datei), "OTA"); } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
+      }
+      case "fw_usblog": fw.usb = null; await this._fwUsbLog(g); return true;
+      case "fw_umstellen": {
+        try { const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_umstellen", datei: t.dataset.datei });
+          this.s.msg = { text: `${t.dataset.datei} umgestellt (alte Fassung: ${r.sicherung}). Jetzt „Installieren“.` }; }
+        catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        await this._fwLaden(); return true;
+      }
+      case "fw_nurbauen": {
+        fw.usb = null;
+        try { await this._fwStarten([t.dataset.datei], ""); this.s.msg = { text: "Wird gebaut – danach geht „Installieren“ schnell." }; }
+        catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
+      }
+      case "fw_vormerken":
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_vormerken", datei, an: !g.vorgemerkt });
+          if (r.job_id) {   // wird gleich gebaut, aufgespielt wird, sobald die Remote benutzt wird
+            fw.job = { job_id: r.job_id, dateien: [datei], port: "", titel: "", status: "laeuft", fertig: false, log: [] };
+            this._fwFolgen(r.job_id);
+            this.s.msg = { text: `${g.friendly || datei}: wird jetzt gebaut und aufgespielt, sobald die Remote das nächste Mal benutzt wird.` };
+          }
+        } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        await this._fwLaden(); return true;
+      case "fw_loeschen": {
+        if (g.art === "remote") { await this._neuClick("entfernen", { dataset: { dev: g.name } }); await this._fwLaden(); return true; }
+        if (!confirm(`${g.friendly || datei} wirklich löschen?\n\nWeg sind danach: der ESPHome-Eintrag in Home Assistant und der Build-Ordner im ESPHome-Add-on. Die Datei ${datei} kommt nach esphome/archive/geloescht/ (wiederherstellbar). Das Dock selbst behält seine Firmware.`)) return true;
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/docks_entfernen", datei });
+          this.s.msg = { text: `${g.friendly || datei} gelöscht: ${r.entfernt.join(", ")}.` };
+        } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        await this._fwLaden();
+        return true;
+      }
+      case "fw_sperre":
+        await this._hass.callWS({ type: "esphomeremote_konfig/fw_sperren", datei, gesperrt: !g.gesperrt });
+        await this._fwLaden(); return true;
+      case "fw_neudock": {
+        const name = prompt("Name des neuen Docks (z. B. „Dock Schlafzimmer“, höchstens 22 Zeichen):", "Dock ");
+        if (!name || !name.trim() || name.trim() === "Dock") return true;
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/docks_anlegen", name: name.trim() });
+          this.s.msg = { text: `${r.datei} angelegt – jetzt per USB flashen.` };
+          await this._fwLaden();
+        } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
+      }
+      case "hw_knopf":
+        try { await this._hass.callService("button", "press", { entity_id: t.dataset.e }); }
+        catch (e) { this.s.msg = { err: true, text: "Hardware-Test: " + (e.message || e) }; }
+        return true;
+      case "fw_test":
+        try {
+          await this._hass.callWS({ type: "esphomeremote_konfig/fw_test_wiederholen", datei });
+          this.s.msg = { text: `${g?.friendly || datei}: Test läuft – Ergebnis in rund 15 s.` };
+          setTimeout(() => this._fwLaden(), 16000);
+        } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
+      case "fw_ha":
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/docks_einbinden", datei });
+          this.s.msg = { err: !r.ok, text: r.text };
+          await this._fwLaden();
+          if (r.ok) await this._dockLaden();   // neuer IR-Sender in der Auswahl
+        } catch (e) { this.s.msg = { err: true, text: "Einbinden: " + (e.message || e.code) }; }
+        return true;
+    }
+    return false;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(FirmwareTab));
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// Einstellungen (2026-10-16): alle Einstellungen der Remote, abgeglichen in beide Richtungen - Aenderung hier geht
+// sofort an die Remote (esphomeremote_konfig/einst_set), Aenderungen an der Remote meldet sie selbst zurueck.
+// Firmware: esphomeremote-einst-sync.h (Namen = globals der Remote), Werte der Stufen-Regler: esphomeremote-stufen.h.
+const SEK = (v) => v < 60 ? `${v} s` : v % 3600 === 0 ? `${v / 3600} h` : v % 60 === 0 ? `${v / 60} min` : `${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")} min`;
+const STUFEN = (werte, text = SEK, extra = {}) => werte.map((v) => [v, extra[v] ?? text(v)]);
+const HML = [[0, "Hoch"], [1, "Mittel"], [2, "Niedrig"]];
+const EINST_GRUPPEN = [
+  ["Bildschirm", "mdi:brightness-6", [
+    ["disp_bri", "Helligkeit Display", { min: 5, max: 100, einheit: "%" },
+      "Helligkeit im Betrieb. Niedriger spart Akku – das Display ist der größte Verbraucher. Folgt die Remote dem Lichtsensor, ist das der Ausgangswert."],
+    ["kbd_light_on", "Tastenbeleuchtung", null,
+      "Beleuchtung der Tasten. Aus spart Akku, die Tasten funktionieren trotzdem. An der Remote: linke Hälfte der Statusleiste antippen."],
+    ["kbd_bri", "Helligkeit Tastenbeleuchtung", { min: 0, max: 100, einheit: "%" },
+      "Helligkeit der Tastenbeleuchtung, wenn sie an ist."],
+    ["disp_timeout_s", "Display aus nach", { min: 0, max: 300, einheit: "s", null: "nie" },
+      "So lange ohne Bedienung, dann geht das Display aus und die Remote ist im <b>Ruhezustand</b> (nicht im Tiefschlaf – Tasten wirken sofort). 0 = nie (kostet viel Akku, und der Tiefschlaf beginnt dann nie)."],
+    ["ps_dim_s", "Abdunkeln nach", { min: 0, max: 60, einheit: "s", null: "aus" },
+      "So lange ohne Bedienung, dann wird das Display gedimmt (Stufe <b>abgedunkelt</b>). Jede Taste, jeder Tipp – und mit „Aufhellen bei Bewegung“ auch eine Bewegung – macht es wieder hell. 0 = nicht abdunkeln."],
+    ["ps_dim_pct", "Abdunkeln auf", STUFEN([5, 10, 15, 20, 25, 30, 40, 50, 60, 70], (v) => `${v} %`),
+      "Helligkeit im abgedunkelten Zustand, bezogen auf die normale Helligkeit."],
+  ], "<b>Die Stufen der Remote:</b> <b>Hell</b> → nach „Abdunkeln nach“ <b>abgedunkelt</b> → nach „Display aus nach“ <b>Ruhezustand</b> (Display aus, der Chip läuft weiter, Bluetooth zum Fernseher bleibt verbunden, jede Taste wirkt sofort) → nach „Tiefschlaf nach“ <b>Tiefschlaf</b> (Chip fast ganz aus, Akku hält Wochen; Wecken = Neustart, ca. 4 s bis die Tasten wirken)."],
+  ["Anzeige", "mdi:monitor-dashboard", [
+    ["show_ble", "Bluetooth-Symbol", null,
+      "Balken für Bluetooth zu Fernseher/Streamer. Blau = verbunden (Balken = Empfang), grau = an, aber nicht verbunden, dunkel = Bluetooth aus."], ["show_wifi", "WLAN-Symbol", null,
+      "Balken fürs WLAN. Grün = verbunden, grau = verbindet gerade, dunkel = WLAN aus (im Dock-Betrieb der Normalfall)."], ["show_batt", "Akkustand", null,
+      "Akkustand in Prozent, beim Laden mit Blitz."], ["show_clock", "Uhrzeit", null,
+      "Uhrzeit in der Statusleiste. Ohne Uhr rückt der Sleeptimer-Countdown nach links."],
+    ["show_assi_icon", "Assistenten-Symbol", null,
+      "Zeigt, welcher Assistent auf der Mikrofon-Taste liegt (Google oder Home Assistant)."], ["show_motion", "Bewegungs-Symbol", null,
+      "Blinkt kurz auf, wenn der Bewegungssensor etwas erkennt – hilft beim Einstellen der Empfindlichkeit."], ["show_ha", "Home-Assistant-Symbol", null,
+      "Rechts in der Statusleiste: das <b>Dock-Symbol</b> (blau = Dock antwortet, alles läuft darüber; rot = kein Dock erreicht, die Remote nimmt ihr WLAN) bzw. das <b>HA-Symbol</b> (grün = eigene Verbindung über WLAN, grau = keine)."],
+    ["cover_ganz_player", "Cover im Player", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]],
+      "Ganz: das Bild vollständig, ggf. mit Rand. Voll: füllt die Fläche, Ränder werden abgeschnitten. Gilt für die Medien-Seite."],
+    ["cover_ganz_home", "Cover auf der Startseite", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]],
+      "Wie oben, für die Karte auf der Startseite."],
+    ["mem_s", "Menü-Position merken für", STUFEN([5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, -1], SEK, { "-1": "immer" }),
+      "So lange nach dem Verlassen des Menüs (bzw. ab Display-Aus) merkt sich die Remote Seite und Markierung – Wiederöffnen springt dorthin zurück. Danach beginnt das Menü oben. Gilt auch für die Medien-Seite."],
+    ["media_merken", "Medienseite von der Startseite", [[0, "Nicht merken – Menütaste öffnet danach das Menü"], [1, "Merken – Menütaste holt sie zurück"]],
+      "Gilt, wenn die Medienseite über die Karte auf der Startseite geöffnet und mit der Menütaste verlassen wurde. Merken: der nächste Druck auf die Menütaste holt sie zurück, so lange wie „Menü-Position merken für“. Mit Zurück verlassen wird nie gemerkt. Aus dem Menü geöffnet gilt der Haken „Diese Seite selbst merken“ am Menüeintrag."],
+    ["menu_close_s", "Menü schließen nach", STUFEN([15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1800, -1], SEK, { "-1": "nie" }),
+      "So lange nach Display-Aus bleibt ein offenes Menü stehen; danach springt die Remote auf die Startseite, damit du sie beim Wecken siehst."],
+    ["sd_logos", "Logos von der SD-Karte", null,
+      "Zu Apps ohne eigenes Cover (Netflix, Disney+ …) das Logo von der SD-Karte (Ordner covers) zeigen. Das Mikrofon ist dabei kurz gesperrt."],
+  ], "Was oben in der Statusleiste und auf den Seiten zu sehen ist. Ändert nichts an der Funktion, nur an der Anzeige."],
+  ["Wecken", "mdi:gesture-tap", [
+    ["keys_wake_all", "Tasten wecken das Display", [[true, "Alle Tasten"], [false, "Nur die Menütaste"]],
+      "Alle Tasten: jede Taste schaltet das Display ein (und wirkt trotzdem). Nur die Menütaste: andere Tasten wirken, das Display bleibt aber aus – praktisch für Lautstärke im Dunkeln. Gilt im Ruhezustand und nach dem Tiefschlaf (dort nur, wenn die Weck-Taste gesendet wird). Aus dem abgedunkelten Zustand holt immer jede Taste zurück."],
+    ["menue_weckt_nur", "Menütaste bei dunklem Display", [[false, "Weckt und öffnet das Menü"], [true, "Weckt nur das Display"]],
+      "Nur für die Menütaste bei dunklem Display. Weckt und öffnet: ein Druck schaltet ein und öffnet sofort das Menü. Weckt nur: der erste Druck schaltet nur ein, der nächste öffnet das Menü."],
+    ["weck_tasten", "Tasten beim Aufwachen aus dem Tiefschlaf", [[2, "Senden – auch die Weck-Taste"], [1, "Weck-Taste nur wecken, danach gedrückte senden"], [0, "Nur wecken – nichts nachsenden"]],
+      "Der Start aus dem Tiefschlaf dauert ca. 4 s. <b>Senden:</b> die Taste, mit der du weckst, und alles, was du während des Starts drückst, wirkt danach normal; Fernseher-Tasten warten, bis Bluetooth verbunden ist (bis zu 8 Tasten, höchstens 20 s nach dem Start, sonst verworfen). <b>Weck-Taste nur wecken:</b> die erste Taste schaltet nur ein, alle weiteren wirken wie oben. <b>Nur wecken:</b> die Weck-Taste wirkt nicht, und Fernseher-Tasten vor der Bluetooth-Verbindung werden verworfen. In allen Fällen gilt: Infrarot wirkt sofort, HA-Befehle gehen sofort übers Dock (ohne Dock warten sie bis zu 10 s auf die eigene HA-Verbindung)."],
+    ["weck_dock", "Weck-Taste übers Dock", [[0, "Schon beim Start senden (unter 1 s)"], [1, "Wie bisher: nach dem Start (ca. 4 s)"]],
+      "Gilt, wenn oben „Senden – auch die Weck-Taste“ gewählt ist. <b>Schon beim Start:</b> ist die Taste nur „kurz“ belegt und geht ihr Befehl übers Dock (Bluetooth am Dock, Infrarot oder 433 MHz übers Dock), schickt die Remote sie per Funk ans Dock, noch bevor Display und Menü hochfahren – ca. 1 s nach dem Druck. Erreicht sie das Dock nicht, geht die Taste wie bisher nach dem Start raus. Tasten mit Doppel-/Lang-Belegung, HA-Befehlen oder Funktionen der Remote wirken immer erst nach dem Start."],
+    ["motion_mode", "Aufwecken bei", [[0, "Aus"], [1, "Bewegung"], [2, "Hochheben"]],
+      "Was das Display im <b>Ruhezustand</b> (Display aus, Remote wach) von selbst einschaltet. Aus: Bewegung weckt nie (nur Tasten, Touch, Klopfen). Bewegung: schon ein leichtes Anstoßen. Hochheben: erst, wenn sie gekippt bzw. aus der Ablage gehoben wird (Lage ändert sich um 12–35°, je nach Empfindlichkeit) – ein Stoß gegen den Tisch weckt dann nicht. Für den Tiefschlaf gibt es die eigene Einstellung darunter."],
+    ["tief_motion", "Aufwecken aus dem Tiefschlaf bei", [[-1, "Wie oben (Aufwecken bei)"], [1, "Bewegung – schon leichtes Anstoßen"], [2, "Hochheben"], [0, "Aus – nur Tasten, Klopfen, Ladekabel"]],
+      "Eigene Wahl für den <b>Tiefschlaf</b>. Bewegung: jeder Ruck über der Empfindlichkeit startet die Remote. Hochheben: erst, wenn sich die Lage um 12–35° ändert und ca. 0,3 s so bleibt. <b>Das Display folgt dabei „Aufwecken bei“:</b> steht das auf Aus, wacht nur der Chip auf – das Display bleibt dunkel, Bluetooth zum Fernseher verbindet schon, und die nächste Taste wirkt sofort ohne die ~4 s Start. (Ist „Doppelt klopfen weckt“ an, geht das Display immer an – Klopfen und Bewegung kommen über denselben Anschluss.) Die Empfindlichkeit darunter gilt für beides."],
+    ["motion_sens", "Empfindlichkeit (Aufwecken)", HML,
+      "Wie stark bewegt bzw. wie weit gekippt werden muss (Ruhezustand und Tiefschlaf). Hoch = schon leichte Bewegung weckt, aber auch Erschütterungen am Tisch."],
+    ["dim_wake", "Aufhellen bei Bewegung", null,
+      "Ist das Display <b>abgedunkelt</b> (noch nicht aus), macht eine Bewegung es wieder hell – unabhängig von „Aufwecken bei“. Aus: zurück nur per Taste oder Tipp."],
+    ["dim_hold_motion", "Nicht abdunkeln, solange in Bewegung", null,
+      "Solange sich die Remote bewegt (z. B. in der Hand), wird sie weder abgedunkelt noch ausgeschaltet. Kostet indirekt Strom, weil das Display länger an bleibt – auch wenn nur der Tisch wackelt."],
+    ["dim_sens", "Empfindlichkeit (Aufhellen/Halten)", HML,
+      "Eigene Empfindlichkeit für „Aufhellen bei Bewegung“ und „Nicht abdunkeln“, getrennt von der Weck-Empfindlichkeit."],
+    ["klopf_wake", "Doppelt klopfen weckt", null,
+      "Zweimal kurz auf die Remote klopfen schaltet sie ein – aus dem abgedunkelten Zustand, aus dem Ruhezustand und auch aus dem Tiefschlaf."],
+    ["klopf_sens", "Klopf-Empfindlichkeit", HML,
+      "Wie fest geklopft werden muss. Hoch = schon leichtes Klopfen."],
+    ["ps_touch_wake", "Touch weckt", null,
+      "Ein Tipp aufs dunkle Display schaltet es im <b>Ruhezustand</b> ein. Aus: der Touch-Chip wird im Ruhezustand nicht abgefragt (spart etwas). Aus dem Tiefschlaf weckt Touch nie."],
+    ["ps_touch_ms", "Touch-Abfrage im Ruhezustand", STUFEN([50, 75, 100, 150, 200, 250, 300], (v) => `${v} ms`),
+      "Wie oft der Touch-Chip im Ruhezustand gefragt wird. Länger spart etwas Strom, aber ein kurzer Tipp kann durchrutschen – dann mehrmals tippen. Nur bei „Touch weckt“."],
+  ], "Die Stufen (hell → abgedunkelt → Ruhezustand → Tiefschlaf) stehen bei „Bildschirm“. <b>Was weckt was:</b><div class='wtabw'><table class='wtab'><tr><th></th><th>gedimmt</th><th>Ruhe&shy;zustand</th><th>Tief&shy;schlaf</th></tr><tr><td>Taste</td><td>ja</td><td>¹</td><td>jede²</td></tr><tr><td>Tipp</td><td>ja</td><td>„Touch weckt“</td><td>nein</td></tr><tr><td>Bewegung</td><td>„Aufhellen bei Bewegung“</td><td>„Aufwecken bei: Bewegung“</td><td>„… aus dem Tiefschlaf: Bewegung“⁴</td></tr><tr><td>Hochheben</td><td>–</td><td>„Aufwecken bei: Hochheben“</td><td>„… aus dem Tiefschlaf: Hochheben“⁴</td></tr><tr><td>Klopfen</td><td colspan='3'>überall, wenn „Doppelt klopfen weckt“ an ist</td></tr><tr><td>Ladekabel</td><td>–</td><td>ja</td><td>ja</td></tr><tr><td>Klingel</td><td>ja</td><td>„Klingel &amp; Popups“ = Ja</td><td>nein</td></tr></table></div>¹ je nach „Tasten wecken“ – andere Tasten wirken trotzdem, nur das Display bleibt aus.<br>² jede Taste weckt den Chip (Neustart ca. 4 s). Ob sie danach auch wirkt, regelt „Tasten beim Aufwachen“; das Display folgt „Tasten wecken“.<br>⁴ weckt den Chip; das Display nur, wenn „Aufwecken bei“ nicht auf Aus steht."],
+  ["Energie", "mdi:leaf", [
+    ["ps_wifi", "WLAN-Sparmodus", null,
+      "Der WLAN-Chip schläft zwischen den Datenpaketen. Spart viel, HA antwortet minimal später. Empfohlen: an.", "wlan"],
+    ["ps_wifi_max", "Sparmodus stark (Ruhe)", null,
+      "Im Ruhezustand schläft der WLAN-Chip noch länger zwischen den Paketen. Spart mehr, HA reagiert träger. Nur mit WLAN-Sparmodus.", "wlan"],
+    ["ps_wifi_off", "WLAN aus im Ruhezustand", null, "Ist das Display aus, geht das WLAN nach der eingestellten Zeit aus; HA läuft dann über Bluetooth weiter.", "wlan"],
+    ["ps_wifi_off_s", "WLAN aus nach", STUFEN([0, 15, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200], SEK, { 0: "sofort" }),
+      "Wartezeit ab Display-Aus, bis das WLAN abgeschaltet wird. Kürzer spart mehr. Nur bei „WLAN aus im Ruhezustand“.", "wlan"],
+    ["ps_wifi_off_tv_s", "WLAN aus bei TV an", STUFEN([-1, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 0], SEK, { "-1": "wie oben", 0: "nie" }),
+      "Abweichende Zeit, solange der Fernseher läuft. „Nie“ = WLAN bleibt bei laufendem Fernseher an.", "wlan"],
+    ["wifi_fest", "WLAN-Schnellstart (feste IP, ab Neustart)", null, "Feste IP statt DHCP – das WLAN ist nach dem Einschalten etwa 1 s schneller verbunden.", "wlan"],
+    ["wlan_frueh", "WLAN früh einschalten (Taste/Bewegung)", null, "Bei WLAN aus im Ruhezustand: schon bei Tastendruck oder Bewegung wieder einschalten, nicht erst, wenn es gebraucht wird.", "wlan"],
+    ["ps_cpu", "Prozessor drosseln", null,
+      "Im Ruhezustand läuft der Prozessor mit 80 statt 240 MHz. Bei Bedienung sofort wieder volle Leistung – merkt man nicht."],
+    ["ps_cpu_s", "Drosseln nach", STUFEN([0, 5, 10, 15, 20, 30, 45, 60, 120, 180, 300], SEK, { 0: "sofort" }),
+      "Wartezeit ab Display-Aus bis zum Drosseln."],
+    ["ps_light", "Leichtschlaf", null,
+      "Zwischen den Aufgaben schläft der Chip kurz (Leichtschlaf), Bluetooth bleibt verbunden. Spart im Ruhezustand deutlich. Nicht verwechseln mit dem Tiefschlaf."],
+    ["ps_bleidle", "Bluetooth-Verbindung langsam", null,
+      "Im Ruhezustand meldet sich die Remote beim Fernseher/Streamer seltener (ca. alle 0,6 s statt 15 ms). Die Verbindung bleibt, der erste Tastendruck kommt minimal später an."],
+    ["ps_ble_s", "Bluetooth langsam nach", STUFEN([5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600]),
+      "Wartezeit ab Display-Aus, bis Bluetooth zum Fernseher in den langsamen Takt geht."],
+    ["ps_low_pct", "Sparmodus bei Akku unter", STUFEN([0, 5, 10, 15, 20, 25, 30, 40], (v) => `${v} %`, { 0: "aus" }),
+      "Bei Akku unter diesem Wert (nicht beim Laden) gelten kurze Zeiten: Display nach höchstens 15 s aus, WLAN/Prozessor sofort gedrosselt, Tiefschlaf nach höchstens 30 s – auch wenn diese Optionen sonst aus sind."],
+  ], "Spart Strom, solange die Remote wach ist (hell, abgedunkelt oder im Ruhezustand). Die Zeiten zählen ab Display-Aus; jede Taste startet sie neu. Den Tiefschlaf stellst du eine Karte weiter ein."],
+  ["Tiefschlaf", "mdi:sleep", [
+    ["ps_deep", "Tiefschlaf im Ruhezustand", null,
+      "Im Ruhezustand nach der eingestellten Zeit in den Tiefschlaf. Dann: kein Bluetooth, keine Popups, Akku hält Wochen. Wecken siehe Karte „Wecken“; die Weck-Taste und alles, was du in den ~4 s Start drückst, kommt danach beim Gerät an."],
+    ["deep_ohne_ble", "Nur ohne Bluetooth-Verbindung", null,
+      "Nur in den Tiefschlaf, wenn gerade kein Fernseher/Streamer per Bluetooth verbunden ist. So bleibt die Remote beim Fernsehen sofort bedienbar."],
+    ["bewegung_haelt", "Bewegung hält wach", null,
+      "Eine Bewegung (Anheben, in der Hand halten, Anstoßen) startet die Wartezeit bis zum Tiefschlaf neu – genau wie ein Tastendruck. Solange du die Remote in der Hand hast, schläft sie also nicht ein; das Display bleibt dabei aus. Aus: nur Tasten und Tippen verlängern. Wie stark bewegt werden muss, bestimmt die Empfindlichkeit unter „Wecken“. Kostet etwas Akku, wenn die Remote oft bewegt wird (z. B. auf dem Sofa)."],
+    ["ps_deep_s", "Tiefschlaf nach", STUFEN([30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200]),
+      "Wartezeit ab Display-Aus bzw. letztem Tastendruck (mit „Bewegung hält wach“ auch letzter Bewegung), bis der Tiefschlaf beginnt. Kürzer spart mehr, dafür öfter ~4 s Start beim Wecken."],
+    ["ps_deep_tv_s", "Tiefschlaf bei TV an", STUFEN([-1, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 0], SEK, { "-1": "wie ohne TV", 0: "nie" }),
+      "Abweichende Zeit, solange der Fernseher läuft – damit die Remote beim Fernsehen nicht zu früh einschläft. „Nie“ = bei laufendem Fernseher kein Tiefschlaf."],
+  ], "Größter Spareffekt: Im Tiefschlaf ist fast alles aus – kein Bluetooth, kein WLAN, keine Popups. Was die Remote daraus weckt, steht in der Karte „Wecken“. Nach dem Wecken ist sie in etwa 4 s bereit; Tasten, die du in dieser Zeit drückst, werden gemerkt und danach gesendet. In den ersten 2 min nach einem Neustart oder Update schläft sie nie (damit sie per WLAN erreichbar bleibt)."],
+  ["Sprache", "mdi:microphone", [
+    ["assistant", "Assistent", [[0, "Google"], [1, "Home Assistant"]],
+      "Google: die Mikrofon-Taste startet die Sprachsuche am Streamer (wie die Original-Fernbedienung). Home Assistant: die Frage geht an Assist (Smart-Home-Befehle)."],
+    ["google_mode", "Google-Modus", [[0, "Assistant"], [1, "Suche"], [2, "Auto"]],
+      "Nur bei Google. Assistant: allgemeine Sprachsuche. Suche: Text landet in der SmartTube-Suche. Auto: Suche, wenn SmartTube läuft, sonst Assistant."],
+    ["tts_speaker", "Antwort hörbar", null,
+      "Antworten von Home Assistant zusätzlich über einen Lautsprecher sprechen. Sonst nur als Text auf der Remote."],
+    ["mic_allowed", "Mikrofon erlaubt", null,
+      "Aus: Das Mikrofon ist stummgeschaltet, die Sprachtaste nimmt nichts auf (wie der Schalter „Mikrofon stumm“ in HA)."],
+    ["mic_vorwaermen", "Mikrofon vorwärmen", null,
+      "Das Mikrofon läuft schon bei eingeschaltetem Display, die Aufnahme startet ohne Verzögerung. Kostet etwas Strom."],
+  ], "Die Mikrofon-Taste: Spracheingabe am Fernseher/Streamer (Google) oder an Home Assistant (Assist)."],
+  ["Bluetooth & Maus", "mdi:bluetooth", [
+    ["ble_parallel", "Parallel verbunden", null, "Mehrere Geräte (Plätze) bleiben gleichzeitig verbunden – der Aktivitätswechsel geht sofort, ohne neu zu verbinden."],
+    ["maus_tempo", "Zeigertempo (Touchpad)", STUFEN([50, 75, 100, 125, 150, 200, 250], (v) => `${v} %`),
+      "Wie schnell der Zeiger dem Finger auf dem Touchpad folgt."],
+    ["maus_dpad", "Steuerkreuz als Maus (im Touchpad)", null,
+      "Im Touchpad bewegt das Steuerkreuz den Zeiger, OK klickt."],
+    ["maus_dpad_tempo", "Tempo Steuerkreuz", STUFEN([50, 75, 100, 125, 150, 200, 250], (v) => `${v} %`),
+      "Zeigertempo mit dem Steuerkreuz."],
+    ["maus_zurueck", "Zurück-Taste im Touchpad", [[0, "Schließt das Touchpad"], [1, "Zurück am Gerät"], [2, "Rechtsklick"]],
+      "Was die Zurück-Taste im Touchpad macht."],
+  ], "Verbindung zu Fernseher und Streamern (die „Plätze“) und das Touchpad. Die Verbindung zu Home Assistant steht in der Karte „Verbindung zu Home Assistant“."],
+  ["Dock-Anzeige", "mdi:tablet-dashboard", [
+    ["dock_an", "Smart Display im Dock", null,
+      "Im Dock als Smart Display: Uhrzeit, Wetter, Raumklima, Termine, Ladestand."],
+    // 2 = Zeitfenster (esphomeremote-dock.h: an zwischen dock_von und dock_bis) - vorher hiess es hier "Uhrzeit unten"
+    ["dock_disp", "Display im Dock", [[0, "Geht aus wie sonst"], [1, "Bleibt an"], [2, "Bleibt an im Zeitfenster"]],
+      "Geht aus wie sonst: das Display folgt „Display aus nach“. Bleibt an: im Dock immer an. Zeitfenster: nur zwischen den Uhrzeiten unten an."],
+    ["dock_von", "Zeitfenster ab", STUFEN([0, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18], (v) => `${v} Uhr`),
+      "Beginn des Zeitfensters (nur bei „Bleibt an im Zeitfenster“)."],
+    ["dock_bis", "Zeitfenster bis", STUFEN([12, 16, 18, 19, 20, 21, 22, 23, 24], (v) => `${v} Uhr`),
+      "Ende des Zeitfensters."],
+    ["musik_dock", "Musik-Anzeige im Dock (solange Musik läuft)", null,
+      "Läuft Musik, zeigt die Remote im Dock das Spektrum (übers Mikrofon) statt der Uhr."],
+    ["musik_player", "Musik-Anzeige nur, wenn der Player spielt", null,
+      "Musik-Anzeige nur, wenn ein Player in HA wirklich spielt – nicht schon bei Geräuschen."],
+  ], "Steht die Remote im Dock (Ladekontakte), kann sie als Smart Display Uhrzeit, Wetter, Termine und bei Musik das Spektrum zeigen."],
+  ["Verbindung zu Home Assistant", "mdi:home-assistant", [
+    ["ha_dock", "HA-Befehle über das Dock", [[0, "Aus – nur eigene Verbindung"], [1, "Nur ohne HA-Verbindung (z. B. nach dem Aufwachen)"], [2, "Immer zuerst übers Dock (am schnellsten)"]],
+      "Tastenbefehle an HA (Licht, Szenen, Skripte …) gehen per Funk ans Dock, das sie in HA ausführt – ohne dass die Remote erst eine Verbindung aufbauen muss. Antwortet kein Dock, nimmt die Remote ihre eigene Verbindung. Solange die Remote selbst noch nicht mit HA verbunden ist, zeigt die Statusleiste das Dock-Symbol.", "fein"],
+    ["dock_netz", "Weg zum Dock bei WLAN an", [[0, "Automatisch – Funk, sonst übers Heimnetz"], [1, "Nur Funk (ESP-NOW, wie früher)"], [2, "Immer übers Heimnetz"]],
+      "Die Remote erreicht das Dock per Funk (ESP-NOW) – das klappt aber nur, wenn beide auf demselben WLAN-Kanal sind. Hängt die Remote an der FRITZ!Box und das Dock am Repeater (anderer Kanal), kommt per Funk nichts an. <b>Automatisch:</b> Bestätigt das Dock nicht, schickt die Remote dasselbe Paket übers Heimnetz an die IP des Docks (wenige ms) und bleibt 5 min dabei. Bei ausgeschaltetem WLAN (Tiefschlaf, Nur-Bluetooth) gibt es nur Funk – dann sucht die Remote alle Kanäle ab.", "fein"],
+    ["http_dock", "Bilder & Stand über das Dock", [[0, "Nur als Ausweg (ohne eigene Verbindung)"], [1, "Zuerst übers Dock (am schnellsten)"]],
+      "Cover, Logos und die Tasten-Konfiguration holt das Dock bei HA und funkt sie verschlüsselt an die Remote. Ist das Display an und hat die Remote keine eigene HA-Verbindung, fragt sie außerdem alle 2 s den Stand (Player, Fernseher, Timer, Popups) beim Dock ab.", "fein"],
+    ["ha_link_modus", "Bluetooth zu HA / Popups bei dunklem Display", [[3, "Nie – kein Bluetooth zu HA (Dock, sonst WLAN)"], [1, "Ja – Verbindung langsam halten"], [2, "Nein – Verbindung trennen"], [0, "Ja, sofort – Verbindung normal halten (mehr Strom)"]],
+      "<b>Nie</b> (empfohlen, 2026-10-25): Die Remote baut gar keine Bluetooth-Verbindung zu HA auf. Befehle, Stand, Popups und Bilder laufen übers Dock (ESP-NOW); ist kein Dock eingerichtet oder antwortet keins, schaltet die Remote während der Benutzung ihr eigenes WLAN ein. Popups gibt es nur, solange du die Remote benutzt.<br><b>Ja:</b> Die HA-Verbindung bleibt bei dunklem Display im langsamen Takt bestehen. Klingelt es (oder geht ein anderes Popup von selbst auf), schaltet sich die Remote ein – etwa 1–2 s später als bei normaler Verbindung. Kostet etwas Strom und belegt dauerhaft einen Platz am Bluetooth-Proxy. Große Daten wie Cover lädt die Remote in dieser Zeit nicht, erst beim Einschalten.<br><b>Nein:</b> Bei dunklem Display wird die HA-Verbindung getrennt. Es gehen keine Popups von selbst auf, dafür hält der Akku am längsten und der Proxy-Platz wird frei. Beim Einschalten verbindet sich die Remote neu; bis dahin laufen Tastenbefehle, Stand und Cover übers Dock.<br>Gilt nur, solange die Remote nicht im Tiefschlaf ist – im Tiefschlaf gibt es nie Popups.", "alt"],
+    ["ha_link_ruhe", "… ab dunklem Display seit", [[0, "Nie (Verbindung bleibt normal)"], [1, "1 min"], [2, "2 min"], [5, "5 min"], [10, "10 min"], [30, "30 min"]],
+      "Wie lange das Display dunkel sein muss, bevor die Einstellung darüber greift. „Nie“ = die Verbindung bleibt immer normal (Popups sofort, mehr Strom).", "alt"],
+  ], `So spricht die Remote mit Home Assistant – die Verbindungsart oben setzt alles Nötige auf einmal:<br>
+    <b style="color:#3B82F6">Dock-Symbol blau</b> = Befehle, Stand, Popups, Cover und Konfiguration laufen per Funk (ESP-NOW) übers Dock – sofort nach dem Aufwachen, WLAN bleibt aus.<br>
+    <b style="color:#EF4444">Dock-Symbol rot</b> = kein Dock erreicht – die Remote schaltet während der Benutzung ihr eigenes WLAN ein.<br>
+    <b style="color:#22C55E">HA-Symbol grün</b> = eigene Verbindung über WLAN (Sprache an HA, Firmware-Update, ohne Dock).<br>
+    Fernseher und Streamer steuert die Remote unabhängig davon über die Bluetooth-Plätze am Dock, selbst oder per Infrarot. Die Wege im Detail stehen unter „Feineinstellungen“.`],
+  ["Gesten", "mdi:gesture", [
+    ["gesten_an", "Bewegungsgesten", null,
+      "Bewegungsgesten mit der Remote erkennen."],
+    ["gesten_dunkel", "Gesten auch bei dunklem Display", null,
+      "Gesten auch bei dunklem Display auswerten (Ruhezustand). Kostet etwas Strom."],
+    ["gesten_sens", "Gesten-Empfindlichkeit", [[0, "Streng"], [1, "Normal"], [2, "Empfindlich"]],
+      "Streng: weniger Fehlauslöser, Gesten müssen deutlicher sein. Empfindlich: leichter, aber auch mal ungewollt."],
+  ], "Bewegungsgesten mit der ganzen Remote (z. B. Kreis, Wischen). Welche Geste was auslöst, stellst du auf der Seite „Gesten“ ein."],
+  ["Wartung", "mdi:wrench", [
+    ["clean_s", "Reinigungsdauer", STUFEN([10, 15, 20, 30, 45, 60, 90, 120]),
+      "So lange sind Tasten und Touch gesperrt, damit du das Display abwischen kannst (Start: zweimal kurz die Aus-Taste)."],
+    ["ps_log_debug", "Debug-Modus (ausführliches Log)", null,
+      "Ausführliches Log und Diagnosewerte an Home Assistant – nur zur Fehlersuche, kostet etwas Akku."],
+  ], "Für Pflege und Fehlersuche."],
+];
+// Energiesparmodus (2026-10-18): ein Knopf setzt alle Spar-Einstellungen auf einmal. "mittel" = die Einstellungen,
+// mit denen Remote Remote 2 im Alltag laeuft (Stand 2026-10-18); leicht/stark davon abgeleitet.
+const ENERGIE_MODI = [
+  ["leicht", "Leicht", "mdi:leaf", "Bequem: WLAN bleibt lange an, Display 30 s, Touch weckt, Mikrofon vorgewärmt. Tiefschlaf erst nach 30 min und nur ohne Bluetooth-Gerät.",
+    { ps_wifi: true, ps_wifi_max: false, ps_wifi_off: true, ps_wifi_off_s: 1800, ps_wifi_off_tv_s: -1, wlan_frueh: true,
+      ps_cpu: true, ps_cpu_s: 30, ps_light: true, ps_bleidle: true, ps_ble_s: 30, ps_low_pct: 15,
+      ps_deep: true, deep_ohne_ble: true, ps_deep_s: 1800, ps_deep_tv_s: -1,
+      disp_timeout_s: 30, ps_dim_s: 15, ps_dim_pct: 30, ps_touch_wake: true, ps_touch_ms: 100, mic_vorwaermen: true }],
+  ["mittel", "Mittel", "mdi:leaf-circle-outline", "Alltag: WLAN aus nach 5 min, Tiefschlaf nach 5 min, Display 16 s. Empfohlen.",
+    { ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 300, ps_wifi_off_tv_s: 7200, wlan_frueh: true,
+      ps_cpu: true, ps_cpu_s: 5, ps_light: true, ps_bleidle: true, ps_ble_s: 5, ps_low_pct: 5,
+      ps_deep: true, deep_ohne_ble: false, ps_deep_s: 300, ps_deep_tv_s: 7200,
+      disp_timeout_s: 16, ps_dim_s: 5, ps_dim_pct: 20, ps_touch_wake: false, ps_touch_ms: 75, mic_vorwaermen: false }],
+  // Wie eine AA-Fernbedienung (2026-10-23): bleibt mit dem Geraet verbunden und schlaeft nur leicht - Tasten sofort, ohne
+  // Dock. Kostet mehr Akku; Verbrauch steht auf der Seite Akku (Zustand "wach, Display aus").
+  ["verbunden", "Verbunden", "mdi:bluetooth-connect", "Wie eine AA-Fernbedienung: bleibt im Leichtschlaf mit Fernseher/Streamer verbunden (langsame Verbindung), Tasten wirken sofort – auch ohne Dock. Tiefschlaf nur ohne Bluetooth-Verbindung. Braucht mehr Akku (Verbrauch: Seite Akku).",
+    { ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 60, ps_wifi_off_tv_s: 600, wlan_frueh: false,
+      ps_cpu: true, ps_cpu_s: 5, ps_light: true, ps_bleidle: true, ps_ble_s: 5, ps_low_pct: 15,
+      ps_deep: true, deep_ohne_ble: true, ps_deep_s: 300, ps_deep_tv_s: 7200,
+      disp_timeout_s: 16, ps_dim_s: 5, ps_dim_pct: 20, ps_touch_wake: false, ps_touch_ms: 150, mic_vorwaermen: false }],
+  ["stark", "Stark", "mdi:battery-heart-variant", "Maximale Laufzeit: WLAN nach 1 min aus, Tiefschlaf nach 90 s, Display 10 s und dunkel, Sparmodus schon ab 25 % Akku.",
+    { ps_wifi: true, ps_wifi_max: true, ps_wifi_off: true, ps_wifi_off_s: 60, ps_wifi_off_tv_s: 600, wlan_frueh: false,
+      ps_cpu: true, ps_cpu_s: 0, ps_light: true, ps_bleidle: true, ps_ble_s: 5, ps_low_pct: 25,
+      ps_deep: true, deep_ohne_ble: false, ps_deep_s: 90, ps_deep_tv_s: 600,
+      disp_timeout_s: 10, ps_dim_s: 4, ps_dim_pct: 10, ps_touch_wake: false, ps_touch_ms: 150, mic_vorwaermen: false }],
+];
+// Verbindung (2026-10-20): auf welchem Weg die Remote mit HA spricht - getrennt vom Energiesparmodus (der setzt sie nicht).
+const VERBINDUNG_MODI = [
+  // Funkkonzept 2026-10-25: kein Bluetooth-Tunnel mehr zu HA (war ein Stromspar-Versuch, ueberlastete das Dock). Mit
+  // Dock laeuft alles per ESP-NOW ueber das Dock, ohne (oder wenn es ausfaellt) ueber das eigene WLAN.
+  ["dock", "Dock, WLAN als Ausweg", "mdi:router-wireless", "Empfohlen. Tasten, Befehle, Stand, Popups, Cover und Konfiguration laufen per Funk (ESP-NOW) übers Dock – sofort nach dem Aufwachen, WLAN bleibt aus. Antwortet kein Dock (oder ist keins eingerichtet), schaltet die Remote während der Benutzung ihr eigenes WLAN ein. Für Firmware-Updates schaltet HA das WLAN über das Dock ein. Popups nur, solange du die Remote benutzt.",
+    { nur_ble: true, ha_dock: 2, http_dock: 1, ha_link_ruhe: 0, ha_link_modus: 3, bt_weg: 2, dock_netz: 0 }],
+  ["wlan", "Nur WLAN (ohne Dock)", "mdi:wifi", "Alles über das eigene WLAN – für Remotes ohne Dock. Braucht mehr Strom; nach dem Aufwachen dauert der erste Befehl, bis das WLAN steht. Ist doch ein Dock da, springt es ein, solange das WLAN noch nicht verbunden ist.",
+    { nur_ble: false, ha_dock: 1, http_dock: 0, ha_link_ruhe: 0, ha_link_modus: 3 }],
+];
+const EINST_CSS = `
+.einst .emodi { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px; margin:4px 0 12px; }
+.einst .emodus { all:unset; cursor:pointer; border:2px solid var(--div); background:var(--card); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; gap:4px; }
+.einst .emodus b { display:flex; align-items:center; gap:6px; font-size:15px; } .einst .emodus small { color:var(--sec); line-height:1.35; }
+.einst .emodus.on { border-color:var(--acc); } .einst .emodus.on b::after { content:"aktiv"; margin-left:auto; font-size:11px; color:var(--acc); }
+.einst { padding:8px 16px 40px; max-width:1100px; }
+.verkn .karte { display:flex; flex-direction:column; gap:6px; } .einst.verkn select { max-width:100%; width:100%; }
+.verkn .vtext { margin:0; color:var(--sec); font-size:13px; line-height:1.4; } .verkn .ez small.vtext { display:block; font-size:12px; }
+.verkn h3 input { font:inherit; }
+.akku .akhero { display:flex; flex-wrap:wrap; gap:18px; align-items:center; padding:16px 18px; border-radius:18px; background:var(--card); border:1px solid var(--div); margin-bottom:12px; }
+.akku .akring { position:relative; width:120px; height:120px; flex:0 0 auto; } .akku .akring svg { width:100%; height:100%; transform:rotate(-90deg); }
+.akku .akring > div { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.akku .akring b { font-size:34px; font-weight:700; } .akku .akring b small { font-size:16px; } .akku .akring ha-icon { color:#f59e0b; --mdc-icon-size:20px; }
+.akku .akinfo { flex:1 1 220px; display:flex; flex-direction:column; gap:4px; } .akku .akinfo h2 { margin:0; font-size:20px; }
+.akku .akzu { font-size:17px; font-weight:600; } .akku .akzu.lad { color:#f59e0b; } .akku .akinfo small { color:var(--sec); }
+.akku .akzahlen ha-icon { color:var(--acc); --mdc-icon-size:20px; }
+.akku .akgross { margin-bottom:12px; } .akku .akdia svg { width:100%; height:auto; display:block; }
+.akku .akdia .aklad { fill:color-mix(in srgb, #22c55e 16%, transparent); } .akku .akdia .akr { stroke:var(--div); stroke-width:1; vector-effect:non-scaling-stroke; }
+.akku .akdia .akt { fill:var(--sec); font-size:11px; } .akku .akdia .kl { display:flex; justify-content:space-between; font-size:11px; color:var(--sec); margin-top:4px; }
+.akku .akdia .akli { display:inline-block; width:10px; height:10px; border-radius:3px; background:color-mix(in srgb, #22c55e 40%, transparent); margin-right:4px; vertical-align:-1px; }
+.akku .akzahlen { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; margin:6px 0 12px; }
+.akku .akzahlen > div { border:1px solid var(--div); background:var(--card); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; gap:2px; }
+.akku .akzahlen b { font-size:22px; } .akku .akzahlen small { color:var(--sec); }
+.akku .akbalken { display:flex; height:16px; border-radius:8px; overflow:hidden; background:var(--div); }
+.akku .aklegende { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; font-size:13px; color:var(--sec); }
+.akku .aklegende i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:middle; }
+.akku .ez b { min-width:5.5em; text-align:right; white-space:nowrap; } .akku .ez small { color:var(--sec); white-space:nowrap; text-align:right; }
+.akku .ez > span { display:flex; align-items:center; gap:6px; } .akku .ez > span ha-icon { --mdc-icon-size:18px; flex:none; }
+.akku .karte + .egrid { margin-top:12px; }
+.einst.jz .egrid { grid-template-columns:repeat(auto-fill, minmax(min(100%, 440px), 1fr)); }
+.jz .ez:not(.quer) { flex-direction:column; align-items:stretch; gap:4px; padding:6px 0; } .jz .ez:not(.quer) select { max-width:100%; width:100%; }
+.einst .egrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px; }
+.einst .karte { border:1px solid var(--div); background:var(--card); border-radius:12px; padding:10px 12px; }
+.einst h3 { display:flex; align-items:center; gap:6px; margin:2px 0 8px; font-size:15px; }
+.einst .ez { display:flex; align-items:center; gap:8px; min-height:34px; border-top:1px solid var(--div); padding:3px 0; }
+.einst .ez:first-of-type { border-top:0; }
+.einst .ez > span { flex:1; } .einst .ez.offen > span::after { content:" ⏳"; }
+.einst .ez.anders > span { color:var(--acc); }
+.einst select, .einst input[type=number] { max-width:52%; }
+.einst input[type=number] { width:5.5em; }
+.einst .estat { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 10px; }
+.einst .ehilfe { margin:-2px 0 6px; font-size:12px; line-height:1.4; color:var(--sec); }
+.einst .eintro { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--sec); }
+.einst .eintro .wtabw { overflow-x:auto; margin:6px 0; }
+.einst .eintro .wtab { width:100%; border-collapse:collapse; font-size:11.5px; table-layout:fixed; }
+.einst .eintro .wtab th, .einst .eintro .wtab td { border:1px solid var(--div); padding:3px 5px; text-align:left; vertical-align:top; }
+.einst .eintro .wtab th { color:var(--fg); font-weight:600; }
+.einst .eintro .wtab td:first-child { font-weight:600; width:22%; }
+details.dscan { margin-top:14px; } details.dscan > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:10px; }
+details.dscan > summary::-webkit-details-marker { display:none; } details.dscan > summary h2 { margin:0; font-size:17px; display:flex; align-items:center; gap:8px; }
+details.dscan > summary small { color:var(--sec); } details.dscan > summary::after { content:"›"; margin-left:auto; font-size:20px; color:var(--sec); transition:transform .15s; }
+details.dscan[open] > summary::after { transform:rotate(90deg); }
+.einst details.efein { margin-top:6px; border-top:1px solid var(--div); padding-top:4px; }
+.einst details.efein > summary { cursor:pointer; display:flex; align-items:center; gap:6px; color:var(--sec); font-size:13px; padding:4px 0; list-style:none; }
+.einst details.efein > summary::-webkit-details-marker { display:none; }
+.einst details.efein > summary::after { content:"›"; margin-left:auto; transition:transform .15s; }
+.einst details.efein[open] > summary::after { transform:rotate(90deg); }
+.einst details.efein > summary ha-icon { --mdc-icon-size:16px; }
+`;
+const EinstTab = {
+  // Seite "Wiedergabe" (jetzt.py): zusammengefasste "Jetzt laeuft"-Player, Aenderungen gelten sofort
+  async _jetztLaden() {
+    if (this._jzLaedt) return;
+    this._jzLaedt = true;
+    try {
+      this.s.jetzt = await this._hass.callWS({ type: "esphomeremote_konfig/jetzt_get" });
+      this.s.strm = await this._hass.callWS({ type: "esphomeremote_konfig/streamer_get" });
+    } catch (e) { this.s.jetzt = { fehler: e.message || String(e) }; }
+    this._jzLaedt = false; this._render();
+  },
+  async _jetztSpeichern() {
+    const s = this.s;
+    try { s.jetzt = await this._hass.callWS({ type: "esphomeremote_konfig/jetzt_save", jetzt: s.jetzt.jetzt }); s.msg = { text: "Wiedergabe gespeichert." }; }
+    catch (e) { s.msg = { err: true, text: "Wiedergabe: " + (e.message || e) }; await this._jetztLaden(); }
+    this._render();
+  },
+  async _strmSpeichern() {
+    const s = this.s;
+    try { s.strm = await this._hass.callWS({ type: "esphomeremote_konfig/streamer_save", streamer: s.strm.streamer }); s.msg = { text: "Streamer gespeichert." };
+      s.jetzt = await this._hass.callWS({ type: "esphomeremote_konfig/jetzt_get" }); }
+    catch (e) { s.msg = { err: true, text: "Streamer: " + (e.message || e) }; }
+    this._render();
+  },
+  async _jetztClick(a, t) {
+    const s = this.s;
+    if (a === "st_add") {
+      const ids = new Set(s.strm.streamer.map((x) => x.id));
+      let n = 1; while (ids.has(`streamer_${n}`)) n++;
+      s.strm.streamer.push({ id: `streamer_${n}`, name: "Streamer", adb: "", webhook: "" });
+      await this._strmSpeichern(); return true;
+    }
+    if (a === "st_del") {
+      const x = s.strm.streamer[Number(t.dataset.si)];
+      if (!confirm(`Streamer „${x.name}“ löschen?`)) return true;
+      s.strm.streamer.splice(Number(t.dataset.si), 1); await this._strmSpeichern(); return true;
+    }
+    if (a === "st_app") {
+      const x = s.strm.streamer[Number(t.dataset.si)], v = t.dataset.v;
+      if (v === "entfernen" && !confirm(`Streamer-App von „${x.name}“ deinstallieren? Titel, Cover und Tastatur-Popup kommen dann nicht mehr.`)) return true;
+      this._strmAppLaden(x.id, v); return true;
+    }
+    if (a === "st_eintragen") {
+      const x = s.strm.streamer[Number(t.dataset.si)];
+      try { const r = await this._hass.callWS({ type: "esphomeremote_konfig/streamer_eintragen", streamer: x.id }); s.msg = { text: `Am Streamer eingetragen: ${r.url}` }; }
+      catch (e) { s.msg = { err: true, text: "Eintragen: " + (e.message || e) }; }
+      return true;
+    }
+    if (a === "jz_add") {
+      const ids = new Set(s.jetzt.jetzt.map((j) => j.id));
+      let n = 1; while (ids.has(`player_${n}`)) n++;
+      s.jetzt.jetzt.push({ id: `player_${n}`, name: s.jetzt.jetzt.length ? `Jetzt läuft ${n}` : "Jetzt läuft", streamer: false, tv: "", tv_app: "", tv_cast: "", cast: "", multiroom: "" });
+      await this._jetztSpeichern(); return true;
+    }
+    if (a === "jz_del") {
+      const j = s.jetzt.jetzt[Number(t.dataset.ji)];
+      if (!confirm(`„${j.name}“ löschen? Remotes, die ihn nutzen, zeigen dann nichts mehr an.`)) return true;
+      s.jetzt.jetzt.splice(Number(t.dataset.ji), 1);
+      await this._jetztSpeichern(); return true;
+    }
+    return false;
+  },
+  _jetztHtml() {
+    const d = this.s.jetzt, st = this._hass.states;
+    if (!d) { this._jetztLaden(); return `<div class="einst">Lade …</div>`; }
+    if (d.fehler) return `<div class="einst"><div class="msg err">${esc(d.fehler)}</div></div>`;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const mps = Object.keys(st).filter((x) => x.startsWith("media_player.") && !Object.values(d.entitaeten || {}).includes(x))
+      .sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const wahl = (ji, j, k, titel, text) => `<div class="ez"><span>${titel}<small class="vtext">${text}</small></span>
+      <select data-jz="${k}" data-ji="${ji}"><option value="">— keine —</option>${[...new Set([...(j[k] ? [j[k]] : []), ...mps])].map((x) => `<option value="${esc(x)}" ${x === j[k] ? "selected" : ""}>${esc(name(x))}</option>`).join("")}</select></div>`;
+    const karten = d.jetzt.map((j, ji) => {
+      const e = d.entitaeten?.[j.id], z = e && st[e];
+      return `<div class="karte">
+      <h3><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon><input data-jz="name" data-ji="${ji}" value="${esc(j.name)}" maxlength="40" style="flex:1">
+        <button class="icon sm" data-a="jz_del" data-ji="${ji}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
+      <small>${e ? `<code>${esc(e)}</code> · ${z ? `${esc(z.state)}${z.attributes.media_title ? ` – ${esc(z.attributes.media_title)}` : ""}` : "wird angelegt …"}` : "wird angelegt …"}</small>
+      ${wahl(ji, j, "tv", "Fernseher", "Sender, Eingang oder TV-App")}
+      ${wahl(ji, j, "tv_app", "App-Erkennung am Fernseher", "Android-TV-Entität des Fernsehers (meldet die laufende App)")}
+      ${wahl(ji, j, "tv_cast", "Chromecast im Fernseher", "Titel und Cover von Apps auf dem Fernseher")}
+      ${wahl(ji, j, "multiroom", "Multiroom-Musik", "z. B. Music-Assistant-Gruppe")}
+      ${wahl(ji, j, "cast", "Chromecast / Lautsprecher", "weiterer Player, der Titel meldet")}
+      <div class="ez"><span>Streamer<small class="vtext">App, Titel, Cover und Position von der Streamer-App (unten anlegen)</small></span>
+        <select data-jz="streamer" data-ji="${ji}"><option value="">— keiner —</option>${(d.streamer || []).map((x) => `<option value="${esc(x.id)}" ${x.id === j.streamer ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+    </div>`;
+    }).join("");
+    return `<div class="einst verkn jz">
+      <p class="hint">Ein <b>„Jetzt läuft“-Player</b> fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu <b>einem</b> Media Player zusammen – er zeigt immer, was gerade läuft (Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher). Welche Remote welchen nutzt, stellst du unter <i>Verknüpfungen</i> ein. Jede Quelle ist optional; Änderungen gelten sofort.</p>
+      <div class="egrid">${karten}</div>
+      <p><button class="btn" data-a="jz_add"><ha-icon icon="mdi:plus"></ha-icon>„Jetzt läuft“-Player anlegen</button></p>
+      ${this._strmHtml(name)}</div>`;
+  },
+  // Streamer-App verwalten (2026-10-26): Status, Einrichten/Aktualisieren, Deinstallieren - ueber die ADB-Entitaet
+  _strmAppHtml(x, si) {
+    const st = this._hass.states, adb = x.adb && st[x.adb];
+    const ok = adb && !["unavailable", "unknown"].includes(adb.state);
+    if (!ok) return `<div class="appbox"><b><ha-icon icon="mdi:android"></ha-icon> Streamer-App</b>
+      <p>Damit der Konfigurator die App aufspielen kann, braucht Home Assistant einmalig eine ADB-Verbindung zum Streamer:</p>
+      <ol><li>Am Streamer: <i>Einstellungen → System → Über</i> → 7× auf <i>Build</i> tippen (Entwickleroptionen frei).</li>
+        <li><i>Einstellungen → System → Entwickleroptionen</i> → <b>USB-Debugging</b> einschalten.</li>
+        <li>In Home Assistant die Integration <a href="/config/integrations/dashboard/add?domain=androidtv" target="_top"><b>Android Debug Bridge</b></a> mit der IP-Adresse des Streamers hinzufügen und am Fernseher <i>„Immer zulassen“</i> bestätigen.</li>
+        <li>Oben als <b>ADB-Gerät</b> wählen – dann erscheint hier „Einrichten“.</li></ol>
+      ${x.adb && !ok ? `<small class="note warnz">${esc(st[x.adb]?.attributes.friendly_name || x.adb)} ist gerade nicht erreichbar (Streamer aus?).</small>` : ""}</div>`;
+    const a = (this.s.strmApp || {})[x.id];
+    if (!a) { this._strmAppLaden(x.id); return `<div class="appbox"><b><ha-icon icon="mdi:android"></ha-icon> Streamer-App</b><p>Prüfe den Streamer …</p></div>`; }
+    if (a.laeuft) return `<div class="appbox"><b><ha-icon icon="mdi:android"></ha-icon> Streamer-App</b><p><ha-icon icon="mdi:timer-sand"></ha-icon> ${esc(a.laeuft)}</p></div>`;
+    if (a.fehler) return `<div class="appbox"><b><ha-icon icon="mdi:android"></ha-icon> Streamer-App</b><div class="msg err">${esc(a.fehler)}</div>
+      <button class="btn small" data-a="st_app" data-v="status" data-si="${si}">Nochmal prüfen</button></div>`;
+    const v = a.verfuegbar || {}, neu = a.installiert && v.code > a.code;
+    const zeile = (gut, ja, nein) => `<li class="${gut ? "gut" : "schlecht"}"><ha-icon icon="mdi:${gut ? "check-circle" : "alert-circle"}"></ha-icon>${gut ? ja : nein}</li>`;
+    const alles = a.installiert && a.bedienung && a.medien && a.webhook_ok;
+    return `<div class="appbox"><b><ha-icon icon="mdi:android"></ha-icon> Streamer-App</b>
+      ${a.installiert ? `<ul class="appst">
+        ${zeile(true, `Installiert: Version ${esc(a.name)}${neu ? ` – <b>${esc(v.name)} verfügbar</b>` : " (aktuell)"}`, "")}
+        ${zeile(a.bedienung, "App und Tastatur erkennen (Bedienungshilfe an)", "Bedienungshilfe aus")}
+        ${zeile(a.medien, "Titel und Cover lesen (Benachrichtigungszugriff)", "Benachrichtigungszugriff fehlt")}
+        ${zeile(a.webhook_ok, "Mit Home Assistant verbunden", a.webhook ? "Meldet an eine andere Adresse" : "Noch nicht mit Home Assistant verbunden")}
+        ${a.zuletzt ? zeile(true, `Letzte Meldung: ${new Date(a.zuletzt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`, "") : ""}</ul>`
+      : `<p>Noch nicht auf dem Streamer. „Einrichten“ spielt die App auf (Version ${esc(v.name || "?")}), schaltet ihre Dienste frei und verbindet sie mit Home Assistant – in einem Schritt, etwa 20 Sekunden.</p>`}
+      <div class="inl">
+        ${!a.installiert ? `<button class="btn primary" data-a="st_app" data-v="einrichten" data-si="${si}"><ha-icon icon="mdi:download"></ha-icon>Einrichten</button>`
+          : neu ? `<button class="btn primary" data-a="st_app" data-v="einrichten" data-si="${si}"><ha-icon icon="mdi:update"></ha-icon>Auf ${esc(v.name)} aktualisieren</button>`
+          : !alles ? `<button class="btn primary" data-a="st_app" data-v="einrichten" data-si="${si}"><ha-icon icon="mdi:auto-fix"></ha-icon>Reparieren</button>` : ""}
+        ${a.installiert ? `<button class="btn small" data-a="st_app" data-v="einrichten" data-si="${si}" title="Neu aufspielen, Dienste freigeben, Adresse eintragen"><ha-icon icon="mdi:refresh"></ha-icon>Neu einrichten</button>
+          <button class="btn small ghost" data-a="st_app" data-v="entfernen" data-si="${si}"><ha-icon icon="mdi:delete-outline"></ha-icon>Deinstallieren</button>` : ""}
+        <button class="btn small ghost" data-a="st_app" data-v="status" data-si="${si}" title="Neu prüfen"><ha-icon icon="mdi:magnify"></ha-icon></button></div>
+      <small class="note">Auf dem Streamer ist die App unter „ESPHomeRemote Streamer“ in der App-Liste – sie zeigt dort ebenfalls, ob alles läuft.</small></div>`;
+  },
+  async _strmAppLaden(id, aktion = "status") {
+    const s = this.s;
+    s.strmApp = s.strmApp || {};
+    if (aktion === "status" && s.strmApp[id]?.laedt) return;
+    s.strmApp[id] = { ...(s.strmApp[id] || {}), laedt: true, ...(aktion !== "status" ? { laeuft: aktion === "einrichten" ? "Spiele die App auf und richte sie ein … (bis zu einer Minute)" : "Entferne die App …" } : {}) };
+    if (aktion !== "status") this._render();
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/streamer_app", streamer: id, aktion });
+      s.strmApp[id] = r;
+      if (aktion === "einrichten") s.msg = { text: `Streamer-App ${r.name} eingerichtet${r.bedienung && r.medien && r.webhook_ok ? " – alles bereit." : " – bitte Status prüfen."}` };
+      if (aktion === "entfernen") s.msg = { text: "Streamer-App deinstalliert." };
+    } catch (e) {
+      s.strmApp[id] = { fehler: e.code === "kein_adb" ? "Keine ADB-Verbindung zum Streamer." : (e.message || String(e)) };
+    }
+    this._render();
+  },
+  _strmHtml(name) {
+    const d = this.s.strm, st = this._hass.states;
+    if (!d) return "";
+    const mps = Object.keys(st).filter((x) => x.startsWith("media_player.")).sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const karten = d.streamer.map((x, si) => {
+      const zul = d.zuletzt?.[x.id];
+      return `<div class="karte">
+      <h3><ha-icon icon="mdi:cast-variant"></ha-icon><input data-st="name" data-si="${si}" value="${esc(x.name)}" maxlength="32" style="flex:1">
+        <button class="icon sm" data-a="st_del" data-si="${si}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
+      <small>${zul ? `Zuletzt gemeldet: ${new Date(zul).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${d.app?.[x.id] ? ` · ${esc(d.app[x.id])}` : ""}` : "Noch nichts empfangen – Streamer-App installieren und Adresse eintragen."}</small>
+      <div class="ez"><span>ADB-Gerät<small class="vtext">Android-TV-Integration des Streamers: Adresse eintragen, App beenden, Neustart, „am Fernseher sichtbar“</small></span>
+        <select data-st="adb" data-si="${si}"><option value="">— keins —</option>${[...new Set([...(x.adb ? [x.adb] : []), ...mps])].map((e) => `<option value="${esc(e)}" ${e === x.adb ? "selected" : ""}>${esc(name(e))}</option>`).join("")}</select></div>
+      <div class="ez"><span>Adresse für die Streamer-App<small class="vtext">Ziel der Meldungen (Webhook)</small></span>
+        <code style="word-break:break-all">http://${esc(d.basis || "<HA-IP>:8123")}/api/webhook/${esc(x.webhook)}</code></div>
+      ${this._strmAppHtml(x, si)}
+    </div>`;
+    }).join("");
+    return `<h3 style="margin-top:24px"><ha-icon icon="mdi:cast-variant"></ha-icon>Streamer</h3>
+      <p class="hint">Android-TV-Streamer mit der App „ESPHomeRemote Streamer“ melden, was läuft (jede App mit Medien-Sitzung, Titel, Cover, Position) und ob die Bildschirmtastatur offen ist. Pro Streamer gibt es Sensoren (z. B. <code>…_tastatur</code> als Popup-Auslöser) und Knöpfe „App beenden“ / „neu starten“.</p>
+      <div class="egrid">${karten}</div>
+      ${d.streamer.length < 4 ? `<p><button class="btn" data-a="st_add"><ha-icon icon="mdi:plus"></ha-icon>Streamer anlegen</button></p>` : ""}`;
+  },
+  // Seite "Klingel" (klingel.py): zwei Plaetze der Firmware, je Ausloeser + Kamera; Aenderungen gelten sofort
+  async _klingelLaden() {
+    try { this.s.klingel = await this._hass.callWS({ type: "esphomeremote_konfig/klingel_get" }); }
+    catch (e) { this.s.klingel = { fehler: e.message || String(e) }; }
+    (this.s.klingel.klingel || []).forEach((k, i) => { if (M_KAMERAS[i]) M_KAMERAS[i][1] = `Klingel: ${k.name}`; });
+    this._render();
+  },
+  async _klingelSpeichern() {
+    const s = this.s;
+    try { s.klingel = await this._hass.callWS({ type: "esphomeremote_konfig/klingel_save", klingel: s.klingel.klingel }); s.msg = { text: "Klingel gespeichert." }; }
+    catch (e) { s.msg = { err: true, text: "Klingel: " + (e.message || e) }; }
+    s.klingel.klingel?.forEach((k, i) => { if (M_KAMERAS[i]) M_KAMERAS[i][1] = `Klingel: ${k.name}`; });
+    this._render();
+  },
+  async _klingelClick(a, t) {
+    const s = this.s;
+    if (a === "kl_add") { s.klingel.klingel.push({ name: s.klingel.klingel.length ? "Wohnungstür" : "Haustür", ausloeser: "", kamera: "", warten: 2 }); await this._klingelSpeichern(); return true; }
+    if (a === "kl_del") { s.klingel.klingel.splice(Number(t.dataset.ki), 1); await this._klingelSpeichern(); return true; }
+    if (a === "kl_test") {
+      s.msg = { text: "Klingel-Bild wird geholt und an die Remotes geschickt …" }; this._render();
+      try { await this._hass.callWS({ type: "esphomeremote_konfig/klingel_test", platz: Number(t.dataset.ki) }); s.msg = { text: "Klingel-Bild verschickt – wache Remotes laden es jetzt." }; }
+      catch (e) { s.msg = { err: true, text: "Test: " + (e.message || e) }; }
+      return true;
+    }
+    return false;
+  },
+  _klingelHtml() {
+    const d = this.s.klingel, st = this._hass.states;
+    if (!d) { this._klingelLaden(); return `<div class="einst">Lade …</div>`; }
+    if (d.fehler) return `<div class="einst"><div class="msg err">${esc(d.fehler)}</div></div>`;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const liste = (doms, wert) => { const l = Object.keys(st).filter((x) => doms.includes(x.split(".")[0])).sort((a, b) => name(a).localeCompare(name(b), "de"));
+      if (wert && !l.includes(wert)) l.unshift(wert); return l; };
+    const opts = (l, wert) => `<option value="">— keine —</option>` + l.map((x) => `<option value="${esc(x)}" ${x === wert ? "selected" : ""}>${esc(name(x))} · ${esc(x)}</option>`).join("");
+    const karten = d.klingel.map((k, ki) => `<div class="karte">
+      <h3><ha-icon icon="mdi:doorbell-video"></ha-icon><input data-kl="name" data-ki="${ki}" value="${esc(k.name)}" maxlength="24" style="flex:1">
+        <button class="icon sm" data-a="kl_del" data-ki="${ki}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
+      <div class="ez"><span>Auslöser<small class="vtext">Geht beim Klingeln auf „an“ (Taster, Schalter, Helfer) – oder Knopf/Ereignis</small></span>
+        <select data-kl="ausloeser" data-ki="${ki}">${opts(liste(["binary_sensor", "input_boolean", "switch", "button", "input_button", "event"], k.ausloeser), k.ausloeser)}</select></div>
+      <div class="ez"><span>Kamera<small class="vtext">Ihr Bild erscheint auf der Remote (Klingel-Seite bzw. Menü-Eintrag „Kamerabild“)</small></span>
+        <select data-kl="kamera" data-ki="${ki}">${opts(liste(["camera"], k.kamera), k.kamera)}</select></div>
+      <div class="ez quer"><span>Warten vor dem Foto</span><input type="number" data-kl="warten" data-ki="${ki}" min="0" max="30" value="${k.warten}"> s</div>
+      <p><button class="btn small" data-a="kl_test" data-ki="${ki}" ${k.kamera ? "" : "disabled"}><ha-icon icon="mdi:bell-ring-outline"></ha-icon>Testen</button></p>
+    </div>`).join("");
+    return `<div class="einst verkn jz">
+      <p class="hint">Beim Klingeln holt Home Assistant das Bild der Kamera, verkleinert es und schickt es an die Remotes – auch bei dunklem Display, solange ihre HA-Verbindung dabei nicht getrennt wird (Einstellungen › Verbindung zu Home Assistant). Im Menü zeigt ein Eintrag „Kamerabild“ mit der Bildquelle der Klingel es an; ein Popup dazu öffnest du über einen Auslöser im Menü-Editor (z. B. derselbe Auslöser auf „an“). Die Kameras für „Kamerabild“ und „Live-Bild“ stellst du je Remote im Menü-Editor ein.</p>
+      <div class="egrid">${karten}</div>
+      ${d.klingel.length < 2 ? `<p><button class="btn" data-a="kl_add"><ha-icon icon="mdi:plus"></ha-icon>Klingel anlegen</button> <small>(bis zu zwei)</small></p>` : ""}</div>`;
+  },
+  // Seite "Akku" (auswertung.py): Verbrauch je Zustand aus dem Recorder, Schlafquote, Gruende, Laufzeit
+  async _akkuLaden(dev, tage) {
+    if (this._akLaedt) return;
+    this._akLaedt = true;
+    try {
+      const slug = this.s.meta[dev]?.slug, ida = `sensor.${slug}_akkustand`, idl = `binary_sensor.${slug}_ladekabel`;
+      const [d, h] = await Promise.all([this._hass.callWS({ type: "esphomeremote_konfig/akku_auswertung", device: dev, tage }),
+        this._hass.callWS({ type: "history/history_during_period", start_time: new Date(Date.now() - tage * 864e5).toISOString(),
+          entity_ids: [ida, idl], minimal_response: true, no_attributes: true, significant_changes_only: false }).catch(() => ({}))]);
+      const zeit = (x) => (x.lu ?? x.lc) * 1000;
+      const hist = { a: (h[ida] || []).map((x) => [zeit(x), parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v)),
+        l: (h[idl] || []).map((x) => [zeit(x), x.s === "on"]).filter(([t]) => Number.isFinite(t)) };
+      this.s.akku = { dev, tage, d, hist };
+    }
+    catch (e) { this.s.akku = { dev, tage, fehler: e.message || String(e) }; }
+    this._akLaedt = false; this._render();
+  },
+  _akkuHtml() {
+    const s = this.s, tage = s.akTage || 3;
+    if (!s.akku || s.akku.dev !== s.dev || s.akku.tage !== tage) { this._akkuLaden(s.dev, tage); return `<div class="einst"><div class="lade"><span class="spin"></span> Werte aus dem Recorder …</div></div>`; }
+    if (s.akku.fehler) return `<div class="einst"><div class="msg err">${esc(s.akku.fehler)}</div></div>`;
+    const d = s.akku.d, z = d.zustaende || {}, an = d.anteile || {};
+    const zahl = (v, n = 1) => v == null ? "–" : Number(v).toLocaleString("de-DE", { maximumFractionDigits: n, minimumFractionDigits: n });
+    const NAMEN = [["tiefschlaf", "Tiefschlaf", "mdi:sleep"], ["wach_ble", "Wach, nur Bluetooth", "mdi:bluetooth"], ["wach_wlan", "Wach, mit WLAN", "mdi:wifi"]];
+    const gesamt = (an.laden || 0) + (an.tiefschlaf || 0) + (an.wach || 0) || 1;
+    const balken = [["laden", "Laden", "var(--gruen, #22c55e)"], ["tiefschlaf", "Tiefschlaf / nicht erreichbar", "var(--acc)"], ["wach", "Wach", "var(--gelb, #f59e0b)"]]
+      .map(([k, n, f]) => `<span style="flex:${an[k] || 0};background:${f}" title="${n}: ${zahl(an[k])} h"></span>`).join("");
+    const legende = [["laden", "Laden", "var(--gruen, #22c55e)"], ["tiefschlaf", "Tiefschlaf", "var(--acc)"], ["wach", "Wach", "var(--gelb, #f59e0b)"]]
+      .map(([k, n, f]) => `<span><i style="background:${f}"></i>${n} ${zahl(an[k])} h (${Math.round(100 * (an[k] || 0) / gesamt)} %)</span>`).join("");
+    const zeilen = NAMEN.map(([k, n, ic]) => z[k] ? `<div class="ez"><span><ha-icon icon="${ic}"></ha-icon> ${n}</span><b>${zahl(z[k].pro_stunde, 2)} %/h</b><small>${zahl(z[k].stunden)} h gemessen</small></div>` : "").join("");
+    const gruende = (d.gruende || []).map((g) => `<div class="ez"><span>${esc(g.grund)}</span><b>${zahl(g.stunden)} h</b></div>`).join("")
+      || `<p class="vtext">Noch keine Daten – der Sensor „Tiefschlaf-Status“ kommt mit der Firmware vom 19.10.</p>`;
+    const L = this._live(s.dev), H = s.akku.hist || { a: [], l: [] };
+    const naechste = L.restH && !L.laden ? new Date(Date.now() + L.restH * 36e5) : null;
+    return `<div class="einst verkn akku">
+      <div class="akhero">
+        <div class="akring">${ring(L.akku ?? 0, akkuFarbe(L.akku), 9)}<div><b>${L.akku != null ? Math.round(L.akku) : "–"}<small>%</small></b>${L.laden ? '<ha-icon icon="mdi:lightning-bolt"></ha-icon>' : ""}</div></div>
+        <div class="akinfo"><h2>${esc(devName(s.dev))}</h2>
+          <span class="akzu ${L.laden ? "lad" : ""}">${L.laden ? "Lädt am Kabel" : L.restH ? `Reicht noch ≈ ${fmtStd(L.restH)}` : "Restlaufzeit wird berechnet …"}</span>
+          <small>${esc(L.ztext || "")}${L.rate != null && Math.abs(L.rate) >= 0.1 ? ` · ${L.rate > 0 ? "+" : ""}${L.rate.toFixed(1).replace(".", ",")} %/h gerade` : ""}${naechste ? ` · nächste Ladung etwa ${naechste.toLocaleString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}</small></div>
+        <div class="estat"><small>Zeitraum</small>${[1, 3, 7, 14].map((t) => `<button class="btn small ${t === tage ? "" : "ghost"}" data-a="ak_tage" data-t="${t}">${t === 1 ? "24 h" : t + " Tage"}</button>`).join("")}</div>
+      </div>
+      <div class="akzahlen">
+        <div><ha-icon icon="mdi:battery-arrow-down-outline"></ha-icon><b>${zahl(d.pro_tag)} %/Tag</b><small>Verbrauch im Schnitt (${zahl(d.schnitt_pro_stunde, 2)} %/h, ohne Laden)</small></div>
+        <div><ha-icon icon="mdi:calendar-clock"></ha-icon><b>${zahl(d.laufzeit_tage)} Tage</b><small>pro Akkuladung bei diesem Gebrauch</small></div>
+        <div><ha-icon icon="mdi:sleep"></ha-icon><b>${d.schlafquote ?? "–"} %</b><small>der Zeit ohne Ladekabel im Tiefschlaf</small></div>
+        <div><ha-icon icon="mdi:power-plug-battery-outline"></ha-icon><b>${d.ladevorgaenge ?? "–"}×</b><small>geladen im Zeitraum</small></div>
+      </div>
+      <div class="karte akgross"><h3><ha-icon icon="mdi:chart-areaspline"></ha-icon>Akkustand ${tage === 1 ? "der letzten 24 h" : `der letzten ${tage} Tage`}</h3>${this._akkuDiagramm(H, tage)}</div>
+      <p class="vtext">Ladezeiten zählen nicht mit – auch kurzes Zwischenladen nicht, und 30 min danach auch nicht (der Akkuchip korrigiert sich dann noch).
+        ${d.ladevorgaenge != null ? `Im Zeitraum ${d.ladevorgaenge}× geladen, ${zahl(d.ausgelassen_stunden)} h deshalb nicht gewertet.` : ""}</p>
+      <div class="karte"><h3><ha-icon icon="mdi:chart-timeline"></ha-icon>Wofür die Zeit draufging</h3><div class="akbalken">${balken}</div><div class="aklegende">${legende}</div></div>
+      <div class="egrid">
+        <div class="karte"><h3><ha-icon icon="mdi:battery-arrow-down"></ha-icon>Verbrauch je Zustand</h3>${zeilen || '<p class="vtext">Zu wenig Daten.</p>'}
+          <p class="vtext">Je länger die Remote im Tiefschlaf ist, desto länger hält der Akku. Was den Schlaf verhindert, zeigt „Warum nicht im Tiefschlaf“.</p></div>
+        <div class="karte"><h3><ha-icon icon="mdi:sleep-off"></ha-icon>Warum nicht im Tiefschlaf</h3>${gruende}</div>
+      </div>
+      ${this._akkuLadungenHtml(H)}</div>`;
+  },
+  // Akku-Verlauf gross: Linie mit Verlauf, Ladephasen gruen hinterlegt, Tageslinien, 0/50/100 %
+  _akkuDiagramm(H, tage) {
+    const pts = H.a;
+    if (!pts || pts.length < 2) return '<p class="vtext">Noch kein Verlauf im Recorder.</p>';
+    const W = 900, Hh = 220, t1 = Date.now(), t0 = t1 - tage * 864e5;
+    const x = (t) => ((Math.max(t0, Math.min(t1, t)) - t0) / (t1 - t0) * W).toFixed(1), y = (v) => (Hh - 4 - Math.max(0, Math.min(100, v)) / 100 * (Hh - 12)).toFixed(1);
+    const p = [...pts.filter(([t]) => t >= t0 - 36e5), [t1, pts[pts.length - 1][1]]];
+    const linie = p.map(([t, v], i) => `${i ? "L" : "M"}${x(t)},${y(v)}`).join("");
+    // Ladephasen aus dem Ladekabel-Sensor
+    const baender = [];
+    let an = null;
+    for (const [t, ja] of H.l) { if (ja && an == null) an = t; if (!ja && an != null) { baender.push([an, t]); an = null; } }
+    if (an != null) baender.push([an, t1]);
+    const lad = baender.filter(([a, b]) => b > t0).map(([a, b]) => `<rect x="${x(a)}" y="0" width="${Math.max(1, x(b) - x(a))}" height="${Hh}" class="aklad"><title>Laden ${new Date(a).toLocaleString("de-DE", { weekday: "short", hour: "2-digit", minute: "2-digit" })} – ${new Date(b).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</title></rect>`).join("");
+    const tagesl = [];
+    for (let d = new Date(t0); d < t1; d.setDate(d.getDate() + 1)) { d.setHours(0, 0, 0, 0); if (d.getTime() > t0) tagesl.push(d.getTime()); }
+    const raster = [0, 50, 100].map((v) => `<line x1="0" x2="${W}" y1="${y(v)}" y2="${y(v)}" class="akr"/><text x="4" y="${y(v) - 3}" class="akt">${v} %</text>`).join("")
+      + tagesl.map((t) => `<line x1="${x(t)}" x2="${x(t)}" y1="0" y2="${Hh}" class="akr"/><text x="${+x(t) + 4}" y="${Hh - 6}" class="akt">${new Date(t).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit" })}</text>`).join("");
+    const farbe = akkuFarbe(pts[pts.length - 1][1]);
+    return `<div class="akdia" style="color:${farbe}"><svg viewBox="0 0 ${W} ${Hh}">
+      <defs><linearGradient id="akg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".35"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>
+      ${lad}${raster}<path d="${linie}L${W},${Hh}L${x(p[0][0])},${Hh}Z" fill="url(#akg)"/><path d="${linie}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>
+      <div class="kl"><span>${tage === 1 ? "vor 24 h" : `vor ${tage} Tagen`}</span><span><i class="akli"></i>geladen</span><span>jetzt</span></div></div>`;
+  },
+  // Ladungen im Zeitraum: Beginn, Dauer, von -> auf %
+  _akkuLadungenHtml(H) {
+    const wert = (t) => { let v = null; for (const [tt, x] of H.a) { if (tt <= t) v = x; else break; } return v; };
+    const liste = [];
+    let an = null;
+    for (const [t, ja] of H.l) { if (ja && an == null) an = t; if (!ja && an != null) { liste.push([an, t]); an = null; } }
+    if (an != null) liste.push([an, null]);
+    if (!liste.length) return "";
+    const zeilen = liste.slice(-10).reverse().map(([a, b]) => {
+      const von = wert(a), bis = b ? wert(b + 60000) : wert(Date.now()), min = ((b || Date.now()) - a) / 60000;
+      return `<div class="ez"><span><ha-icon icon="mdi:power-plug-battery-outline"></ha-icon> ${new Date(a).toLocaleString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+        <b>${von != null ? Math.round(von) : "?"} → ${bis != null ? Math.round(bis) : "?"} %</b><small>${min < 90 ? Math.round(min) + " min" : (min / 60).toFixed(1).replace(".", ",") + " h"}${b ? "" : " · lädt noch"}</small></div>`;
+    }).join("");
+    return `<div class="karte"><h3><ha-icon icon="mdi:history"></ha-icon>Ladungen</h3>${zeilen}</div>`;
+  },
+  // Timer (2026-10-26): beliebig viele aus HA; neben der Uhr steht der, der zuerst ablaeuft; abgelaufen -> Popup
+  _verknTimerHtml(wert, titel, icon) {
+    const st = this._hass.states, name = (e) => st[e]?.attributes.friendly_name || e;
+    const gew = Array.isArray(wert) ? wert : wert ? [wert] : [];
+    const alle = [...new Set([...gew, ...Object.keys(st).filter((x) => x.startsWith("timer.")).sort((a, b) => name(a).localeCompare(name(b), "de"))])];
+    const zst = (e) => { const z = st[e]; if (!z) return "gibt es nicht (mehr)";
+      return z.state === "active" ? `läuft – fertig ${new Date(z.attributes.finishes_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}` : z.state === "paused" ? "pausiert" : "bereit"; };
+    const popup = (this.cfg.menu?.pages || []).some((p) => p.id === "popup_timer");
+    return `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>
+      <p class="vtext">Welche Timer die Remote zeigt. Neben der Uhr steht der, der als Nächstes abläuft. Läuft einer ab, kommt das Popup „Timer abgelaufen“ (mit +5 min, Nochmal, OK).</p>
+      <div class="opts">${alle.map((e) => `<label class="opt"><input type="checkbox" data-entm="timer" value="${esc(e)}" ${gew.includes(e) ? "checked" : ""}><span><b>${esc(name(e))}</b><small>${esc(e)} · ${esc(zst(e))}</small></span></label>`).join("") || '<div class="none">Keine Timer in Home Assistant (Helfer → Timer anlegen).</div>'}</div>
+      ${gew.length ? (popup ? `<small class="note">Popup: Menü → Popups → „Timer“ (frei gestaltbar).</small>` : `<small class="note warnz">Das Popup „Timer“ fehlt im Menü (gelöscht?) – im Menü über „+ Popup“ neu anlegen.</small>`) : ""}</div>`;
+  },
+  _verknHtml() {
+    const ents = this.cfg.ents || {}, st = this._hass.states;
+    const name = (e) => st[e]?.attributes.friendly_name || e;
+    const karten = VERKN.map(([k, titel, icon, doms, text]) => {
+      if (k === "timer") return this._verknTimerHtml(ents.timer, titel, icon);
+      const e = ents[k] || "";
+      const alle = Object.keys(st).filter((x) => doms.includes(x.split(".")[0])).sort((a, b) => name(a).localeCompare(name(b), "de"));
+      if (e && !alle.includes(e)) alle.unshift(e);
+      const zustand = e ? (st[e] ? `<small>Zustand: <b>${esc(st[e].state)}</b></small>` : `<small style="color:var(--error-color,#e5484d)">Entität gibt es nicht (mehr)</small>`) : `<small>Nicht gewählt – die Funktion ist aus.</small>`;
+      return `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>
+        <p class="vtext">${esc(text)}</p>
+        <select data-ent="${k}"><option value="">— keine —</option>${alle.map((x) => `<option value="${esc(x)}" ${x === e ? "selected" : ""}>${esc(name(x))} · ${esc(x)}</option>`).join("")}</select>
+        ${zustand}</div>`;
+    }).join("");
+    return `<div class="einst verkn">
+      <p class="hint">Welche Geräte aus Home Assistant die eingebauten Funktionen von ${esc(devName(this.s.dev))} nutzen. Wirksam nach „Speichern“ – ohne neue Firmware.</p>
+      <div class="egrid">${karten}</div></div>`;
+  },
+  _einstHtml() {
+    const s = this.s, m = s.meta[s.dev] || {};
+    const w = m.einst || {}, offen = new Set(m.einst_offen || []), std = s.einstStandard || {};
+    if (!Object.keys(w).length) return `<div class="einst"><div class="empty"><ha-icon icon="mdi:tune-variant"></ha-icon>
+      <p>Von ${esc(devName(s.dev))} sind noch keine Einstellungen bekannt. Die Remote meldet sie nach dem Flashen der neuen Firmware von selbst.</p></div></div>`;
+    // Markierung (2026-10-25): "wlan" = nur bei "Nur WLAN" sinnvoll (im Dock-Betrieb ist das WLAN aus), "alt" = aus der
+    // Zeit des Bluetooth-Tunnels, nur sichtbar, solange die Remote noch einen alten Wert hat, "fein" = eingeklappt
+    const sichtbar = ([k, , , , tag]) => k in w && !(tag === "wlan" && w.nur_ble !== false) && !(tag === "alt" && (k === "ha_link_modus" ? w[k] === 3 : w[k] === 0));
+    const zeile = ([k, name, art, hilfe, tag]) => {
+      if (!sichtbar([k, name, art, hilfe, tag])) return "";
+      const v = w[k];
+      let ctl;
+      if (Array.isArray(art)) {
+        const opts = art.some(([x]) => x === v) ? art : [...art, [v, String(v)]];
+        ctl = `<select data-einst="${k}">${opts.map(([x, l]) => `<option value='${JSON.stringify(x)}' ${x === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+      } else if (art) {
+        ctl = `<input type="number" data-einst="${k}" min="${art.min}" max="${art.max}" value="${v}"> ${art.einheit}${art.null && v === 0 ? ` <small>(${art.null})</small>` : ""}`;
+      } else ctl = `<label class="sw"><input type="checkbox" data-einst="${k}" ${v ? "checked" : ""}></label>`;
+      const anders = k in std && std[k] !== v;
+      return `<div class="ez ${offen.has(k) ? "offen" : ""} ${anders ? "anders" : ""}" data-k="${k}" title="${offen.has(k) ? "wartet auf die Remote" : anders ? "weicht vom Standard ab" : ""}"><span>${esc(name)}${this._lichtHinweis(k)}</span>${ctl}</div>`
+        + (hilfe ? `<p class="ehilfe">${hilfe}</p>` : "");
+    };
+    const karten = EINST_GRUPPEN.map(([titel, icon, felder, intro]) => {
+      const z = felder.filter((f) => f[4] !== "fein").map(zeile).join("");
+      const fein = felder.filter((f) => f[4] === "fein").map(zeile).join("");
+      const feinHtml = fein ? `<details class="efein"><summary><ha-icon icon="mdi:tune"></ha-icon>Feineinstellungen</summary>${fein}</details>` : "";
+      const wlanHinweis = titel === "Energie" && w.nur_ble !== false
+        ? `<p class="ehilfe">WLAN-Optionen erscheinen nur bei der Verbindungsart „Nur WLAN“ – im Dock-Betrieb ist das WLAN ohnehin aus und kommt nur bei Bedarf.</p>` : "";
+      return z || fein ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>${intro ? `<div class="eintro">${intro}</div>` : ""}${z}${wlanHinweis}${feinHtml}</div>` : "";
+    }).join("") + this._begruessungHtml(zeile);
+    const zeit = m.einst_at ? new Date(m.einst_at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "–";
+    const nAnders = Object.keys(std).filter((k) => k in w && std[k] !== w[k]).length;
+    return `<div class="einst">
+      <p class="hint">Änderungen gehen <b>sofort</b> an die Remote (kein „Speichern“ nötig) – schläft sie, beim nächsten Aufwachen. Was du an der Remote selbst umstellst, erscheint hier.
+        ⏳ = wartet auf die Remote. <span style="color:var(--acc)">Farbig</span> = anders als der Standard für neue Remotes.</p>
+      <div class="estat"><small>Zuletzt von der Remote gemeldet: ${zeit}${offen.size ? ` · ${offen.size} Änderung(en) unterwegs` : ""}</small><span class="grow"></span>
+        ${nAnders ? `<button class="btn small" data-a="einst_std_laden" title="Alle Einstellungen auf den Standard setzen"><ha-icon icon="mdi:backup-restore"></ha-icon>Auf Standard (${nAnders})</button>` : ""}
+        <button class="btn small ghost" data-a="einst_std_merken" title="Die Einstellungen dieser Remote gelten künftig als Standard für neue Remotes"><ha-icon icon="mdi:star-outline"></ha-icon>Als Standard merken</button></div>
+      <div class="inl" style="margin:6px 0 12px">
+        <button class="btn small" data-a="werk_laden" title="Belegung (Aktivitäten, Tasten, Menü, Startseite …) und Einstellungen aus der Werkseinstellung übernehmen"><ha-icon icon="mdi:backup-restore"></ha-icon>Werkseinstellung laden</button>
+        <button class="btn small ghost" data-a="werk_merken" title="Belegung und Einstellungen dieser Remote als Werkseinstellung merken (bleibt auf deinem Home Assistant)"><ha-icon icon="mdi:content-save-cog-outline"></ha-icon>Als Werkseinstellung speichern</button></div>
+      <h3><ha-icon icon="mdi:transit-connection-variant"></ha-icon>Verbindungsart</h3>
+      <div class="emodi">${VERBINDUNG_MODI.map(([id, n, ic, text, werte]) => {
+        const on = Object.entries(werte).every(([k, v]) => !(k in w) || w[k] === v);
+        return `<button class="emodus ${on ? "on" : ""}" data-a="einst_vmodus" data-m="${id}"><b><ha-icon icon="${ic}"></ha-icon>${n}</b><small>${esc(text)}</small></button>`;
+      }).join("")}</div>
+      <h3><ha-icon icon="mdi:battery-charging-wireless-outline"></ha-icon>Energiesparmodus</h3>
+      <div class="emodi">${ENERGIE_MODI.map(([id, n, ic, text, werte]) => {
+        const on = Object.entries(werte).every(([k, v]) => !(k in w) || w[k] === v);
+        return `<button class="emodus ${on ? "on" : ""}" data-a="einst_modus" data-m="${id}"><b><ha-icon icon="${ic}"></ha-icon>${n}</b><small>${esc(text)}</small></button>`;
+      }).join("")}</div>
+      ${this._lichtHtml()}
+      <div class="egrid">${karten}</div></div>`;
+  },
+  // Begruessung (2026-10-20): an/aus = Einstellung "begruessung" (sofort), Text = cfg.begruessung (mit "Speichern")
+  _begruessungHtml(zeile) {
+    const z = zeile(["begruessung", "Nach dem Start/Aufwachen zeigen"]);
+    if (!z) return "";
+    const t = this.cfg.begruessung || "", fremd = fremdeZeichen(t);
+    return `<div class="karte"><h3><ha-icon icon="mdi:hand-wave-outline"></ha-icon>Begrüßung</h3>${z}
+      <div class="ez"><span>Text</span><input data-bgr value="${esc(t)}" maxlength="40" placeholder="Hallo ${esc(devName(this.s.dev).replace(/^Remote( WZ)? /, ""))}"
+        ${fremd.length ? `title="Zeichen ohne Schrift auf der Remote: ${esc(fremd.join(" "))}" style="border-color:var(--gelb)"` : ""}></div>
+      <p class="vtext" style="margin:4px 0 0;font-size:12px;color:var(--sec)">Leer = „Hallo“ und der Name der Remote. Der Text wirkt nach „Speichern“. Die Tasten bedienen das Gerät schon, während die Begrüßung steht.</p></div>`;
+  },
+  async _einstSetzen(arg) {
+    const s = this.s;
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/einst_set", device: s.dev, ...arg });
+      Object.assign(s.meta[s.dev], { einst: r.einst, einst_offen: r.einst_offen });
+      await this._syncNachladen(r.abgeglichen);
+      return r;
+    } catch (e) { s.msg = { err: true, text: "Einstellung: " + (e.message || e.code || e) }; }
+    return null;
+  },
+  async _einstChange(t) {
+    const k = t.dataset.einst;
+    let v;
+    if (t.type === "checkbox") v = t.checked;
+    else if (t.tagName === "SELECT") v = JSON.parse(t.value);
+    else v = Math.max(Number(t.min), Math.min(Number(t.max), Math.round(Number(t.value) || 0)));
+    await this._einstSetzen({ werte: { [k]: v } });
+    this._render();
+  },
+  async _einstClick(a, t) {
+    const s = this.s;
+    if (a === "einst_vmodus") {
+      const m = VERBINDUNG_MODI.find(([id]) => id === t.dataset.m);
+      if (!m || !confirm(`Verbindung „${m[1]}“ für ${devName(s.dev)} setzen?\n\n${m[3]}`)) return true;
+      const r = await this._einstSetzen({ werte: m[4] });
+      if (r) s.msg = { text: `Verbindung „${m[1]}“: ${r.geaendert} Einstellung(en) geändert${r.einst_offen?.length ? " – gehen beim nächsten Aufwachen an die Remote" : ""}.` };
+      return true;
+    }
+    if (a === "einst_modus") {
+      const m = ENERGIE_MODI.find(([id]) => id === t.dataset.m);
+      if (!m || !confirm(`Energiesparmodus „${m[1]}“ für ${devName(s.dev)} setzen?\n\n${m[3]}`)) return true;
+      const r = await this._einstSetzen({ werte: m[4] });
+      if (r) s.msg = { text: `Energiesparmodus „${m[1]}“: ${r.geaendert} Einstellung(en) geändert${r.einst_offen?.length ? " – gehen beim nächsten Aufwachen an die Remote" : ""}.` };
+      return true;
+    }
+    if (a === "einst_std_merken") {
+      if (!confirm(`Einstellungen von ${devName(s.dev)} als Standard für neue Remotes merken?`)) return true;
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/einst_standard", device: s.dev });
+      s.einstStandard = r.einst_standard;
+      s.msg = { text: "Gemerkt – neue Remotes starten mit diesen Einstellungen." };
+      return true;
+    }
+    if (a === "einst_std_laden") {
+      if (!confirm(`Alle Einstellungen von ${devName(s.dev)} auf den Standard setzen?`)) return true;
+      const r = await this._einstSetzen({ werte: s.einstStandard });
+      if (r) s.msg = { text: `${r.geaendert} Einstellung(en) auf den Standard gesetzt.` };
+      return true;
+    }
+    return false;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(EinstTab));
+
+// ---------------------------------------------------------------- Helligkeit nach Lichtsensor (2026-10-17)
+// Eine Kurve je Ziel (Display, Tastenbeleuchtung, Dock-LED): Punkte Lux -> %, dazwischen linear ueber log10(Lux).
+// Gerechnet wird in HA (licht.py); hier Diagramm mit ziehbaren Punkten, Sensor-Wahl und Dock-LED-Einstellungen.
+const LICHT_ZIELE = [["disp", "Display", "#3b82f6"], ["kbd", "Tastenbeleuchtung", "#f59e0b"], ["dock", "Dock-LED", "#22c55e"]];
+const LX_MIN = Math.log10(0.5), LX_MAX = Math.log10(3000);
+const LK = { w: 640, h: 230, l: 38, r: 12, t: 12, b: 28 };
+const lxX = (lux) => LK.l + (Math.log10(Math.max(lux, 0.5)) - LX_MIN) / (LX_MAX - LX_MIN) * (LK.w - LK.l - LK.r);
+const pctY = (v) => LK.t + (100 - v) / 100 * (LK.h - LK.t - LK.b);
+const xLx = (x) => Math.pow(10, LX_MIN + (x - LK.l) / (LK.w - LK.l - LK.r) * (LX_MAX - LX_MIN));
+const yPct = (y) => 100 - (y - LK.t) / (LK.h - LK.t - LK.b) * 100;
+const lichtKurve = (punkte, lux) => {
+  const p = [...punkte].sort((a, b) => a[0] - b[0]);
+  if (!p.length) return 50;
+  const x = Math.log10(Math.max(lux, 0.5)), xs = p.map(([l]) => Math.log10(Math.max(l, 0.5)));
+  if (x <= xs[0]) return Math.round(p[0][1]);
+  for (let i = 1; i < p.length; i++) if (x <= xs[i]) return Math.round(p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (xs[i] > xs[i - 1] ? (x - xs[i - 1]) / (xs[i] - xs[i - 1]) : 1));
+  return Math.round(p[p.length - 1][1]);
+};
+const lichtPfad = (punkte) => {
+  let d = "";
+  for (let i = 0; i <= 80; i++) { const x = LK.l + i / 80 * (LK.w - LK.l - LK.r); d += `${i ? "L" : "M"}${x.toFixed(1)},${pctY(lichtKurve(punkte, xLx(x))).toFixed(1)}`; }
+  return d;
+};
+const lxText = (l) => l >= 100 ? Math.round(l) : l >= 10 ? Math.round(l) : (Math.round(l * 10) / 10).toString().replace(".", ",");
+
+const LICHT_CSS = `
+.licht { margin-bottom:16px; }
+.licht .lkopf { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.licht .lkopf h3 { margin:0; flex:1 1 auto; }
+.licht .lsensor { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0 4px; font-size:13px; color:var(--sec); }
+.licht .lsensor select { width:auto; flex:1 1 220px; max-width:420px; }
+.licht .lux { font-size:22px; font-weight:600; color:var(--primary-text-color); }
+.licht svg { width:100%; height:auto; display:block; margin:6px 0; touch-action:none; user-select:none; }
+.licht svg .gitter { stroke:var(--rand); stroke-width:1; }
+.licht svg text { fill:var(--sec); font-size:11px; }
+.licht svg .jetzt { stroke:var(--primary-text-color); stroke-dasharray:4 4; opacity:.5; }
+.licht svg path { fill:none; stroke-width:2.5; }
+.licht svg path.aus { stroke-dasharray:3 5; opacity:.35; }
+.licht svg path.neben { opacity:.35; }
+.licht svg .kp { cursor:grab; stroke:var(--card); stroke-width:2; }
+.licht svg .kp:hover, .licht svg .kp.zieh { r:9; }
+.licht .lziele { display:flex; flex-direction:column; gap:6px; }
+.licht .lz { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 10px; border-radius:12px; border:1px solid var(--rand); cursor:pointer; }
+.licht .lz.sel { border-color:var(--acc); background:var(--acc-s); }
+.licht .lz .farbe { width:14px; height:14px; border-radius:50%; flex:0 0 auto; }
+.licht .lz b { font-weight:600; min-width:150px; }
+.licht .lz .jetztw { color:var(--sec); font-size:13px; min-width:70px; }
+.licht .lz .pkte { display:flex; gap:4px; flex-wrap:wrap; flex:1 1 auto; }
+.licht .lz .pk { display:inline-flex; align-items:center; gap:2px; font-size:12px; padding:2px 4px 2px 8px; border-radius:999px; background:var(--flaeche); border:1px solid var(--rand); }
+.licht .lz .pk button { border:0; background:none; color:var(--sec); cursor:pointer; padding:0 2px; font-size:14px; line-height:1; }
+.licht .lfuss { display:flex; gap:10px 16px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+.ledtab { width:100%; border-collapse:collapse; font-size:14px; }
+.ledtab td { padding:8px 6px; border-top:1px solid var(--rand); vertical-align:middle; }
+.ledtab tr:first-child td { border-top:0; }
+.ledtab td.n b { display:block; } .ledtab td.n small { color:var(--sec); }
+.ledtab input[type=range] { width:140px; accent-color:var(--acc); vertical-align:middle; padding:0; border:0; }
+.ledtab td.ls select { width:auto; max-width:220px; } .ledtab td.ls small { display:block; color:var(--sec); font-size:12px; }
+.ledtab .wert { display:inline-block; min-width:3.2em; text-align:right; font-variant-numeric:tabular-nums; }
+.einst .ez .auto { font-size:11px; font-weight:600; color:var(--ok); margin-left:6px; }
+`;
+
+const LichtTab = {
+  _lichtLaden(neu) {
+    if (this.s.licht && !neu) return;
+    if (this._lichtLaedt) return;
+    this._lichtLaedt = true;
+    this._hass.callWS({ type: "esphomeremote_konfig/licht_get" })
+      .then((r) => { this.s.licht = r; }, (e) => { this.s.licht = { fehler: e.message || String(e) }; })
+      .finally(() => { this._lichtLaedt = false; this._render(); });
+  },
+  async _lichtSetzen(werte) {
+    try { this.s.licht = await this._hass.callWS({ type: "esphomeremote_konfig/licht_set", werte }); }
+    catch (e) { this.s.msg = { err: true, text: "Lichtsensor: " + (e.message || e.code || e) }; }
+    this._render();
+  },
+  // Sensor eines Geraets (Remote oder Dock): eigener (cfg.je) oder der Standard
+  _lichtSensor(g = this.s.dev) { const c = this.s.licht?.cfg; return (c?.je || {})[g] || c?.sensor || ""; },
+  _lichtLux(g = this.s.dev) {
+    const id = this._lichtSensor(g), st = id ? this._hass.states[id] : null;
+    const v = st ? Number(st.state) : NaN;
+    return Number.isFinite(v) ? v : null;
+  },
+  // Hinweis an den Reglern der Einstellungsseite
+  _lichtHinweis(k) {
+    const L = this.s.licht, z = { disp_bri: "disp", kbd_bri: "kbd" }[k];
+    if (!z || !L?.cfg || !L.cfg.ziele[z]?.an || L.cfg.aus.includes(this.s.dev) || this._lichtLux() == null) return "";
+    return `<span class="auto" title="Folgt dem Lichtsensor. Von Hand verstellen bringt der Kurve den Wert bei der jetzigen Helligkeit bei.">automatisch</span>`;
+  },
+  // Auswahl eines Sensors; std = Text fuer die Option "Standard" (dann Wert "" = Standard), sonst "keiner"
+  _lichtSensorSel(attrs, wert, std) {
+    const L = this.s.licht, sensoren = [...L.sensoren];
+    if (wert && !sensoren.some((x) => x.id === wert)) sensoren.push({ id: wert, name: wert + " (nicht gefunden)" });
+    return `<select ${attrs}><option value="">${esc(std || "– keiner (Automatik aus) –")}</option>${sensoren.map((x) => `<option value="${esc(x.id)}" ${x.id === wert ? "selected" : ""}>${esc(x.name)}${x.wert != null ? ` · ${esc(x.wert)} lx` : ""}</option>`).join("")}</select>`;
+  },
+  _lichtHtml() {
+    const L = this.s.licht;
+    if (!L) { this._lichtLaden(); return `<div class="karte licht"><h3><ha-icon icon="mdi:brightness-auto"></ha-icon>Helligkeit nach Lichtsensor</h3><div class="none">Lade …</div></div>`; }
+    if (L.fehler) return `<div class="msg err">Lichtsensor: ${esc(L.fehler)}</div>`;
+    const c = L.cfg, lux = this._lichtLux(), sel = this.s.lichtZiel || "disp", dev = this.s.dev;
+    const stdName = (L.sensoren.find((x) => x.id === c.sensor)?.name) || c.sensor;
+    const gitterX = [1, 10, 100, 1000].map((l) => `<line class="gitter" x1="${lxX(l)}" x2="${lxX(l)}" y1="${LK.t}" y2="${LK.h - LK.b}"/><text x="${lxX(l)}" y="${LK.h - 8}" text-anchor="middle">${l} lx</text>`).join("");
+    const gitterY = [0, 25, 50, 75, 100].map((v) => `<line class="gitter" x1="${LK.l}" x2="${LK.w - LK.r}" y1="${pctY(v)}" y2="${pctY(v)}"/><text x="${LK.l - 6}" y="${pctY(v) + 4}" text-anchor="end">${v}%</text>`).join("");
+    const reihen = [...LICHT_ZIELE.filter(([z]) => z !== sel), ...LICHT_ZIELE.filter(([z]) => z === sel)];   // ausgewaehlte Kurve oben
+    const kurven = reihen.map(([z, , f]) => {
+      const zz = c.ziele[z];
+      return `<path data-kz="${z}" d="${lichtPfad(zz.punkte)}" stroke="${f}" class="${zz.an ? "" : "aus"} ${z === sel ? "" : "neben"}"/>`
+        + (z === sel ? zz.punkte.map(([l, v], j) => `<circle class="kp" data-z="${z}" data-j="${j}" cx="${lxX(l)}" cy="${pctY(v)}" r="7" fill="${f}"><title>${lxText(l)} lx → ${v} %</title></circle>`).join("") : "");
+    }).join("");
+    const jetzt = lux != null ? `<line class="jetzt" x1="${lxX(lux)}" x2="${lxX(lux)}" y1="${LK.t}" y2="${LK.h - LK.b}"/><text x="${Math.min(lxX(lux) + 4, LK.w - 60)}" y="${LK.t + 10}">jetzt ${lxText(lux)} lx</text>` : "";
+    const ziele = LICHT_ZIELE.map(([z, name, f]) => {
+      const zz = c.ziele[z];
+      const w = zz.an && lux != null ? lichtKurve(zz.punkte, lux) : null;
+      return `<div class="lz ${z === sel ? "sel" : ""}">
+        <label class="sw" title="Automatik für ${name}"><input type="checkbox" data-li="an" data-z="${z}" ${zz.an ? "checked" : ""}></label>
+        <span class="farbe" style="background:${f}" data-a="li_ziel" data-z="${z}"></span><b data-a="li_ziel" data-z="${z}" title="Kurve bearbeiten">${name}</b><span class="jetztw">${w != null ? `jetzt ${w} %` : zz.an ? "–" : "aus"}</span>
+        <span class="pkte">${z === sel ? [...zz.punkte].sort((a, b) => a[0] - b[0]).map(([l, v]) => `<span class="pk">${lxText(l)} lx → ${v} %<button data-a="li_del" data-z="${z}" data-l="${l}" title="Punkt löschen" ${zz.punkte.length < 2 ? "disabled" : ""}>×</button></span>`).join("") : ""}</span>
+        ${z === sel ? `<button class="btn small ghost" data-a="li_add" data-z="${z}" ${lux == null ? "disabled" : ""} title="Punkt bei der jetzigen Helligkeit im Raum"><ha-icon icon="mdi:plus"></ha-icon>Punkt</button>
+          <button class="btn small ghost" data-a="li_reset" data-z="${z}" title="Kurve auf den Ausgangszustand"><ha-icon icon="mdi:backup-restore"></ha-icon></button>` : ""}</div>`;
+    }).join("");
+    return `<div class="karte licht">
+      <div class="lkopf"><h3><ha-icon icon="mdi:brightness-auto"></ha-icon>Helligkeit nach Lichtsensor</h3>
+        <label class="sw small" title="Gilt für ${esc(devName(dev))}"><input type="checkbox" data-li="dev" ${c.aus.includes(dev) ? "" : "checked"}><span>Für ${esc(devName(dev))}</span></label></div>
+      <div class="lsensor">Sensor für ${esc(devName(dev))} ${this._lichtSensorSel(`data-li="je" data-g="${esc(dev)}"`, (c.je || {})[dev] || "", c.sensor ? `Standard (${stdName})` : "Standard (keiner)")}
+        <span class="lux">${lux != null ? `${lxText(lux)} lx` : "–"}</span></div>
+      <div class="lsensor">Standard-Sensor (alle Remotes und Docks ohne eigenen) ${this._lichtSensorSel(`data-li="sensor"`, c.sensor, "")}</div>
+      <svg viewBox="0 0 ${LK.w} ${LK.h}" class="lchart">${gitterY}${gitterX}${kurven}${jetzt}</svg>
+      <div class="lziele">${ziele}</div>
+      <div class="lfuss"><label class="sw"><input type="checkbox" data-li="lernen" ${c.lernen ? "checked" : ""}><span>Kurve lernt mit</span></label>
+        <small class="note" style="margin:0;flex:1 1 300px">Verstellst du die Helligkeit von Hand (Regler auf der Remote, hier unter Bildschirm oder die LED-Helligkeit eines Docks), merkt sich die Kurve den Wert für die jetzige Helligkeit im Raum. Punkte im Diagramm lassen sich auch ziehen. Die Kurven gelten für alle Remotes und Docks, gerechnet wird mit dem Sensor im jeweiligen Raum (eigener Sensor je Remote hier oben, je Dock unter Dockingstation). Die Remote übernimmt neue Werte beim nächsten Verbinden.</small></div>
+    </div>`;
+  },
+  // Bereich Dockingstation: LED je Dock
+  _lichtDockHtml() {
+    const L = this.s.licht;
+    if (!L) { this._lichtLaden(); return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div><p class="hint">Lade …</p>`; }
+    if (L.fehler || !L.docks?.length) return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div><p class="hint">${L.fehler ? esc(L.fehler) : "Noch kein Dock mit LED gefunden."}</p>`;
+    const c = L.cfg, stdName = (L.sensoren.find((x) => x.id === c.sensor)?.name) || c.sensor;
+    const zeilen = L.docks.map((d) => {
+      const autoAn = c.ziele.dock.an && this._lichtLux(d.id) != null, auto = autoAn && d.auto, lx = this._lichtLux(d.id);
+      return `<tr><td class="n"><b>${esc(d.name)}</b><small>${d.online ? `LED jetzt ${d.led_ist ?? "–"} %` : "offline"}</small></td>
+        <td><label class="sw small" title="Helligkeit nach Lichtsensor (Kurve unter Fernbedienung › Einstellungen)"><input type="checkbox" data-li="dock_auto" data-dock="${esc(d.id)}" ${d.auto ? "checked" : ""} ${autoAn ? "" : "disabled"}><span>Automatisch</span></label></td>
+        <td class="ls">${this._lichtSensorSel(`data-li="je" data-g="${esc(d.id)}" title="Lichtsensor im Raum dieses Docks"`, (c.je || {})[d.id] || "", c.sensor ? `Standard (${stdName})` : "Standard (keiner)")}<small>${lx != null ? `${lxText(lx)} lx` : "kein Wert"}</small></td>
+        <td>${auto ? `<small class="note" style="margin:0">nach Lichtsensor</small>` : `<input type="range" min="5" max="100" step="5" value="${d.led}" data-li="dock_led" data-dock="${esc(d.id)}"> <span class="wert">${d.led} %</span>`}</td>
+        <td><label class="sw small"><input type="checkbox" data-li="dock_blinkt" data-dock="${esc(d.id)}" ${d.blinkt ? "checked" : ""}><span>Blinkt beim Senden</span></label></td></tr>`;
+    }).join("");
+    return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div>
+      <p class="hint">Wie hell die LED am Dock leuchtet – von Hand per Regler oder automatisch nach dem Lichtsensor im Raum (wie Display und Tastenbeleuchtung der Remote).</p>
+      <div class="karte"><table class="ledtab">${zeilen}</table>
+      ${c.ziele.dock.an ? "" : `<small class="note">Automatik aus: Kurve „Dock-LED“ ist aus (Fernbedienung › Einstellungen).</small>`}</div>`;
+  },
+  async _lichtChange(t) {
+    const f = t.dataset.li;
+    if (!f) return false;
+    const L = this.s.licht;
+    if (f === "sensor") await this._lichtSetzen({ sensor: t.value });
+    else if (f === "je") await this._lichtSetzen({ je: { [t.dataset.g]: t.value } });
+    else if (f === "lernen") await this._lichtSetzen({ lernen: t.checked });
+    else if (f === "an") await this._lichtSetzen({ ziele: { [t.dataset.z]: { an: t.checked } } });
+    else if (f === "dev" || f === "dock_auto") {
+      const id = f === "dev" ? this.s.dev : t.dataset.dock;
+      const aus = L.cfg.aus.filter((x) => x !== id);
+      if (!t.checked) aus.push(id);
+      await this._lichtSetzen({ aus });
+    } else if (f === "dock_led") await this._lichtSetzen({ docks: { [t.dataset.dock]: { led: Number(t.value) } } });
+    else if (f === "dock_blinkt") await this._lichtSetzen({ docks: { [t.dataset.dock]: { blinkt: t.checked } } });
+    return true;
+  },
+  async _lichtClick(a, t) {
+    if (!a.startsWith("li_")) return false;
+    const L = this.s.licht, z = t.dataset.z;
+    if (a === "li_ziel") { this.s.lichtZiel = z; return true; }
+    const pk = L.cfg.ziele[z].punkte;
+    if (a === "li_del") await this._lichtSetzen({ ziele: { [z]: { punkte: pk.filter(([l]) => String(l) !== t.dataset.l) } } });
+    if (a === "li_add") { const lux = this._lichtLux(); await this._lichtSetzen({ ziele: { [z]: { punkte: [...pk.filter(([l]) => Math.abs(Math.log10(l) - Math.log10(Math.max(lux, 0.5))) > 0.05), [Math.max(lux, 0.5), lichtKurve(pk, lux)]] } } }); }
+    if (a === "li_reset" && confirm("Kurve auf den Ausgangszustand zurücksetzen? Gelernte Punkte gehen verloren.")) await this._lichtSetzen({ ziele: { [z]: { zuruecksetzen: true } } });
+    return true;
+  },
+  // Punkte ziehen: Position live, beim Loslassen speichern
+  _lichtBind() {
+    const svg = this.shadowRoot.querySelector("svg.lchart");
+    if (!svg) return;
+    svg.onpointerdown = (ev) => {
+      const kp = ev.target.closest(".kp");
+      if (!kp) return;
+      ev.preventDefault();
+      const z = kp.dataset.z, j = Number(kp.dataset.j), punkte = this.s.licht.cfg.ziele[z].punkte.map((p) => [...p]);
+      const pfad = svg.querySelector(`path[data-kz="${z}"]`);
+      kp.classList.add("zieh");
+      svg.setPointerCapture(ev.pointerId);
+      const pos = (e) => { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); };
+      const move = (e) => {
+        const p = pos(e);
+        const x = Math.max(LK.l, Math.min(LK.w - LK.r, p.x)), y = Math.max(LK.t, Math.min(LK.h - LK.b, p.y));
+        const l = xLx(x);
+        punkte[j] = [l >= 10 ? Math.round(l) : Math.round(l * 10) / 10, Math.max(5, Math.min(100, Math.round(yPct(y))))];
+        kp.setAttribute("cx", lxX(punkte[j][0])); kp.setAttribute("cy", pctY(punkte[j][1]));
+        kp.querySelector("title").textContent = `${lxText(punkte[j][0])} lx → ${punkte[j][1]} %`;
+        pfad.setAttribute("d", lichtPfad(punkte));
+      };
+      const up = () => {
+        svg.onpointermove = null; svg.onpointerup = null; svg.onpointercancel = null;
+        this._lichtSetzen({ ziele: { [z]: { punkte } } });
+      };
+      svg.onpointermove = move; svg.onpointerup = up; svg.onpointercancel = up;
+    };
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(LichtTab));
+// ---------------------------------------------------------------- Gesten, Makros, Smart Display (2026-10-17)
+const GESTEN_FEST = [
+  ["schuetteln", "Zweimal schütteln", "mdi:vibrate", "Kurz zweimal hin und her – z. B. Pause/Wiedergabe."],
+  ["kipp_l", "Kippen nach links", "mdi:rotate-left", "Seitlich kippen und ½ s halten. Wieder zurück = scharf für das nächste Mal."],
+  ["kipp_r", "Kippen nach rechts", "mdi:rotate-right", "Wie links, andere Richtung. Ist es vertauscht: einfach die Aktionen tauschen."],
+];
+// "Wirkt wie Taste" (k): kurzer Druck dieser Taste in der aktuellen Aktivitaet - auch an der Remote waehlbar
+const GESTEN_TASTEN = [2, 5, 4, 11, 33, 43, 44, 42, 22, 102, 3, 31, 34, 13, 23, 25, 24, 21, 45];
+const GESTEN_CSS = `
+.gesten .lernbox { padding:12px 14px; border-radius:12px; background:var(--acc-s); border:1px solid var(--acc-m); margin:8px 0; display:flex; flex-direction:column; gap:8px; }
+.gesten .lernbox .punkte { display:flex; gap:10px; } .gesten .lernbox .punkte i { width:14px; height:14px; border-radius:50%; background:var(--rand); display:inline-block; }
+.gesten .lernbox .punkte i.ok { background:#22c55e; }
+.gesten .lernbox .zeile { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.gesten { display:grid; grid-template-columns:minmax(260px,340px) 1fr; gap:16px; padding:12px 16px 40px; align-items:start; }
+.gesten .gliste { display:flex; flex-direction:column; gap:8px; }
+.gesten .gk { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--rand); border-radius:12px; background:var(--card); cursor:pointer; }
+.gesten .gk.sel { border-color:var(--acc); background:var(--acc-s); }
+.gesten .gk > ha-icon { color:var(--acc); }
+.gesten .gk span { flex:1; display:flex; flex-direction:column; min-width:0; } .gesten .gk small { color:var(--sec); font-size:12px; }
+.gesten .gk.aus { opacity:.6; }
+.gesten .gkopf { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.gesten .vorlagen { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+.gesten .vl { position:relative; border:1px solid var(--rand); border-radius:10px; background:var(--flaeche); padding:4px; }
+.gesten .vl svg { width:120px; height:56px; display:block; }
+.gesten .vl button { position:absolute; top:2px; right:2px; padding:2px; }
+.gesten .log { font-size:13px; display:flex; flex-direction:column; gap:4px; max-height:160px; overflow:auto; }
+.gesten .log div { display:flex; gap:8px; } .gesten .log small { color:var(--sec); }
+.gesten .makro { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+.gesten .makro input { flex:1; min-width:0; } .gesten .makro select { width:auto; }
+.gesten .makro input.n { flex:0 0 110px; }
+@media (max-width: 870px) { .gesten { grid-template-columns:1fr; padding:12px; } }
+.anz .azeile { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:6px 0; }
+.anz .azeile label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--sec); flex:1 1 200px; }
+.anz .kal { display:flex; flex-wrap:wrap; gap:4px 14px; margin:6px 0; }
+.anz .kal label { display:inline-flex; gap:6px; align-items:center; font-size:13px; cursor:pointer; } .anz .kal input { width:auto; flex:0 0 auto; }
+.anz .vorschau { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; }
+.anz .mini { width:200px; border-radius:20px; background:#0e1116; color:#f1f3f5; padding:12px 12px 10px; box-shadow:inset 0 0 0 2px #23272e; font-size:12px; }
+.anz .mini .u { font-size:34px; text-align:center; font-weight:600; letter-spacing:1px; }
+.anz .mini .d { text-align:center; color:#8b94a3; }
+.anz .mini .w { display:flex; gap:8px; align-items:center; margin-top:8px; } .anz .mini .w ha-icon { --mdc-icon-size:30px; color:#facc15; }
+.anz .mini .k { background:#1a1f27; border-radius:8px; padding:6px 8px; margin-top:8px; display:flex; flex-direction:column; gap:4px; }
+.anz .mini .k b { color:#3b82f6; font-weight:500; }
+`;
+const vlHex = (h) => { const a = []; for (let i = 0; i < 192; i += 2) { let v = parseInt(h.slice(i, i + 2), 16); if (v > 127) v -= 256; a.push(v); } return a; };
+const vlSvg = (h) => {
+  const a = vlHex(h), farben = ["#ef4444", "#22c55e", "#3b82f6"];
+  return `<svg viewBox="0 0 124 56">${[0, 1, 2].map((k) => `<polyline fill="none" stroke="${farben[k]}" stroke-width="1.6" points="${Array.from({ length: 32 }, (_, p) => `${(p * 4).toFixed(0)},${(28 - a[p * 3 + k] / 5).toFixed(1)}`).join(" ")}"/>`).join("")}</svg>`;
+};
+
+const GestenTab = {
+  _gestAbo() {
+    if (this._gestUnsub || !this._hass?.connection) return;
+    const liste = (this._gestUnsub = []);
+    // kommt die Anmeldung erst nach dem Aushaengen zurueck: gleich wieder abmelden
+    const add = (typ, f) => this._hass.connection.subscribeEvents(f, typ).then((u) => { if (this._gestUnsub === liste) liste.push(u); else u(); }, () => {});
+    // Anlernen an der Remote (2026-10-17): Fortschritt und gespeicherte Gesten (HA hat cfg.gesten schon gespeichert)
+    add("esphomeremote_konfig_lernstand", (e) => {
+      const d = e.data || {}, l = this.s.gestLernen;
+      if (!l || d.device !== l.dev) return;
+      l.text = d.text; l.probe = d.probe;
+      if (d.text === "Abgebrochen") this.s.gestLernen = null;
+      this._render();
+    });
+    add("esphomeremote_konfig_gesten", (e) => {
+      const d = e.data || {}, c = this.s.cfg[d.device];
+      if (!c) return;
+      c.gesten = d.gesten || {};
+      // gespeicherten Stand mitziehen: HA hat schon gespeichert, das ist keine offene Aenderung
+      try { const sv = JSON.parse(this.s.saved[d.device]); sv.gesten = c.gesten; this.s.saved[d.device] = JSON.stringify(sv); } catch (err) { /* egal */ }
+      this.s.base[d.device] = JSON.stringify(c);
+      this._touch(d.device);
+      const l = this.s.gestLernen;
+      if (l && l.dev === d.device && (c.gesten.eigen || []).some((x) => x.id === l.id)) {
+        if (d.device === this.s.dev) this.s.gest = "e:" + l.id;
+        this.s.gestLernen = null;
+        this.s.msg = { text: `Geste „${l.name}“ angelernt und gespeichert.` };
+      }
+      if (this.s.mode === "gesten") this._render();
+    });
+    add("esphome.remote_geste_erkannt", (e) => {
+      const d = e.data || {};
+      if (d.geraet !== this.s.dev) return;
+      (this.s.gestLog ||= []).unshift({ t: new Date().toLocaleTimeString("de-DE"), n: d.name, a: d.abstand });
+      this.s.gestLog.length = Math.min(this.s.gestLog.length, 12);
+      if (this.s.mode === "gesten") this._render();
+    });
+  },
+  _lernBox() {
+    const l = this.s.gestLernen, n = Math.min(3, Number(l.probe) || 0);
+    return `<div class="lernbox"><div class="zeile"><span class="spin"></span><b>Anlernen: ${esc(l.name)}</b><span class="grow"></span>
+      <span class="punkte">${[0, 1, 2].map((i) => `<i class="${i < n ? "ok" : ""}"></i>`).join("")}</span></div>
+      <div>${esc(l.text || "Startet an der Remote …")}</div>
+      <small class="note" style="margin:0">An der Remote: kurz ruhig halten, Geste ausführen, mit OK bestätigen (Zurück = verwerfen) – dreimal. Die Remote zeigt jeden Schritt an.</small>
+      <div class="zeile"><button class="btn small ghost" data-a="gest_lern_zu">Ausblenden</button></div></div>`;
+  },
+  _gestObj(key = this.s.gest || "schuetteln") {
+    const g = this.cfg.gesten || {};
+    if (key.startsWith("e:")) return (g.eigen || []).find((x) => x.id === key.slice(2)) || null;
+    return g[key] || { an: true, s: [] };
+  },
+  _gestSetzen(key, obj) {
+    const g = clone(this.cfg.gesten || {});
+    if (key.startsWith("e:")) {
+      g.eigen = (g.eigen || []).map((x) => (x.id === key.slice(2) ? obj : x)).filter(Boolean);
+    } else g[key] = obj;
+    this.cfg.gesten = g;
+    this._touch();
+  },
+  _gestenHtml() {
+    this._gestAbo();
+    const g = this.cfg.gesten || {}, sel = this.s.gest || "schuetteln";
+    const w = this.s.meta[this.s.dev]?.einst || {};
+    const karte = (key, name, icon, sub) => {
+      const o = this._gestObj(key) || {};
+      const n = (o.s || []).length;
+      const bel = [o.k ? `wie ${KEYNAME[o.k] || o.k}` : "", n ? `${n} Aktion${n > 1 ? "en" : ""}` : ""].filter(Boolean).join(" + ") || "frei";
+      return `<div class="gk ${key === sel ? "sel" : ""} ${o.an === false ? "aus" : ""}" data-a="gest_sel" data-k="${esc(key)}"><ha-icon icon="${icon}"></ha-icon>
+        <span><b>${esc(name)}</b><small>${esc(sub)} · ${esc(bel)}</small></span></div>`;
+    };
+    const liste = GESTEN_FEST.map(([k, n, i]) => karte(k, n, i, "eingebaut")).join("")
+      + (g.eigen || []).map((e) => karte("e:" + e.id, e.n, "mdi:magic-staff", e.f === 2 ? `${(e.v || []).length} Probe(n)` : "bitte neu anlernen")).join("");
+    const o = this._gestObj(sel);
+    let ed = "";
+    if (o) {
+      const fest = GESTEN_FEST.find(([k]) => k === sel);
+      const steps = o.s || [];
+      ed = `<div class="editor" style="min-height:0">
+        <div class="gkopf" style="padding:14px 0 6px">
+          ${fest ? `<h2 style="margin:0;flex:1">${esc(fest[1])}</h2>` : `<input data-gest="n" value="${esc(o.n)}" maxlength="24" style="flex:1;font-size:17px;font-weight:600">`}
+          <label class="sw small"><input type="checkbox" data-gest="an" ${o.an === false ? "" : "checked"}><span>Aktiv</span></label>
+          ${fest ? "" : `<button class="icon sm" data-a="gest_del" title="Geste löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>`}</div>
+        ${fest ? `<small class="note">${esc(fest[3])}</small>` : `
+          <div class="vorlagen">${(o.v || []).map((h, j) => `<div class="vl" title="Probe ${j + 1} (rot X, grün Y, blau Z)">${vlSvg(h)}<button class="icon sm" data-a="gest_vdel" data-j="${j}" title="Probe löschen"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")}</div>
+          ${this.s.gestLernen?.id === o.id ? this._lernBox() : `<button class="btn small" data-a="gest_lern"><ha-icon icon="mdi:magic-staff"></ha-icon>Neu anlernen</button>`}
+          <small class="note">Anlernen: an der Remote dreimal ausführen, jedes Mal mit OK bestätigen. Die Remote prüft, ob die Proben zusammenpassen.</small>`}
+        <div class="inl" style="margin:10px 0 2px;font-size:13px;color:var(--sec);gap:8px;display:flex;align-items:center">Wirkt wie Taste
+          <select data-gest="k"><option value="0">– keine –</option>${GESTEN_TASTEN.map((k) => `<option value="${k}" ${o.k === k ? "selected" : ""}>${esc(KEYNAME[k] || k)}</option>`).join("")}</select></div>
+        <small class="note">Kurzer Druck dieser Taste in der aktuellen Aktivität – zusätzlich zu den Aktionen unten. Auch an der Remote einstellbar (Menü › Einstellungen › Gesten).</small>
+        <section class="gest"><h3><ha-icon icon="mdi:play-circle-outline"></ha-icon>Aktionen<span class="grow"></span>
+          <button class="btn small" data-a="add" data-g="gest"><ha-icon icon="mdi:plus"></ha-icon>Aktion</button></h3>
+          ${steps.map((st, i) => this._stepHtml("gest", i, st, steps.length)).join("") || `<div class="none">nichts – die Geste zeigt nur einen Hinweis</div>`}</section>
+      </div>`;
+    }
+    const log = (this.s.gestLog || []).map((x) => `<div><small>${esc(x.t)}</small><b>${esc(x.n)}</b><small>Abstand ${esc(x.a)}</small></div>`).join("");
+    const makros = this.cfg.makros || [];
+    return `<div class="gesten">
+      <div class="gliste">
+        <div class="karte" style="border:1px solid var(--rand);border-radius:14px;padding:10px 12px;background:var(--card)">
+          ${"gesten_an" in w ? `<label class="sw"><input type="checkbox" data-einst="gesten_an" ${w.gesten_an ? "checked" : ""}><span><b>Gesten an</b></span></label>
+          <label class="sw small"><input type="checkbox" data-einst="gesten_dunkel" ${w.gesten_dunkel ? "checked" : ""}><span>Auch bei dunklem Display</span></label>
+          <div class="inl" style="margin-top:8px;font-size:13px;color:var(--sec)">Empfindlichkeit <select data-einst="gesten_sens">${[[0, "Streng"], [1, "Normal"], [2, "Empfindlich"]].map(([v, l]) => `<option value='${v}' ${w.gesten_sens === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>`
+          : `<small class="note">Die Remote braucht dafür die neue Firmware (Bereich Firmware).</small>`}
+        </div>
+        ${liste}
+        ${this.s.gestLernen && !(g.eigen || []).some((x) => x.id === this.s.gestLernen.id) ? this._lernBox()
+          : `<div class="karte" style="border:1px solid var(--rand);border-radius:14px;padding:10px 12px;background:var(--card);display:flex;gap:8px;align-items:center">
+          <input data-gest="neuname" value="${esc(this.s.gestNeuName || "")}" maxlength="24" placeholder="Name, z. B. Kreis" style="flex:1">
+          <button class="btn" data-a="gest_neu" ${(g.eigen || []).length >= 8 ? "disabled title='Höchstens 8 eigene Gesten'" : ""}><ha-icon icon="mdi:magic-staff"></ha-icon>Anlernen</button></div>`}
+        <div class="karte" style="border:1px solid var(--rand);border-radius:14px;padding:10px 12px;background:var(--card)">
+          <h3 style="margin:0 0 6px;font-size:14px">Zuletzt erkannt</h3><div class="log">${log || `<small class="note">Noch nichts – Geste ausführen zum Testen.</small>`}</div></div>
+        <small class="note">Schutz gegen Fehlauslösen: nur nach kurzer Ruhe, nicht im Dock oder am Kabel, nicht direkt nach einer Taste, danach 1,2 s Pause. Eigene Gesten müssen eindeutig zu einer Vorlage passen.</small>
+      </div>
+      <div>${ed}
+        <div class="editor" style="min-height:0;margin-top:16px">
+          <div class="gkopf" style="padding:14px 0 6px"><h2 style="margin:0;flex:1">Touchpad-Makros</h2><button class="btn small" data-a="mak_neu"><ha-icon icon="mdi:plus"></ha-icon>Makro</button></div>
+          <small class="note">Erscheinen auf dem Touchpad unter <ha-icon icon="mdi:format-list-bulleted" style="--mdc-icon-size:14px"></ha-icon> neben Kopieren/Einfügen. Text tippen oder Tastenkürzel (Strg/Alt/Win + Taste). Für Buchstaben braucht der Bluetooth-Platz die Eingabe „Tastatur“ oder „Maus + Tastatur“ (Fernbedienung › Bluetooth).</small>
+          ${makros.map((m, i) => `<div class="makro"><input class="n" data-mak="n" data-i="${i}" value="${esc(m.n)}" maxlength="20" placeholder="Name">
+            <select data-mak="art" data-i="${i}"><option value="t" ${m.k ? "" : "selected"}>Text</option><option value="k" ${m.k ? "selected" : ""}>Kürzel</option></select>
+            ${m.k ? `<select data-mak="mod" data-i="${i}">${[[1, "Strg"], [4, "Alt"], [8, "Win/Cmd"], [2, "Umschalt"], [5, "Strg+Alt"], [3, "Strg+Umschalt"]].map(([v, l]) => `<option value="${v}" ${m.k[0] === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+              <input data-mak="key" data-i="${i}" value="${esc(HID_NAME[m.k[1]] || "")}" maxlength="6" placeholder="Taste" style="flex:0 0 70px">`
+            : `<input data-mak="t" data-i="${i}" value="${esc(m.t || "")}" maxlength="200" placeholder="Text, der getippt wird">`}
+            <button class="icon sm" data-a="mak_del" data-i="${i}"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`).join("") || `<div class="none">Keine Makros</div>`}
+        </div>
+      </div>
+    </div>`;
+  },
+  async _gestenClick(a, t) {
+    const s = this.s;
+    if (!["gest_sel", "gest_neu", "gest_lern", "gest_lern_zu", "gest_del", "gest_vdel", "mak_neu", "mak_del"].includes(a)) return false;
+    if (a === "gest_sel") { s.gest = t.dataset.k; return true; }
+    if (a === "gest_neu" || a === "gest_lern") {
+      // Anlernen an der Remote: dreimal ausfuehren, je mit OK bestaetigen; HA speichert das Ergebnis selbst
+      let id, name;
+      if (a === "gest_neu") {
+        name = (s.gestNeuName || "").trim();
+        if (!name) { s.msg = { err: true, text: "Erst einen Namen für die Geste eingeben." }; return true; }
+        id = "g" + Date.now().toString(36).slice(-6);
+      } else {
+        const o = this._gestObj(); id = o.id; name = o.n;
+      }
+      if (s.dirty[s.dev] && !confirm("Es gibt ungespeicherte Änderungen. Die angelernte Geste wird sofort gespeichert – deine anderen Änderungen bleiben offen. Weiter?")) return true;
+      try {
+        await this._hass.callWS({ type: "esphomeremote_konfig/geste_anlernen", device: s.dev, gid: id, name });
+        s.gestLernen = { dev: s.dev, id, name, text: "Probe 1 von 3: Remote ruhig halten, Geste ausführen, dann OK.", probe: 0 };
+        s.gestNeuName = "";
+      } catch (e) { s.msg = { err: true, text: e.message || String(e) }; }
+      return true;
+    }
+    if (a === "gest_lern_zu") { s.gestLernen = null; return true; }
+    if (a === "gest_del") {
+      if (!confirm("Diese Geste löschen?")) return true;
+      const g = clone(this.cfg.gesten || {});
+      g.eigen = (g.eigen || []).filter((x) => "e:" + x.id !== s.gest);
+      this.cfg.gesten = g; s.gest = "schuetteln"; this._touch(); return true;
+    }
+    if (a === "gest_vdel") {
+      const o = clone(this._gestObj()); o.v.splice(Number(t.dataset.j), 1); this._gestSetzen(s.gest, o); return true;
+    }
+    if (a === "mak_neu") { this.cfg.makros = [...(this.cfg.makros || []), { n: "Makro", t: "" }]; this._touch(); return true; }
+    if (a === "mak_del") { this.cfg.makros = (this.cfg.makros || []).filter((_, i) => i !== Number(t.dataset.i)); this._touch(); return true; }
+    return false;
+  },
+  _gestenChange(t) {
+    if (t.dataset.gest) {
+      const o = clone(this._gestObj() || {});
+      if (t.dataset.gest === "neuname") { this.s.gestNeuName = t.value; return false; }
+      if (t.dataset.gest === "an") o.an = t.checked;
+      if (t.dataset.gest === "k") { const k = Number(t.value); if (k) o.k = k; else delete o.k; }
+      if (t.dataset.gest === "n") o.n = t.value.slice(0, 24);
+      this._gestSetzen(this.s.gest || "schuetteln", o);
+      return true;
+    }
+    if (t.dataset.mak) {
+      const m = clone(this.cfg.makros || []), i = Number(t.dataset.i), x = m[i];
+      const f = t.dataset.mak;
+      if (f === "n") x.n = t.value;
+      else if (f === "t") x.t = t.value;
+      else if (f === "art") { if (t.value === "k") { delete x.t; x.k = [1, 0x06]; } else { delete x.k; x.t = ""; } }
+      else if (f === "mod") x.k[0] = Number(t.value);
+      else if (f === "key") { const c = HID_CODE(t.value); if (c != null) x.k[1] = c; else this.s.msg = { err: true, text: `Taste „${t.value}“ unbekannt (a–z, 0–9, Enter, Esc, Tab, Entf, F1–F12, Pfeile: Hoch/Runter/Links/Rechts)` }; }
+      this.cfg.makros = m; this._touch();
+      return true;
+    }
+    return false;
+  },
+  // Steps der gewaehlten Geste fuer den Schritte-Editor
+  _gestSteps() { return { gest: clone(this._gestObj()?.s || []) }; },
+  _gestCommit(kc) { const o = clone(this._gestObj() || { an: true }); o.s = kc.gest; this._gestSetzen(this.s.gest || "schuetteln", o); },
+
+  // ---- Smart Display (Bereich Dockingstation) ----
+  _anzLaden() {
+    if (this._anzLaedt) return;
+    this._anzLaedt = true;
+    this._hass.callWS({ type: "esphomeremote_konfig/anzeige_get" }).then((r) => { this.s.anz = r; }, (e) => { this.s.anz = { fehler: e.message }; })
+      .finally(() => { this._anzLaedt = false; this._render(); });
+  },
+  async _anzSetzen(werte) {
+    try { this.s.anz = await this._hass.callWS({ type: "esphomeremote_konfig/anzeige_set", werte }); }
+    catch (e) { this.s.msg = { err: true, text: "Smart Display: " + (e.message || e) }; }
+    this._render();
+  },
+  _anzHtml() {
+    const A = this.s.anz;
+    if (!A) { this._anzLaden(); return ""; }
+    if (A.fehler) return `<div class="msg err">${esc(A.fehler)}</div>`;
+    const c = A.cfg, v = A.vorschau || {};
+    const sel = (f, liste, wert, leer) => `<select data-anz="${f}"><option value="">${leer}</option>${liste.map((x) => `<option value="${esc(x.id)}" ${x.id === wert ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>`;
+    const wico = (v.w?.i || "weather-cloudy");
+    const jetzt = new Date();
+    return `<div class="dkopf"><h2><ha-icon icon="mdi:tablet-dashboard"></ha-icon> Smart Display im Dock</h2></div>
+      <div class="karte anz"><div class="vorschau"><div style="flex:1 1 300px">
+        <small class="note" style="margin:0 0 6px">Steht eine Remote im Dock, zeigt sie Uhrzeit, Wetter, Raumklima, Termine und den Ladestand. Herausnehmen = sofort wieder Fernbedienung. Ein/aus und wie lange das Display an bleibt: Fernbedienung › Einstellungen › Dock-Anzeige.</small>
+        <div class="azeile"><label>Wetter${sel("wetter", A.wetter, c.wetter, "– kein Wetter –")}</label></div>
+        <div class="azeile"><label>Raumtemperatur${sel("raum_t", A.temp, c.raum_t, "– keine –")}</label><label>Luftfeuchte${sel("raum_f", A.feuchte, c.raum_f, "– keine –")}</label></div>
+        <div style="font-size:12px;color:var(--sec);margin-top:8px">Kalender (die nächsten <select data-anz="anzahl" style="width:auto">${[0, 1, 2, 3].map((n) => `<option ${c.anzahl === n ? "selected" : ""}>${n}</option>`).join("")}</select> Termine aus <select data-anz="tage" style="width:auto">${[1, 2, 3, 7, 14, 31].map((n) => `<option value="${n}" ${c.tage === n ? "selected" : ""}>${n === 1 ? "heute" : n + " Tagen"}</option>`).join("")}</select>)</div>
+        <div class="kal">${A.kalender.map((k) => `<label><input type="checkbox" data-anz="kal" value="${esc(k.id)}" ${c.kalender.includes(k.id) ? "checked" : ""}>${esc(k.name)}</label>`).join("")}</div>
+      </div>
+      <div class="mini"><div class="d">${jetzt.toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "short" })}</div>
+        <div class="u">${jetzt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+        ${v.w ? `<div class="w"><ha-icon icon="mdi:${esc(wico)}"></ha-icon><div><b style="font-size:16px">${v.w.t ?? ""}°</b><br><span style="color:#8b94a3">${esc(v.w.z || "")}${v.w.h != null ? ` · ${v.w.h}° / ${v.w.l}°` : ""}</span></div></div>` : ""}
+        ${v.r ? `<div style="margin-top:6px"><ha-icon icon="mdi:thermometer" style="--mdc-icon-size:14px;color:#3b82f6"></ha-icon> ${v.r.t != null ? String(v.r.t).replace(".", ",") + " °C" : ""} ${v.r.f != null ? "&nbsp; " + v.r.f + " %" : ""}</div>` : ""}
+        <div class="k">${(v.k || []).map(([tag, zeit, titel]) => `<div><b>${esc(tag)} ${esc(zeit)}</b><br>${esc(titel)}</div>`).join("") || "<div>Keine Termine</div>"}</div>
+        ${(() => { const L = this._live(this.s.dev); return L.akku != null ? `<div style="margin-top:8px;color:#22c55e"><ha-icon icon="mdi:battery-charging-high" style="--mdc-icon-size:14px"></ha-icon> Lädt · ${Math.round(L.akku)} %</div>` : ""; })()}</div>
+      </div></div>`;
+  },
+  async _anzChange(t) {
+    const f = t.dataset.anz;
+    if (!f) return false;
+    const c = this.s.anz.cfg;
+    if (f === "kal") await this._anzSetzen({ kalender: t.checked ? [...c.kalender, t.value] : c.kalender.filter((x) => x !== t.value) });
+    else await this._anzSetzen({ [f]: ["anzahl", "tage"].includes(f) ? Number(t.value) : t.value });
+    return true;
+  },
+};
+// HID-Tastencodes fuer Makro-Kuerzel
+const HID_NAME = {};
+"abcdefghijklmnopqrstuvwxyz".split("").forEach((c, i) => { HID_NAME[0x04 + i] = c; });
+"1234567890".split("").forEach((c, i) => { HID_NAME[0x1E + i] = c; });
+Object.assign(HID_NAME, { 0x28: "Enter", 0x29: "Esc", 0x2A: "Rück", 0x2B: "Tab", 0x2C: "Leer", 0x4C: "Entf", 0x4F: "Rechts", 0x50: "Links", 0x51: "Runter", 0x52: "Hoch", 0x4A: "Pos1", 0x4D: "Ende" });
+for (let i = 1; i <= 12; i++) HID_NAME[0x39 + i] = "F" + i;
+const HID_CODE = (n) => { const k = String(n).trim().toLowerCase(); for (const [c, v] of Object.entries(HID_NAME)) if (v.toLowerCase() === k) return Number(c); return null; };
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(GestenTab));
+
+
+const PANEL_STAND = (() => { try { return new URL(import.meta.url).searchParams.get("v") || "dev"; } catch (e) { return "dev"; } })();
+// Rahmen der Oberflaeche (2026-10-17) - kommt nach THEME_CSS. Breiten ueber Container-Abfragen (das Panel ist
+// schmaler als das Fenster, solange die HA-Seitenleiste offen ist): ab 1100 px volle Leiste, darunter nur Symbole,
+// unter 760 px Schublade + Leiste unten.
+const SHELL_CSS = `
+:host { --side:256px; --kopf:64px; --side-bg:color-mix(in srgb, var(--card) 55%, var(--primary-background-color)); --blau:#3b82f6; --gelb:#f59e0b; }
+button, input, select, textarea { font-family:inherit; }
+.laden { min-height:60vh; display:flex; align-items:center; justify-content:center; gap:16px; padding:24px; }
+.laden .logo, .brand .logo { width:40px; height:40px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; color:#fff; flex:0 0 auto;
+  background:linear-gradient(135deg, var(--acc), color-mix(in srgb, var(--acc) 45%, #8b5cf6)); box-shadow:0 6px 18px var(--acc-m); }
+.huelle { container-type:inline-size; container-name:huelle; min-height:100vh; }
+.app { display:grid; grid-template-columns:var(--side) minmax(0,1fr); min-height:100vh; }
+
+/* Seitenleiste */
+.side { position:sticky; top:0; height:100vh; overflow-y:auto; overscroll-behavior:contain; display:flex; flex-direction:column; gap:2px;
+  padding:16px 12px 14px; background:var(--side-bg); border-right:1px solid var(--rand); scrollbar-width:thin; z-index:8; }
+.brand { display:flex; align-items:center; gap:11px; padding:2px 6px 16px; }
+.brand .bt { display:flex; flex-direction:column; line-height:1.2; min-width:0; } .brand b { font-size:15px; } .brand small { font-size:10.5px; color:var(--sec); letter-spacing:.08em; text-transform:uppercase; }
+.navzu { display:none; margin-left:auto; }
+.suche { display:flex; align-items:center; gap:8px; border:1px solid var(--rand); background:var(--card); color:var(--sec); border-radius:12px; padding:8px 10px; cursor:pointer; font-size:13px; }
+.suche:hover { border-color:var(--acc); color:var(--primary-text-color); }
+.suche > span { flex:1; text-align:left; white-space:nowrap; } .suche ha-icon { --mdc-icon-size:18px; }
+kbd { font-family:inherit; font-size:10.5px; line-height:1.4; padding:1px 6px; border-radius:6px; border:1px solid var(--rand); border-bottom-width:2px; background:var(--flaeche); color:var(--sec); white-space:nowrap; }
+.suche.nav { margin:0 0 10px; }
+.nsec { font-size:10.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--sec); padding:18px 10px 6px; }
+.ni { display:flex; align-items:center; gap:12px; width:100%; border:0; background:none; color:var(--primary-text-color); padding:9px 10px; border-radius:11px; cursor:pointer; font-size:14px; text-align:left; position:relative; }
+.ni > ha-icon { color:var(--sec); --mdc-icon-size:20px; flex:0 0 auto; }
+.ni:hover { background:color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
+.ni.on { background:var(--acc-s); color:var(--acc); font-weight:600; } .ni.on > ha-icon { color:var(--acc); }
+.ni > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.zahl { font-style:normal; font-size:11px; font-weight:700; min-width:20px; height:20px; padding:0 6px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; background:var(--gelb); color:#1a1a1a; }
+.punkt { width:8px; height:8px; border-radius:50%; background:var(--acc); flex:0 0 auto; display:inline-block; } .punkt.warn { background:var(--gelb); }
+.rgruppe { border-radius:16px; margin:1px 0; transition:background-color .2s; } .rgruppe.auf { background:color-mix(in srgb, var(--primary-text-color) 4.5%, transparent); padding-bottom:6px; }
+.rk { display:flex; align-items:center; gap:11px; width:100%; border:0; background:none; color:inherit; padding:8px; border-radius:14px; cursor:pointer; text-align:left; }
+.rk:hover { background:color-mix(in srgb, var(--primary-text-color) 6%, transparent); } .rgruppe.auf .rk:hover { background:none; }
+.ava { position:relative; width:40px; height:40px; flex:0 0 40px; display:inline-flex; align-items:center; justify-content:center; }
+.ava svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
+.ava b { font-size:14px; } .ava::after { content:""; position:absolute; right:-1px; bottom:-1px; width:12px; height:12px; border-radius:50%; border:2.5px solid var(--side-bg); background:#6b7280; }
+.ava.wlan::after { background:var(--ok); } .ava.ble::after { background:var(--blau); } .ava.dock::after { background:#a855f7; }
+svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, transparent); } svg .rv { fill:none; stroke-linecap:round; transition:stroke-dasharray .6s ease; }
+.rkt { display:flex; flex-direction:column; min-width:0; flex:1; line-height:1.3; } .rkt b { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rkt small { font-size:11.5px; color:var(--sec); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rk.on .rkt b { color:var(--acc); }
+.subnav { display:flex; flex-direction:column; gap:1px; padding:0 6px 0 10px; }
+.subnav .ni { padding:7px 10px 7px 12px; font-size:13.5px; gap:11px; } .subnav .ni > ha-icon { --mdc-icon-size:18px; }
+.nfuss { margin-top:auto; padding:18px 10px 0; font-size:10.5px; color:var(--sec); display:flex; flex-direction:column; gap:2px; opacity:.8; }
+
+/* Kopf */
+.haupt { min-width:0; display:flex; flex-direction:column; }
+.seitenkopf { position:sticky; top:0; z-index:7; height:var(--kopf); display:flex; align-items:center; gap:12px; padding:0 24px;
+  background:color-mix(in srgb, var(--primary-background-color) 80%, transparent); backdrop-filter:saturate(1.6) blur(16px); -webkit-backdrop-filter:saturate(1.6) blur(16px); border-bottom:1px solid var(--rand); }
+.ktitel { display:flex; align-items:center; gap:12px; min-width:0; border:0; background:none; color:inherit; padding:0; text-align:left; cursor:default; }
+.kico { width:38px; height:38px; flex:0 0 38px; border-radius:11px; background:var(--acc-s); color:var(--acc); display:inline-flex; align-items:center; justify-content:center; }
+.kt { display:flex; flex-direction:column; min-width:0; line-height:1.25; } .kt b { font-size:18px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.kt small { font-size:12px; color:var(--sec); display:flex; align-items:center; gap:2px; } .kt small ha-icon { --mdc-icon-size:14px; display:none; }
+.seitenkopf .suche { min-width:230px; }
+.hamenu { color:var(--sec); }
+.syncw { position:relative; }
+.pill { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--rand); background:var(--card); color:var(--primary-text-color); border-radius:999px; padding:5px 13px 5px 5px; font-size:13px; cursor:pointer; white-space:nowrap; }
+.pill:hover, .pill.auf { border-color:color-mix(in srgb, var(--primary-text-color) 28%, transparent); }
+.pill .pd { width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--flaeche); color:var(--sec); } .pill .pd ha-icon { --mdc-icon-size:16px; }
+.pill.ok .pd { background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
+.pill.warn .pd, .pill.wait .pd { background:color-mix(in srgb, var(--gelb) 20%, transparent); color:var(--gelb); }
+.pill.err .pd { background:color-mix(in srgb, var(--fehler) 18%, transparent); color:var(--fehler); }
+.pill.busy .pd { background:var(--acc-s); color:var(--acc); animation:puls 1.4s ease-in-out infinite; }
+@keyframes puls { 50% { box-shadow:0 0 0 5px var(--acc-s); } }
+.syncpop { position:absolute; right:0; top:calc(100% + 10px); width:min(440px, calc(100vw - 24px)); z-index:30; background:var(--card); border:1px solid var(--rand);
+  border-radius:18px; padding:16px; box-shadow:0 22px 60px rgba(0,0,0,.32); display:flex; flex-direction:column; gap:12px; animation:hoch .14s ease-out; }
+.groesse { display:flex; flex-direction:column; gap:6px; font-size:12.5px; color:var(--sec); }
+.groesse > span { display:flex; justify-content:space-between; gap:8px; } .groesse b { color:var(--primary-text-color); font-weight:600; }
+.groesse.warn .xbar span { background:var(--gelb); } .groesse.err .xbar span { background:var(--fehler); } .groesse.warn b { color:var(--gelb); } .groesse.err b { color:var(--fehler); }
+.zahlen span.voll { border-color:var(--gelb); color:var(--gelb); } .zahlen span.voll b { color:var(--gelb); }
+.syncpop .spt { font-size:14px; } .syncpop .xfer { box-shadow:none; } .syncpop .note { margin:0; line-height:1.5; }
+
+/* Inhalt */
+.inhalt { min-width:0; flex:1; padding-bottom:28px; }
+/* Leiste "Was gerade laeuft" (2026-10-23) */
+.aktivl { display:flex; flex-direction:column; gap:6px; padding:10px 24px 0; }
+.aktivl .al { display:flex; align-items:center; gap:10px; padding:7px 12px; border-radius:12px; background:var(--card); border:1px solid var(--rand); font-size:13px; min-width:0; }
+.aktivl .al > ha-icon { --mdc-icon-size:18px; color:var(--sec); flex:none; }
+.aktivl .alt { display:flex; flex-direction:column; min-width:0; flex:1; } .aktivl .alt b { font-weight:500; }
+.aktivl .alt small { color:var(--sec); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.aktivl .alb { flex:0 1 180px; height:6px; border-radius:3px; background:var(--flaeche); overflow:hidden; } .aktivl .alb i { display:block; height:100%; background:var(--acc); transition:width .4s; }
+.aktivl .alb.busy i { width:30% !important; animation:xpulse 1.2s ease-in-out infinite; }
+.aktivl .alp { font-size:12px; color:var(--sec); min-width:34px; text-align:right; font-variant-numeric:tabular-nums; }
+.aktivl .al.busy > ha-icon { color:var(--acc); animation:puls 1.4s ease-in-out infinite; }
+.aktivl .al.ok { border-color:color-mix(in srgb, var(--ok) 40%, transparent); } .aktivl .al.ok > ha-icon { color:var(--ok); }
+.aktivl .al.wait > ha-icon, .aktivl .al.warn > ha-icon { color:var(--gelb); }
+.aktivl .al.err { border-color:color-mix(in srgb, var(--fehler) 45%, transparent); } .aktivl .al.err > ha-icon { color:var(--fehler); }
+@media (max-width:700px) { .aktivl { padding:10px 12px 0; } .aktivl .alb { flex-basis:70px; } .aktivl .alt small { white-space:normal; } }
+.sbw { position:sticky; bottom:18px; z-index:15; display:flex; justify-content:center; pointer-events:none; padding:0 12px; }
+.sbw .savebar { position:relative; left:auto; bottom:auto; transform:none; pointer-events:auto; animation:hoch .2s ease-out; }
+.savebar-platz { display:none; }
+.lade { display:flex; align-items:center; gap:10px; color:var(--sec); padding:40px; justify-content:center; }
+.blink { animation:blink 2.2s ease-out; border-radius:10px; }
+@keyframes blink { 0%, 30% { box-shadow:0 0 0 3px var(--acc), 0 0 0 9px var(--acc-s); background:var(--acc-s); } 100% { box-shadow:0 0 0 0 transparent; } }
+.main, .mmain { padding:20px 24px 28px; } .mbar { padding:18px 24px 0; } .gesten { padding:20px 24px 40px; }
+.einst, .dock, .fw { max-width:1240px; padding:20px 24px 40px; }
+@container huelle (min-width: 761px) { .main { grid-template-columns:minmax(300px,380px) minmax(0,1fr); gap:24px; } }
+.remote-wrap { top:calc(var(--kopf) + 16px); }
+.edhead { top:var(--kopf); flex-wrap:wrap; row-gap:6px; } .edhead > div:nth-child(2) { flex:1 1 200px; min-width:0; }
+.main .editor { min-height:520px; }
+
+/* Menue-Editor */
+@container huelle (min-width: 1150px) { .mmain { grid-template-columns:250px 360px minmax(0,1fr); } }
+@container huelle (min-width: 761px) and (max-width: 1149px) { .mmain { grid-template-columns:240px minmax(0,1fr); } .mmain .editor { grid-column:1 / -1; } }
+@container huelle (max-width: 760px) { .mmain, .main { grid-template-columns:minmax(0,1fr); } }
+.phd .inl:has(> .inl2) { flex-direction:column; align-items:stretch; gap:8px; }
+.phd .inl2 { display:flex; flex-direction:column; align-items:stretch; gap:3px; font-size:12px; color:var(--sec); }
+.phd .inl2 select { width:100%; }
+.mprev { min-width:0; }
+.note.warnz { color:var(--gelb); }
+.karte.entw { gap:6px; } .karte.entw .sw span b { font-weight:600; }
+.mgrp { border:1px solid var(--rand, var(--div)); border-radius:14px; margin:10px 0; padding:0 12px; background:var(--card); }
+.mgrp > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:8px; padding:10px 0; font-size:15px; user-select:none; }
+.mgrp > summary::-webkit-details-marker { display:none; }
+.mgrp > summary > ha-icon { color:var(--acc); background:var(--acc-s); border-radius:8px; padding:4px; --mdc-icon-size:18px; }
+.mgrp > summary > b { font-weight:500; }
+.mgrp > summary > small { margin-left:auto; color:var(--sec); font-size:12px; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:55%; }
+.mgrp > summary::after { content:"›"; color:var(--sec); font-size:20px; line-height:1; transition:transform .15s; margin-left:4px; }
+.mgrp[open] > summary::after { transform:rotate(90deg); }
+.mgrp[open] > summary { border-bottom:1px solid var(--div); margin-bottom:10px; }
+.mgrpi { padding:0 0 12px; display:flex; flex-direction:column; gap:8px; }
+.mgrpi > label, .mgrpi > .inl { margin:0; }
+.grpbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.form.mgrpform { display:block; padding:0; }
+.gest .inl:has(.seg) { flex-wrap:wrap; } .gest .inl:has(.seg) > label { flex:1 1 auto; }   /* Ausrichtung/Groesse liefen rechts aus dem Editor */
+/* Einstellungen: Hinweis links statt zentriert */
+.einst > .hint { text-align:left; max-width:none; margin:0 0 4px; }
+
+/* Aktivitaeten-Leiste */
+.aktleiste { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:18px 24px 0; }
+.akts { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.aktk { display:flex; align-items:center; gap:9px; border:1px solid var(--rand); background:var(--card); color:inherit; border-radius:14px; padding:5px 14px 5px 5px; cursor:pointer; text-align:left; line-height:1.2; }
+.aktk:hover { border-color:color-mix(in srgb, var(--primary-text-color) 26%, transparent); }
+.ai { width:32px; height:32px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; background:var(--flaeche); color:var(--sec); flex:0 0 auto; } .ai ha-icon { --mdc-icon-size:18px; }
+.aktk > span:last-child { display:flex; flex-direction:column; } .aktk b { font-size:14px; font-weight:600; } .aktk small { font-size:11px; color:var(--sec); white-space:nowrap; max-width:130px; overflow:hidden; text-overflow:ellipsis; }
+.aktk.on { border-color:var(--acc); background:var(--acc-s); box-shadow:0 4px 14px var(--acc-s); } .aktk.on .ai { background:var(--acc); color:#fff; }
+.aktk.nodock { opacity:.62; } .aktk.nodock b { font-style:italic; }
+.aktk.plus { padding:0; width:44px; height:44px; justify-content:center; border-style:dashed; color:var(--sec); background:transparent; }
+.akts.modi .aktk { border-style:dashed; } .akts.modi .aktk.on { border-style:solid; } .akts.modi .ai { width:28px; height:28px; }
+.trenner { width:1px; align-self:stretch; min-height:32px; background:var(--rand); margin:0 2px; }
+.seg.ansicht button { display:inline-flex; align-items:center; gap:6px; } .seg.ansicht ha-icon { --mdc-icon-size:17px; }
+.aktset { padding:12px 24px 0; } .modhint { text-align:left; max-width:none; margin:8px 24px 0; }
+
+/* Steckbrief (keine Taste gewaehlt) */
+.steckbrief { padding:20px 4px 8px; display:flex; flex-direction:column; gap:16px; }
+.sbkopf { display:flex; gap:14px; align-items:center; } .sbkopf h2 { margin:0; font-size:22px; } .sbkopf small { color:var(--sec); }
+.ai.gross { width:52px; height:52px; border-radius:15px; background:var(--acc-s); color:var(--acc); } .ai.gross ha-icon { --mdc-icon-size:28px; }
+.sbzahlen { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px; }
+.sbzahlen > div { background:var(--flaeche); border:1px solid var(--rand); border-radius:14px; padding:12px 14px; display:flex; flex-direction:column; gap:2px; }
+.sbzahlen b { font-size:26px; font-weight:700; line-height:1.1; } .sbzahlen b small { font-size:14px; color:var(--sec); font-weight:500; }
+.sbzahlen span { font-size:12px; color:var(--sec); display:flex; align-items:center; gap:5px; }
+.c-short { color:#4fc3f7; } .c-double { color:#ffb74d; } .c-long { color:#ba68c8; } i.dot { display:inline-block; }
+.sbev { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; color:var(--sec); padding:10px 12px; border-radius:12px; border:1px dashed var(--rand); }
+.sbev span { flex:1 1 200px; } .sbev > ha-icon { --mdc-icon-size:18px; }
+.steckbrief h3 { margin:8px 0 0; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.09em; color:var(--sec); }
+.chips.frei { flex-wrap:wrap; overflow:visible; padding:0; } .chips.frei .chip { display:inline-flex; align-items:center; gap:6px; } .chips.frei ha-icon { --mdc-icon-size:16px; color:var(--sec); }
+i.cd { width:14px; height:8px; border-radius:4px; display:inline-block; }
+.tipps { margin:0; padding-left:18px; color:var(--sec); font-size:13px; line-height:2; } .tipps a { color:var(--acc); }
+.steckbrief .msg { margin:0; }
+
+/* Tabelle aller Aktivitaeten */
+.matrixw { padding:18px 24px 40px; }
+table.matrix { border-collapse:separate; border-spacing:0; width:100%; table-layout:fixed; font-size:12.5px; background:var(--card); border:1px solid var(--rand); border-radius:16px; }
+.matrix th, .matrix td { border-bottom:1px solid var(--rand); padding:0; text-align:left; vertical-align:top; }
+.matrix tr:last-child > * { border-bottom:0; }
+.matrix thead th { position:sticky; top:var(--kopf); z-index:2; background:var(--card); padding:10px 8px; font-size:13px; font-weight:600; white-space:nowrap; }
+.matrix thead th:first-child { border-top-left-radius:16px; } .matrix thead th:last-child { border-top-right-radius:16px; }
+.matrix thead th .ai { width:26px; height:26px; margin-right:8px; vertical-align:middle; } .matrix thead th.mod { color:var(--sec); }
+.matrix thead th:first-child { width:200px; }
+.matrix thead th { overflow:hidden; text-overflow:ellipsis; }
+.matrix tbody th { padding:10px 12px; white-space:nowrap; font-weight:500; overflow:hidden; text-overflow:ellipsis; }
+.matrix tbody th > * { vertical-align:middle; } .matrix tbody th > span { margin-left:8px; }
+.matrix tbody th ha-icon { --mdc-icon-size:18px; color:var(--sec); } .matrix .okt { font-style:normal; font-weight:700; font-size:11px; color:var(--sec); width:18px; text-align:center; }
+.matrix td + td, .matrix th + td { border-left:1px solid var(--rand); }
+.matrix td button { display:flex; flex-direction:column; gap:3px; width:100%; min-height:42px; border:0; background:none; color:inherit; text-align:left; padding:8px 10px; cursor:pointer; font-size:12.5px; }
+.matrix td button:hover { background:var(--acc-s); } .matrix td button.on { background:var(--acc-s); box-shadow:inset 0 0 0 2px var(--acc); }
+.mz { display:flex; gap:7px; align-items:baseline; min-width:0; max-width:100%; } .mz > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; } .mz i { font-style:normal; color:var(--sec); }
+.mz .dot { flex:0 0 auto; transform:translateY(-1px); }
+.matrix .frei { color:var(--sec); opacity:.45; } .matrix tbody tr:hover th { color:var(--acc); }
+.matrixw .hint { text-align:left; max-width:none; }
+
+/* Uebersicht */
+.ueber, .werk { max-width:1280px; margin:0 auto; padding:30px 28px 40px; display:flex; flex-direction:column; gap:30px; }
+.hero { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+.hero h1 { margin:0; font-size:30px; font-weight:700; letter-spacing:-.01em; }
+.hero p { margin:6px 0 0; color:var(--sec); font-size:14px; } .warnt { color:var(--gelb); } .okt2 { color:var(--ok); }
+h2.abschn { font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--sec); margin:0 0 12px; font-weight:600; display:flex; align-items:center; gap:8px; }
+h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:999px; background:var(--flaeche); border:1px solid var(--rand); letter-spacing:0; }
+.hinweise { display:flex; flex-direction:column; gap:8px; }
+.hw2 { display:flex; align-items:center; gap:12px; padding:11px 12px 11px 12px; border-radius:16px; background:var(--card); border:1px solid var(--rand); flex-wrap:wrap; }
+.hi { width:36px; height:36px; border-radius:11px; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; background:var(--acc-s); color:var(--acc); }
+.hw2.warn .hi { background:color-mix(in srgb, var(--gelb) 18%, transparent); color:var(--gelb); }
+.hw2.err .hi { background:color-mix(in srgb, var(--fehler) 16%, transparent); color:var(--fehler); } .hw2.err { border-color:color-mix(in srgb, var(--fehler) 40%, transparent); }
+.hw2.busy .hi { animation:puls 1.4s ease-in-out infinite; }
+.ht { flex:1 1 240px; min-width:0; display:flex; flex-direction:column; gap:1px; } .ht b { font-size:14px; font-weight:600; } .ht small { font-size:12.5px; color:var(--sec); }
+.rgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap:18px; }
+.rkarte { position:relative; overflow:hidden; background:var(--card); border:1px solid var(--rand); border-radius:24px; padding:22px; display:flex; flex-direction:column; gap:16px; box-shadow:var(--schatten); --glow:#6b7280; }
+.rkarte.wlan { --glow:var(--ok); } .rkarte.ble { --glow:var(--blau); } .rkarte.dock { --glow:#a855f7; }
+.rkarte::before { content:""; position:absolute; right:-90px; top:-110px; width:300px; height:300px; border-radius:50%; background:radial-gradient(circle, var(--glow) 0%, transparent 68%); opacity:.13; pointer-events:none; }
+.rkarte > * { position:relative; }
+.rkarte header { display:flex; gap:18px; align-items:center; }
+.ringw { position:relative; width:88px; height:88px; flex:0 0 auto; } .ringw svg { width:100%; height:100%; transform:rotate(-90deg); }
+.ringw .rw { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1; }
+.ringw .rw b { font-size:24px; font-weight:700; } .ringw .rw b small { font-size:12px; color:var(--sec); font-weight:500; margin-left:1px; }
+.ringw .rw ha-icon { --mdc-icon-size:16px; color:var(--gelb); margin-top:2px; }
+.rkopf { display:flex; flex-direction:column; gap:5px; min-width:0; } .rkopf h2 { margin:0; font-size:21px; font-weight:700; } .rkopf small { color:var(--sec); font-size:12.5px; line-height:1.4; }
+.zst { display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--sec); }
+.zst i { width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 0 4px color-mix(in srgb, currentColor 18%, transparent); }
+.zst.wlan { color:var(--ok); } .zst.ble { color:var(--blau); } .zst.dock { color:#a855f7; } .zst.wlan i, .zst.ble i, .zst.dock i { animation:atmen 2.4s ease-in-out infinite; }
+@keyframes atmen { 50% { box-shadow:0 0 0 7px color-mix(in srgb, currentColor 6%, transparent); } }
+.fakten { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }
+.fakt { display:flex; gap:10px; align-items:center; padding:10px 12px; border-radius:14px; background:var(--flaeche); min-width:0; }
+.fakt > ha-icon { --mdc-icon-size:18px; color:var(--sec); flex:0 0 auto; }
+.fakt span { display:flex; flex-direction:column; min-width:0; } .fakt small { font-size:10.5px; color:var(--sec); text-transform:uppercase; letter-spacing:.07em; }
+.fakt b { font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fakt.ok b { color:var(--ok); } .fakt.warn b { color:var(--gelb); } .fakt.err b { color:var(--fehler); } .fakt.busy b { color:var(--acc); }
+.zahlen { display:flex; gap:6px; flex-wrap:wrap; } .zahlen span { font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--rand); color:var(--sec); } .zahlen b { color:var(--primary-text-color); }
+.rkarte footer { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.gesp { color:var(--sec); font-size:11.5px; margin-top:-6px; }
+.dgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap:12px; }
+.dkarte { background:var(--card); border:1px solid var(--rand); border-radius:18px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+.dk1 { display:flex; align-items:center; gap:11px; } .dk1 > span:nth-child(2) { display:flex; flex-direction:column; flex:1; min-width:0; } .dk1 b { font-size:14px; }
+.dk1 small { color:var(--sec); font-size:12px; display:flex; align-items:center; gap:6px; } .zp { width:7px; height:7px; border-radius:50%; background:#6b7280; display:inline-block; } .dkarte.on .zp { background:var(--ok); }
+.dkarte:not(.on) { opacity:.75; }
+.dk2 { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--sec); } .dk2 span { display:inline-flex; align-items:center; gap:4px; } .dk2 ha-icon { --mdc-icon-size:15px; }
+.ki { width:42px; height:42px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; background:var(--acc-s); color:var(--acc); flex:0 0 auto; }
+.kgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap:12px; }
+.kachel { display:flex; gap:13px; align-items:center; padding:14px; border-radius:18px; border:1px solid var(--rand); background:var(--card); cursor:pointer; text-align:left; color:inherit; }
+.kachel:hover { border-color:var(--acc); transform:translateY(-1px); box-shadow:0 8px 24px rgba(0,0,0,.12); }
+.kachel > span:nth-child(2) { display:flex; flex-direction:column; gap:3px; flex:1; min-width:0; } .kachel b { font-size:14.5px; } .kachel small { font-size:12.5px; color:var(--sec); line-height:1.4; }
+.kachel .kpf { color:var(--sec); --mdc-icon-size:18px; } .kachel:hover .kpf { color:var(--acc); }
+.kachel.rot .ki { background:color-mix(in srgb, var(--fehler) 14%, transparent); color:var(--fehler); } .kachel.rot:hover { border-color:var(--fehler); }
+
+/* Firmware-Seite: Titel steht im Kopf, nur die Knoepfe bleiben */
+.seite-fw .fw > .dkopf:first-child h2 { display:none; }
+/* Aenderungsliste ueber der Speicherleiste */
+.sbw { flex-direction:column; align-items:center; gap:8px; }
+.diffpop { pointer-events:auto; width:min(560px, 100%); max-height:min(52vh, 460px); display:flex; flex-direction:column; gap:8px; padding:14px 10px 10px 14px; background:var(--card);
+  border:1px solid var(--rand); border-radius:18px; box-shadow:0 18px 50px rgba(0,0,0,.32); animation:hoch .15s ease-out; }
+.diffpop > b { font-size:13px; padding-right:4px; }
+.diffl { overflow-y:auto; display:flex; flex-direction:column; gap:2px; padding-right:4px; }
+.dz { display:flex; align-items:center; gap:10px; border:0; background:none; color:inherit; text-align:left; padding:6px 8px; border-radius:10px; cursor:pointer; }
+.dz:hover:not(:disabled) { background:var(--flaeche); } .dz:disabled { cursor:default; }
+.dz > span:nth-child(2) { display:flex; flex-direction:column; flex:1; min-width:0; } .dz b { font-size:13px; font-weight:500; } .dz small { font-size:11.5px; color:var(--sec); }
+.dzi { width:28px; height:28px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:var(--acc-s); color:var(--acc); flex:0 0 auto; } .dzi ha-icon { --mdc-icon-size:16px; }
+.dzi.neu { background:color-mix(in srgb, var(--ok) 16%, transparent); color:var(--ok); } .dzi.weg { background:color-mix(in srgb, var(--fehler) 14%, transparent); color:var(--fehler); }
+.dzi.warn { background:color-mix(in srgb, var(--gelb) 18%, transparent); color:var(--gelb); }
+.diffk.on { background:var(--acc-s); border-color:var(--acc); }
+.dz .kpf { color:var(--sec); --mdc-icon-size:18px; }
+
+/* Akku-Verlauf in der Remote-Karte */
+.kurve { margin:-4px 0 -2px; } .kurve svg { width:100%; height:54px; display:block; }
+.kurve .kl { display:flex; justify-content:space-between; font-size:10.5px; color:var(--sec); margin-top:2px; } .kurve .kl span:nth-child(2) { color:inherit; opacity:.9; }
+
+/* Werkstatt */
+.werk .fw.eingebettet { padding:0; max-width:none; margin:0; }
+.werk .fw.eingebettet > .dkopf:first-child { margin-top:0; }
+.kuerzel { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap:8px; }
+.kuerzel > div { display:flex; flex-direction:column; gap:6px; padding:12px 14px; border-radius:14px; background:var(--card); border:1px solid var(--rand); } .kuerzel small { color:var(--sec); }
+
+/* Bluetooth und Infrarot als Seite */
+.alsseite { padding:20px 24px 40px; }
+.alsseite .modal { position:static; inset:auto; background:none; backdrop-filter:none; -webkit-backdrop-filter:none; padding:0; display:block; animation:none; z-index:auto; }
+.alsseite .dlg { max-width:900px; margin:0 auto; max-height:none; height:auto; border-radius:22px; border:1px solid var(--rand); box-shadow:var(--schatten); animation:none; padding:8px 24px 24px; }
+.alsseite .dlg .opts { overflow:visible; }
+.alsseite .dh .icon[data-a="modalx"], .alsseite .dfoot { display:none; }
+.alsseite .dh h2 { font-size:20px; }
+.alsseite h3 { margin:18px 0 6px; font-size:15px; }
+
+/* Toast */
+.toast { position:fixed; right:22px; bottom:22px; z-index:45; width:min(460px, calc(100vw - 32px)); display:flex; align-items:flex-start; gap:10px; padding:13px 10px 13px 14px; border-radius:16px;
+  background:var(--card); border:1px solid var(--rand); box-shadow:0 18px 48px rgba(0,0,0,.3); font-size:13.5px; line-height:1.5; overflow:hidden; }
+.toast.neu { animation:toastein .26s cubic-bezier(.2,.9,.3,1.2); }
+@keyframes toastein { from { opacity:0; transform:translateY(16px) scale(.97); } }
+.toast > ha-icon { color:var(--acc); flex:0 0 auto; margin-top:1px; }
+.toast.err { border-color:color-mix(in srgb, var(--fehler) 50%, transparent); } .toast.err > ha-icon { color:var(--fehler); }
+.toast > span { flex:1; min-width:0; } .toast .icon { padding:4px; margin:-3px 0 0; } .toast .btn { flex:0 0 auto; }
+.toast .zeit { position:absolute; left:0; bottom:0; height:3px; width:100%; background:var(--acc); opacity:.5; transform-origin:left; animation-name:zeit; animation-timing-function:linear; animation-fill-mode:forwards; }
+@keyframes zeit { to { transform:scaleX(0); } }
+.huelle:has(.savebar) ~ .toast { bottom:92px; }
+
+/* Schnellsuche */
+.palbg { position:fixed; inset:0; z-index:50; background:rgba(8,10,14,.5); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px); display:flex; justify-content:center; align-items:flex-start; padding:11vh 16px 16px; animation:einblenden .12s; }
+.pal { width:min(660px, 100%); max-height:72vh; display:flex; flex-direction:column; background:var(--card); border:1px solid var(--rand); border-radius:20px; box-shadow:0 30px 90px rgba(0,0,0,.5); overflow:hidden; animation:hoch .16s ease-out; }
+.palin { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--rand); } .palin > ha-icon { color:var(--acc); }
+.palin input { border:0; background:none; font-size:17px; padding:6px 0; box-shadow:none !important; outline:0; }
+.palin input::-webkit-search-cancel-button { display:none; }
+.palerg { overflow-y:auto; padding:6px 8px 8px; scroll-padding:30px; }
+.palg { font-size:10.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--sec); padding:12px 10px 5px; font-weight:600; }
+.pe { display:flex; align-items:center; gap:12px; width:100%; border:0; background:none; color:inherit; text-align:left; padding:7px 10px; border-radius:12px; cursor:pointer; }
+.pico { width:34px; height:34px; border-radius:10px; background:var(--flaeche); display:inline-flex; align-items:center; justify-content:center; color:var(--sec); flex:0 0 auto; } .pico ha-icon { --mdc-icon-size:18px; }
+.pe > span:nth-child(2) { display:flex; flex-direction:column; min-width:0; flex:1; }
+.pe b { font-weight:500; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .pe small { font-size:12px; color:var(--sec); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pe:hover { background:var(--flaeche); } .pe.sel { background:var(--acc-s); } .pe.sel .pico { background:var(--acc); color:#fff; }
+.pe mark { background:none; color:var(--acc); font-weight:700; }
+.palfuss { display:flex; gap:14px; align-items:center; padding:9px 16px; border-top:1px solid var(--rand); font-size:11.5px; color:var(--sec); }
+
+/* Leiste unten (Handy) */
+.unten { display:none; position:fixed; left:0; right:0; bottom:0; z-index:12; padding:6px 6px calc(6px + env(safe-area-inset-bottom)); justify-content:space-around;
+  background:color-mix(in srgb, var(--card) 90%, transparent); backdrop-filter:saturate(1.6) blur(16px); -webkit-backdrop-filter:saturate(1.6) blur(16px); border-top:1px solid var(--rand); }
+.unten button { flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; border:0; background:none; color:var(--sec); font-size:10.5px; cursor:pointer; padding:2px 0; }
+.unten .ui { display:inline-flex; padding:4px 18px; border-radius:999px; transition:background-color .2s; }
+.unten button.on { color:var(--acc); font-weight:600; } .unten button.on .ui { background:var(--acc-s); }
+.navgrund { display:none; }
+
+/* Mittlere Breite: Leiste nur mit Symbolen */
+@container huelle (min-width: 761px) and (max-width: 1100px) {
+  .app { grid-template-columns:78px minmax(0,1fr); }
+  .side { padding:14px 9px; align-items:center; }
+  .brand { padding:2px 0 14px; } .brand .bt, .suche.nav > span, .suche.nav kbd, .ni > span, .rkt, .nfuss { display:none; }
+  .suche.nav { width:46px; height:40px; justify-content:center; padding:0; }
+  .nsec { padding:0; margin:12px 0 8px; width:36px; height:1px; background:var(--rand); font-size:0; }
+  .ni { width:48px; height:44px; justify-content:center; padding:0; }
+  .ni .zahl, .ni .punkt { position:absolute; top:3px; right:3px; } .ni .zahl { min-width:17px; height:17px; font-size:10px; padding:0 4px; }
+  .rgruppe { width:60px; } .rgruppe.auf { padding-bottom:4px; }
+  .rk { justify-content:center; padding:7px 0; position:relative; } .rk > .punkt { position:absolute; top:6px; right:6px; }
+  .subnav { padding:0; align-items:center; } .subnav .ni { width:44px; height:38px; padding:0; }
+}
+@container huelle (min-width: 761px) and (max-width: 1100px) { .main { grid-template-columns:minmax(280px,340px) minmax(0,1fr); gap:18px; } }
+/* Schmal: Schublade + Leiste unten */
+@container huelle (max-width: 760px) {
+  .app { grid-template-columns:minmax(0,1fr); }
+  .side { position:fixed; left:0; top:0; bottom:0; height:auto; width:min(310px, 86vw); z-index:40; transform:translateX(-104%); transition:transform .24s cubic-bezier(.2,.8,.2,1); box-shadow:0 0 60px rgba(0,0,0,.4); background:var(--card); --side-bg:var(--card); }
+  .app.navauf .side { transform:none; }
+  .app.navauf .navgrund { display:block; position:fixed; inset:0; z-index:39; background:rgba(0,0,0,.45); animation:einblenden .2s; }
+  .navzu { display:inline-flex; }
+  .unten { display:flex; }
+  .seitenkopf { padding:0 8px 0 6px; gap:6px; height:58px; --kopf:58px; }
+  .seitenkopf .suche { min-width:0; padding:8px; border:0; background:none; } .seitenkopf .suche > span, .seitenkopf .suche kbd { display:none; } .seitenkopf .suche ha-icon { --mdc-icon-size:22px; }
+  .ktitel { cursor:pointer; } .kico { width:34px; height:34px; flex-basis:34px; } .kt b { font-size:16px; } .kt small ha-icon { display:inline-flex; }
+  .pill { padding:4px; } .pill .ptx { display:none; }
+  .inhalt { padding-bottom:84px; }
+  .sbw { bottom:80px; }
+  .huelle:has(.main.editing) .unten, .huelle:has(.mmain.editing) .unten { display:none; }
+  .huelle:has(.main.editing) .sbw, .huelle:has(.mmain.editing) .sbw { bottom:12px; }
+  .main, .mmain { padding:14px 12px 20px; } .mbar, .aktleiste { padding:14px 12px 0; } .aktset { padding:10px 12px 0; } .modhint { margin:8px 12px 0; }
+  .gesten { padding:14px 12px 30px; } .einst, .dock, .fw, .alsseite, .matrixw { padding:14px 12px 30px; }
+  .ueber, .werk { padding:20px 14px 30px; gap:24px; } .hero h1 { font-size:24px; }
+  .akts { flex-wrap:nowrap; overflow-x:auto; max-width:100%; scrollbar-width:none; padding-bottom:2px; } .aktleiste { flex-wrap:wrap; } .trenner { display:none; }
+  .rkarte { padding:18px; border-radius:20px; } .fakt b { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; } .ringw { width:72px; height:72px; } .ringw .rw b { font-size:20px; }
+  .sbzahlen { grid-template-columns:repeat(2, minmax(0,1fr)); }
+  .alsseite .dlg { padding:4px 14px 18px; border-radius:18px; }
+  .matrix thead th:first-child { width:130px; } .matrixw { overflow-x:auto; }
+  .matrix thead th { position:static; }
+}
+@media (max-width: 760px) {
+  .toast { left:12px; right:12px; width:auto; bottom:84px; }
+  .huelle:has(.savebar) ~ .toast { bottom:150px; }
+  .palbg { padding:0; } .pal { max-height:100%; height:100%; border-radius:0; width:100%; border:0; }
+  .main.editing .editor, .mmain.editing .editor { z-index:20; }
+  .sbw { z-index:25; }
+}
+`;
+
+// ===========================================================================
+// Oberflaeche (2026-10-17): Seitenleiste mit allen Bereichen, Uebersicht mit Live-Stand der Remotes und Docks,
+// Belegungstabelle, Werkstatt, Schnellsuche (Strg+K), Meldungen als Toast. Die Bereiche selbst (Tasten, Menue,
+// Einstellungen ...) rendern weiter ihre eigenen Mixins - hier nur Rahmen und Navigation.
+// ===========================================================================
+const SEITEN_REMOTE = [
+  ["keys", "Tasten", "mdi:gesture-tap-button"],
+  ["home", "Startseite", "mdi:view-dashboard-outline"],
+  ["menu", "Menü", "mdi:menu-open"],
+  ["gesten", "Gesten", "mdi:gesture"],
+  ["bt", "Bluetooth", "mdi:bluetooth-settings"],
+  ["ir", "Infrarot", "mdi:remote-tv"],
+  ["verkn", "Verknüpfungen", "mdi:link-variant"],
+  ["akku", "Akku", "mdi:battery-heart-variant"],
+  ["einst", "Einstellungen", "mdi:tune-variant"],
+];
+// Verknuepfungen je Remote (cfg.ents, spiegel.py): welche HA-Entitaeten die eingebauten Funktionen nutzen
+const VERKN = [
+  ["jetzt", "Wiedergabe („Jetzt läuft“)", "mdi:play-box-multiple-outline", ["media_player"],
+    "Wiedergabe-Karte der Startseite, Media-Seite und Musik-Anzeige zeigen Titel, Cover und Position dieses Players. Am besten ein „Jetzt läuft“-Player (Seite Wiedergabe), der Fernseher, Streamer und Musik zusammenfasst."],
+  ["tv", "Fernseher", "mdi:television", ["media_player"],
+    "Ob der Fernseher läuft: längere Energie-Zeiten bei laufendem TV, Knopf „Fernseher einschalten“ auf der Media-Seite."],
+  ["multiroom", "Multiroom-Musik", "mdi:speaker-multiple", ["media_player"],
+    "Zeigt der Wiedergabe-Player die Quelle „multiroom“, steuern Play/Vor/Zurück/Lautstärke diesen Player statt Bluetooth."],
+  ["tts", "Lautsprecher für den Assistenten", "mdi:account-voice", ["media_player"],
+    "Antworten des Sprachassistenten werden hier abgespielt (Einstellung „Antwort hörbar“)."],
+  ["adb", "Streamer (Texteingabe per ADB)", "mdi:cast", ["media_player"],
+    "Android-TV-/ADB-Entität: die Tastatur-Seite tippt Text darüber ein."],
+  ["timer", "Timer neben der Uhr", "mdi:timer-outline", ["timer"],
+    "Läuft dieser Timer, zeigt die Statusleiste den Countdown."],
+];
+const SEITEN_SYSTEM = [
+  ["jetzt", "Wiedergabe", "mdi:play-box-multiple-outline"],
+  ["klingel", "Klingel", "mdi:doorbell-video"],
+  ["dock", "Dockingstation", "mdi:dock-window"],
+  ["ircodes", "IR-Codes", "mdi:remote-tv"],
+  ["sync", "Synchronisieren", "mdi:sync"],
+  ["vergleich", "Vergleichen", "mdi:compare-horizontal"],
+  ["pruef", "Prüfen & Finden", "mdi:clipboard-check-outline"],
+  ["fw", "Firmware & Geräte", "mdi:chip"],
+  ["werk", "Werkstatt", "mdi:toolbox-outline"],
+];
+const SEITEN_TEXT = {
+  start: ["Übersicht", "mdi:view-dashboard-variant-outline"],
+  ...Object.fromEntries(SEITEN_SYSTEM.map(([k, t, i]) => [k, [t, i]])),
+};
+const AKT_ICONS = [[/tv|fernseh|sony|samsung|bravia/i, "mdi:television"], [/stream|cast|google|apple ?tv|fire|shield/i, "mdi:cast"],
+  [/tablet|ipad|handy|phone/i, "mdi:tablet"], [/musik|music|radio|sonos|spotify|audio|hifi/i, "mdi:music"], [/licht|lampe/i, "mdi:lightbulb-outline"],
+  [/spiel|game|ps\d|playstation|xbox|switch|konsole/i, "mdi:gamepad-variant-outline"], [/kino|film|beamer|movie/i, "mdi:movie-open-outline"],
+  [/pc|computer|laptop|mac/i, "mdi:laptop"]];
+const aktIcon = (n) => (AKT_ICONS.find(([r]) => r.test(n || "")) || [null, "mdi:play-box-outline"])[1];
+const norm = (x) => String(x ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/ß/g, "ss");
+const fmtStd = (h) => h < 1 ? "unter 1 Std." : h < 48 ? `${Math.round(h)} Std.` : `${(h / 24).toFixed(1).replace(".", ",")} Tage`;
+const fmtZeit = (iso) => { if (!iso) return ""; const d = new Date(iso); if (isNaN(d)) return ""; const min = (Date.now() - d) / 60000;
+  return min < 1 ? "gerade eben" : min < 60 ? `vor ${Math.round(min)} min` : min < 60 * 20 ? `vor ${Math.round(min / 60)} Std.`
+    : d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
+const ring = (pct, farbe, dicke = 7) => { const r = 32 - dicke / 2 - 1, u = 2 * Math.PI * r, p = Math.max(0, Math.min(100, pct || 0));
+  return `<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="${r}" class="rg" style="stroke-width:${dicke}"/><circle cx="32" cy="32" r="${r}" class="rv" style="stroke:${farbe};stroke-width:${dicke};stroke-dasharray:${(u * p / 100).toFixed(1)} ${u.toFixed(1)}"/></svg>`; };
+const akkuFarbe = (a) => a == null ? "var(--sec)" : a < 20 ? "var(--fehler)" : a < 40 ? "#f59e0b" : "var(--ok)";
+
+const OberflaecheTab = {
+  // ------------------------------------------------------------- Live-Stand
+  _live(d) {
+    const m = this.s.meta[d] || {}, slug = m.slug, S = this._hass?.states || {};
+    const st = (id) => S[id];
+    const num = (id) => { const v = parseFloat(st(id)?.state); return Number.isFinite(v) ? v : null; };
+    const g = (this.s.fw?.geraete || []).find((x) => x.name === d);
+    const akku = num(`sensor.${slug}_akkustand`), rate = num(`sensor.${slug}_akku_rate`);
+    const laden = st(`binary_sensor.${slug}_ladekabel`)?.state === "on";
+    const haE = st(`binary_sensor.${slug}_ha_verbunden`), wlan = st(`binary_sensor.${slug}_wlan_aktiv`)?.state === "on";
+    // Verbindung: die Firmware-Liste aus HA weiss es am besten (Sensoren behalten im Tiefschlaf ihren letzten Wert)
+    let zustand = g ? (g.online ? "wlan" : g.ha_da ? "ble" : "schlaf") : haE?.state === "on" ? (wlan ? "wlan" : "ble") : "schlaf";
+    // Ohne eigene HA-Verbindung, aber Werte kamen uebers Dock (2026-10-23, dockstatus.py): "Ueber Dock", solange die
+    // letzte Meldung juenger als 11 min ist (2026-10-25: Status kommt nur noch bei Aenderung, sonst alle 10 min) und die Remote nicht "Tiefschlaf" gemeldet hat
+    const dA = st(`sensor.${slug}_akkustand`), dTs = st(`sensor.${slug}_tiefschlaf_status`)?.state;
+    const dock = zustand === "schlaf" && dA?.attributes?.quelle === "dock" && Date.now() - new Date(dA.last_updated).getTime() < 660000
+      && dTs !== "Tiefschlaf" ? (dA.attributes.dock || "Dock") : null;
+    if (dock) zustand = "dock";
+    const restH = akku != null && rate != null && rate < -0.2 && !laden ? akku / -rate : null;
+    const aktI = num(`sensor.${slug}_aktivitat`);
+    const dockName = dock ? devName(String(dock).replace(/_/g, "-")) : "";
+    const ztext = { wlan: "Online · WLAN", ble: "Online · Bluetooth", dock: `Online · über ${dockName}`, schlaf: "Schläft" }[zustand];
+    const kurz = [akku != null ? `${Math.round(akku)} %${laden ? " ⚡" : ""}` : "", { wlan: "WLAN", ble: "Bluetooth", dock: "Dock", schlaf: "schläft" }[zustand]].filter(Boolean).join(" · ");
+    let akt = aktI != null ? this.s.cfg[d]?.activities?.[Math.round(aktI)]?.name : null;
+    if (!akt) akt = (this.s.cfg[d]?.activities || []).find((a) => st(`switch.${slug}_aktivitat_${norm(a.name).replace(/[^a-z0-9]+/g, "_")}`)?.state === "on")?.name || null;
+    return { slug, g, akku, rate, laden, zustand, ztext, kurz, restH, akt,
+      verbunden: ["unknown", "unavailable", "", undefined].includes(st(`sensor.${slug}_verbunden_mit`)?.state) ? null : st(`sensor.${slug}_verbunden_mit`).state,
+      neustart: st(`sensor.${slug}_letzter_neustart`)?.state, gemeldet: st(`sensor.${slug}_akkustand`)?.last_updated };
+  },
+  // Wie voll ist die Datei, die die Remote laedt? (HA lehnt Speichern ueber max_bytes ab)
+  _groesse(d = this.s.dev) {
+    const s = this.s, m = s.meta[d] || {}, max = s.maxBytes || 90000;
+    if (m.bytes == null) return null;
+    let b = m.bytes;
+    if (s.dirty[d] && s.base[d] && s.saved[d]) {
+      const c = (this._grC ||= {})[d];
+      if (c && c.base === s.base[d] && c.saved === s.saved[d]) b += c.diff;
+      else {
+        const enc = (this._enc ||= new TextEncoder());
+        const diff = enc.encode(s.base[d]).length - enc.encode(s.saved[d]).length;
+        this._grC[d] = { base: s.base[d], saved: s.saved[d], diff };
+        b += diff;
+      }
+    }
+    return { b, max, pct: Math.round((b / max) * 100), text: `${Math.round(b / 1000)} von ${Math.round(max / 1000)} KB` };
+  },
+  _statistik(d) {
+    const c = this.s.cfg[d] || {};
+    let bel = 0;
+    for (const a of c.activities || []) for (const kc of Object.values(a.keys || {})) bel += GESTURES.filter(([g]) => kc[g]?.length).length;
+    const seiten = (c.menu?.pages || []).filter((p) => !p.popup);
+    return { akt: (c.activities || []).length, bel, seiten: seiten.length, eintraege: seiten.reduce((n, p) => n + (p.items || []).length, 0),
+      popups: (c.menu?.pages || []).filter((p) => p.popup).length, modi: (c.modi || []).length, gesten: (c.gesten?.eigen || []).length };
+  },
+  _fwSicher() {
+    const fw = this.s.fw;
+    if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return false; }
+    return true;
+  },
+
+  // ------------------------------------------------------------- Navigation
+  _geh(b, m) {
+    const s = this.s;
+    if (s.modal && ["btset", "irset"].includes(s.modal.type)) s.modal = null;
+    if (b === "remote" && !m) m = s.bereich === "remote" ? s.mode : s.letzterModus || "keys";
+    s.bereich = b;
+    if (m) { this._seiteMerken(m); s.mode = m; s.letzterModus = m; }
+    s.mitem = null;   // anderer Bereich/Editor: kein Eintrag mehr offen (Menue und Startseiten teilen s.mitem)
+    s.nav = false; s.syncOffen = false;
+    this._nachOben = true;
+    try { localStorage.setItem("erk_seite", JSON.stringify([s.bereich, s.mode])); } catch (e) { /* egal */ }
+  },
+  _remWahl(d) {
+    const s = this.s;
+    if (!s.order.includes(d)) return;
+    if (d !== s.dev) {
+      s.dev = d; s.key = null; s.modus = null; s.mitem = null; s.mpage = null;
+      s.act = Math.min(s.act, this.cfg.activities.length - 1);
+      if (s.modal && ["btset", "irset"].includes(s.modal.type)) s.modal = null;
+      try { localStorage.setItem("erk_dev", d); } catch (e) { /* egal */ }
+    }
+  },
+  _modalAlsSeite() {
+    const s = this.s, t = s.modal?.type;
+    return s.bereich === "remote" && ((s.mode === "bt" && t === "btset") || (s.mode === "ir" && t === "irset"));
+  },
+  _seitenTitel() {
+    const s = this.s;
+    if (s.bereich === "remote") { const x = SEITEN_REMOTE.find(([m]) => m === s.mode); return [x[1], x[2]]; }
+    return SEITEN_TEXT[s.bereich] || SEITEN_TEXT.start;
+  },
+  _navHtml() {
+    const s = this.s;
+    const nH = this._hinweise().filter((h) => h.stufe !== "info").length;
+    const item = (on, b, m, icon, text, extra = "") => `<button class="ni ${on ? "on" : ""}" data-a="o_geh" data-b="${b}" ${m ? `data-m="${m}"` : ""} title="${esc(text)}">
+      <ha-icon icon="${icon}"></ha-icon><span>${esc(text)}</span>${extra}</button>`;
+    return `<div class="brand"><span class="logo"><ha-icon icon="mdi:remote-tv"></ha-icon></span><span class="bt"><b>Fernbedienung</b><small>Konfigurator</small></span>
+        <button class="icon navzu" data-a="o_navzu" title="Schließen"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <button class="suche nav" data-a="o_pal" title="Suchen (Strg+K)"><ha-icon icon="mdi:magnify"></ha-icon><span>Suchen …</span><kbd>Strg K</kbd></button>
+      ${item(s.bereich === "start", "start", "", "mdi:view-dashboard-variant-outline", "Übersicht", nH ? `<i class="zahl" title="${nH} Hinweis(e)">${nH}</i>` : "")}
+      <div class="nsec">Fernbedienungen</div>
+      <div class="rliste">${(this._listeAlt = this._remListeHtml())}</div>
+      <div class="nsec">Zuhause</div>
+      ${SEITEN_SYSTEM.map(([k, t, i]) => item(s.bereich === k, k, "", i, t, k === "dock" && s.dock?.dirty ? '<i class="punkt warn"></i>' : "")).join("")}
+      <div class="nfuss"><span>Panel ${esc(PANEL_STAND)}</span><span>Strg K = Suche · Strg S = Speichern</span></div>`;
+  },
+  _remListeHtml() {
+    const s = this.s;
+    return s.order.map((d) => {
+      const L = this._live(d), auf = d === s.dev;
+      const name = devName(d);
+      const sub = auf ? `<div class="subnav">${SEITEN_REMOTE.map(([m, t, i]) => `<button class="ni ${s.bereich === "remote" && s.mode === m ? "on" : ""}" data-a="o_geh" data-b="remote" data-m="${m}" title="${esc(t)}">
+          <ha-icon icon="${i}"></ha-icon><span>${esc(t)}</span>${m === "einst" && (s.meta[d]?.einst_offen || []).length ? '<i class="punkt" title="Änderungen unterwegs"></i>' : ""}</button>`).join("")}</div>` : "";
+      return `<div class="rgruppe ${auf ? "auf" : ""}"><button class="rk ${auf && s.bereich === "remote" ? "on" : ""}" data-a="o_rem" data-d="${esc(d)}" title="${esc(name)} · ${esc(L.kurz)}">
+          <span class="ava ${L.zustand}">${ring(L.akku ?? 0, akkuFarbe(L.akku), 5)}<b>${esc(name.replace(/^Remote /, "").slice(0, 1).toUpperCase())}</b></span>
+          <span class="rkt"><b>${esc(name)}</b><small>${esc(L.kurz)}</small></span>${s.dirty[d] ? '<i class="punkt warn" title="nicht gespeichert"></i>' : ""}</button>${sub}</div>`;
+    }).join("") || `<div class="none">Keine Remote</div>`;
+  },
+  _kopfHtml() {
+    const s = this.s, [titel, icon] = this._seitenTitel(), rem = s.bereich === "remote";
+    return `<header class="seitenkopf">
+      ${this._narrow ? `<button class="icon hamenu" data-a="menu" title="Home-Assistant-Menü"><ha-icon icon="mdi:menu"></ha-icon></button>` : ""}
+      <button class="ktitel" data-a="o_navauf" title="Navigation"><span class="kico"><ha-icon icon="${icon}"></ha-icon></span>
+        <span class="kt"><b>${esc(titel)}</b>${rem ? `<small>${esc(devName(s.dev))}<ha-icon icon="mdi:chevron-down"></ha-icon></small>` : ""}</span></button>
+      <span class="grow"></span>
+      <button class="suche" data-a="o_pal" title="Suchen (Strg+K)"><ha-icon icon="mdi:magnify"></ha-icon><span>Suchen …</span><kbd>Strg K</kbd></button>
+      ${rem ? `<span id="wlanp">${(this._wlanAlt = this._wlanKnopf())}</span>` : ""}
+      ${rem ? this._syncPillHtml() : ""}
+    </header>`;
+  },
+  // WLAN der Remote einschalten (2026-10-27, Nutzerwunsch): ueber "Wartungsfenster jetzt" bzw. das Dock (Flag "w" im
+  // Stand - die Remote fragt das Dock, solange sie wach ist, und schaltet ihr WLAN dann 3 min ein)
+  _wlanKnopf() {
+    const s = this.s, d = s.dev, st = this._hass.states[`binary_sensor.${d.replace(/-/g, "_")}_wlan_aktiv`]?.state;
+    if (st === "on") return `<span class="pill ok" title="Das WLAN der Remote ist gerade an"><span class="pd"><ha-icon icon="mdi:wifi"></ha-icon></span><span class="ptx">WLAN an</span></span>`;
+    const warte = s.wlanAn?.[d] && Date.now() - s.wlanAn[d] < 180000;
+    return `<button class="pill ${warte ? "wait" : ""}" data-a="o_wlan" title="${warte ? "Angefordert – die Remote schaltet es ein, sobald sie das Dock fragt (Taste drücken / Display an)" : "WLAN der Remote für ein paar Minuten einschalten"}">
+      <span class="pd"><ha-icon icon="${warte ? "mdi:wifi-sync" : "mdi:wifi-off"}"></ha-icon></span><span class="ptx">${warte ? "WLAN angefordert" : "WLAN einschalten"}</span></button>`;
+  },
+  _syncPillKnopf() {
+    const s = this.s, z = this._syncStand();
+    const an = !!s.enabled[s.dev];
+    const [cls, icon, text] = !an && z.art !== "dirty" ? ["warn", "mdi:power-plug-off-outline", "Belegung aus"]
+      : { dirty: ["warn", "mdi:content-save-alert-outline", "Nicht gespeichert"], ok: ["ok", "mdi:check", "Aktiv"], laedt: ["busy", "mdi:upload", `Lädt ${z.pct} %`],
+        verbinde: ["busy", "mdi:lan-pending", "Verbinde …"], fehler: ["err", "mdi:alert", "Fehler"], wartet: ["wait", "mdi:timer-sand", "Wartet auf Remote"],
+        unbekannt: ["", "mdi:help", "Kein Stand"] }[z.art];
+    return (this._syncAlt = `<button id="sync" class="pill ${cls} ${s.syncOffen ? "auf" : ""}" data-a="o_sync" title="${esc(z.text)}"><span class="pd"><ha-icon icon="${icon}"></ha-icon></span><span class="ptx">${esc(text)}</span></button>`);
+  },
+  // Was gerade laeuft (2026-10-23, Nutzerwunsch "immer sehen, ob er uebertraegt, laedt, probiert"): schmale Leiste
+  // unter dem Kopf auf jeder Seite - Uebertragung je Remote (verbindet/laedt x %/wartet/Fehler), Einstellungen unterwegs,
+  // Firmware-Job. Die gerade offene Remote steht immer drin (auch "aktiv"), andere nur, solange etwas laeuft.
+  _aktivLeisteHtml() {
+    const s = this.s, E = [];
+    if (!s.loaded) return "";
+    for (const d of s.order || []) {
+      const n = devName(d), z = this._syncStand(d), offen = (s.meta[d]?.einst_offen || []).length;
+      const hier = s.bereich === "remote" && d === s.dev;
+      const push = `<button class="btn small" data-a="o_push" data-d="${esc(d)}"><ha-icon icon="mdi:upload"></ha-icon>${z.art === "fehler" ? "Erneut" : "Übertragen"}</button>`;
+      if (z.art === "laedt") E.push(["busy", "mdi:upload", `${n}: überträgt`, z.text, z.pct]);
+      else if (z.art === "verbinde") E.push(["busy", "mdi:lan-pending", `${n}: verbindet sich`, "Remote baut die Verbindung zu HA auf …", 3]);
+      else if (z.art === "fehler") E.push(["err", "mdi:alert", `${n}: Übertragung fehlgeschlagen`, z.text, null, push]);
+      else if (z.art === "wartet") E.push(["wait", "mdi:timer-sand", `${n}: wartet auf die Remote`, "Gespeichert, aber noch nicht drauf – schläft sie? Eine Taste drücken.", null, push]);
+      else if (z.art === "dirty" && hier) E.push(["warn", "mdi:content-save-alert-outline", `${n}: nicht gespeichert`, "Erst speichern, dann geht es an die Remote."]);
+      else if (z.art === "ok" && hier && !offen) E.push(["ok", "mdi:check-circle", `${n}: Belegung aktiv`, "Alles Gespeicherte ist auf der Remote."]);
+      if (offen) E.push(["wait", "mdi:tune-variant", `${n}: ${offen} Einstellung${offen > 1 ? "en" : ""} unterwegs`, "Die Remote übernimmt sie beim nächsten Aufwachen."]);
+    }
+    const j = s.fw?.job && !s.fw.job.fertig ? s.fw.job : null;
+    if (j) {
+      const pct = typeof j.progress === "number" ? Math.max(0, Math.min(100, Math.round(j.progress))) : 5;
+      E.unshift(["busy", "mdi:chip", `${j.titel || "Firmware"}: ${j.schritt || "läuft"}`, "Firmware wird gebaut/geflasht", pct,
+        `<button class="btn small" data-a="o_geh" data-b="fw"><ha-icon icon="mdi:console"></ha-icon>Protokoll</button>`]);
+    }
+    const u = s.fw?.usb && !s.fw.usb.fertig ? s.fw.usb : null;
+    if (u) E.unshift(["busy", "mdi:usb", `USB: ${u.text || "läuft"}`, "", u.pct ?? 5]);
+    if (!E.length) return "";
+    return `<div class="aktivl">${E.map(([st, ic, t, sub, pct, knopf]) => `<div class="al ${st}" title="${esc(sub || "")}">
+        <ha-icon icon="${ic}"></ha-icon><span class="alt"><b>${esc(t)}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</span>
+        ${pct != null ? `<span class="alb ${st === "busy" && pct < 10 ? "busy" : ""}"><i style="width:${Math.max(4, pct)}%"></i></span><span class="alp">${pct >= 10 ? pct + " %" : ""}</span>` : ""}${knopf || ""}</div>`).join("")}</div>`;
+  },
+  _syncPillHtml() {
+    const s = this.s;
+    return `<div class="syncw">${this._syncPillKnopf()}${s.syncOffen ? `<div class="syncpop">
+        <b class="spt">Belegung auf ${esc(devName(s.dev))}</b>
+        <div id="syncx">${this._statusHtml()}</div>
+        <label class="sw"><input type="checkbox" id="enabled" ${s.enabled[s.dev] ? "checked" : ""}><span>Diese Belegung auf der Remote benutzen</span></label>
+        ${(() => { const G = this._groesse(); return G ? `<div class="groesse ${G.pct >= 100 ? "err" : G.pct >= 85 ? "warn" : ""}"><span>Speicher der Remote<b>${G.text} · ${G.pct} %</b></span><div class="xbar"><span style="width:${Math.min(100, G.pct)}%"></span></div></div>` : ""; })()}
+        <small class="note">Aus: Die Remote nutzt die fest eingebaute Belegung. Gilt nach dem Speichern.${s.meta[s.dev]?.saved_at ? ` Zuletzt gespeichert ${esc(fmtZeit(s.meta[s.dev].saved_at))}${s.meta[s.dev].saved_by ? " von " + esc(s.meta[s.dev].saved_by) : ""}.` : ""}</small>
+      </div>` : ""}</div>`;
+  },
+  _untenHtml() {
+    const s = this.s, rem = s.bereich === "remote";
+    const k = (on, a, data, icon, t) => `<button class="${on ? "on" : ""}" data-a="${a}" ${data}><span class="ui"><ha-icon icon="${icon}"></ha-icon></span><span>${t}</span></button>`;
+    return `<nav class="unten">
+      ${k(s.bereich === "start", "o_geh", 'data-b="start"', "mdi:view-dashboard-variant-outline", "Übersicht")}
+      ${k(rem && s.mode === "keys", "o_geh", 'data-b="remote" data-m="keys"', "mdi:gesture-tap-button", "Tasten")}
+      ${k(rem && s.mode === "menu", "o_geh", 'data-b="remote" data-m="menu"', "mdi:menu-open", "Menü")}
+      ${k(rem && s.mode === "einst", "o_geh", 'data-b="remote" data-m="einst"', "mdi:tune-variant", "Einstellungen")}
+      ${k(s.nav, "o_navauf", "", "mdi:dots-grid", "Mehr")}</nav>`;
+  },
+  _speicherleiste() {
+    const s = this.s;
+    if (s.bereich === "dock" && s.dock?.dirty) return this._saveBar("Ungespeicherte Änderungen an den IR-Geräten", "", "dk_verwerfen", "dk_save");
+    if (!s.dirty[s.dev]) { s.diffOffen = false; return ""; }
+    const n = (s.hist[s.dev] || []).length;
+    const L = (this._diffListe = this._aenderungen(s.dev));
+    const liste = s.diffOffen && L.length ? `<div class="diffpop"><b>Was sich geändert hat</b><div class="diffl">${L.map((x, i) => `<button class="dz" data-a="o_diffgo" data-n="${i}" ${x.go ? "" : "disabled"}>
+        <span class="dzi ${x.art || ""}"><ha-icon icon="${x.i}"></ha-icon></span><span><b>${esc(x.t)}</b>${x.u ? `<small>${esc(x.u)}</small>` : ""}</span>${x.go ? '<ha-icon class="kpf" icon="mdi:chevron-right"></ha-icon>' : ""}</button>`).join("")}</div></div>` : "";
+    return liste + this._saveBar(`Ungespeicherte Änderungen an ${devName(s.dev)}`,
+      (L.length ? `<button class="btn ghost diffk ${s.diffOffen ? "on" : ""}" data-a="o_diff" title="Änderungen ansehen"><ha-icon icon="mdi:format-list-checks"></ha-icon>${L.length}<span class="wide">&nbsp;Änderung${L.length === 1 ? "" : "en"}</span><ha-icon icon="mdi:chevron-${s.diffOffen ? "down" : "up"}"></ha-icon></button>` : "")
+      + (n ? `<button class="btn ghost" data-a="undo" title="Letzten Schritt rückgängig (Strg+Z)"><ha-icon icon="mdi:undo"></ha-icon><span class="wide">Rückgängig (${n})</span></button>` : ""), "reload", "save");
+  },
+  // Unterschied gespeichert -> jetzt, je Taste/Seite eine Zeile; go = wohin ein Klick springt
+  _aenderungen(d) {
+    const s = this.s, L = [];
+    let alt;
+    try { alt = JSON.parse(s.saved[d] || "null"); } catch (e) { alt = null; }
+    const neu = s.cfg[d];
+    if (!alt || !neu) return L;
+    const J = (x) => JSON.stringify(x ?? null);
+    if (!!s.enabled[d] !== !!(s.savedEn || {})[d]) L.push({ t: `Belegung ${s.enabled[d] ? "eingeschaltet" : "ausgeschaltet"}`, i: "mdi:power", art: "warn" });
+    const tasten = (titel, a, n, go) => {
+      const ka = a?.keys || {}, kn = n?.keys || {};
+      for (const k of [...new Set([...Object.keys(ka), ...Object.keys(kn)])].sort((x, y) => x - y)) {
+        if (J(ka[k]) === J(kn[k])) continue;
+        L.push({ t: `${titel} › ${KEYNAME[k] || "Taste " + k}`, u: !ka[k] ? "neu belegt" : !kn[k] ? "geleert" : "geändert", i: !ka[k] ? "mdi:plus-circle-outline" : !kn[k] ? "mdi:minus-circle-outline" : "mdi:pencil-circle-outline",
+          art: !ka[k] ? "neu" : !kn[k] ? "weg" : "", go: { ...go, key: Number(k) } });
+      }
+    };
+    const aA = alt.activities || [], aN = neu.activities || [];
+    for (let i = 0; i < Math.max(aA.length, aN.length); i++) {
+      const a = aA[i], n = aN[i];
+      if (!a) { L.push({ t: `Aktivität „${n.name}“`, u: "neu angelegt", i: "mdi:plus-circle-outline", art: "neu", go: { act: i } }); continue; }
+      if (!n) { L.push({ t: `Aktivität „${a.name}“`, u: "gelöscht", i: "mdi:minus-circle-outline", art: "weg" }); continue; }
+      if (a.name !== n.name) L.push({ t: `Aktivität „${a.name}“ → „${n.name}“`, u: "umbenannt", i: "mdi:rename-box", go: { act: i } });
+      if (a.slot !== n.slot) L.push({ t: `${n.name}: Bluetooth-Gerät`, u: `${this.slotName(a.slot)} → ${this.slotName(n.slot)}`, i: "mdi:bluetooth", go: { act: i } });
+      if ((a.dock ?? i < 4) !== (n.dock ?? i < 4)) L.push({ t: `${n.name}: ${n.dock ? "in" : "nicht mehr in"} der Leiste`, i: "mdi:dock-bottom", go: { act: i } });
+      tasten(n.name, a, n, { act: i });
+    }
+    const mA = alt.modi || [], mN = neu.modi || [];
+    for (let i = 0; i < Math.max(mA.length, mN.length); i++) {
+      const a = mA[i], n = mN[i];
+      if (!a) { L.push({ t: `Folgemodus „${n.name}“`, u: "neu angelegt", i: "mdi:timer-plus-outline", art: "neu", go: { modus: i } }); continue; }
+      if (!n) { L.push({ t: `Folgemodus „${a.name}“`, u: "gelöscht", i: "mdi:timer-off-outline", art: "weg" }); continue; }
+      if (a.name !== n.name || a.s !== n.s) L.push({ t: `Folgemodus „${n.name}“`, u: "Name oder Dauer geändert", i: "mdi:timer-cog-outline", go: { modus: i } });
+      tasten(`Folgemodus ${n.name}`, a, n, { modus: i });
+    }
+    const pA = Object.fromEntries((alt.menu?.pages || []).map((p) => [p.id, p])), pN = Object.fromEntries((neu.menu?.pages || []).map((p) => [p.id, p]));
+    for (const id of [...new Set([...Object.keys(pA), ...Object.keys(pN)])]) {
+      const a = pA[id], n = pN[id];
+      if (J(a) === J(n)) continue;
+      const titel = (n || a).title || id;
+      const da = (a?.items || []).length, dn = (n?.items || []).length;
+      L.push({ t: `${(n || a).popup ? "Popup" : "Menüseite"} „${titel}“`, u: !a ? "neu" : !n ? "gelöscht" : dn !== da ? `${dn > da ? "+" : ""}${dn - da} Einträge` : "geändert",
+        i: !a ? "mdi:card-plus-outline" : !n ? "mdi:card-remove-outline" : "mdi:card-text-outline", art: !a ? "neu" : !n ? "weg" : "", go: n ? { mode: "menu", mpage: id } : null });
+    }
+    if (J(alt.menu?.start) !== J(neu.menu?.start) || J(alt.menu?.on) !== J(neu.menu?.on)) L.push({ t: "Menü: Startseite oder An/Aus", i: "mdi:menu-open", go: { mode: "menu" } });
+    for (const [k, t, i, mode] of [["home", "Startseite (Touchscreen)", "mdi:view-dashboard-outline", "home"], ["slots", "Namen der Bluetooth-Plätze", "mdi:bluetooth", "bt"], ["bt", "Bluetooth-Proxys", "mdi:bluetooth-settings", "bt"],
+      ["ir", "Infrarot-Vorgabe", "mdi:remote-tv", "ir"], ["kameras", "Kameras", "mdi:cctv", "menu"], ["gesten", "Gesten", "mdi:gesture", "gesten"],
+      ["makros", "Touchpad-Makros", "mdi:keyboard-outline", "gesten"]])
+      if (J(alt[k]) !== J(neu[k])) L.push({ t, u: "geändert", i, go: { mode } });
+    const bekannt = new Set(["v", "activities", "modi", "menu", "home", "slots", "bt", "ir", "kameras", "gesten", "makros"]);
+    const rest = [...new Set([...Object.keys(alt), ...Object.keys(neu)])].filter((k) => !bekannt.has(k) && J(alt[k]) !== J(neu[k]));
+    if (rest.length) L.push({ t: "Weitere Einstellungen", u: rest.join(", "), i: "mdi:cog-outline" });
+    return L;
+  },
+  _toastHtml() {
+    const m = this.s.msg;
+    if (!m) return "";
+    const neu = m !== this._toastAlt;
+    if (neu) { this._toastAlt = m; this._toastT0 = Date.now(); clearTimeout(this._toastT); }
+    const dauer = m.err ? 0 : Math.min(25000, 6000 + String(m.text).length * 55);
+    if (neu && dauer) this._toastT = setTimeout(() => { if (this.s.msg === m) { this.s.msg = null; this.shadowRoot.querySelector(".toast")?.remove(); } }, dauer);
+    const text = String(m.text).replace(/\bUnauthorized\b/g, "Nur für Administratoren (HA-Benutzer ohne Adminrecht)");
+    return `<div class="toast ${m.err ? "err" : ""} ${neu ? "neu" : ""}" role="status"><ha-icon icon="${m.err ? "mdi:alert-circle" : "mdi:information-outline"}"></ha-icon>
+      <span>${esc(text)}</span>${m.undo && (this.s.hist[this.s.dev] || []).length ? `<button class="btn small" data-a="undo"><ha-icon icon="mdi:undo"></ha-icon>Rückgängig</button>` : ""}
+      <button class="icon" data-a="msgx" title="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
+      ${dauer ? `<i class="zeit" style="animation-duration:${dauer}ms;animation-delay:-${Date.now() - this._toastT0}ms"></i>` : ""}</div>`;
+  },
+  // Ziel einer Suche/Sprungs hervorheben - bleibt 2,4 s, auch wenn die Seite nachlaedt und neu zeichnet
+  _blinken() {
+    const s = this.s;
+    if (s.blink) { this._blinkSel = s.blink; this._blinkBis = Date.now() + 2600; this._blinkRollen = true; s.blink = null; }
+    if (!this._blinkSel || Date.now() > this._blinkBis) { this._blinkSel = null; return; }
+    const el = this.shadowRoot.querySelector(this._blinkSel);
+    if (!el) return;
+    el.classList.add("blink");
+    if (this._blinkRollen) { this._blinkRollen = false; setTimeout(() => el.isConnected && el.scrollIntoView({ block: "center", behavior: "smooth" }), 60); }
+  },
+
+  // ------------------------------------------------------------- Seiten
+  _seiteHtml() {
+    const s = this.s;
+    switch (s.bereich) {
+      case "start": return (this._ueberAlt = this._uebersichtHtml());
+      case "dock": return this._dockHtml();
+      case "ircodes": return this._ircHtml();
+      case "jetzt": return this._jetztHtml();
+      case "klingel": return this._klingelHtml();
+      case "fw": return this._fwHtml();
+      case "werk": return this._werkHtml();
+      case "sync": return this._syncHtml();
+      case "vergleich": return this._vglHtml();
+      case "pruef": return this._pruefHtml();
+    }
+    return this._haHinweis() + this._remoteSeiteHtml();
+  },
+  // Remote nicht mit Home Assistant verbunden (2026-10-26): dann kommt keine Belegung an - deutlich sagen, was fehlt
+  _haHinweis() {
+    const d = this.s.dev, g = (this.s.fw?.geraete || []).find((x) => x.name === d);
+    if (!this.s.fw?.geladen) { if (!this.s.fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return ""; }
+    if (!g || g.in_ha) return "";
+    return `<div class="haweg"><ha-icon icon="mdi:link-variant-off"></ha-icon><div><b>${esc(devName(d))} ist nicht in Home Assistant eingebunden</b>
+      <span>Ohne diese Verbindung bekommt die Remote keine Belegung und kein Layout – Speichern und Importieren wirken nicht.</span>
+      <ol><li>Firmware aufspielen (Seite <i>Firmware &amp; Geräte</i>), Remote ins WLAN.</li>
+        <li><i>Einstellungen → Geräte &amp; Dienste</i>: bei „Neues Gerät gefunden“ <b>Hinzufügen</b> – oder <i>Gerät hinzufügen → ESPHome</i> mit der IP der Remote.</li>
+        <li>Beim Gerät <i>Konfigurieren</i> → <b>„Gerät darf Home-Assistant-Aktionen ausführen“</b> einschalten.</li></ol>
+      <a href="/config/integrations/integration/esphome" target="_top">ESPHome-Geräte öffnen</a></div></div>`;
+  },
+  _remoteSeiteHtml() {
+    const s = this.s;
+    switch (s.mode) {
+      case "gesten": return this._gestenHtml();
+      case "einst": return this._einstHtml();
+      case "verkn": return this._verknHtml();
+      case "akku": return this._akkuHtml();
+      case "home": return this._homeHtml();
+      case "menu": return this._menuHtml();
+      case "bt": case "ir": {
+        const typ = s.mode === "bt" ? "btset" : "irset";
+        if (s.modal?.type === typ) return `<div class="alsseite">${this._modalHtml().replace(/ data-a="modalbg"/g, "")}</div>`;
+        if (!s.modal && !this._oeffnet) {
+          this._oeffnet = true;
+          queueMicrotask(async () => {
+            try { await (s.mode === "bt" ? this._btClick("bt_einst", { dataset: {} }) : this._irClick("ir_einst", { dataset: {} })); }
+            finally { this._oeffnet = false; }
+            this._render();
+          });
+        }
+        return `<div class="alsseite"><div class="lade"><span class="spin"></span> Lade …</div></div>`;
+      }
+    }
+    return this._tastenHtml();
+  },
+
+  // Tasten: Aktivitaeten + Folgemodi, dann Fernbedienung + Editor oder die Tabelle aller Aktivitaeten
+  _tastenHtml() {
+    const s = this.s, acts = this.cfg.activities;
+    const imDock = (a, i) => a.dock ?? i < 4;
+    const nDock = acts.filter(imDock).length;
+    const modi = this.cfg.modi || [];
+    if (s.modus != null && !modi[s.modus]) s.modus = null;
+    const tabelle = s.ansicht === "tabelle";
+    const aktKn = acts.map((a, i) => `<button class="aktk ${i === s.act && s.modus == null ? "on" : ""} ${imDock(a, i) ? "" : "nodock"}" data-a="act" data-i="${i}"
+        title="${esc(a.name)} · ${esc(this.slotName(a.slot))}${imDock(a, i) ? "" : " · nicht in der Leiste (nur über Menü/Tasten)"}"><span class="ai"><ha-icon icon="${aktIcon(a.name)}"></ha-icon></span>
+        <span><b>${esc(a.name)}</b><small>${esc(this.slotName(a.slot))}</small></span></button>`).join("")
+      + (acts.length < 16 ? `<button class="aktk plus" data-a="actadd" title="Aktivität hinzufügen"><ha-icon icon="mdi:plus"></ha-icon></button>` : "");
+    const modKn = modi.map((m, i) => `<button class="aktk mod ${i === s.modus ? "on" : ""}" data-a="modus" data-i="${i}" title="${esc(m.name)}: überschreibt ${Object.keys(m.keys || {}).length} Taste(n) für ${m.s || 7} s">
+        <span class="ai"><ha-icon icon="mdi:timer-cog-outline"></ha-icon></span><span><b>${esc(m.name)}</b><small>${m.s || 7} s · ${Object.keys(m.keys || {}).length} Tasten</small></span></button>`).join("")
+      + (modi.length < 16 ? `<button class="aktk plus" data-a="modadd" title="Folgemodus anlegen"><ha-icon icon="mdi:timer-plus-outline"></ha-icon></button>` : "");
+    const akt = this.activity, mo = s.modus != null ? modi[s.modus] : null;
+    const zeile = tabelle ? "" : mo ? `<div class="aktset">
+      <label class="inl2">Name <input data-mod="name" value="${esc(mo.name)}" maxlength="24"></label>
+      <label class="inl2" title="Gilt fuer alle Tasten des Modus ohne eigene Zeit">Standard-Dauer <input type="number" data-mod="s" min="2" max="60" value="${mo.s || 7}" style="width:4.5em"> s</label>
+      <span class="inl2" title="Belegt Kanal +/− mit „Schrittweise regeln“ – danach jede Taste frei änderbar">Vorlage einfügen <button class="btn small" data-a="modvor" data-p="licht"><ha-icon icon="mdi:lightbulb-outline"></ha-icon>Licht</button>
+        <button class="btn small" data-a="modvor" data-p="luefter"><ha-icon icon="mdi:fan"></ha-icon>Ventilator</button></span>
+      <span class="grow"></span>
+      <button class="icon sm" data-a="moddel" title="Folgemodus löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
+      ${this._modStarter(mo)}
+      <p class="hint modhint">Solange der Modus läuft, gelten die Tasten unten statt der Aktivität – jede Taste frei belegbar (Taste antippen). Jeder Druck verlängert um die Standard-Dauer (${mo.s || 7} s) oder die eigene Zeit der Taste. Leere Tasten behalten ihre normale Belegung. Oben auf der Remote zeigt eine Leiste den Modus und die Restzeit.</p>`
+      : `<div class="aktset">
+      <label class="inl2">Name <input data-akt="name" value="${esc(akt.name)}" maxlength="16"></label>
+      <label class="inl2">Bluetooth-Gerät <select data-akt="slot">${[0, 1, 2, 3].map((d) => `<option value="${d}" ${akt.slot === d ? "selected" : ""}>${esc(this.slotName(d))}</option>`).join("")}</select></label>
+      <label class="sw small"><input type="checkbox" data-akt="dock" ${imDock(akt, s.act) ? "checked" : ""} ${!imDock(akt, s.act) && nDock >= 4 ? "disabled" : ""}><span>In der Leiste (${nDock}/4)</span></label>
+      <span class="grow"></span>
+      <button class="icon sm" data-a="actmove" data-d="-1" ${s.act > 0 ? "" : "disabled"} title="in der Leiste nach links"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
+      <button class="icon sm" data-a="actmove" data-d="1" ${s.act < acts.length - 1 ? "" : "disabled"} title="nach rechts"><ha-icon icon="mdi:arrow-right"></ha-icon></button>
+      <button class="icon sm" data-a="actdel" ${acts.length > 1 ? "" : "disabled"} title="Aktivität löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`;
+    const leiste = `<div class="aktleiste">
+        <div class="akts">${aktKn}</div><span class="trenner"></span><div class="akts modi">${modKn}</div>
+        <span class="grow"></span>
+        <div class="seg sm ansicht"><button class="${tabelle ? "" : "on"}" data-a="o_ansicht" data-v="" title="Fernbedienung mit Editor"><ha-icon icon="mdi:remote"></ha-icon><span class="wide">Remote</span></button>
+          <button class="${tabelle ? "on" : ""}" data-a="o_ansicht" data-v="tabelle" title="Alle Aktivitäten nebeneinander"><ha-icon icon="mdi:table-large"></ha-icon><span class="wide">Tabelle</span></button></div>
+        ${tabelle ? "" : `<button class="btn ghost small" data-a="copyact" title="Layout einer anderen Aktivität übernehmen"><ha-icon icon="mdi:content-copy"></ha-icon><span class="wide">Layout kopieren</span></button>`}
+        <button class="btn ghost small" data-a="werk_tasten" title="Aktivitäten und Tastenbelegung aus der Werkseinstellung übernehmen"><ha-icon icon="mdi:backup-restore"></ha-icon><span class="wide">Standardtasten laden</span></button>
+        <button class="btn ghost small" data-a="p_spick" title="Alle Aktivitäten als Übersicht zum Ausdrucken"><ha-icon icon="mdi:printer-outline"></ha-icon><span class="wide">Spickzettel</span></button>
+      </div>${zeile}`;
+    if (tabelle) return leiste + this._matrixHtml();
+    return `${leiste}
+      <div class="main ${s.key != null ? "editing" : ""}">
+        <div class="remote-wrap">${s.clip ? `<div class="clip"><ha-icon icon="mdi:clipboard-outline"></ha-icon><span><b>${s.clip.type === "key" ? "Taste" : "Druckart"} kopiert</b><small>${esc(s.clip.label)}</small></span>
+            <button class="icon" data-a="clipx" title="Zwischenablage leeren"><ha-icon icon="mdi:close"></ha-icon></button></div>` : ""}${this._remoteHtml()}
+          <p class="hint">Punkte = belegt: <b class="dot short"></b> kurz <b class="dot double"></b> doppelt <b class="dot long"></b> lang · <ha-icon icon="mdi:star-four-points" class="sm" style="color:#ffca28"></ha-icon> öffnet das Menü
+          <br>Im Menü der Remote steuern Pfeile, OK und Zurück immer das Menü <ha-icon icon="mdi:lock" class="sm"></ha-icon>.</p>
+        </div>
+        <div class="editor">${s.key != null ? this._editorHtml() : this._steckbriefHtml()}</div>
+      </div>`;
+  },
+  // Rechts, solange keine Taste gewaehlt ist: Stand der Aktivitaet, freie Tasten, Kuerzel
+  _steckbriefHtml() {
+    const s = this.s, a = this.activity, mo = s.modus != null;
+    const alle = [POWER, ...ROWS.flat()];
+    const bel = (k) => GESTURES.some(([g]) => a.keys?.[String(k)]?.[g]?.length);
+    const frei = alle.filter(([k]) => !bel(k));
+    const n = { short: 0, double: 0, long: 0 };
+    for (const kc of Object.values(a.keys || {})) for (const [g] of GESTURES) if (kc[g]?.length) n[g]++;
+    const ev = AKT_EVENTS.filter(([k]) => bel(k)).map(([, l]) => l);
+    return `<div class="steckbrief">
+      <div class="sbkopf"><span class="ai gross"><ha-icon icon="${mo ? "mdi:timer-cog-outline" : aktIcon(a.name)}"></ha-icon></span>
+        <div><h2>${esc(a.name)}</h2><small>${mo ? `Folgemodus · ${a.s || 7} s` : `Aktivität · sendet an ${esc(this.slotName(a.slot))}`}</small></div></div>
+      <div class="sbzahlen"><div><b>${alle.length - frei.length}<small>/${alle.length}</small></b><span>Tasten belegt</span></div>
+        <div><b class="c-short">${n.short}</b><span><i class="dot short"></i> Kurz</span></div><div><b class="c-double">${n.double}</b><span><i class="dot double"></i> Doppelt</span></div>
+        <div><b class="c-long">${n.long}</b><span><i class="dot long"></i> Lang</span></div></div>
+      ${!mo && !this._hasMenu(a) ? `<div class="msg err"><ha-icon icon="mdi:alert"></ha-icon>Keine Taste öffnet in dieser Aktivität das Menü der Remote – mindestens eine Taste mit „Menü öffnen“ belegen.</div>` : ""}
+      ${!mo ? `<div class="sbev"><ha-icon icon="mdi:swap-horizontal"></ha-icon><span>${ev.length ? `Beim Wechsel: ${esc(ev.join(" und "))} belegt` : "Beim Starten/Beenden der Aktivität passiert nichts Eigenes"}</span>
+        <button class="btn small" data-a="key" data-k="900">Beim Starten</button><button class="btn small" data-a="key" data-k="901">Beim Beenden</button></div>` : ""}
+      ${frei.length ? `<h3>${mo ? "Ohne Folgemodus-Belegung" : "Freie Tasten"} (${frei.length})</h3><div class="chips frei">${frei.map(([k, l, i]) => `<button class="chip" data-a="key" data-k="${k}">${i ? `<ha-icon icon="${i}"></ha-icon>` : COLOR_KEYS[k] ? `<i class="cd" style="background:${COLOR_KEYS[k]}"></i>` : ""}${esc(KEYNAME[k])}</button>`).join("")}</div>` : ""}
+      <h3>Tipps</h3>
+      <ul class="tipps"><li>Taste links antippen, dann je Druckart Aktionen anlegen – mehrere laufen nacheinander.</li>
+        <li><kbd>Strg</kbd> <kbd>C</kbd> / <kbd>V</kbd> kopiert eine Taste, <kbd>Strg</kbd> <kbd>Z</kbd> macht rückgängig, <kbd>Strg</kbd> <kbd>S</kbd> speichert.</li>
+        <li><kbd>Strg</kbd> <kbd>K</kbd> findet jede Taste, Einstellung und Menüseite.</li>
+        <li>Die <a href="#" data-a="o_ansicht" data-v="tabelle">Tabelle</a> zeigt alle Aktivitäten nebeneinander.</li></ul></div>`;
+  },
+  // Alle Tasten x alle Aktivitaeten (und Folgemodi); Klick oeffnet die Taste im Editor
+  _matrixHtml() {
+    const s = this.s, c = this.cfg;
+    const spalten = [...c.activities.map((a, i) => ({ a, i, mod: false })), ...(c.modi || []).map((a, i) => ({ a, i, mod: true }))];
+    const zeilen = [POWER, ...ROWS.flat(), ...AKT_EVENTS];
+    const zelle = (sp, k) => {
+      const kc = sp.a.keys?.[String(k)] || {};
+      const teile = GESTURES.filter(([g]) => kc[g]?.length).map(([g]) => `<span class="mz"><b class="dot ${g}"></b><span>${esc(this.stepText(kc[g][0]))}${kc[g].length > 1 ? ` <i>+${kc[g].length - 1}</i>` : ""}</span></span>`);
+      const on = s.key === k && (sp.mod ? s.modus === sp.i : s.modus == null && s.act === sp.i);
+      return `<td><button class="${on ? "on" : ""} ${teile.length ? "" : "leer"}" data-a="o_zelle" data-i="${sp.i}" data-k="${k}" ${sp.mod ? 'data-mod="1"' : ""}>${teile.join("") || `<span class="frei">${sp.mod ? "wie Aktivität" : "frei"}</span>`}</button></td>`;
+    };
+    return `<div class="matrixw"><table class="matrix" style="min-width:${150 + spalten.length * 130}px"><thead><tr><th>Taste</th>${spalten.map((sp) => `<th class="${sp.mod ? "mod" : ""}"><span class="ai"><ha-icon icon="${sp.mod ? "mdi:timer-cog-outline" : aktIcon(sp.a.name)}"></ha-icon></span>${esc(sp.a.name)}</th>`).join("")}</tr></thead>
+      <tbody>${zeilen.map(([k, l, i]) => `<tr><th>${i ? `<ha-icon icon="${i}"></ha-icon>` : COLOR_KEYS[k] ? `<i class="cd" style="background:${COLOR_KEYS[k]}"></i>` : `<i class="okt">${esc(l)}</i>`}<span>${esc(KEYNAME[k])}</span></th>${spalten.map((sp) => zelle(sp, k)).join("")}</tr>`).join("")}</tbody></table>
+      <p class="hint">Zelle antippen öffnet die Taste im Editor. Gezeigt wird je Druckart die erste Aktion (+n = weitere).</p></div>`;
+  },
+
+  // ------------------------------------------------------------- Uebersicht
+  _hinweise() {
+    const s = this.s, H = [];
+    for (const d of s.order) {
+      const n = devName(d), L = this._live(d), z = this._syncStand(d), g = L.g;
+      if (s.dirty[d]) H.push({ stufe: "warn", icon: "mdi:content-save-alert-outline", text: `${n}: ungespeicherte Änderungen`, sub: "Erst nach dem Speichern gehen sie an die Remote.",
+        k: [["o_speichern", d, "Speichern", "mdi:content-save"], ["o_rem", d, "Ansehen", "mdi:arrow-right"]] });
+      else if (z.art === "fehler") H.push({ stufe: "err", icon: "mdi:alert", text: `${n}: Übertragung fehlgeschlagen`, sub: z.text, k: [["o_push", d, "Erneut", "mdi:upload"]] });
+      else if (["wartet", "verbinde", "laedt"].includes(z.art)) H.push({ stufe: "info", icon: "mdi:timer-sand", text: `${n}: Belegung noch nicht auf der Remote`, sub: z.art === "laedt" ? z.text : "Kommt beim nächsten Aufwachen an – oder jetzt übertragen.", k: [["o_push", d, "Übertragen", "mdi:upload"]] });
+      if (!s.enabled[d]) H.push({ stufe: "info", icon: "mdi:power-plug-off-outline", text: `${n}: Konfigurator-Belegung ist aus`, sub: "Die Remote nutzt die fest eingebaute Belegung.", k: [["o_rem", d, "Ändern", "mdi:arrow-right"]] });
+      if (L.akku != null && L.akku < 20 && !L.laden) H.push({ stufe: "warn", icon: "mdi:battery-alert-variant-outline", text: `${n}: Akku fast leer (${Math.round(L.akku)} %)`, sub: "Bitte ins Dock stellen." });
+      if (g && !g.in_ha) H.push({ stufe: "warn", icon: "mdi:link-variant-off", text: `${n}: nicht in Home Assistant eingebunden`, sub: "Ohne Verbindung kommt keine Belegung an. Einstellungen → Geräte & Dienste → ESPHome → Hinzufügen, dann „Gerät darf Home-Assistant-Aktionen ausführen“.",
+        k: [["o_geh", "fw", "Firmware & Geräte", "mdi:chip"]] });
+      if (g?.update && !g.gesperrt && !g.vorgemerkt) H.push({ stufe: "info", icon: "mdi:update", text: `${n}: Firmware-Update bereit`, sub: L.zustand === "schlaf" ? "Remote schläft – vormerken, dann startet es beim nächsten Aufwachen." : "Kann jetzt installiert werden.",
+        k: [["o_vormerken", g.datei, "Vormerken", "mdi:calendar-clock"], ["o_geh", "fw", "Firmware", "mdi:chip"]] });
+      if (g?.vorgemerkt) H.push({ stufe: "info", icon: "mdi:calendar-clock", text: `${n}: Update vorgemerkt`, sub: "Startet automatisch, sobald die Remote online ist." });
+      const G = this._groesse(d);
+      if (G && G.pct >= 85) H.push({ stufe: G.pct >= 100 ? "err" : "warn", icon: "mdi:memory", text: `${n}: Belegung ${G.pct >= 100 ? "zu groß" : "fast voll"} (${G.text})`,
+        sub: G.pct >= 100 ? "So lässt sie sich nicht speichern – Menüseiten oder Aktivitäten verkleinern." : "Die Remote lädt höchstens " + Math.round(G.max / 1000) + " KB. Große Menüseiten (z. B. Kameras, Energie) zuerst verkleinern.",
+        k: [["o_rem", d, "Menü", "mdi:menu-open"]] });
+      const off = (s.meta[d]?.einst_offen || []).length;
+      if (off) H.push({ stufe: "info", icon: "mdi:tune-variant", text: `${n}: ${off} Einstellung${off > 1 ? "en" : ""} unterwegs`, sub: "Die Remote übernimmt sie beim nächsten Aufwachen." });
+    }
+    const pr = this._pruefung().filter((p) => p.stufe !== "info");
+    if (pr.length) { const nE = pr.filter((p) => p.stufe === "err").length;
+      H.push({ stufe: nE ? "err" : "warn", icon: "mdi:clipboard-alert-outline", text: `Prüfung: ${nE ? `${nE} Fehler` : ""}${nE && pr.length > nE ? ", " : ""}${pr.length > nE ? `${pr.length - nE} Warnung${pr.length - nE > 1 ? "en" : ""}` : ""}`,
+        sub: pr[0].text + (pr.length > 1 ? " …" : ""), k: [["o_geh", "pruef", "Ansehen", "mdi:arrow-right"]] }); }
+    if (s.dock?.dirty) H.push({ stufe: "warn", icon: "mdi:dock-window", text: "Dock: ungespeicherte IR-Geräte", k: [["o_geh", "dock", "Ansehen", "mdi:arrow-right"]] });
+    for (const g of (s.fw?.geraete || []).filter((x) => x.art === "dock" && x.geflasht && !x.online && !x.gesperrt))
+      H.push({ stufe: "info", icon: "mdi:lan-disconnect", text: `${g.friendly || g.name} ist offline`, sub: "Strom oder WLAN prüfen." });
+    const job = s.fw?.job && !s.fw.job.fertig ? s.fw.job : null;
+    if (job) H.unshift({ stufe: "busy", icon: "mdi:progress-upload", text: `${job.titel || "Firmware"}: ${job.schritt || "läuft"}${typeof job.progress === "number" ? ` · ${Math.round(job.progress)} %` : ""}`, k: [["o_geh", "fw", "Protokoll", "mdi:console"]] });
+    return H;
+  },
+  _uebersichtHtml() {
+    const s = this.s;
+    const fw = s.fw;
+    if (this._fwSicher() && fw && !this._fwHolt && Date.now() - (fw.zeit || 0) > 30000) {
+      this._fwHolt = true; setTimeout(() => this._fwLaden().finally(() => { this._fwHolt = false; }), 0);
+    }
+    if ((!s.verlauf || Date.now() - s.verlauf.zeit > 6e5) && !this._verlaufHolt) setTimeout(() => this._verlaufLaden(), 0);
+    const H = this._hinweise();
+    const std = new Date().getHours();
+    const gruss = std < 5 ? "Gute Nacht" : std < 11 ? "Guten Morgen" : std < 18 ? "Hallo" : "Guten Abend";
+    const docks = (fw?.geraete || []).filter((g) => g.art === "dock");
+    const ernst = H.filter((h) => h.stufe !== "info").length;
+    const hinweise = H.length ? `<section><h2 class="abschn">Hinweise <i>${H.length}</i></h2><div class="hinweise">${H.map((h) => `<div class="hw2 ${h.stufe}">
+        <span class="hi"><ha-icon icon="${h.icon}"></ha-icon></span><span class="ht"><b>${esc(h.text)}</b>${h.sub ? `<small>${esc(h.sub)}</small>` : ""}</span>
+        ${(h.k || []).map(([a, x, l, i]) => `<button class="btn small" data-a="${a}" ${a === "o_geh" ? `data-b="${esc(x)}"` : a === "o_vormerken" ? `data-datei="${esc(x)}"` : `data-d="${esc(x)}"`}><ha-icon icon="${i}"></ha-icon>${esc(l)}</button>`).join("")}</div>`).join("")}</div></section>` : "";
+    return `<div class="ueber">
+      <div class="hero"><div><h1>${gruss}${this._hass.user?.name ? ", " + esc(this._hass.user.name.split(" ")[0]) : ""}</h1>
+        <p>${s.order.length} Fernbedienung${s.order.length === 1 ? "" : "en"}${docks.length ? ` · ${docks.length} Docks (${docks.filter((g) => g.online).length} online)` : ""} · ${ernst ? `<b class="warnt">${ernst} ${ernst === 1 ? "Sache braucht" : "Sachen brauchen"} dich</b>` : H.length ? "nichts Dringendes" : `<b class="okt2">alles in Ordnung</b>`}</p></div>
+        <span class="grow"></span>
+        <button class="btn" data-a="o_pal"><ha-icon icon="mdi:magnify"></ha-icon>Suchen</button>
+        <button class="btn primary" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
+      ${hinweise}
+      <section><h2 class="abschn">Fernbedienungen</h2><div class="rgrid">${s.order.map((d) => this._remKarte(d)).join("")}</div></section>
+      ${docks.length ? `<section><h2 class="abschn">Docks</h2><div class="dgrid">${docks.map((g) => this._dockKarte(g)).join("")}</div></section>` : ""}
+      <section><h2 class="abschn">Schnellzugriff</h2><div class="kgrid">
+        ${this._kachel("o_geh", 'data-b="fw"', "mdi:chip", "Firmware & Geräte", fw?.geraete ? `${fw.geraete.filter((g) => g.update && !g.gesperrt && g.art !== "test").length || "Keine"} Updates bereit` : "Updates, USB, neue Docks")}
+        ${this._kachel("o_geh", 'data-b="dock"', "mdi:dock-window", "Dockingstation", "IR-Geräte, LED, Smart Display")}
+        ${this._kachel("bk_down", "", "mdi:download", "Sicherung herunterladen", "Alle Remotes als Datei")}
+        ${this._kachel("o_geh", 'data-b="werk"', "mdi:toolbox-outline", "Werkstatt", "Neue Remote, Kopieren, Hardware-Test")}
+      </div></section></div>`;
+  },
+  // Akkustand der letzten 24 h aus dem HA-Verlauf (alle 10 min neu)
+  async _verlaufLaden() {
+    const s = this.s;
+    if (this._verlaufHolt) return;
+    this._verlaufHolt = true;
+    const daten = {};
+    try {
+      const id = (d) => `sensor.${s.meta[d].slug}_akkustand`;
+      const r = await this._hass.callWS({ type: "history/history_during_period", start_time: new Date(Date.now() - 864e5).toISOString(),
+        entity_ids: s.order.map(id), minimal_response: true, no_attributes: true, significant_changes_only: false });
+      for (const d of s.order) daten[d] = (r[id(d)] || []).map((x) => [(x.lu ?? x.lc) * 1000, parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
+    } catch (e) { /* ohne Verlauf */ }
+    s.verlauf = { zeit: Date.now(), daten };
+    this._verlaufHolt = false;
+    if (s.bereich === "start" && !s.modal && !s.pal) this._render();
+  },
+  _kurve(punkte, farbe, id = "kg") {
+    if (!punkte || punkte.length < 2) return "";
+    const W = 300, H = 54, t1 = Date.now(), t0 = t1 - 864e5;
+    const pts = [...punkte.filter(([t]) => t >= t0 - 36e5), [t1, punkte[punkte.length - 1][1]]];
+    const x = (t) => ((Math.max(t0, t) - t0) / 864e5 * W).toFixed(1), y = (v) => (H - 3 - Math.max(0, Math.min(100, v)) / 100 * (H - 8)).toFixed(1);
+    const linie = pts.map(([t, v], i) => `${i ? "L" : "M"}${x(t)},${y(v)}`).join("");
+    const werte = pts.map(([, v]) => v);
+    const lade = pts.some(([, v], i) => i && v > pts[i - 1][1] + 2);
+    return `<div class="kurve" style="color:${farbe}"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".32"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>
+      <path d="${linie}L${W},${H}L${x(pts[0][0])},${H}Z" fill="url(#${id})"/><path d="${linie}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>
+      <div class="kl"><span>vor 24 h</span><span>${Math.round(Math.min(...werte))}–${Math.round(Math.max(...werte))} %${lade ? " · geladen" : ""}</span><span>jetzt</span></div></div>`;
+  },
+  _kachel(a, data, icon, titel, sub, cls = "") {
+    return `<button class="kachel ${cls}" data-a="${a}" ${data}><span class="ki"><ha-icon icon="${icon}"></ha-icon></span><span><b>${esc(titel)}</b><small>${esc(sub)}</small></span><ha-icon class="kpf" icon="mdi:chevron-right"></ha-icon></button>`;
+  },
+  _remKarte(d) {
+    const s = this.s, L = this._live(d), z = this._syncStand(d), g = L.g, st = this._statistik(d), m = s.meta[d] || {};
+    const fakt = (icon, label, wert, cls = "") => `<div class="fakt ${cls}"><ha-icon icon="${icon}"></ha-icon><span><small>${label}</small><b title="${esc(wert)}">${esc(wert)}</b></span></div>`;
+    const syncT = { dirty: ["Nicht gespeichert", "warn"], ok: ["Aktiv", "ok"], laedt: [z.text, "busy"], verbinde: ["Verbindet …", "busy"], fehler: ["Fehler", "err"], wartet: ["Wartet auf die Remote", "warn"], unbekannt: ["Unbekannt", ""] }[z.art];
+    const fwT = !g ? ["–", ""] : g.vorgemerkt ? ["Update vorgemerkt", "busy"] : g.update ? ["Update bereit", "warn"] : g.geflasht ? [`Aktuell${g.version ? " · " + g.version : ""}`, "ok"] : ["Nicht geflasht", ""];
+    return `<article class="rkarte ${L.zustand}">
+      <header><div class="ringw">${ring(L.akku ?? 0, akkuFarbe(L.akku))}<div class="rw"><b>${L.akku != null ? Math.round(L.akku) : "–"}<small>%</small></b>${L.laden ? '<ha-icon icon="mdi:lightning-bolt"></ha-icon>' : ""}</div></div>
+        <div class="rkopf"><h2>${esc(devName(d))}</h2><span class="zst ${L.zustand}"><i></i>${esc(L.ztext)}</span>
+          <small>${L.laden ? "Lädt am Kabel" : L.restH ? `Akku reicht noch ≈ ${fmtStd(L.restH)}` : ""}${L.rate != null && Math.abs(L.rate) >= 0.1 ? ` · ${L.rate > 0 ? "+" : ""}${L.rate.toFixed(1).replace(".", ",")} %/h` : ""}${L.gemeldet ? ` · ${fmtZeit(L.gemeldet)}` : ""}</small></div></header>
+      ${this._kurve(s.verlauf?.daten?.[d], akkuFarbe(L.akku), "kg_" + L.slug)}
+      <div class="fakten">
+        ${fakt("mdi:play-circle-outline", "Aktivität", L.akt || "–")}
+        ${fakt("mdi:sync", "Belegung", s.enabled[d] ? syncT[0] : "Aus (eingebaut)", s.enabled[d] ? syncT[1] : "warn")}
+        ${fakt("mdi:chip", "Firmware", fwT[0], fwT[1])}
+        ${fakt("mdi:restart", "Letzter Start", L.neustart || "–")}
+        ${L.verbunden ? fakt("mdi:bluetooth-connect", "Verbunden mit", L.verbunden) : ""}
+      </div>
+      <div class="zahlen">${(() => { const G = this._groesse(d); return G ? `<span class="${G.pct >= 85 ? "voll" : ""}" title="Datei, die die Remote lädt (höchstens ${Math.round(G.max / 1000)} KB)"><b>${G.pct} %</b> Speicher</span>` : ""; })()}<span><b>${st.akt}</b> Aktivitäten</span><span><b>${st.bel}</b> Belegungen</span><span><b>${st.seiten}</b> Menüseiten</span><span><b>${st.eintraege}</b> Einträge</span>
+        ${st.modi ? `<span><b>${st.modi}</b> Folgemodi</span>` : ""}${st.popups ? `<span><b>${st.popups}</b> Popups</span>` : ""}${st.gesten ? `<span><b>${st.gesten}</b> eigene Gesten</span>` : ""}</div>
+      <footer>
+        <button class="btn" data-a="o_rem" data-d="${esc(d)}" data-m="keys"><ha-icon icon="mdi:gesture-tap-button"></ha-icon>Tasten</button>
+        <button class="btn" data-a="o_rem" data-d="${esc(d)}" data-m="menu"><ha-icon icon="mdi:menu-open"></ha-icon>Menü</button>
+        <button class="btn" data-a="o_rem" data-d="${esc(d)}" data-m="einst"><ha-icon icon="mdi:tune-variant"></ha-icon>Einstellungen</button>
+        <span class="grow"></span>
+        ${s.dirty[d] ? `<button class="btn primary" data-a="o_speichern" data-d="${esc(d)}"><ha-icon icon="mdi:content-save"></ha-icon>Speichern</button>`
+          : z.phase && z.phase < 4 ? `<button class="btn primary" data-a="o_push" data-d="${esc(d)}"><ha-icon icon="mdi:upload"></ha-icon>Übertragen</button>` : ""}
+        ${g?.update && !g.gesperrt ? `<button class="btn" data-a="o_vormerken" data-datei="${esc(g.datei)}" title="${g.vorgemerkt ? "Vormerkung aufheben" : "Update starten, sobald die Remote online ist"}"><ha-icon icon="mdi:${g.vorgemerkt ? "calendar-remove" : "update"}"></ha-icon>${g.vorgemerkt ? "Nicht vormerken" : "Update"}</button>` : ""}
+      </footer>
+      ${m.saved_at ? `<small class="gesp">Gespeichert ${esc(fmtZeit(m.saved_at))}${m.saved_by ? " von " + esc(m.saved_by) : ""}</small>` : ""}
+    </article>`;
+  },
+  _dockKarte(g) {
+    const S = this._hass.states, slug = g.name.replace(/-/g, "_");
+    const v = (id) => S[id]?.state;
+    const sig = parseFloat(v(`sensor.${slug}_wlan_signal`)), lauf = parseFloat(v(`sensor.${slug}_laufzeit`)), led = parseFloat(v(`number.${slug}_led_helligkeit`));
+    const stufe = !Number.isFinite(sig) ? 0 : sig > -55 ? 4 : sig > -65 ? 3 : sig > -75 ? 2 : 1;
+    return `<div class="dkarte ${g.online ? "on" : ""}">
+      <div class="dk1"><span class="ki"><ha-icon icon="mdi:dock-window"></ha-icon></span><span><b>${esc(g.friendly || g.name)}</b><small><i class="zp"></i>${g.online ? "online" : g.geflasht ? "offline" : "noch nicht geflasht"}${g.ip && g.online ? " · " + esc(g.ip) : ""}</small></span>
+        ${g.update && !g.gesperrt ? '<span class="badge warn">Update</span>' : ""}</div>
+      ${g.online ? `<div class="dk2"><span title="WLAN ${Number.isFinite(sig) ? sig + " dBm" : ""}"><ha-icon icon="mdi:wifi-strength-${stufe || "off-outline"}"></ha-icon>${Number.isFinite(sig) ? `${sig} dBm` : "–"}</span>
+        <span title="Laufzeit"><ha-icon icon="mdi:timer-outline"></ha-icon>${Number.isFinite(lauf) ? fmtStd(lauf / 3600) : "–"}</span>
+        <span title="LED-Helligkeit"><ha-icon icon="mdi:led-on"></ha-icon>${Number.isFinite(led) ? Math.round(led) + " %" : "–"}</span></div>` : ""}
+    </div>`;
+  },
+
+  // ------------------------------------------------------------- Werkstatt
+  _werkHtml() {
+    const s = this.s, d = s.dev;
+    const tests = this._fwSicher() ? this._fwTestHtml() : `<div class="lade"><span class="spin"></span> Lade …</div>`;
+    return `<div class="werk">
+      <section><h2 class="abschn">Einrichten &amp; übertragen</h2><div class="kgrid">
+        ${this._kachel("neu", "", "mdi:plus-circle-outline", "Neue Fernbedienung", "Name, Firmware bauen, flashen, in HA einbinden – Schritt für Schritt.")}
+        ${this._kachel("kopie", "", "mdi:content-duplicate", `Alles nach ${devName(d)} kopieren`, "Aktivitäten, Tasten, Menü, Startseite, Einstellungen von einer anderen Remote.")}
+        ${this._kachel("bk_down", "", "mdi:download", "Sicherung herunterladen", "Gespeicherter Stand aller Remotes als JSON-Datei.")}
+        ${this._kachel("bk_up", "", "mdi:upload", "Sicherung einspielen", "Eine Sicherung wieder auf eine oder mehrere Remotes schreiben.")}
+        ${this._kachel("o_geh", 'data-b="vergleich"', "mdi:compare-horizontal", "Remotes vergleichen", "Zwei beliebige Remotes, Unterschiede je Bereich, gezielt übernehmen.")}
+        ${this._kachel("p_spick", "", "mdi:printer-outline", `Spickzettel ${devName(d)}`, "Tastenbelegung aller Aktivitäten zum Ausdrucken.")}
+        ${this._kachel("o_geh", 'data-b="fw"', "mdi:chip", "Firmware & Geräte", "Updates, USB-Flashen, Docks anlegen und einbinden.")}
+      </div></section>
+      ${this._fwSicher() && this.s.fw.entwickler != null ? `<section class="fw eingebettet"><div class="dkopf"><h3>Entwicklung</h3></div>${this._fwEntwicklerHtml()}</section>` : ""}
+      <section class="fw eingebettet">${tests || `<div class="dkopf"><h3>Hardware-Test</h3></div><p class="hint">Kein Testprogramm gefunden (<code>esphome/hardware-test.yaml</code>).</p>`}</section>
+      <section><h2 class="abschn">Tastenkürzel</h2><div class="kuerzel">
+        ${[["Strg K", "Suchen: Tasten, Einstellungen, Menüseiten, Aktionen"], ["Strg S", "Speichern"], ["Strg Z", "Rückgängig"], ["Strg C / Strg V", "Taste kopieren / einfügen"], ["Esc", "Dialog, Suche oder Taste schließen"], ["/", "Suche öffnen"]]
+          .map(([k, t]) => `<div><span>${k.split(" / ").map((x) => x.split(" ").map((y) => `<kbd>${y}</kbd>`).join(" ")).join(" / ")}</span><small>${t}</small></div>`).join("")}</div></section>
+      ${s.meta[d]?.entfernbar ? `<section><h2 class="abschn">Gefahrenzone</h2><div class="kgrid">${this._kachel("entfernen", "", "mdi:delete-outline", `${devName(d)} entfernen`, "Belegung, YAML, feste IP und ESPHome-Eintrag in HA löschen.", "rot")}</div></section>` : ""}
+    </div>`;
+  },
+
+  // ------------------------------------------------------------- Schnellsuche
+  _palEintraege() {
+    const s = this.s, E = [], d = s.dev, rn = devName(d);
+    const geh = (b, m, extra) => () => { this._geh(b, m); if (extra) extra(); };
+    E.push({ g: "Seiten", t: "Übersicht", u: "Alle Remotes und Docks auf einen Blick", i: "mdi:view-dashboard-variant-outline", go: geh("start") });
+    for (const [m, t, i] of SEITEN_REMOTE) E.push({ g: "Seiten", t, u: rn, i, go: geh("remote", m) });
+    for (const [k, t, i] of SEITEN_SYSTEM) E.push({ g: "Seiten", t, u: "Für alle Remotes", i, go: geh(k) });
+    for (const o of s.order) if (o !== d) E.push({ g: "Fernbedienungen", t: devName(o), u: `Wechseln · ${this._live(o).kurz}`, i: "mdi:remote", go: () => { this._remWahl(o); this._geh("remote"); } });
+    const A = (t, u, i, go, k = "") => E.push({ g: "Aktionen", t, u, i, go, k });
+    if (s.dirty[d]) A("Speichern", rn, "mdi:content-save", () => this._save());
+    if ((s.hist[d] || []).length) A("Rückgängig", `${s.hist[d].length} Schritt(e)`, "mdi:undo", () => this._undo());
+    A("Übertragen", `Belegung jetzt an ${rn} schicken`, "mdi:upload", () => this._pushDev(d), "senden");
+    A("Neue Fernbedienung einrichten", "Assistent", "mdi:plus-circle-outline", () => { s.modal = { type: "neu", schritt: 0, name: "", ip: "", vorlage: d, job: null }; }, "anlegen");
+    A(`Teile nach ${rn} übernehmen`, "Aktivitäten, Menüseiten, Popups … von einer anderen Remote", "mdi:content-duplicate", () => { s.modal = { type: "teile", quelle: s.order.find((x) => x !== d) || "", sel: {} }; });
+    A("Sicherung herunterladen", "Alle Remotes als Datei", "mdi:download", () => this._click({ target: this._knopf("bk_down") }), "backup export");
+    A("Sicherung einspielen", "Aus Datei wiederherstellen", "mdi:upload", () => this._click({ target: this._knopf("bk_up") }), "backup import restore");
+    A("Firmware aktualisieren", "Updates für Remotes und Docks", "mdi:update", geh("fw"), "ota flashen");
+    A("Bluetooth-Plätze verwalten", rn, "mdi:bluetooth-connect", geh("remote", "bt"), "koppeln pairing");
+    A("Hardware-Test", "Platine prüfen: Tasten, Mikrofon, Display, Touch, IR, Sensoren …", "mdi:clipboard-check-outline", geh("werk"), "hardware platinen test pcb mikrofon tasten");
+    const c = this.cfg;
+    const rows = [POWER, ...ROWS.flat(), ...AKT_EVENTS];
+    c.activities.forEach((a, ai) => {
+      for (const [k, , ic] of rows) {
+        const kc = a.keys?.[String(k)] || {};
+        const was = GESTURES.filter(([g]) => kc[g]?.length).map(([g, l]) => `${l}: ${this.stepText(kc[g][0])}`).join(" · ");
+        E.push({ g: "Tasten", t: `${KEYNAME[k]}`, u: `${a.name} · ${was || "frei"}`, i: ic || "mdi:gesture-tap-button", k: was ? "" : "frei leer",
+          go: geh("remote", "keys", () => { s.ansicht = ""; s.act = ai; s.modus = null; s.key = k; s.blink = `.key[data-k="${k}"]`; }) });
+      }
+    });
+    (c.modi || []).forEach((mo, mi) => E.push({ g: "Tasten", t: `Folgemodus ${mo.name}`, u: `${Object.keys(mo.keys || {}).length} Tasten · ${mo.s || 7} s`, i: "mdi:timer-cog-outline",
+      go: geh("remote", "keys", () => { s.ansicht = ""; s.modus = mi; s.key = null; }) }));
+    c.activities.forEach((a, ai) => E.push({ g: "Tasten", t: `Aktivität ${a.name}`, u: `Bluetooth: ${this.slotName(a.slot)}`, i: aktIcon(a.name),
+      go: geh("remote", "keys", () => { s.ansicht = ""; s.act = ai; s.modus = null; s.key = null; }) }));
+    const w = s.meta[d]?.einst || {};
+    for (const [gr, gi, felder] of EINST_GRUPPEN) for (const [k, name, art] of felder) {
+      if (!(k in w)) continue;
+      const v = w[k];
+      const wert = Array.isArray(art) ? (art.find(([x]) => x === v)?.[1] ?? String(v)) : art ? `${v} ${art.einheit}` : v ? "an" : "aus";
+      E.push({ g: "Einstellungen", t: name, u: `${gr} · ${wert}`, i: gi, go: geh("remote", "einst", () => { s.blink = `.ez[data-k="${k}"]`; }) });
+    }
+    for (const p of c.menu?.pages || []) {
+      E.push({ g: "Menüseiten", t: p.title || p.id, u: `${p.popup ? "Popup" : "Menüseite"} · ${(p.items || []).length} Einträge`, i: p.popup ? "mdi:message-badge-outline" : "mdi:card-outline",
+        go: geh("remote", "menu", () => { s.mpage = p.id; s.mitem = null; }) });
+      (p.items || []).forEach((it, ii) => {
+        const t = it.t === "text" ? "" : this._mItemText(it);
+        if (t && t.length <= 60) E.push({ g: "Menü", t, u: `Eintrag auf „${p.title || p.id}“`, i: it.icon ? "mdi:" + String(it.icon).replace(/^mdi:/, "") : "mdi:gesture-tap", go: geh("remote", "menu", () => { s.mpage = p.id; s.mitem = ii; }) });
+      });
+    }
+    (c.slots || []).forEach((n, i) => E.push({ g: "Bluetooth", t: n || `Platz ${i + 1}`, u: `Bluetooth-Platz ${i + 1}`, i: "mdi:bluetooth", go: geh("remote", "bt") }));
+    return E;
+  },
+  _knopf(a) { const b = document.createElement("button"); b.dataset.a = a; return b; },
+  _palSuche(q) {
+    const p = this.s.pal;
+    p.alle ||= this._palEintraege();
+    const n = norm(q).trim();
+    if (!n) return p.alle.filter((e) => ["Seiten", "Fernbedienungen", "Aktionen"].includes(e.g)).slice(0, 30);
+    const w = n.split(/\s+/);
+    const GR = ["Seiten", "Fernbedienungen", "Aktionen", "Menüseiten", "Tasten", "Einstellungen", "Menü", "Bluetooth"];
+    const treffer = p.alle.map((e, idx) => {
+      const t = norm(e.t), hay = `${t} ${norm(e.u)} ${norm(e.g)} ${norm(e.k)}`;
+      if (!w.every((x) => hay.includes(x))) return null;
+      const sc = (t === n ? 0 : t.startsWith(n) ? 1 : t.includes(n) ? 2 : w.every((x) => t.includes(x)) ? 3 : 5) * 100 + GR.indexOf(e.g) * 10 + idx / 1e4;
+      return { e, sc };
+    }).filter(Boolean).sort((a, b) => a.sc - b.sc).slice(0, 60);
+    const best = {};
+    for (const x of treffer) best[x.e.g] ??= x.sc;
+    return treffer.sort((a, b) => best[a.e.g] - best[b.e.g] || a.sc - b.sc).map((x) => x.e);
+  },
+  _palErgHtml() {
+    const p = this.s.pal;
+    p.erg = this._palSuche(p.q || "");
+    p.i = Math.max(0, Math.min(p.i || 0, p.erg.length - 1));
+    const n = norm(p.q || "").trim().split(/\s+/).filter(Boolean);
+    const mark = (t) => { let h = esc(t); for (const x of n) { const i = norm(t).indexOf(x); if (i >= 0 && x.length > 1) { h = esc(t.slice(0, i)) + "<mark>" + esc(t.slice(i, i + x.length)) + "</mark>" + esc(t.slice(i + x.length)); break; } } return h; };
+    let gr = "";
+    return p.erg.map((e, i) => {
+      const kopf = e.g !== gr ? `<div class="palg">${esc((gr = e.g))}</div>` : "";
+      return `${kopf}<button class="pe ${i === p.i ? "sel" : ""}" data-a="o_palgo" data-n="${i}"><span class="pico"><ha-icon icon="${esc(e.i)}"></ha-icon></span>
+        <span><b>${mark(e.t)}</b><small>${esc(e.u)}</small></span>${i === p.i ? '<kbd>Enter</kbd>' : ""}</button>`;
+    }).join("") || `<div class="none">Nichts gefunden für „${esc(p.q)}“.</div>`;
+  },
+  _palHtml() {
+    const p = this.s.pal;
+    return `<div class="palbg" data-a="o_palzu"><div class="pal" role="dialog" aria-label="Suche">
+      <div class="palin"><ha-icon icon="mdi:magnify"></ha-icon><input id="palq" type="search" autocomplete="off" spellcheck="false" placeholder="Taste, Einstellung, Menüseite, Aktion …" value="${esc(p.q || "")}"><kbd>Esc</kbd></div>
+      <div class="palerg">${this._palErgHtml()}</div>
+      <div class="palfuss"><span><kbd>↑</kbd> <kbd>↓</kbd> wählen</span><span><kbd>Enter</kbd> öffnen</span><span class="grow"></span><span>${esc(devName(this.s.dev))}</span></div></div></div>`;
+  },
+  _palBind() {
+    const q = this.shadowRoot.querySelector("#palq");
+    if (!q) return;
+    const p = this.s.pal;
+    const liste = () => this.shadowRoot.querySelector(".palerg");
+    const markiere = () => {
+      liste().querySelectorAll(".pe").forEach((b) => { const on = Number(b.dataset.n) === p.i; b.classList.toggle("sel", on); b.querySelector("kbd")?.remove(); if (on) { b.insertAdjacentHTML("beforeend", "<kbd>Enter</kbd>"); b.scrollIntoView({ block: "nearest" }); } });
+    };
+    q.oninput = () => { p.q = q.value; p.i = 0; liste().innerHTML = this._palErgHtml(); liste().scrollTop = 0; };
+    q.onkeydown = (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); p.i = Math.max(0, Math.min(p.erg.length - 1, p.i + (e.key === "ArrowDown" ? 1 : -1))); markiere(); }
+      else if (e.key === "Enter") { e.preventDefault(); this._palAus(p.i); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.s.pal = null; this._render(); }
+    };
+    setTimeout(() => { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }, 0);
+  },
+  async _palAus(i) {
+    const e = this.s.pal?.erg?.[i];
+    this.s.pal = null;
+    if (e) await e.go();
+    this._render();
+  },
+  // Remote die neue Belegung holen lassen (2026-10-26): nur, wenn HA die Aktion gerade kennt (Remote direkt verbunden).
+  // hass.callService zeigt sonst selbst "Action ... not found" an - die Remote holt sich den Stand ohnehin beim
+  // naechsten Aufwachen ueber die Ankuendigung (Dock bzw. HA). Rueckgabe: angestossen?
+  async _neuLaden(d) {
+    const dienst = `${this.s.meta[d]?.slug}_tasten_neu_laden`;
+    if (!this._hass.services?.esphome?.[dienst]) return false;
+    try { await this._hass.callWS({ type: "call_service", domain: "esphome", service: dienst, service_data: {} }); return true; }
+    catch (e) { return false; }
+  },
+  // ESPHome-Aktion einer Remote/eines Docks ohne die automatische Fehlermeldung von hass.callService ("Action ...
+  // not found", wenn das Geraet gerade nicht direkt verbunden ist) - Fehler behandelt der Aufrufer (2026-10-26)
+  _esphome(dienst, daten = {}) {
+    return this._hass.callWS({ type: "call_service", domain: "esphome", service: dienst, service_data: daten || {} });
+  },
+  async _pushDev(d) {
+    try {
+      if (!(await this._neuLaden(d))) throw new Error("nicht verbunden");
+      this.s.msg = { text: `${devName(d)}: Übertragung angestoßen.` };
+    } catch (e) {
+      this.s.msg = { err: true, text: `${devName(d)} nicht erreichbar – sie schläft (WLAN aus). Eine Taste drücken oder aufs Display tippen, dann holt sie sich die Belegung selbst.` };
+    }
+  },
+
+  // ------------------------------------------------------------- Ereignisse
+  async _oClick(a, t, ev) {
+    const s = this.s;
+    switch (a) {
+      case "o_geh": this._geh(t.dataset.b, t.dataset.m); return true;
+      case "o_rem": this._remWahl(t.dataset.d); this._geh("remote", t.dataset.m); return true;
+      case "o_navauf": s.nav = true; return true;
+      case "o_navzu": s.nav = false; return true;
+      case "o_pal": s.pal = { q: "", i: 0 }; s.nav = false; return true;
+      case "o_palzu": if (ev.target !== t) return "stop"; s.pal = null; return true;
+      case "o_palgo": await this._palAus(Number(t.dataset.n)); return "stop";
+      case "o_sync": s.syncOffen = !s.syncOffen; return true;
+      case "o_ansicht": ev.preventDefault?.(); s.ansicht = t.dataset.v; this._nachOben = !!t.closest(".steckbrief"); return true;
+      case "o_zelle": {
+        const i = Number(t.dataset.i), k = Number(t.dataset.k);
+        if (t.dataset.mod) { s.modus = i; } else { s.act = i; s.modus = null; }
+        s.key = k; s.ansicht = ""; s.blink = `.key[data-k="${k}"]`;
+        return true;
+      }
+      case "o_speichern": this._remWahl(t.dataset.d); await this._save(); return "stop";
+      case "o_push": await this._pushDev(t.dataset.d); return true;
+      case "p_go": this._pGo(this._pListe?.[Number(t.dataset.n)]?.go); return true;
+      case "p_ref": this._pGo(this._pRefs?.[Number(t.dataset.n)]); return true;
+      case "p_spick": this._spickzettel(); return true;
+      case "o_diff": s.diffOffen = !s.diffOffen; return true;
+      case "o_diffgo": {
+        const x = this._diffListe?.[Number(t.dataset.n)]?.go;
+        if (!x) return true;
+        this._geh("remote", x.mode || "keys");
+        if (x.mpage) { s.mpage = x.mpage; s.mitem = null; }
+        if (x.modus != null) { s.modus = x.modus; s.key = x.key ?? null; s.ansicht = ""; }
+        else if (x.act != null) { s.act = x.act; s.modus = null; s.key = x.key ?? null; s.ansicht = ""; }
+        if (x.key != null) s.blink = `.key[data-k="${x.key}"]`;
+        s.diffOffen = false;
+        return true;
+      }
+      case "o_vormerken": {
+        const g = s.fw?.geraete?.find((x) => x.datei === t.dataset.datei);
+        try { await this._hass.callWS({ type: "esphomeremote_konfig/fw_vormerken", datei: t.dataset.datei, an: !g?.vorgemerkt });
+          s.msg = { text: g?.vorgemerkt ? "Vormerkung aufgehoben." : `${g?.friendly || t.dataset.datei}: Update vorgemerkt – es startet, sobald die Remote online ist.` };
+        } catch (e) { s.msg = { err: true, text: e.message || String(e) }; }
+        await this._fwLaden(); return true;
+      }
+    }
+    return false;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(OberflaecheTab));
+
+// Remotes synchron halten (2026-10-22, sync.py): Gruppe, was mitlaeuft (je Bereich und je Einstellung), Unterschiede,
+// Vollabgleich von einer Vorlage, Verlauf. Gespeichert wird sofort (kein "Speichern" noetig).
+const SYNC_BEREICHE = {
+  activities: ["Aktivitäten & Tasten", "mdi:gesture-tap-button", "Alle Aktivitäten mit ihren Tasten (einfach, doppelt, lang, halten), Leiste und zugeordnetem Bluetooth-Platz."],
+  home: ["Startseite", "mdi:view-dashboard-outline", "Kacheln, Anordnung und Inhalte der Startseite."],
+  menu: ["Menü", "mdi:menu-open", "Alle Menüseiten und Popups, auch die Einstellungsseiten auf der Remote."],
+  modi: ["Folgemodi", "mdi:timer-play-outline", "Tastenbelegungen, die nach einer Taste kurz gelten."],
+  gesten: ["Gesten", "mdi:gesture", "Bewegungsgesten (Schütteln, Kippen, eigene angelernte) und was sie auslösen. Auch an der Remote angelernte Gesten laufen mit."],
+  makros: ["Makros", "mdi:keyboard-outline", "Texte und Tastenfolgen der Tastatur-Seite."],
+  ir: ["Infrarot", "mdi:remote-tv", "Gelernte und aus der Datenbank gewählte Infrarot-Geräte und Befehle."],
+  kameras: ["Kameras", "mdi:cctv", "Kameras für „Kamerabild“ und „Live-Bild“."],
+  slots: ["Namen der Bluetooth-Plätze", "mdi:bluetooth-settings", "Nur die Namen (z. B. Streamer, Fernseher). Die Kopplung selbst steckt in jeder Remote – jede muss einmal mit dem Gerät gekoppelt werden."],
+  bt: ["Home Assistant über Bluetooth (Proxys)", "mdi:bluetooth-connect", "Über welche Bluetooth-Proxys Home Assistant die Remote erreichen darf."],
+  ents: ["Verknüpfungen", "mdi:link-variant", "Player, Fernseher, Lautsprecher und Timer der eingebauten Funktionen. Abwählen, wenn die Remotes in verschiedenen Räumen liegen."],
+  begruessung: ["Begrüßungstext", "mdi:hand-wave-outline", "Steht meist „Hallo <Name>“ darin – deshalb ab Werk abgewählt. Leerer Text heißt ohnehin „Hallo“ + eigener Name."],
+  enabled: ["Belegung an/aus", "mdi:toggle-switch-outline", "Ob die Remote die Belegung aus dem Konfigurator nutzt oder ihre eingebaute."],
+};
+// Einstellungen, die nicht auf der Einstellungsseite stehen (Bluetooth-Seite, Gesten-Seite)
+const SYNC_WEITERE = {
+  maus_slots: "Maus je Bluetooth-Platz", voll_slots: "Volle Tastatur je Bluetooth-Platz", maus_tempo: "Zeigertempo",
+  maus_dpad: "Steuerkreuz als Maus", maus_dpad_tempo: "Tempo Steuerkreuz", maus_zurueck: "Zurück-Taste im Touchpad",
+  gesten_an: "Gesten an", gesten_dunkel: "Gesten bei dunklem Display", gesten_sens: "Gesten-Empfindlichkeit", begruessung: "Begrüßung zeigen",
+};
+
+const SyncTab = {
+  async _syncLaden() {
+    if (this._syLaedt) return;
+    this._syLaedt = true;
+    try { this.s.sync = await this._hass.callWS({ type: "esphomeremote_konfig/sync_get" }); }
+    catch (e) { this.s.sync = { fehler: e.message || String(e) }; }
+    this._syLaedt = false; this._render();
+  },
+  async _syncSetzen(arg) {
+    try { this.s.sync = await this._hass.callWS({ type: "esphomeremote_konfig/sync_set", ...arg }); }
+    catch (e) { this.s.msg = { err: true, text: "Synchronisieren: " + (e.message || e) }; }
+  },
+  // Nach einem Abgleich: Belegung und Einstellungen der angepassten Remotes neu holen (nicht bei offenen Aenderungen)
+  async _syncNachladen(liste) {
+    if (!liste?.length) return;
+    const s = this.s;
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/get" });
+      const behalten = [];
+      for (const d of liste) {
+        if (!r.devices[d]) continue;
+        s.meta[d] = r.devices[d];
+        if (s.dirty[d]) { behalten.push(d); continue; }
+        s.cfg[d] = r.devices[d].config; s.enabled[d] = r.devices[d].enabled;
+        s.saved[d] = JSON.stringify(s.cfg[d]); (s.savedEn ||= {})[d] = !!s.enabled[d];
+      }
+      const namen = liste.map(devName).join(", ");
+      s.toastSync = `Auch an ${namen} übertragen.` + (behalten.length ? ` ${behalten.map(devName).join(", ")} hat ungespeicherte Änderungen – dort erst nach dem Neuladen sichtbar.` : "");
+      s.msg = { text: s.toastSync };
+    } catch (e) { /* Anzeige egal - HA hat es gespeichert */ }
+    s.sync = null;   // Unterschiede neu berechnen lassen
+  },
+  _syncEinstListe() {
+    const bekannt = new Set();
+    const gruppen = EINST_GRUPPEN.map(([titel, icon, felder]) => {
+      const f = felder.filter(([k]) => typeof k === "string").map(([k, name]) => { bekannt.add(k); return [k, name]; });
+      return [titel, icon, f];
+    });
+    const alle = new Set();
+    for (const d of this.s.order) Object.keys(this.s.meta[d]?.einst || {}).forEach((k) => alle.add(k));
+    const rest = [...alle].filter((k) => !bekannt.has(k) && k !== "kb_ziffern").sort().map((k) => [k, SYNC_WEITERE[k] || k]);
+    if (rest.length) gruppen.push(["Bluetooth-Seite, Gesten und Weiteres", "mdi:dots-horizontal-circle-outline", rest]);
+    return gruppen.filter((g) => g[2].length);
+  },
+  _syncWert(k, v) {
+    if (v === undefined || v === null) return "– (noch nicht gemeldet)";
+    if (typeof v === "boolean") return v ? "an" : "aus";
+    for (const [, , felder] of EINST_GRUPPEN) {
+      const f = felder.find(([x]) => x === k);
+      if (f && Array.isArray(f[2])) { const o = f[2].find(([x]) => x === v); if (o) return o[1]; }
+      if (f && f[2]?.einheit) return `${v} ${f[2].einheit}`;
+    }
+    return String(v);
+  },
+  _syncHtml() {
+    const s = this.s, y = s.sync;
+    if (!y) { this._syncLaden(); return `<div class="einst"><div class="lade"><span class="spin"></span> Lade …</div></div>`; }
+    if (y.fehler) return `<div class="einst"><div class="msg err">${esc(y.fehler)}</div></div>`;
+    const aus = new Set(y.aus), gr = new Set(y.geraete);
+    const vorlage = s.syncVon && gr.has(s.syncVon) ? s.syncVon : (gr.has(s.dev) ? s.dev : y.geraete[0]);
+    const u = y.unterschiede, namen = Object.fromEntries(this._syncEinstListe().flatMap(([, , f]) => f));
+    // Gruppe
+    const remotes = s.order.map((d) => `<label class="sw syrem"><input type="checkbox" data-a="sy_rem" data-d="${esc(d)}" ${gr.has(d) ? "checked" : ""}>
+      <span><b>${esc(devName(d))}</b><small>${this._live ? esc(this._live(d).kurz || "") : ""}</small></span></label>`).join("");
+    // Unterschiede
+    const nB = Object.keys(u.cfg).length, nE = Object.keys(u.einst).length;
+    const bZeilen = Object.entries(u.cfg).map(([b, staende]) => `<div class="ez ${aus.has("cfg:" + b) ? "syaus" : ""}"><span>${esc(SYNC_BEREICHE[b]?.[0] || b)}${aus.has("cfg:" + b) ? " <small>(wird nicht abgeglichen)</small>" : ""}</span>
+      <small>${staende.map((l) => l.map(devName).join(" = ")).join(" ≠ ")}</small></div>`).join("");
+    const eZeilen = Object.entries(u.einst).map(([k, vals]) => `<div class="ez ${aus.has("einst:" + k) ? "syaus" : ""}"><span>${esc(namen[k] || k)}${aus.has("einst:" + k) ? " <small>(wird nicht abgeglichen)</small>" : ""}</span>
+      <small>${u.geraete.map((d) => `${esc(devName(d))}: <b>${esc(this._syncWert(k, vals[d]))}</b>`).join(" · ")}</small></div>`).join("");
+    // Auswahl: Bereiche
+    const bereiche = y.bereiche.map((b) => { const [t, ic, txt] = SYNC_BEREICHE[b] || [b, "mdi:circle-small", ""];
+      return `<label class="sw syzeile"><input type="checkbox" data-a="sy_aus" data-k="cfg:${b}" ${aus.has("cfg:" + b) ? "" : "checked"}>
+        <span><b><ha-icon icon="${ic}"></ha-icon>${esc(t)}</b><small>${esc(txt)}</small></span></label>`; }).join("");
+    // Auswahl: Einstellungen je Gruppe, aufklappbar bis zur einzelnen Einstellung
+    const einst = this._syncEinstListe().map(([titel, icon, felder], gi) => {
+      const an = felder.filter(([k]) => !aus.has("einst:" + k)).length;
+      const zust = an === felder.length ? "checked" : "";
+      return `<details class="sygr" ${s.syncAuf?.[gi] ? "open" : ""}><summary data-a="sy_auf" data-gi="${gi}">
+          <input type="checkbox" data-a="sy_gruppe" data-gi="${gi}" ${zust} ${an && an < felder.length ? "data-teil" : ""} title="Ganze Gruppe">
+          <ha-icon icon="${icon}"></ha-icon><b>${esc(titel)}</b><small>${an} von ${felder.length}</small></summary>
+        <div class="syfelder">${felder.map(([k, name]) => `<label class="sw"><input type="checkbox" data-a="sy_aus" data-k="einst:${k}" ${aus.has("einst:" + k) ? "" : "checked"}>
+          <span>${esc(name)}${k in u.einst ? ' <i class="sydiff" title="unterscheidet sich gerade">≠</i>' : ""}</span></label>`).join("")}</div></details>`;
+    }).join("");
+    const log = (y.log || []).map((l) => `<div class="ez"><span><small>${new Date(l.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</small>
+      ${esc(devName(l.von))} → ${esc(l.nach.map(devName).join(", "))}</span><small>${esc(l.was)}</small></div>`).join("");
+    return `<div class="einst sync">
+      <p class="hint">Hält mehrere Remotes <b>gleich</b>: Tasten, Startseite, Menü, Einstellungen und alles Weitere – nur der <b>Name</b> bleibt je Remote
+        (Gerätename, Bluetooth-Name, „Hallo …“). Was du an einer Remote der Gruppe änderst – im Konfigurator <i>oder</i> direkt an der Remote –, geht automatisch an die anderen.
+        Schlafende Remotes holen es beim nächsten Aufwachen. Unten wählst du genau aus, was mitläuft.</p>
+      <div class="egrid">
+        <div class="karte"><h3><ha-icon icon="mdi:sync"></ha-icon>Synchronisieren</h3>
+          <label class="sw syhaupt"><input type="checkbox" data-a="sy_an" ${y.an ? "checked" : ""}><span><b>${y.an ? "An" : "Aus"}</b>
+            <small>${y.an ? `Änderungen an einer Remote der Gruppe gehen sofort an die anderen.` : "Nichts wird automatisch abgeglichen."}</small></span></label>
+          <div class="ez"><span>Remotes in der Gruppe <small class="vtext">(mindestens zwei)</small></span></div>
+          <div class="syremotes">${remotes}</div>
+          <div class="ez quer"><span>Vorlage für „Jetzt angleichen“</span>
+            <select data-syvon>${y.geraete.map((d) => `<option value="${esc(d)}" ${d === vorlage ? "selected" : ""}>${esc(devName(d))}</option>`).join("")}</select></div>
+          <p><button class="btn ${y.an && !nB && !nE ? "ghost" : "primary"}" data-a="sy_jetzt" ${y.geraete.length > 1 ? "" : "disabled"}><ha-icon icon="mdi:content-duplicate"></ha-icon>${y.geraete.length > 1 ? `Jetzt alles von ${esc(devName(vorlage))} angleichen` : "Erst zwei Remotes anhaken"}</button></p>
+          <p class="vtext">Beim ersten Einschalten einmal angleichen – danach hält der Abgleich die Remotes von selbst gleich. Abgewähltes bleibt dabei unberührt.</p>
+        </div>
+        <div class="karte"><h3><ha-icon icon="mdi:compare-horizontal"></ha-icon>Unterschiede jetzt ${nB + nE ? `<span class="badge warn">${nB + nE}</span>` : `<span class="badge ok">alles gleich</span>`}</h3>
+          ${bZeilen ? `<div class="sykopf">Belegung</div>${bZeilen}` : ""}
+          ${eZeilen ? `<div class="sykopf">Einstellungen</div>${eZeilen}` : ""}
+          ${nB + nE ? "" : `<p class="vtext">${esc(u.geraete.map(devName).join(", "))} sind gleich.</p>`}
+          <p class="vtext">Einstellungen, die eine Remote noch nicht gemeldet hat (schläft, alte Firmware), erscheinen hier, bis sie sich meldet.</p>
+        </div>
+      </div>
+      <div class="egrid">
+        <div class="karte"><h3><ha-icon icon="mdi:format-list-checks"></ha-icon>Belegung: was mitläuft</h3>
+          <p class="vtext">Gilt beim Speichern im Konfigurator und für an der Remote angelernte Gesten.</p>${bereiche}</div>
+        <div class="karte"><h3><ha-icon icon="mdi:tune-variant"></ha-icon>Einstellungen: was mitläuft</h3>
+          <p class="vtext">Gruppe anhaken = alle darin. Aufklappen für einzelne Einstellungen. ≠ = unterscheidet sich gerade.
+            <button class="btn small ghost" data-a="sy_alle">Alles an</button> <button class="btn small ghost" data-a="sy_std">Ab Werk</button></p>${einst}</div>
+      </div>
+      <div class="egrid">
+        <div class="karte"><h3><ha-icon icon="mdi:shield-lock-outline"></ha-icon>Bleibt immer je Remote</h3>
+          <p class="vtext"><b>Name</b> (Gerätename, Bluetooth-Name, Begrüßung), <b>Bluetooth-Kopplungen</b> (stecken in der Remote – jede einmal mit Fernseher/Streamer koppeln),
+            <b>Akku- und Verbrauchswerte</b>, <b>Firmware-Stand und IP-Adresse</b>, die Helligkeit, solange „Helligkeit nach Lichtsensor“ sie je Raum regelt (die gelernte Kurve gilt ohnehin für alle).</p></div>
+        <div class="karte"><h3><ha-icon icon="mdi:history"></ha-icon>Verlauf</h3>${log || `<p class="vtext">Noch nichts abgeglichen.</p>`}</div>
+      </div></div>`;
+  },
+  async _syncClick(a, t) {
+    if (!a.startsWith("sy_")) return false;
+    const s = this.s, y = s.sync;
+    if (!y) return true;
+    const aus = new Set(y.aus);
+    switch (a) {
+      case "sy_auf": (s.syncAuf ||= {})[t.dataset.gi] = !s.syncAuf[t.dataset.gi]; return true;   // Gruppe auf-/zuklappen
+      case "sy_an": {
+        if (t.checked && y.geraete.length < 2) { alert("Erst mindestens zwei Remotes für die Gruppe anhaken."); t.checked = false; return true; }
+        const u = y.unterschiede, n = Object.keys(u.cfg).length + Object.keys(u.einst).length;
+        if (t.checked && n && confirm(`Die Remotes unterscheiden sich gerade in ${n} Punkt(en).\n\nJetzt alles von ${devName(s.syncVon && y.geraete.includes(s.syncVon) ? s.syncVon : (y.geraete.includes(s.dev) ? s.dev : y.geraete[0]))} an die anderen übertragen?\n(Abbrechen = nur einschalten; angeglichen wird dann erst bei der nächsten Änderung.)`)) {
+          await this._syncSetzen({ an: true });
+          return this._syncClick("sy_jetzt", { dataset: { ohneFrage: "1" } });
+        }
+        await this._syncSetzen({ an: t.checked });
+        s.msg = { text: t.checked ? "Synchronisieren ist an." : "Synchronisieren ist aus." };
+        return true;
+      }
+      case "sy_rem": {
+        const g = new Set(y.geraete);
+        if (t.checked) g.add(t.dataset.d); else g.delete(t.dataset.d);
+        await this._syncSetzen({ geraete: [...g], ...(g.size < 2 && y.an ? { an: false } : {}) });
+        if (g.size < 2 && y.an) s.msg = { text: "Weniger als zwei Remotes – Synchronisieren ausgeschaltet." };
+        return true;
+      }
+      case "sy_aus": {
+        if (t.checked) aus.delete(t.dataset.k); else aus.add(t.dataset.k);
+        await this._syncSetzen({ aus: [...aus] });
+        return true;
+      }
+      case "sy_gruppe": {
+        const f = this._syncEinstListe()[Number(t.dataset.gi)][2];
+        for (const [k] of f) { if (t.checked) aus.delete("einst:" + k); else aus.add("einst:" + k); }
+        await this._syncSetzen({ aus: [...aus] });
+        return true;
+      }
+      case "sy_alle": await this._syncSetzen({ aus: [] }); return true;
+      case "sy_std": await this._syncSetzen({ aus: y.standard_aus }); return true;
+      case "sy_jetzt": {
+        const von = s.syncVon && y.geraete.includes(s.syncVon) ? s.syncVon : (y.geraete.includes(s.dev) ? s.dev : y.geraete[0]);
+        const ziele = y.geraete.filter((d) => d !== von);
+        if (Object.values(s.dirty).some(Boolean) && !confirm("Es gibt ungespeicherte Änderungen im Konfigurator. Angeglichen wird der gespeicherte Stand. Trotzdem weiter?")) return true;
+        if (!t.dataset.ohneFrage && !confirm(`Alles Angehakte von ${devName(von)} an ${ziele.map(devName).join(", ")} übertragen?\n\nDie bisherige Belegung und die angehakten Einstellungen dort werden ersetzt. Der Name bleibt.`)) return true;
+        s.msg = { text: "Gleiche an …" }; this._render();
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/sync_jetzt", von });
+          const fehler = Object.entries(r.ergebnis || {}).filter(([, e]) => e.fehler);
+          s.sync = r;
+          await this._syncNachladen(ziele);
+          s.sync = r;
+          s.msg = fehler.length ? { err: true, text: fehler.map(([d, e]) => `${devName(d)}: ${e.fehler}`).join(" · ") }
+            : { text: `${ziele.map(devName).join(", ")} ${ziele.length > 1 ? "sind" : "ist"} jetzt wie ${devName(von)}. Schlafende Remotes übernehmen es beim Aufwachen.` };
+        } catch (e) { s.msg = { err: true, text: "Angleichen: " + (e.message || e) }; }
+        return true;
+      }
+    }
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(SyncTab));
+
+// Pruefen & Finden, Vergleichen, Spickzettel, Dock-Zustand (2026-10-25)
+// - _refs: alle HA-Entitaeten, die eine Remote nutzt (Tasten, Folgemodi, Menue, Popups, Gesten, Verknuepfungen, Kameras),
+//   je mit Fundort und Sprungziel
+// - _pruefung: Warnungen ueber alle Remotes (fehlende Entitaeten/Dienste, tote Verweise, Popups, die nie aufgehen ...)
+// - Vergleichen: zwei beliebige Remotes je Bereich bis zur einzelnen Aktivitaet/Menueseite, in beide Richtungen uebernehmen
+const ENT_RE = /^[a-z_]+\.[a-z0-9_]+$/;
+const ENT_DOMAINS = new Set(["light", "switch", "script", "scene", "media_player", "sensor", "binary_sensor", "cover", "climate", "fan", "automation",
+  "camera", "timer", "number", "select", "button", "remote", "vacuum", "lock", "counter", "group", "person", "weather", "calendar", "todo", "event",
+  "alarm_control_panel", "water_heater", "humidifier", "siren", "valve", "lawn_mower", "image", "text", "update", "device_tracker", "infrared",
+  "input_boolean", "input_select", "input_number", "input_text", "input_datetime", "input_button", "zone", "sun"]);
+const REF_OHNE = new Set(["label", "name", "title", "svc", "t", "fn", "kind", "page", "src", "icon", "id", "target"]);   // keine Entitaeten
+const istEnt = (v) => typeof v === "string" && ENT_RE.test(v) && ENT_DOMAINS.has(v.split(".")[0]);
+const VGL_BEREICHE = ["activities", "modi", "menu", "home", "gesten", "makros", "ir", "kameras", "slots", "bt", "ents", "begruessung"];
+const VGL_LISTE = { activities: (x) => x.name, modi: (x) => x.name, menu: (x) => x.id };   // je Eintrag vergleichen (Schluessel)
+const gleich = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+const PruefTab = {
+  // ------------------------------------------------------------- Verweise
+  _refs(d) {
+    const c = this.s.cfg[d] || {}, R = [];
+    const walk = (v, wo, go) => {
+      if (istEnt(v)) { R.push({ e: v, wo, go, d }); return; }
+      if (Array.isArray(v)) { for (const x of v) walk(x, wo, go); return; }
+      if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) if (!REF_OHNE.has(k)) walk(x, wo, go);
+    };
+    const tasten = (liste, mod) => (liste || []).forEach((a, i) => {
+      for (const [k, kc] of Object.entries(a.keys || {})) for (const [g] of GESTURES) if (kc[g]?.length)
+        walk(kc[g], `${mod ? "Folgemodus" : "Tasten"} · ${a.name} · ${KEYNAME[k] || k} (${GNAME[g] || g})`, { d, mode: "keys", [mod ? "modus" : "act"]: i, key: Number(k) });
+    });
+    tasten(c.activities, false);
+    tasten(c.modi, true);
+    for (const p of c.menu?.pages || []) {
+      (p.items || []).forEach((it, j) => walk(it, `${p.popup ? "Popup" : "Menü"} · ${p.title || p.id} · ${this._mItemText(it) || it.t}`, { d, mode: "menu", mpage: p.id, mitem: j }));
+      for (const art of ["open", "close", "if"]) walk(p.popup?.[art], `Popup · ${p.title || p.id} · ${{ open: "öffnet bei", close: "schließt bei", if: "nur wenn" }[art]}`, { d, mode: "menu", mpage: p.id });
+    }
+    for (const [gk, gv] of Object.entries(c.gesten || {})) walk(gv, `Gesten · ${gk === "eigen" ? "eigene" : gk}`, { d, mode: "gesten" });
+    for (const [k, v] of Object.entries(c.ents || {})) walk(v, `Verknüpfungen · ${VERKN.find(([x]) => x === k)?.[1] || k}`, { d, mode: "verkn" });
+    (c.kameras || []).forEach((k) => walk(k.e, `Kameras · ${k.n || k.e}`, { d, mode: "menu" }));
+    return R;
+  },
+  _pGo(go) {
+    const s = this.s;
+    if (!go) return;
+    this._remWahl(go.d);
+    this._geh("remote", go.mode || "keys");
+    if (go.mpage) { s.mpage = go.mpage; s.mitem = go.mitem ?? null; }
+    if (go.modus != null) { s.modus = go.modus; s.key = go.key ?? null; s.ansicht = ""; }
+    else if (go.act != null) { s.act = go.act; s.modus = null; s.key = go.key ?? null; s.ansicht = ""; }
+    if (go.key != null) s.blink = `.key[data-k="${go.key}"]`;
+  },
+
+  // ------------------------------------------------------------- Pruefung
+  _pruefung() {
+    const s = this.s, S = this._hass.states, SV = this._hass.services || {}, P = [];
+    const add = (stufe, text, sub, go) => P.push({ stufe, text, sub, go });
+    for (const d of s.order) {
+      const c = s.cfg[d] || {}, n = devName(d).replace(/^Remote /, "");
+      // Entitaeten: fehlt ganz / nicht verfuegbar
+      const fehlt = {}, weg = {};
+      for (const r of this._refs(d)) {
+        const st = S[r.e];
+        if (!st) (fehlt[r.e] ||= []).push(r); else if (st.state === "unavailable") (weg[r.e] ||= []).push(r);
+      }
+      for (const [e, rs] of Object.entries(fehlt)) add("err", `${n}: ${e} gibt es in HA nicht`, `${rs.length}× benutzt – ${rs[0].wo}${rs.length > 1 ? " …" : ""}`, rs[0].go);
+      for (const [e, rs] of Object.entries(weg)) add("warn", `${n}: ${S[e].attributes.friendly_name || e} ist nicht verfügbar`, `${e} · ${rs[0].wo}${rs.length > 1 ? ` (+${rs.length - 1})` : ""}`, rs[0].go);
+      // HA-Dienste, die es nicht (mehr) gibt
+      const dienste = {};
+      const stepsWalk = (steps, wo, go) => (steps || []).forEach((st) => {
+        if (st?.t !== "ha" || !st.svc || istRegeln(st)) return;
+        const [dom, svc] = st.svc.split(".");
+        if (!SV[dom]?.[svc]) (dienste[st.svc] ||= { wo, go, n: 0 }).n++;
+      });
+      const tasten = (liste, mod) => (liste || []).forEach((a, i) => { for (const [k, kc] of Object.entries(a.keys || {})) for (const [g] of GESTURES)
+        stepsWalk(kc[g], `${a.name} · ${KEYNAME[k] || k} (${GNAME[g] || g})`, { d, mode: "keys", [mod ? "modus" : "act"]: i, key: Number(k) }); });
+      tasten(c.activities, false); tasten(c.modi, true);
+      for (const p of c.menu?.pages || []) (p.items || []).forEach((it, j) => stepsWalk(it.steps, `${p.title || p.id} · ${this._mItemText(it) || it.t}`, { d, mode: "menu", mpage: p.id, mitem: j }));
+      for (const [svc, x] of Object.entries(dienste)) add("err", `${n}: Dienst ${svc} gibt es in HA nicht`, `${x.n}× benutzt – ${x.wo}`, x.go);
+      // Aktivitaeten ohne Menue-Taste
+      (c.activities || []).forEach((a, i) => {
+        const hat = Object.values(a.keys || {}).some((kc) => GESTURES.some(([g]) => (kc[g] || []).some((st) => st.t === "int" && MENU_FNS.has(st.fn))));
+        if (!hat) add("err", `${n}: In „${a.name}“ öffnet keine Taste das Menü`, "Mindestens eine Taste mit „Menü öffnen“ belegen.", { d, mode: "keys", act: i });
+      });
+      // Menue: Verweise auf fehlende Seiten, nicht erreichbare Seiten, Popups ohne Ausloeser
+      const pages = c.menu?.pages || [], ids = new Set(pages.map((p) => p.id));
+      const erreichbar = new Set(), byId = Object.fromEntries(pages.map((p) => [p.id, p]));
+      const lauf = (id) => { const pg = byId[id]; if (!pg || erreichbar.has(id)) return; erreichbar.add(id); for (const it of pg.items || []) if (it.t === "page") lauf(it.target); };
+      lauf(c.menu?.start || "main");
+      const akts = new Set((c.activities || []).map((a) => a.name));
+      for (const p of pages) {
+        (p.items || []).forEach((it, j) => {
+          if (it.t === "page" && !ids.has(it.target)) add("err", `${n}: Kachel „${this._mItemText(it) || "?"}“ zeigt auf eine gelöschte Seite`, `Seite ${p.title || p.id} · Ziel „${it.target}“`, { d, mode: "menu", mpage: p.id, mitem: j });
+        });
+        if (!p.popup && !erreichbar.has(p.id) && !String(p.id).startsWith("settings") && !String(p.id).startsWith("einst"))
+          add("info", `${n}: Menüseite „${p.title || p.id}“ ist nirgends verlinkt`, "Auf der Remote nur über HA (menue_popup) erreichbar.", { d, mode: "menu", mpage: p.id });
+        if (p.popup) {
+          const pp = p.popup;
+          if (!(pp.open || []).length) add("info", `${n}: Popup „${p.title || p.id}“ hat keinen Auslöser`, "Geht nur per HA-Dienst oder „Auf der Remote zeigen“ auf.", { d, mode: "menu", mpage: p.id });
+          for (const art of ["open", "close", "if"]) for (const tr of pp[art] || []) {
+            const wo = { open: "öffnet bei", close: "schließt bei", if: "Bedingung" }[art];
+            if (tr.ev === "aktivitaet" && tr.to && !akts.has(tr.to)) add("err", `${n}: Popup „${p.title || p.id}“ wartet auf Aktivität „${tr.to}“`, `Die gibt es nicht (${wo}).`, { d, mode: "menu", mpage: p.id });
+            const st = tr.entity && S[tr.entity];
+            if (!st || tr.attr || tr.to == null || tr.to === "") continue;
+            const opts = st.attributes.options;
+            const dom = tr.entity.split(".")[0];
+            const moeglich = Array.isArray(opts) ? opts.map(String)
+              : ["binary_sensor", "input_boolean", "switch", "light", "fan", "automation", "script"].includes(dom) ? ["on", "off"] : null;
+            if (moeglich && !moeglich.some((o) => o.toLowerCase() === String(tr.to).toLowerCase()))
+              add("warn", `${n}: Popup „${p.title || p.id}“: ${st.attributes.friendly_name || tr.entity} wird nie „${tr.to}“`, `${wo} · möglich: ${moeglich.slice(0, 8).join(", ")}${moeglich.length > 8 ? " …" : ""}`, { d, mode: "menu", mpage: p.id });
+          }
+        }
+      }
+      // Folgemodus-Verweise
+      const modIds = new Set((c.modi || []).map((m) => m.id));
+      (c.activities || []).forEach((a, i) => { for (const [k, kc] of Object.entries(a.keys || {})) for (const [g] of GESTURES) for (const st of kc[g] || [])
+        if (st.t === "modus" && st.id != null && !modIds.has(st.id)) add("err", `${n}: ${a.name} · ${KEYNAME[k] || k} startet einen gelöschten Folgemodus`, GNAME[g] || g, { d, mode: "keys", act: i, key: Number(k) }); });
+    }
+    const rang = { err: 0, warn: 1, info: 2 };
+    return P.sort((a, b) => rang[a.stufe] - rang[b.stufe]);
+  },
+
+  _pruefHtml() {
+    const s = this.s, P = this._pruefung();
+    this._pListe = P;
+    const nE = P.filter((p) => p.stufe === "err").length, nW = P.filter((p) => p.stufe === "warn").length;
+    const liste = P.length ? `<div class="hinweise">${P.map((p, i) => `<div class="hw2 ${p.stufe}"><span class="hi"><ha-icon icon="${{ err: "mdi:alert-circle-outline", warn: "mdi:alert-outline", info: "mdi:information-outline" }[p.stufe]}"></ha-icon></span>
+        <span class="ht"><b>${esc(p.text)}</b>${p.sub ? `<small>${esc(p.sub)}</small>` : ""}</span>
+        ${p.go ? `<button class="btn small" data-a="p_go" data-n="${i}"><ha-icon icon="mdi:arrow-right"></ha-icon>Hinspringen</button>` : ""}</div>`).join("")}</div>`
+      : `<div class="hw2"><span class="hi"><ha-icon icon="mdi:check"></ha-icon></span><span class="ht"><b>Alles in Ordnung</b><small>Keine fehlenden Entitäten, Dienste oder toten Verweise gefunden.</small></span></div>`;
+    // Wo wird das benutzt?
+    const q = norm(s.pq || "");
+    const alle = s.order.flatMap((d) => this._refs(d));
+    const nachE = {};
+    for (const r of alle) (nachE[r.e] ||= []).push(r);
+    const S = this._hass.states;
+    const treffer = Object.keys(nachE).filter((e) => !q || norm(e).includes(q) || norm(S[e]?.attributes?.friendly_name).includes(q)).sort((a, b) => nachE[b].length - nachE[a].length);
+    this._pRefs = [];
+    const gruppen = treffer.slice(0, q ? 60 : 25).map((e) => {
+      const st = S[e], rs = nachE[e];
+      const zeilen = rs.map((r) => { this._pRefs.push(r.go); return `<button class="pref" data-a="p_ref" data-n="${this._pRefs.length - 1}"><span class="pdev">${esc(devName(r.d).replace(/^Remote /, ""))}</span><span>${esc(r.wo)}</span><ha-icon icon="mdi:chevron-right"></ha-icon></button>`; }).join("");
+      return `<details class="pent" ${q && treffer.length <= 5 ? "open" : ""}><summary><ha-icon icon="${esc(st?.attributes?.icon || DOMAIN_ICON[e.split(".")[0]] || "mdi:shape")}"></ha-icon>
+        <span><b>${esc(st?.attributes?.friendly_name || e)}</b><small>${esc(e)}${st ? ` · ${esc(st.state)}` : " · gibt es nicht"}</small></span><i class="pz">${rs.length}×</i></summary><div class="prefs">${zeilen}</div></details>`;
+    }).join("");
+    return `<div class="ueber pruef">
+      <section><h2 class="abschn">Prüfung <i>${nE ? `${nE} Fehler` : ""}${nE && nW ? " · " : ""}${nW ? `${nW} Warnungen` : ""}${!nE && !nW ? "ok" : ""}</i></h2>
+        <p class="hint">Prüft alle Remotes mit dem Stand im Konfigurator (auch Ungespeichertes): Entitäten und Dienste, die es in HA nicht gibt, Kacheln auf gelöschte Seiten,
+          Aktivitäten ohne Menü-Taste und Popups, deren Bedingung nie eintreten kann.</p>${liste}</section>
+      <section><h2 class="abschn">Wo wird das benutzt?</h2>
+        <div class="psuche"><ha-icon icon="mdi:magnify"></ha-icon><input id="pq" value="${esc(s.pq || "")}" placeholder="Entität oder Name, z. B. script.kamera oder Fernseher" autocomplete="off"></div>
+        <p class="hint">${treffer.length} Entität${treffer.length === 1 ? "" : "en"} in ${alle.length} Verwendungen${!q && treffer.length > 25 ? " – die 25 meistgenutzten, Suche grenzt ein" : ""}. Antippen zeigt Remote und Stelle.</p>
+        <div class="pents">${gruppen || `<p class="hint">Nichts gefunden.</p>`}</div></section>
+    </div>`;
+  },
+  _pruefBind() {
+    const q = this.shadowRoot.querySelector("#pq");
+    if (!q) return;
+    q.oninput = () => {
+      this.s.pq = q.value;
+      const pos = q.selectionStart;
+      this._render();
+      const nq = this.shadowRoot.querySelector("#pq");
+      if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); }
+    };
+  },
+
+  // ------------------------------------------------------------- Vergleichen
+  _vglPaar() {
+    const s = this.s, o = s.order;
+    let a = o.includes(s.vglA) ? s.vglA : s.dev, b = o.includes(s.vglB) && s.vglB !== a ? s.vglB : o.find((x) => x !== a);
+    return [a, b];
+  },
+  _vglHtml() {
+    const s = this.s, [A, B] = this._vglPaar();
+    if (!B) return `<div class="ueber"><p class="hint">Zum Vergleichen braucht es mindestens zwei Remotes.</p></div>`;
+    const ca = s.cfg[A] || {}, cb = s.cfg[B] || {};
+    const na = devName(A).replace(/^Remote /, ""), nb = devName(B).replace(/^Remote /, "");
+    const sel = (k, v) => `<select data-vgl="${k}">${s.order.map((d) => `<option value="${esc(d)}" ${d === v ? "selected" : ""}>${esc(devName(d))}</option>`).join("")}</select>`;
+    const knoepfe = (bereich, key, hatA, hatB) => `<span class="vk">
+        ${hatA ? `<button class="btn small" data-a="v_kop" data-r="ab" data-b="${bereich}" ${key != null ? `data-k="${esc(key)}"` : ""} title="${esc(na)} → ${esc(nb)}">${esc(na)} <ha-icon icon="mdi:arrow-right"></ha-icon></button>` : ""}
+        ${hatB ? `<button class="btn small" data-a="v_kop" data-r="ba" data-b="${bereich}" ${key != null ? `data-k="${esc(key)}"` : ""} title="${esc(nb)} → ${esc(na)}"><ha-icon icon="mdi:arrow-left"></ha-icon> ${esc(nb)}</button>` : ""}</span>`;
+    let nAnders = 0;
+    const karten = VGL_BEREICHE.map((b) => {
+      const [titel, icon] = SYNC_BEREICHE[b] || [b, "mdi:circle-small"];
+      const va = ca[b], vb = cb[b];
+      if (gleich(va, vb)) return `<div class="vz gleich"><ha-icon icon="${icon}"></ha-icon><span><b>${esc(titel)}</b></span><span class="vst ok">gleich</span></div>`;
+      nAnders++;
+      const keyFn = VGL_LISTE[b];
+      let detail = "";
+      if (keyFn) {
+        const la = b === "menu" ? va?.pages || [] : va || [], lb = b === "menu" ? vb?.pages || [] : vb || [];
+        const namen = [...new Set([...la.map(keyFn), ...lb.map(keyFn)])];
+        detail = namen.map((k) => {
+          const xa = la.find((x) => keyFn(x) === k), xb = lb.find((x) => keyFn(x) === k);
+          if (gleich(xa, xb)) return "";
+          const lab = b === "menu" ? `${(xa || xb).popup ? "Popup" : "Seite"} „${(xa || xb).title || k}“` : `„${k}“`;
+          const st = !xa ? `nur ${esc(nb)}` : !xb ? `nur ${esc(na)}` : b === "menu" ? "anders" : this._vglTastenDiff(xa, xb);
+          return `<div class="vz sub"><span>${esc(lab)}</span><span class="vst">${st}</span>${knoepfe(b, k, !!xa, !!xb)}</div>`;
+        }).join("");
+        if (b === "menu" && (va?.start !== vb?.start || va?.on !== vb?.on || va?.hl !== vb?.hl)) detail += `<div class="vz sub"><span>Startseite/Einstellungen des Menüs</span><span class="vst">anders</span></div>`;
+      }
+      return `<div class="vz"><ha-icon icon="${icon}"></ha-icon><span><b>${esc(titel)}</b></span><span class="vst warn">${va == null ? `nur ${esc(nb)}` : vb == null ? `nur ${esc(na)}` : "anders"}</span>
+        ${knoepfe(b, null, va != null, vb != null)}</div>${detail}`;
+    }).join("");
+    // Einstellungen
+    const ea = s.meta[A]?.einst || {}, eb = s.meta[B]?.einst || {};
+    const namen = Object.fromEntries(this._syncEinstListe().flatMap(([, , f]) => f));
+    const eDiff = [...new Set([...Object.keys(ea), ...Object.keys(eb)])].filter((k) => k in ea && k in eb && !gleich(ea[k], eb[k]) && k !== "kb_ziffern");
+    const eZeilen = eDiff.map((k) => `<div class="vz sub"><span>${esc(namen[k] || k)}</span><span class="vst">${esc(na)}: <b>${esc(this._syncWert(k, ea[k]))}</b> · ${esc(nb)}: <b>${esc(this._syncWert(k, eb[k]))}</b></span>
+        <span class="vk"><button class="btn small" data-a="v_einst" data-r="ab" data-k="${esc(k)}">${esc(na)} <ha-icon icon="mdi:arrow-right"></ha-icon></button>
+        <button class="btn small" data-a="v_einst" data-r="ba" data-k="${esc(k)}"><ha-icon icon="mdi:arrow-left"></ha-icon> ${esc(nb)}</button></span></div>`).join("");
+    const dirty = [A, B].filter((d) => s.dirty[d]);
+    return `<div class="ueber vgl">
+      <section><div class="vwahl"><label>Remote A ${sel("a", A)}</label><button class="icon" data-a="v_tausch" title="Tauschen"><ha-icon icon="mdi:swap-horizontal"></ha-icon></button><label>Remote B ${sel("b", B)}</label>
+        <span class="grow"></span>${dirty.map((d) => `<button class="btn primary small" data-a="o_speichern" data-d="${esc(d)}"><ha-icon icon="mdi:content-save"></ha-icon>${esc(devName(d))} speichern</button>`).join("")}</div>
+        <p class="hint">Vergleicht den Stand im Konfigurator. Pfeil = von dort übernehmen (ersetzt den Teil auf der anderen Seite, „Rückgängig“ geht bis zum Speichern).
+          Belegung muss danach gespeichert werden, Einstellungen gehen sofort an die Remote. Für dauerhaft gleiche Remotes gibt es <a href="#" data-a="o_geh" data-b="sync">Synchronisieren</a>.</p></section>
+      <section><h2 class="abschn">Belegung <i>${nAnders ? `${nAnders} Bereich${nAnders > 1 ? "e" : ""} anders` : "gleich"}</i></h2><div class="karte vliste">${karten}</div></section>
+      <section><h2 class="abschn">Einstellungen <i>${eDiff.length || "gleich"}</i></h2><div class="karte vliste">${eZeilen || `<p class="hint">Keine Unterschiede (soweit beide Remotes ihre Einstellungen gemeldet haben).</p>`}</div></section>
+    </div>`;
+  },
+  _vglTastenDiff(xa, xb) {
+    const ka = xa.keys || {}, kb = xb.keys || {};
+    const n = [...new Set([...Object.keys(ka), ...Object.keys(kb)])].filter((k) => !gleich(ka[k], kb[k])).length;
+    const rest = Object.keys({ ...xa, ...xb }).filter((k) => k !== "keys" && !gleich(xa[k], xb[k]));
+    return [n ? `${n} Taste${n > 1 ? "n" : ""} anders` : "", rest.length ? "Einstellungen anders" : ""].filter(Boolean).join(" · ") || "anders";
+  },
+  async _vglClick(a, t) {
+    if (!a.startsWith("v_")) return false;
+    const s = this.s, [A, B] = this._vglPaar();
+    const [von, nach] = t.dataset.r === "ba" ? [B, A] : [A, B];
+    switch (a) {
+      case "v_tausch": s.vglA = B; s.vglB = A; return true;
+      case "v_kop": {
+        const b = t.dataset.b, k = t.dataset.k, q = s.cfg[von], z = s.cfg[nach];
+        if (k == null) {
+          if (!confirm(`${SYNC_BEREICHE[b]?.[0] || b} von ${devName(von)} nach ${devName(nach)} übernehmen?\n\nDer Bereich auf ${devName(nach)} wird ersetzt.`)) return true;
+          if (q[b] === undefined) delete z[b]; else z[b] = clone(q[b]);
+        } else {
+          const keyFn = VGL_LISTE[b];
+          const lq = b === "menu" ? q.menu.pages : q[b], lz = b === "menu" ? (z.menu ||= { on: true, start: "main", pages: [] }).pages : (z[b] ||= []);
+          const x = lq.find((y) => keyFn(y) === k);
+          if (!x) return true;
+          const i = lz.findIndex((y) => keyFn(y) === k);
+          if (i >= 0) lz[i] = clone(x);
+          else if (b === "activities" && lz.length >= 16) { s.msg = { err: true, text: "Höchstens 16 Aktivitäten." }; return true; }
+          else lz.splice(Math.min(lq.indexOf(x), lz.length), 0, clone(x));   // gleiche Stelle wie in der Quelle
+        }
+        this._touch(nach);
+        s.msg = { text: `Von ${devName(von)} nach ${devName(nach)} übernommen – noch nicht gespeichert.` };
+        return true;
+      }
+      case "v_einst": {
+        const k = t.dataset.k, v = s.meta[von]?.einst?.[k];
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/einst_set", device: nach, werte: { [k]: v } });
+          Object.assign(s.meta[nach], { einst: r.einst, einst_offen: r.einst_offen });
+          s.msg = { text: `${devName(nach)}: Einstellung übernommen${r.einst_offen?.length ? " – geht beim nächsten Aufwachen an die Remote" : ""}.` };
+        } catch (e) { s.msg = { err: true, text: "Einstellung: " + (e.message || e.code || e) }; }
+        return true;
+      }
+    }
+    return true;
+  },
+
+  // ------------------------------------------------------------- Spickzettel
+  _spickzettel(d = this.s.dev) {
+    const c = this.s.cfg[d] || {};
+    const zeilen = (a) => [POWER, ...ROWS.flat()].map(([k]) => {
+      const kc = a.keys?.[String(k)] || {};
+      const zellen = [["short"], ["double"], ["long"]].map(([g]) => (kc[g] || []).filter((st) => st.t !== "wait").map((st) => esc(this.stepText(st))).join(" → "));
+      return zellen.some(Boolean) ? `<tr><th>${esc(KEYNAME[k] || k)}</th>${zellen.map((z) => `<td>${z}</td>`).join("")}</tr>` : "";
+    }).join("");
+    const tabelle = (a, titel) => { const z = zeilen(a); return z ? `<section><h2>${esc(titel)}</h2><table><thead><tr><th>Taste</th><th>Kurz</th><th>Doppelt</th><th>Lang</th></tr></thead><tbody>${z}</tbody></table></section>` : ""; };
+    const html = `<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Spickzettel ${esc(devName(d))}</title><style>
+      body { font:12px/1.35 system-ui, sans-serif; color:#111; margin:18px; } h1 { font-size:18px; margin:0 0 2px; } .sub { color:#666; margin:0 0 14px; }
+      section { break-inside:avoid; margin:0 0 16px; } h2 { font-size:14px; margin:0 0 4px; border-bottom:2px solid #333; padding-bottom:2px; }
+      table { border-collapse:collapse; width:100%; } th, td { text-align:left; vertical-align:top; padding:3px 6px; border-bottom:1px solid #ddd; }
+      thead th { font-size:11px; color:#555; } tbody th { width:22%; white-space:nowrap; } td { width:26%; }
+      .knopf { position:fixed; top:12px; right:12px; } @media print { .knopf { display:none; } }</style></head><body>
+      <button class="knopf" onclick="print()">Drucken</button>
+      <h1>${esc(devName(d))}</h1><p class="sub">Tastenbelegung je Aktivität · Stand ${new Date().toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</p>
+      ${(c.activities || []).map((a) => tabelle(a, a.name)).join("")}
+      ${(c.modi || []).map((m) => tabelle(m, `Folgemodus: ${m.name} (${m.s || 7} s)`)).join("")}</body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { this.s.msg = { err: true, text: "Der Browser hat das neue Fenster blockiert – Popups für Home Assistant erlauben." }; return; }
+    w.document.open(); w.document.write(html); w.document.close();
+  },
+
+  // ------------------------------------------------------------- Dock-Zustand
+  async _dockVerlaufLaden() {
+    const s = this.s, docks = (s.fw?.geraete || []).filter((g) => g.art === "dock");
+    if (this._dvHolt || !docks.length) return;
+    this._dvHolt = true;
+    const daten = {};
+    try {
+      const sl = (g) => g.name.replace(/-/g, "_");
+      // Status 30 Tage (offline seit ...), Laufzeit und Speicher 24 h
+      const hol = async (ids, tage) => {
+        const r = await this._hass.callWS({ type: "history/history_during_period", start_time: new Date(Date.now() - tage * 864e5).toISOString(),
+          entity_ids: ids, minimal_response: true, no_attributes: true, significant_changes_only: false });
+        for (const id of ids) daten[id] = (r[id] || []).map((x) => [(x.lu ?? x.lc) * 1000, x.s]);
+      };
+      await hol(docks.map((g) => `binary_sensor.${sl(g)}_status`), 30);
+      await hol(docks.flatMap((g) => [`sensor.${sl(g)}_laufzeit`, `sensor.${sl(g)}_groesster_freier_block`]), 1);
+    } catch (e) { /* ohne Verlauf */ }
+    s.dockVerlauf = { zeit: Date.now(), daten };
+    this._dvHolt = false;
+    if (s.bereich === "dock") this._render();
+  },
+  _dockZustand(g) {
+    const S = this._hass.states, sl = g.name.replace(/-/g, "_"), V = this.s.dockVerlauf?.daten || {};
+    const num = (id) => { const v = parseFloat(S[id]?.state); return Number.isFinite(v) ? v : null; };
+    const st = V[`binary_sensor.${sl}_status`] || [], lauf = V[`sensor.${sl}_laufzeit`] || [], blk = V[`sensor.${sl}_groesster_freier_block`] || [];
+    const t24 = Date.now() - 864e5;
+    // Offline seit: Ende der letzten "on"-Phase im Verlauf (die Zeit der HA-Sensoren springt bei jedem HA-Neustart)
+    let seit = null, mind = false;
+    if (!g.online) {
+      for (let i = st.length - 1; i >= 0; i--) if (st[i][1] === "on") { seit = st[i + 1]?.[0] ?? null; break; }
+      // nie "on" im Verlauf: erster Eintrag nach Beginn des Zeitraums = seitdem bekannt offline
+      if (seit == null && st.length && st[0][0] > Date.now() - 29 * 864e5) { seit = st[0][0]; mind = true; }
+    }
+    const war24 = g.online || st.some(([t, v]) => v === "on" && t >= t24);
+    // Ausfall = mindestens 1 min weg (kurze Luecken sind meist HA-Neustarts oder ein Firmware-Update)
+    const ausfaelle = st.filter(([t, v], i) => t >= t24 && v === "off" && st[i - 1]?.[1] === "on" && (st[i + 1]?.[0] ?? Date.now()) - t >= 60000).length;
+    let neustarts = 0, vorher = null;
+    for (const [t, v] of lauf) { const b = parseFloat(v); if (!Number.isFinite(b)) continue; if (vorher != null && b + 60 < vorher && t >= t24) neustarts++; vorher = b; }
+    const bw = blk.filter(([t]) => t >= t24).map(([t, v]) => [t, parseFloat(v)]).filter(([, v]) => Number.isFinite(v));
+    const minBlk = bw.length ? Math.min(...bw.map(([, v]) => v)) : null;
+    const sig = num(`sensor.${sl}_wlan_signal`), frei = num(`sensor.${sl}_freier_speicher`), klein = num(`sensor.${sl}_kleinster_freier_speicher`), block = num(`sensor.${sl}_groesster_freier_block`), lz = num(`sensor.${sl}_laufzeit`);
+    const kurve = (() => {
+      if (bw.length < 2) return "";
+      const W = 300, H = 40, max = Math.max(40, ...bw.map(([, v]) => v));
+      const x = (t) => ((Math.max(t24, t) - t24) / 864e5 * W).toFixed(1), y = (v) => (H - 2 - v / max * (H - 4)).toFixed(1);
+      const pts = [...bw, [Date.now(), bw[bw.length - 1][1]]];
+      const grenze = y(6);
+      return `<svg class="dvk" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${grenze}" y2="${grenze}" class="gr"/><path d="${pts.map(([t, v], i) => `${i ? "L" : "M"}${x(t)},${y(v)}`).join("")}" vector-effect="non-scaling-stroke"/></svg>`;
+    })();
+    const fakt = (icon, label, wert, cls = "") => `<span class="df ${cls}" title="${esc(label)}"><ha-icon icon="${icon}"></ha-icon><small>${esc(label)}</small><b>${esc(wert)}</b></span>`;
+    const stufe = sig == null ? 0 : sig > -55 ? 4 : sig > -65 ? 3 : sig > -75 ? 2 : 1;
+    // Ampel (2026-10-26): ein Blick, ob es dem Dock gut geht - mit Begruendung in Worten
+    let farbe = "gruen", warum = [];
+    if (g.geflasht && !g.online) { farbe = "rot"; warum.push("Das Dock ist nicht erreichbar (aus, kein Strom oder kein WLAN)."); }
+    else if (g.online) {
+      if ((block != null && block < 3) || (minBlk != null && minBlk < 3) || neustarts >= 2 || (klein != null && klein < 5)) farbe = "rot";
+      else if ((block != null && block < 8) || (minBlk != null && minBlk < 6) || neustarts === 1 || ausfaelle > 0 || stufe === 1) farbe = "gelb";
+      if (minBlk != null && minBlk < 6) warum.push(`Der Speicher war zeitweise knapp (größtes freies Stück nur ${Math.round(minBlk)} kB). Bei Firmware-Updates oder Protokoll-Mitschnitten ist das normal – sonst beobachten.`);
+      if (neustarts) warum.push(`${neustarts}× neu gestartet in 24 h${S[`sensor.${sl}_neustartgrund`] ? ` (zuletzt: ${S[`sensor.${sl}_neustartgrund`].state})` : ""}.`);
+      if (ausfaelle) warum.push(`WLAN ${ausfaelle}× länger als 1 min weg.`);
+      if (stufe === 1) warum.push(`Schwaches WLAN (${sig} dBm) – näher an den Router oder einen Repeater.`);
+    }
+    const ampelText = { gruen: "Alles gut – genug Speicher frei, stabile Verbindung.", gelb: "Läuft, aber etwas fällt auf:", rot: farbe === "rot" && !g.online ? "Offline." : "Kritisch – das Dock kann ausfallen oder neu starten:" }[farbe];
+    const ampel = g.geflasht ? `<div class="ampel ${farbe}"><span class="lichter"><i class="r"></i><i class="y"></i><i class="g"></i></span>
+      <span><b>${ampelText}</b>${warum.length ? `<small>${warum.map(esc).join(" ")}</small>` : ""}</span></div>` : "";
+    return `<div class="dzk ${g.online ? "on" : "off"}">
+      <div class="dz1"><span class="ki"><ha-icon icon="mdi:dock-window"></ha-icon></span><span><b>${esc(g.friendly || g.name)}</b>
+        <small><i class="zp"></i>${g.online ? `online${g.ip ? " · " + esc(g.ip) : ""}` : !g.geflasht ? "noch nicht geflasht" : seit ? `offline seit ${mind ? "mindestens " : ""}${esc(fmtZeit(new Date(seit).toISOString()))}` : st.length ? "offline seit über 30 Tagen" : "offline"}</small></span>
+        <span class="grow"></span>${g.update && !g.gesperrt ? '<span class="badge warn">Update</span>' : ""}</div>
+      ${ampel}
+      ${g.online ? `<div class="dfakten">
+        ${fakt(`mdi:wifi-strength-${stufe || "off-outline"}`, "WLAN", sig != null ? `${sig} dBm` : "–", stufe === 1 ? "warn" : "")}
+        ${fakt("mdi:timer-outline", "Läuft seit", lz != null ? fmtStd(lz / 3600) : "–")}
+        ${fakt("mdi:memory", "Frei", frei != null ? `${Math.round(frei)} kB` : "–")}
+        ${fakt("mdi:memory", "Größtes freies Stück", block != null ? `${Math.round(block)} kB` : "–", block != null && block < 8 ? "warn" : "")}
+        ${klein != null ? fakt("mdi:arrow-collapse-down", "Tiefster Stand", `${Math.round(klein)} kB`, klein < 10 ? "warn" : "") : ""}
+      </div>` : ""}
+      ${g.geflasht && war24 ? `<div class="dz24"><span class="${ausfaelle ? "warn" : ""}" title="WLAN-Verbindung mindestens 1 min weg">${ausfaelle} ${ausfaelle === 1 ? "Ausfall" : "Ausfälle"}</span><span class="${neustarts ? "warn" : ""}">${neustarts} Neustart${neustarts === 1 ? "" : "s"}</span>
+        ${minBlk != null ? `<span class="${minBlk < 6 ? "warn" : ""}">größter Block min. ${Math.round(minBlk)} kB</span>` : ""}<small>letzte 24 h</small></div>` : ""}
+      ${kurve ? `<div class="dzkurve">${kurve}<div class="kl"><span>vor 24 h</span><span>größtes freies Speicherstück</span><span>jetzt</span></div>
+        <small class="note">Das Dock hat wenig Arbeitsspeicher. Entscheidend ist das <b>größte zusammenhängende freie Stück</b>: WLAN-Pakete brauchen rund 1,7 kB am Stück. Liegt die Kurve über der gestrichelten Linie (6 kB), ist alles gut; kurze Täler bei Updates sind normal, bleibt sie darunter, kann das Dock die Verbindung verlieren.</small></div>` : ""}
+    </div>`;
+  },
+  _dockZustandHtml() {
+    const s = this.s, fw = s.fw;
+    if (!fw?.geladen) return "";
+    const docks = (fw.geraete || []).filter((g) => g.art === "dock");
+    if (!docks.length) return "";
+    if ((!s.dockVerlauf || Date.now() - s.dockVerlauf.zeit > 3e5) && !this._dvHolt) setTimeout(() => this._dockVerlaufLaden(), 0);
+    return `<div class="dkopf"><h2><ha-icon icon="mdi:heart-pulse"></ha-icon> Zustand der Docks</h2></div>
+      <div class="dzgrid">${docks.sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0)).map((g) => this._dockZustand(g)).join("")}</div>`;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(PruefTab));
+
+const PRUEF_CSS = `
+.pruef .psuche { display:flex; align-items:center; gap:8px; background:var(--card); border:1px solid var(--rand); border-radius:12px; padding:6px 12px; max-width:560px; }
+.pruef .psuche input { flex:1; border:0; background:transparent; color:inherit; font:inherit; font-size:14px; outline:none; padding:4px 0; }
+.pruef .pents { display:flex; flex-direction:column; gap:6px; }
+.pruef .pent { background:var(--card); border:1px solid var(--rand); border-radius:12px; }
+.pruef .pent summary { display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer; list-style:none; }
+.pruef .pent summary::-webkit-details-marker { display:none; }
+.pruef .pent summary span { flex:1; display:flex; flex-direction:column; min-width:0; } .pruef .pent summary small { color:var(--sec); font-size:12px; overflow:hidden; text-overflow:ellipsis; }
+.pruef .pz { font-style:normal; font-size:12px; color:var(--sec); }
+.pruef .prefs { display:flex; flex-direction:column; padding:0 8px 8px; }
+.pruef .pref { display:flex; align-items:center; gap:10px; text-align:left; background:none; border:0; border-top:1px solid var(--div); color:inherit; font:inherit; font-size:13px; padding:6px 4px; cursor:pointer; }
+.pruef .pref:hover { background:var(--flaeche); } .pruef .pref span:nth-child(2) { flex:1; }
+.pruef .pdev { font-size:11px; font-weight:600; padding:1px 7px; border-radius:999px; background:var(--acc-s); color:var(--acc); white-space:nowrap; }
+.vgl .vwahl { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.vgl .vwahl label { display:flex; align-items:center; gap:6px; font-weight:600; }
+.vgl .vliste { background:var(--card); border:1px solid var(--rand); border-radius:16px; padding:4px 12px; }
+.vgl .vz { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 0; border-top:1px solid var(--div); }
+.vgl .vz:first-child { border-top:0; } .vgl .vz > span:nth-of-type(1) { flex:1 1 180px; min-width:0; }
+.vgl .vz.sub { padding:5px 0 5px 30px; font-size:13px; } .vgl .vz.gleich { color:var(--sec); }
+.vgl .vst { font-size:12px; color:var(--sec); } .vgl .vst.ok { color:var(--ok); } .vgl .vst.warn { color:var(--gelb); font-weight:600; }
+.vgl .vk { display:flex; gap:6px; } .vgl .vk ha-icon { --mdc-icon-size:16px; }
+.dock .dzgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap:12px; margin:8px 0 18px; }
+.dock .dzk { border:1px solid var(--div); background:var(--card); border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+.dock .dzk.off { opacity:.75; }
+.dock .dz1 { display:flex; align-items:center; gap:10px; } .dock .dz1 > span:nth-child(2) { display:flex; flex-direction:column; } .dock .dz1 small { color:var(--sec); font-size:12px; }
+.dock .dz1 .zp { display:inline-block; width:8px; height:8px; border-radius:50%; background:#6b7280; margin-right:6px; } .dock .dzk.on .zp { background:var(--ok); } .dock .dzk.off .zp { background:var(--fehler); }
+.dock .dfakten { display:grid; grid-template-columns:repeat(auto-fill, minmax(92px, 1fr)); gap:6px; }
+.dock .df { display:flex; flex-direction:column; gap:1px; background:var(--flaeche); border-radius:10px; padding:6px 8px; } .dock .df ha-icon { --mdc-icon-size:16px; color:var(--sec); }
+.dock .df small { font-size:11px; color:var(--sec); } .dock .df b { font-size:14px; } .dock .df.warn b { color:var(--gelb); }
+.dock .dz24 { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; font-size:13px; } .dock .dz24 small { color:var(--sec); margin-left:auto; } .dock .dz24 .warn { color:var(--gelb); font-weight:600; }
+.dock .dvk { width:100%; height:40px; display:block; } .dock .dvk path { fill:none; stroke:var(--acc); stroke-width:2; } .dock .dvk .gr { stroke:var(--fehler); stroke-dasharray:4 4; stroke-width:1; opacity:.6; }
+.dock .dkspr { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 4px; position:sticky; top:0; z-index:2; padding:6px 0; background:var(--bg, var(--primary-background-color)); }
+.dock .dkspr .chip { display:inline-flex; align-items:center; gap:4px; } .dock .dkspr ha-icon { --mdc-icon-size:16px; }
+.dock .ampel { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; border-radius:12px; background:var(--flaeche); }
+.dock .ampel > span:last-child { display:flex; flex-direction:column; gap:2px; } .dock .ampel small { color:var(--sec); font-size:12px; }
+.dock .ampel .lichter { display:flex; flex-direction:column; gap:3px; padding:4px 5px; border-radius:8px; background:#111827; flex:0 0 auto; }
+.dock .ampel .lichter i { width:10px; height:10px; border-radius:50%; background:#374151; display:block; }
+.dock .ampel.rot .r { background:#ef4444; box-shadow:0 0 6px #ef4444; } .dock .ampel.gelb .y { background:#f59e0b; box-shadow:0 0 6px #f59e0b; } .dock .ampel.gruen .g { background:#22c55e; box-shadow:0 0 6px #22c55e; }
+.dock .dzkurve .kl { display:flex; justify-content:space-between; font-size:11px; color:var(--sec); }
+`;
+
+const SYNC_CSS = `
+.sync .syremotes { display:flex; flex-wrap:wrap; gap:6px 14px; margin:2px 0 8px; }
+.sync label.sw { display:flex; align-items:flex-start; gap:8px; cursor:pointer; padding:4px 0; }
+.sync label.sw input { margin-top:3px; flex:none; }
+.sync label.sw span { display:flex; flex-direction:column; gap:1px; }
+.sync label.sw span small { color:var(--sec); font-size:12px; line-height:1.35; }
+.sync .syzeile { border-top:1px solid var(--div); } .sync .syzeile b { display:flex; align-items:center; gap:6px; } .sync .syzeile ha-icon { --mdc-icon-size:18px; }
+.sync .syhaupt b { font-size:15px; }
+.sync .sygr { border-top:1px solid var(--div); padding:4px 0; }
+.sync .sygr summary { display:flex; align-items:center; justify-content:flex-start; gap:8px; cursor:pointer; list-style:none; min-height:32px; text-align:left; }
+.sync .sygr summary b { flex:1; } .sync .sygr summary small { white-space:nowrap; } .sync .sygr summary input { margin:0; flex:none; width:auto; min-width:0; }
+.sync .sygr summary::-webkit-details-marker { display:none; }
+.sync .sygr summary::after { content:"›"; margin-left:auto; transition:transform .15s; color:var(--sec); }
+.sync .sygr[open] summary::after { transform:rotate(90deg); }
+.sync .sygr summary small { color:var(--sec); } .sync .sygr summary ha-icon { --mdc-icon-size:18px; }
+.sync .syfelder { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:0 12px; padding:2px 0 6px 26px; }
+.sync .syfelder label.sw { padding:2px 0; font-size:13px; }
+.sync .sydiff { color:var(--acc); font-style:normal; font-weight:700; }
+.sync .sykopf { font-size:12px; font-weight:600; color:var(--sec); margin:8px 0 2px; text-transform:uppercase; letter-spacing:.04em; }
+.sync .ez { flex-wrap:wrap; } .sync .ez > small { flex:1 1 100%; color:var(--sec); }
+.sync .ez.syaus { opacity:.55; }
+`;
+
+// ===========================================================================
+// IR-Codes (2026-10-28): Datenbanken von GitHub (Flipper-IRDB, Logitech Harmony) mit Abgleich und "Meine Codes"
+// (angelernte und gesammelte Codes, nach Geraeten) an einer Stelle. Backend: irdb.py (irdb_*, ircodes_get/save).
+// Die Tasten nehmen Codes weiter ueber "Aus IR-Datenbank …" - dort erscheinen Meine Codes zuerst.
+// ===========================================================================
+const IRC_QUELLEN = { eigen: ["Meine Codes", "mdi:account-star-outline"], flipper: ["Flipper", "mdi:dolphin"], harmony: ["Harmony", "mdi:remote-tv"] };
+const irId = (v) => (/^\d+$/.test(String(v)) ? Number(v) : String(v));   // Flipper: Zahl, Harmony "h…", eigene "e…"
+const ircCode = (b) => (b.raw ? { raw: b.raw.slice(), f: b.f || 38000 } : { proto: b.proto, addr: b.addr, cmd: b.cmd });
+const ircText = (c) => (c.raw ? `roh · ${c.raw.length} Werte · ${Math.round((c.f || 38000) / 1000)} kHz` : `${IR_NAMEN[c.proto] || c.proto} ${hex(c.addr)}/${hex(c.cmd)}`);
+const ircGleich = (a, b) => JSON.stringify(ircCode(a)) === JSON.stringify(ircCode(b));
+const IRC_CSS = `
+.irc { max-width:1100px; }
+.irc .irkopf { display:flex; gap:16px; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; margin-bottom:18px; }
+.irc .irkopf h2 { margin:0 0 4px; font-size:24px; display:flex; align-items:center; gap:10px; }
+.irc .irkopf h2 ha-icon { --mdc-icon-size:28px; color:var(--acc); }
+.irc .irkopf small { color:var(--sec); max-width:560px; display:block; line-height:1.4; }
+.irc .irzahlen { display:flex; gap:10px; flex-wrap:wrap; }
+.irc .irzahl { border:1px solid var(--rand); border-radius:14px; padding:8px 14px; min-width:96px; background:var(--card); }
+.irc .irzahl b { display:block; font-size:20px; } .irc .irzahl small { color:var(--sec); font-size:12px; }
+.irc .irsek { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:26px 0 10px; }
+.irc .irsek h3 { margin:0; font-size:17px; display:flex; align-items:center; gap:8px; }
+.irc .irsek h3 ha-icon { color:var(--acc); background:var(--acc-s); border-radius:8px; padding:4px; --mdc-icon-size:18px; }
+.irc .qgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:14px; }
+.irc .qkarte { border:1px solid var(--rand); border-radius:18px; background:var(--card); box-shadow:var(--schatten); overflow:hidden; display:flex; flex-direction:column; }
+.irc .qkopf { padding:14px 16px 12px; display:flex; gap:12px; align-items:center; background:linear-gradient(135deg, var(--acc-s), transparent 70%); }
+.irc .qkopf ha-icon { --mdc-icon-size:30px; color:var(--acc); }
+.irc .qkopf b { font-size:16px; display:block; } .irc .qkopf small { color:var(--sec); }
+.irc .qrumpf { padding:4px 16px 14px; display:flex; flex-direction:column; gap:8px; flex:1; }
+.irc .qwerte { display:flex; gap:16px; flex-wrap:wrap; font-size:13px; } .irc .qwerte span { color:var(--sec); } .irc .qwerte b { color:var(--primary-text-color); font-weight:600; }
+.irc .qneu { display:flex; align-items:center; gap:6px; font-size:13px; color:#b45309; background:rgba(245,158,11,.14); border-radius:10px; padding:6px 10px; }
+.irc .qok { display:flex; align-items:center; gap:6px; font-size:13px; color:#15803d; } .irc .qok ha-icon, .irc .qneu ha-icon { --mdc-icon-size:18px; }
+.irc .qfuss { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:auto; }
+.irc .qfuss .sw { margin-left:auto; font-size:13px; }
+.irc .geraet { border:1px solid var(--rand); border-radius:14px; background:var(--card); margin-bottom:10px; overflow:hidden; }
+.irc .gkopf { display:flex; align-items:center; gap:8px; padding:8px 10px 8px 12px; }
+.irc .gkopf input.gname { flex:1; min-width:120px; font-size:15px; font-weight:600; border:1px solid transparent; background:transparent; color:inherit; border-radius:8px; padding:4px 6px; }
+.irc .gkopf input.gname:hover, .irc .gkopf input.gname:focus { border-color:var(--div); background:var(--primary-background-color); }
+.irc .gkopf .anz { color:var(--sec); font-size:12px; white-space:nowrap; }
+.irc .codes { border-top:1px solid var(--div); }
+.irc .code { display:flex; align-items:center; gap:8px; padding:5px 10px 5px 14px; border-top:1px solid var(--div); }
+.irc .code:first-child { border-top:0; }
+.irc .code input { flex:1; min-width:90px; border:1px solid transparent; background:transparent; color:inherit; border-radius:6px; padding:3px 6px; font-size:14px; }
+.irc .code input:hover, .irc .code input:focus { border-color:var(--div); background:var(--primary-background-color); }
+.irc .code small { color:var(--sec); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px; }
+.irc .code select { font-size:12px; max-width:130px; }
+.irc .leer { border:2px dashed var(--div); border-radius:14px; padding:22px; text-align:center; color:var(--sec); }
+.irc .leer ha-icon { --mdc-icon-size:36px; display:block; margin:0 auto 6px; opacity:.6; }
+.irc .irsuche { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+.irc .irsuche input[type=search] { flex:1; min-width:220px; font-size:15px; padding:9px 12px; border-radius:12px; border:1px solid var(--div); background:var(--primary-background-color); color:inherit; }
+.irc .treffer { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:8px; }
+.irc .treffer .ent { margin:0; }
+.qbadge { font-size:11px; border-radius:999px; padding:1px 7px; background:var(--acc-s); color:var(--acc); font-weight:600; white-space:nowrap; }
+.qbadge.flipper { background:rgba(249,115,22,.15); color:#ea580c; } .qbadge.harmony { background:rgba(14,165,233,.15); color:#0284c7; }
+.qbadge.eigen { background:rgba(34,197,94,.16); color:#16a34a; }
+.irc .devkarte { border:1px solid var(--rand); border-radius:16px; background:var(--card); padding:12px 14px; margin-top:6px; }
+.irc .devkarte .dkk { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.irc .devkarte .dkk b { font-size:16px; }
+.irc .devkarte .liste { max-height:420px; overflow:auto; border-top:1px solid var(--div); }
+.irfilter { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 8px; }
+.irfilter .chip.on { background:var(--acc); color:#fff; border-color:var(--acc); }
+@media (max-width: 600px) { .irc .code small { display:none; } }
+`;
+
+const IrCodesTab = {
+  _ircLaden() {
+    const s = this.s;
+    if (s.irc?.laedt) return;
+    s.irc = { ...(s.irc || {}), laedt: true };
+    Promise.all([this._hass.callWS({ type: "esphomeremote_konfig/irdb_status" }), this._hass.callWS({ type: "esphomeremote_konfig/ircodes_get" })])
+      .then(([st, eigen]) => { Object.assign(s.irc, { st, eigen: eigen || { geraete: [] }, laedt: false, fehler: null }); this._ircPoll(); this._render(); })
+      .catch((e) => { Object.assign(s.irc, { laedt: false, fehler: e.message || String(e) }); this._render(); });
+  },
+  async _ircEigen() {   // Meine Codes bei Bedarf holen (auch ausserhalb der Seite, z. B. Knopf "In Meine Codes")
+    const s = this.s;
+    s.irc ||= {};
+    if (!s.irc.eigen) s.irc.eigen = (await this._hass.callWS({ type: "esphomeremote_konfig/ircodes_get" })) || { geraete: [] };
+    return s.irc.eigen;
+  },
+  _ircPoll() {
+    const s = this.s, st = s.irc?.st;
+    const laeuft = st && Object.values(st.quellen || {}).some((q) => q.job && !["fertig", "fehler"].includes(q.job.phase));
+    clearTimeout(this._ircT);
+    if (!laeuft) return;
+    this._ircT = setTimeout(async () => {
+      try { s.irc.st = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_status" }); } catch (e) { /* naechster Versuch */ }
+      if (s.bereich === "ircodes" && !s.modal) this._render();
+      this._ircPoll();
+    }, 1200);
+  },
+  _ircSpeichern() {
+    clearTimeout(this._ircSpT);
+    this._ircSpT = setTimeout(async () => {
+      try { await this._hass.callWS({ type: "esphomeremote_konfig/ircodes_save", daten: this.s.irc.eigen }); }
+      catch (e) { this.s.msg = { err: true, text: `Meine Codes nicht gespeichert: ${e.message || e.code}` }; this._render(); }
+    }, 400);
+  },
+  // Code in ein Geraet von Meine Codes legen (gleicher Code dort schon da: nur Name nachziehen)
+  _ircAblegen(gi, name, b, quelle) {
+    const e = this.s.irc.eigen, g = e.geraete[gi];
+    g.codes ||= [];
+    const da = g.codes.find((c) => ircGleich(c, b));
+    if (da) return false;
+    g.codes.push({ name: String(name || "Code").slice(0, 40), ...ircCode(b), quelle, zeit: new Date().toISOString().slice(0, 16) });
+    return true;
+  },
+  _ircGeraet(name) {   // Geraet nach Namen finden oder anlegen -> Index
+    const e = this.s.irc.eigen;
+    let gi = e.geraete.findIndex((g) => g.name.toLowerCase() === name.toLowerCase());
+    if (gi < 0) { e.geraete.push({ name: name.slice(0, 40), codes: [] }); gi = e.geraete.length - 1; }
+    return gi;
+  },
+
+  _ircHtml() {
+    const s = this.s, d = s.irc;
+    if (!d?.st || !d.eigen) { this._ircLaden(); return `<div class="einst irc">${d?.fehler ? `<div class="msg err">${esc(d.fehler)}</div>` : "Lade …"}</div>`; }
+    const st = d.st, qs = st.quellen || {}, e = d.eigen;
+    const nEigen = e.geraete.reduce((n, g) => n + (g.codes || []).length, 0);
+    const zahl = (n) => Number(n || 0).toLocaleString("de-DE");
+    const kacheln = [[zahl(nEigen), "Meine Codes"], ...Object.entries(qs).map(([k, q]) => [q.installiert ? zahl(q.meta.anzahl) : "–", `${IRC_QUELLEN[k]?.[0] || k} · Geräte`])];
+    return `<div class="einst irc">
+      <div class="irkopf"><div><h2><ha-icon icon="mdi:remote-tv"></ha-icon>IR-Codes</h2>
+        <small>Deine angelernten Codes und die IR-Datenbanken von GitHub an einer Stelle. In jeder Taste holst du Codes über „Aus IR-Datenbank …“ – deine eigenen stehen dort ganz oben.</small></div>
+        <div class="irzahlen">${kacheln.map(([w, t]) => `<div class="irzahl"><b>${w}</b><small>${esc(t)}</small></div>`).join("")}</div></div>
+      ${this._ircEigenHtml(e)}
+      ${this._ircSucheHtml()}
+      ${this._ircQuellenHtml(st)}
+    </div>`;
+  },
+
+  _ircEigenHtml(e) {
+    const s = this.s, d = s.irc, auf = d.auf ||= {};
+    const remotes = s.order.map((x) => `<option value="${esc(x)}" ${x === s.dev ? "selected" : ""}>${esc(devName(x))}</option>`).join("");
+    const geraete = e.geraete.map((g, gi) => {
+      const offen = auf[gi] ?? g.codes.length <= 12;
+      return `<div class="geraet"><div class="gkopf">
+          <button class="icon sm" data-a="ic_tog" data-gi="${gi}" title="${offen ? "zuklappen" : "aufklappen"}"><ha-icon icon="mdi:chevron-${offen ? "down" : "right"}"></ha-icon></button>
+          <input class="gname" data-icg="${gi}" value="${esc(g.name)}" maxlength="40" title="Name des Geräts">
+          <span class="anz">${g.codes.length} Codes</span>
+          <button class="btn small" data-a="ic_lernen" data-gi="${gi}" title="Mit der Remote eine Taste der Original-Fernbedienung aufnehmen"><ha-icon icon="mdi:school-outline"></ha-icon>Anlernen</button>
+          <button class="icon sm" data-a="ic_gdel" data-gi="${gi}" title="Gerät mit allen Codes löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
+        ${offen ? `<div class="codes">${g.codes.map((c, ci) => `<div class="code"><ha-icon icon="${c.raw ? "mdi:sine-wave" : "mdi:code-tags"}"></ha-icon>
+            <input data-icc="${gi}:${ci}" value="${esc(c.name)}" maxlength="40" title="Name des Codes"><small title="${esc(ircText(c))}">${esc(ircText(c))}${c.quelle ? " · " + esc(c.quelle) : ""}</small>
+            <button class="icon sm" data-a="ic_test" data-gi="${gi}" data-ci="${ci}" title="Über ${esc(devName(s.dev))} senden"><ha-icon icon="mdi:play"></ha-icon></button>
+            ${e.geraete.length > 1 ? `<select data-icmv="${gi}:${ci}" title="In ein anderes Gerät verschieben"><option value="">verschieben …</option>${e.geraete.map((x, xi) => xi === gi ? "" : `<option value="${xi}">${esc(x.name)}</option>`).join("")}</select>` : ""}
+            <button class="icon sm" data-a="ic_cdel" data-gi="${gi}" data-ci="${ci}" title="Code löschen"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")
+          || `<div class="code"><small>Noch keine Codes – „Anlernen“ oder unten in der Suche „+“ drücken.</small></div>`}</div>` : ""}</div>`;
+    }).join("");
+    return `<div class="irsek"><h3><ha-icon icon="mdi:account-star-outline"></ha-icon>Meine Codes</h3><span class="grow"></span>
+        <label class="inl2" title="Über diese Remote wird angelernt und getestet">Remote <select data-icdev>${remotes}</select></label>
+        <button class="btn small primary" data-a="ic_gneu"><ha-icon icon="mdi:plus"></ha-icon>Gerät</button>
+        <button class="btn small" data-a="ic_sammeln" title="IR-Codes aus den Tastenbelegungen aller Remotes übernehmen (angelernte und eingetippte)"><ha-icon icon="mdi:tray-arrow-down"></ha-icon>Aus Tasten sammeln</button>
+        <button class="btn small" data-a="ic_export"><ha-icon icon="mdi:export"></ha-icon>Exportieren</button>
+        <label class="btn small" style="cursor:pointer"><ha-icon icon="mdi:import"></ha-icon>Importieren<input type="file" accept=".json,application/json" data-icimp hidden></label></div>
+      ${geraete || `<div class="leer"><ha-icon icon="mdi:remote"></ha-icon>Noch keine eigenen Codes.<br>Lege ein Gerät an und lerne Tasten deiner Original-Fernbedienung an – oder übernimm Codes aus der Suche oder aus deinen Tasten.</div>`}`;
+  },
+
+  _ircSucheHtml() {
+    const d = this.s.irc, r = d.res, f = d.quelle || "";
+    const chips = [["", "Alle"], ...Object.entries(IRC_QUELLEN).map(([k, [n]]) => [k, n])].map(([k, n]) => `<button class="chip sm ${f === k ? "on" : ""}" data-a="ic_filter" data-q="${k}">${esc(n)}</button>`).join("");
+    let dev = "";
+    if (d.dev) {
+      const g = d.dev, e = d.eigen, ok = g.befehle.filter((b) => b.ok).length;
+      const ziel = d.ziel ?? "";
+      dev = `<div class="devkarte"><div class="dkk"><button class="icon sm" data-a="ic_devzu" title="Zurück zur Liste"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
+          <span class="qbadge ${g.q}">${esc(IRC_QUELLEN[g.q]?.[0] || g.q)}</span><b>${esc(g.m ? g.m + " " : "")}${esc(g.n)}</b><small class="note">${esc(g.k)} · ${g.befehle.length} Befehle${g.power ? ` · Ein/Aus: ${g.power === "toggle" ? "eine Taste (umschalten)" : g.power === "discrete" ? "getrennte Tasten" : esc(g.power)}` : ""}</small>
+          <span class="grow"></span>${g.q !== "eigen" ? `<label class="inl2">Ablegen in <select data-iczl><option value="">neues Gerät „${esc((g.m ? g.m + " " : "") + g.n)}“</option>${e.geraete.map((x, xi) => `<option value="${xi}" ${String(ziel) === String(xi) ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
+          <button class="btn small" data-a="ic_alle" ${ok ? "" : "disabled"}><ha-icon icon="mdi:playlist-plus"></ha-icon>Alle ${ok} übernehmen</button>` : ""}</div>
+        <div class="liste">${g.befehle.map((b, j) => `<div class="irrow"><span class="ent" style="cursor:default"><ha-icon icon="${b.raw ? "mdi:sine-wave" : "mdi:code-tags"}"></ha-icon><span><b>${esc(b.name)}</b>
+            <small>${b.raw ? `roh · ${b.raw.length} Werte · ${Math.round(b.f / 1000)} kHz${b.hp ? " · " + esc(b.hp) : ""}` : `${esc(b.proto)} ${hex(b.addr)}/${hex(b.cmd)}`}${b.ok ? "" : " · von der Remote nicht sendbar"}</small></span></span>
+            <button class="icon sm" data-a="ic_dbtest" data-j="${j}" title="Über ${esc(devName(this.s.dev))} senden" ${b.ok ? "" : "disabled"}><ha-icon icon="mdi:play"></ha-icon></button>
+            ${g.q !== "eigen" ? `<button class="icon sm" data-a="ic_dbplus" data-j="${j}" title="In Meine Codes" ${b.ok ? "" : "disabled"}><ha-icon icon="mdi:plus"></ha-icon></button>` : ""}</div>`).join("")}</div></div>`;
+    }
+    const liste = !d.dev && r ? `<div class="treffer">${r.treffer.map((t) => `<button class="ent" data-a="ic_dev" data-id="${esc(String(t.id))}"><ha-icon icon="${IRC_QUELLEN[t.q]?.[1] || "mdi:remote"}"></ha-icon>
+        <span><b>${esc(t.m ? t.m + " " : "")}${esc(t.n)}</b><small><span class="qbadge ${t.q}">${esc(IRC_QUELLEN[t.q]?.[0] || t.q)}</span> ${esc(t.k)} · ${t.b} Befehle</small></span></button>`).join("")}</div>
+      ${r.gesamt > r.treffer.length ? `<div class="none">… ${(r.gesamt - r.treffer.length).toLocaleString("de-DE")} weitere – Suche verfeinern</div>` : ""}${!r.gesamt ? `<div class="none">Nichts gefunden.</div>` : ""}` : "";
+    return `<div class="irsek"><h3><ha-icon icon="mdi:database-search"></ha-icon>Suchen</h3></div>
+      <div class="irsuche"><input id="icq" type="search" placeholder="Marke, Modell oder Taste (z. B. sony bravia, lg soundbar) …" value="${esc(d.q || "")}" autocomplete="off"></div>
+      <div class="irfilter">${chips}</div>${dev}${liste}`;
+  },
+
+  _ircQuellenHtml(st) {
+    const qs = st.quellen || {};
+    const datum = (x) => (x ? new Date(x.length <= 10 ? x + "T12:00" : x.replace(" ", "T")).toLocaleDateString("de-DE") : "?");
+    const karten = Object.entries(qs).map(([k, q]) => {
+      const j = q.job, laeuft = j && !["fertig", "fehler"].includes(j.phase), m = q.meta || {};
+      const zustand = laeuft ? `<div class="xbar ${j.pct < 0 ? "busy" : ""}"><span style="width:${Math.max(4, j.pct)}%"></span></div><small class="note">${esc(j.text)}</small>`
+        : j?.phase === "fehler" ? `<div class="msg err">${esc(j.text)}</div>`
+        : !q.installiert ? `<small class="note">Nicht installiert.${k === "harmony" ? " Download einige Hundert MB, der Suchindex braucht ein paar Minuten." : " Download ca. 20 MB."}</small>`
+        : q.neu ? `<div class="qneu"><ha-icon icon="mdi:update"></ha-icon>Neu auf GitHub: Stand ${datum(q.neu.datum)}</div>`
+        : `<div class="qok"><ha-icon icon="mdi:check-circle-outline"></ha-icon>Aktuell${m.sha ? "" : " (Stand unbekannt – „Auf GitHub nachsehen“)"}</div>`;
+      const werte = q.installiert ? `<div class="qwerte"><span><b>${Number(m.anzahl || 0).toLocaleString("de-DE")}</b> Geräte</span><span><b>${Number(m.marken || 0).toLocaleString("de-DE")}</b> Marken</span>
+          <span><b>${m.mb}</b> MB</span><span>Stand <b>${m.stand ? datum(m.stand) : datum(m.geladen)}</b></span></div>` : "";
+      return `<div class="qkarte"><div class="qkopf"><ha-icon icon="${IRC_QUELLEN[k]?.[1] || "mdi:database"}"></ha-icon><div><b>${esc(q.name)}</b>
+          <small>${esc(q.text)}</small></div></div>
+        <div class="qrumpf">${werte}${zustand}
+          <small class="note">github.com/${esc(q.repo)} · Lizenz ${esc(q.lizenz)}</small>
+          <div class="qfuss">${laeuft ? "" : q.installiert
+            ? `<button class="btn small ${q.neu ? "primary" : ""}" data-a="ic_laden" data-q="${k}"><ha-icon icon="mdi:download"></ha-icon>${q.neu ? "Aktualisieren" : "Neu laden"}</button>
+               <button class="btn small ghost" data-a="ic_loeschen" data-q="${k}"><ha-icon icon="mdi:delete-outline"></ha-icon>Entfernen</button>`
+            : `<button class="btn small primary" data-a="ic_laden" data-q="${k}"><ha-icon icon="mdi:download"></ha-icon>Herunterladen</button>`}
+            <label class="sw small" title="Neue Fassung von GitHub selbst laden (Home Assistant sieht zweimal am Tag nach)"><input type="checkbox" data-icauto="${k}" ${q.auto ? "checked" : ""}><span>Automatisch aktualisieren</span></label></div></div></div>`;
+    }).join("");
+    return `<div class="irsek"><h3><ha-icon icon="mdi:github"></ha-icon>Datenbanken</h3><span class="grow"></span>
+        <small class="note">${st.geprueft ? `Zuletzt auf GitHub nachgesehen: ${esc(new Date(st.geprueft.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }))}` : "Noch nicht auf GitHub nachgesehen"}</small>
+        <button class="btn small" data-a="ic_pruefen"><ha-icon icon="mdi:cloud-refresh-outline"></ha-icon>Auf GitHub nachsehen</button></div>
+      <div class="qgrid">${karten}</div>
+      <small class="note">Die Datenbanken liegen in Home Assistant, nicht auf der Remote. In die Remote kommen nur die Codes, die du einer Taste gibst.</small>`;
+  },
+
+  _ircBind() {
+    const q = this.shadowRoot.querySelector("#icq");
+    if (!q) return;
+    q.oninput = () => {
+      const d = this.s.irc;
+      d.q = q.value;
+      clearTimeout(this._icqT);
+      this._icqT = setTimeout(async () => {
+        await this._ircSuchen();
+        const pos = this.shadowRoot.querySelector("#icq")?.selectionStart ?? d.q.length;
+        this._render();
+        const nq = this.shadowRoot.querySelector("#icq");
+        if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); }
+      }, 250);
+    };
+  },
+  async _ircSuchen() {
+    const d = this.s.irc, q = d.q || "";
+    if (!q.trim() && !d.quelle) { d.res = null; return; }
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_suchen", q, limit: 90, ...(d.quelle ? { quelle: d.quelle } : {}) });
+      if ((d.q || "") === q) { d.res = r; d.dev = null; }
+    } catch (e) { this.s.msg = { err: true, text: e.message }; }
+  },
+
+  async _ircClick(a, t) {
+    if (!a.startsWith("ic_")) return false;
+    const s = this.s, d = s.irc, e = d?.eigen, gi = Number(t.dataset.gi), ci = Number(t.dataset.ci);
+    switch (a) {
+      case "ic_tog": d.auf[gi] = !(d.auf[gi] ?? e.geraete[gi].codes.length <= 12); return true;
+      case "ic_gneu": e.geraete.push({ name: `Gerät ${e.geraete.length + 1}`, codes: [] }); d.auf[e.geraete.length - 1] = true; this._ircSpeichern(); return true;
+      case "ic_gdel":
+        if (e.geraete[gi].codes.length && !confirm(`„${e.geraete[gi].name}“ mit ${e.geraete[gi].codes.length} Codes löschen?\nTasten, die diese Codes benutzen, behalten sie.`)) return true;
+        e.geraete.splice(gi, 1); d.auf = {}; this._ircSpeichern(); return true;
+      case "ic_cdel": e.geraete[gi].codes.splice(ci, 1); this._ircSpeichern(); return true;
+      case "ic_test": await this._irTest({ t: "ir", ...ircCode(e.geraete[gi].codes[ci]), n: e.geraete[gi].codes[ci].name }); return true;
+      case "ic_lernen": await this._lernStart("ir", null, null, { gi }); return true;
+      case "ic_sammeln": {
+        const n = this._ircSammeln();
+        s.msg = { text: n ? `${n} Codes aus den Tasten übernommen.` : "Keine neuen IR-Codes in den Tasten gefunden." };
+        if (n) this._ircSpeichern();
+        return true;
+      }
+      case "ic_export": {
+        const blob = new Blob([JSON.stringify({ art: "esphomeremote-ircodes", version: 1, ...e }, null, 1)], { type: "application/json" });
+        const l = document.createElement("a");
+        l.href = URL.createObjectURL(blob); l.download = `ir-codes-${new Date().toISOString().slice(0, 10)}.json`; l.click();
+        setTimeout(() => URL.revokeObjectURL(l.href), 2000);
+        return true;
+      }
+      case "ic_filter": d.quelle = t.dataset.q || ""; d.dev = null; await this._ircSuchen(); return true;
+      case "ic_dev":
+        try { d.dev = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_geraet", geraet: irId(t.dataset.id) }); d.ziel = ""; }
+        catch (err) { s.msg = { err: true, text: err.message }; }
+        return true;
+      case "ic_devzu": d.dev = null; return true;
+      case "ic_dbtest": { const b = d.dev.befehle[Number(t.dataset.j)]; await this._irTest({ t: "ir", ...ircCode(b), n: b.name }); return true; }
+      case "ic_dbplus": case "ic_alle": {
+        const g = d.dev, name = `${g.m ? g.m + " " : ""}${g.n}`;
+        const ziel = d.ziel !== "" && d.ziel != null ? Number(d.ziel) : this._ircGeraet(name);
+        d.ziel = ziel;
+        const liste = a === "ic_alle" ? g.befehle.filter((b) => b.ok) : [g.befehle[Number(t.dataset.j)]];
+        const n = liste.filter((b) => this._ircAblegen(ziel, b.name, b, IRC_QUELLEN[g.q]?.[0])).length;
+        s.msg = { text: n ? `${n === 1 ? `„${liste[0].name}“` : n + " Codes"} in „${e.geraete[ziel].name}“ abgelegt.` : "Schon in Meine Codes." };
+        this._ircSpeichern();
+        return true;
+      }
+      case "ic_pruefen":
+        try { d.st = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_pruefen" }); s.msg = { text: Object.values(d.st.quellen).some((q) => q.neu) ? "Neue Fassung auf GitHub gefunden." : "Alles aktuell." }; }
+        catch (err) { s.msg = { err: true, text: err.message }; }
+        return true;
+      case "ic_laden":
+        try { d.st = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_laden", quelle: t.dataset.q }); } catch (err) { s.msg = { err: true, text: err.message }; }
+        this._ircPoll();
+        return true;
+      case "ic_loeschen":
+        if (!confirm(`${d.st.quellen[t.dataset.q].name} aus Home Assistant entfernen?\nBereits belegte Tasten und Meine Codes bleiben erhalten.`)) return true;
+        d.st = await this._hass.callWS({ type: "esphomeremote_konfig/irdb_loeschen", quelle: t.dataset.q });
+        return true;
+    }
+    return false;
+  },
+  _ircChange(t) {
+    const d = this.s.irc, e = d?.eigen;
+    if (!e) return false;
+    if (t.dataset.icg != null) { e.geraete[Number(t.dataset.icg)].name = t.value.trim().slice(0, 40) || "Gerät"; this._ircSpeichern(); return true; }
+    if (t.dataset.icc != null) { const [gi, ci] = t.dataset.icc.split(":").map(Number); e.geraete[gi].codes[ci].name = t.value.trim().slice(0, 40) || "Code"; this._ircSpeichern(); return true; }
+    if (t.dataset.icmv != null && t.value !== "") {
+      const [gi, ci] = t.dataset.icmv.split(":").map(Number), [c] = e.geraete[gi].codes.splice(ci, 1);
+      e.geraete[Number(t.value)].codes.push(c); this._ircSpeichern(); return true;
+    }
+    if (t.dataset.icdev != null) { this.s.dev = t.value; return true; }
+    if (t.dataset.iczl != null) { d.ziel = t.value; return true; }
+    if (t.dataset.icauto != null) {
+      this._hass.callWS({ type: "esphomeremote_konfig/irdb_auto", quelle: t.dataset.icauto, an: t.checked }).then((st) => { d.st = st; this._render(); });
+      return true;
+    }
+    if (t.dataset.icimp != null && t.files?.[0]) {
+      t.files[0].text().then((txt) => {
+        let n = 0;
+        try {
+          const x = JSON.parse(txt);
+          for (const g of x.geraete || []) {
+            const gi = this._ircGeraet(String(g.name || "Import"));
+            for (const c of g.codes || []) if ((Array.isArray(c.raw) && c.raw.length) || c.proto) n += this._ircAblegen(gi, c.name, c, c.quelle || "Import") ? 1 : 0;
+          }
+          this.s.msg = { text: `${n} Codes importiert.` };
+          if (n) this._ircSpeichern();
+        } catch (err) { this.s.msg = { err: true, text: `Keine gültige Datei: ${err.message}` }; }
+        this._render();
+      });
+      return true;
+    }
+    return false;
+  },
+  // IR-Codes aus allen Tastenbelegungen (alle Remotes) einsammeln - je Remote ein Geraet "Tasten <Remote>"
+  _ircSammeln() {
+    let n = 0;
+    for (const dev of this.s.order) {
+      const cfg = this.s.cfg[dev];
+      if (!cfg) continue;
+      const funde = [];
+      const lauf = (x, pfad) => {
+        if (Array.isArray(x)) { x.forEach((y) => lauf(y, pfad)); return; }
+        if (!x || typeof x !== "object") return;
+        if (x.t === "ir" && ((Array.isArray(x.raw) && x.raw.length) || x.proto)) funde.push({ name: x.n || pfad || "IR-Code", ...ircCode(x) });
+        for (const [k, v] of Object.entries(x)) if (v && typeof v === "object") lauf(v, KEYNAME[k] || (x.label ? x.label : pfad));
+      };
+      lauf(cfg, "");
+      if (!funde.length) continue;
+      const gi = this._ircGeraet(`Tasten ${devName(dev).replace(/^Remote /, "")}`);
+      for (const f of funde) if (!this.s.irc.eigen.geraete.some((g) => g.codes.some((c) => ircGleich(c, f)))) n += this._ircAblegen(gi, f.name, f, "aus den Tasten") ? 1 : 0;
+      if (!this.s.irc.eigen.geraete[gi].codes.length) this.s.irc.eigen.geraete.splice(gi, 1);
+    }
+    return n;
+  },
+  // Knopf am IR-Schritt einer Taste: diesen Code in Meine Codes ablegen
+  async _ircAusSchritt(st) {
+    await this._ircEigen();
+    const gi = this._ircGeraet("Gesammelt");
+    const ok = this._ircAblegen(gi, st.n || `${KEYNAME[this.s.key] || "Taste"}`, st, "aus einer Taste");
+    this._ircSpeichern();
+    this.s.msg = { text: ok ? `In Meine Codes („Gesammelt“) abgelegt – umbenennen und ordnen unter „IR-Codes“.` : "Dieser Code ist schon in Meine Codes." };
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(IrCodesTab));
+
+// Nach einem Panel-Update laedt HA die neue Datei, ohne die alte Definition zu vergessen
+if (!customElements.get("esphomeremote-konfigurator")) customElements.define("esphomeremote-konfigurator", EsphomeremoteKonfigurator);

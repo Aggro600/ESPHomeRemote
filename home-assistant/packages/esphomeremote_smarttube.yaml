@@ -1,0 +1,52 @@
+# ESPHomeRemote - persoenliche Ergaenzungen (Stand 2026-10-19).
+# Streamer, Cover, Klingel- und Kamerabilder macht inzwischen die Integration (Konfigurator > Wiedergabe / Klingel);
+# die alte Fassung dieses Pakets liegt in esphome/archive/vor_jetzt_umzug_2026-10-19/.
+script:
+  esphomeremote_streamer_close_app:
+    alias: "ESPHomeRemote: App auf dem Streamer beenden"
+    description: Seit 2026-10-19 ein Knopf der Integration (Konfigurator > Wiedergabe > Streamer).
+    sequence:
+      - action: button.press
+        target: {entity_id: button.esphomeremote_streamer_wohnzimmer_app_beenden}
+    mode: single
+
+automation:
+  - id: esphomeremote_neue_version_blinken
+    alias: "ESPHomeRemote: Hängelampe blinkt bei neuer Fernbedienungs-Version"
+    description: >
+      Die Fernbedienungen melden nach jedem Flash (neue Firmware) einmal das Ereignis
+      esphome.remote_neue_version. Die Hängelampe blinkt dann dreimal und stellt ihren
+      vorherigen Zustand wieder her.
+    triggers:
+      - trigger: event
+        event_type: esphome.remote_neue_version
+    actions:
+      - action: scene.create
+        data:
+          scene_id: haengelampe_vor_blinken
+          snapshot_entities:
+            - light.hangelampe
+      - repeat:
+          count: 3
+          sequence:
+            - action: light.turn_off
+              target:
+                entity_id: light.hangelampe
+              data:
+                transition: 0
+            - delay:
+                milliseconds: 500
+            - action: light.turn_on
+              target:
+                entity_id: light.hangelampe
+              data:
+                brightness_pct: 100
+                transition: 0
+            - delay:
+                milliseconds: 500
+      - action: scene.turn_on
+        target:
+          entity_id: scene.haengelampe_vor_blinken
+        data:
+          transition: 0
+    mode: single

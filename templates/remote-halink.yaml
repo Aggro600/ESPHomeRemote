@@ -1,0 +1,193 @@
+# VORLAGE Bluetooth-Schicht (HA-Link) fuer ALLE Fernbedienungen (seit 2026-10-16) - nur diese Datei pflegen.
+# tools/remotes.py erzeugt daraus remote-wz-<name>-halink.yaml; die bindet remote-wz-<name>.yaml ein.
+# Geflasht wird immer die -halink-Datei.
+packages:
+  remotename: !include remote-wz-remotename.yaml
+  # Test- und Diagnosewerkzeuge (Bildschirmfotos, Zeitlupe, Mikrofon-/RAM-Test ...) - auf allen Remotes, nicht veroeffentlicht
+  dev: !include remote-dev-tests.yaml
+
+external_components:
+  - source: {type: local, path: components}
+    # network: ESPHome 2026.9.1 + eine Zeile (API bleibt bei WLAN aus ueber den Tunnel verbunden, s. util.h)
+    components: [ha_tunnel, network]
+
+# Alle HTTP-Zugriffe der Remote auf HA (Cover, Klingel-/Kamerabilder, Tasten-/Menue-Konfiguration) gehen ueber den
+# Vermittler im Tunnel: bei WLAN direkt zu HA, sonst durch Bluetooth (2026-10-06).
+substitutions:
+  ha_host: "127.0.0.1:8081"
+  ha_ueber_tunnel: "true"
+
+# Bilder (Cover 12-21 KB, Klingel) durch den Bluetooth-Tunnel brauchen laenger als die 2,5 s der Basis (2026-10-07):
+# das Player-Cover lief in die Zeitgrenze, wurde ausgeblendet - nur das kleinere Startseiten-Bild kam an.
+http_request:
+  timeout: 10s
+
+ha_tunnel:
+  id: tunnel
+  keyboard_id: kb
+  http_port: 8081
+  ha_host: "${ha_adresse}"   # echtes HA fuer den WLAN-Weg (Startwert; HA kuendigt seine Adresse an, s. unten)
+  # HA-Sprachassistent ohne WLAN: Mikrofon -> IMA-ADPCM 16 kHz (~8 KB/s) -> Link -> Bruecke -> Assist-Pipeline.
+  # Gleiche Verstaerkung wie voice_assistant (volume_multiplier 6.5). Anzeige/Ausgabe wie dort.
+  microphone: remote_mic
+  voice_gain: 6.5
+  on_voice_event:
+    - lambda: |-
+        ESP_LOGI("assi", "Bluetooth-Sprache: Ereignis %d: %s", typ, text.c_str());
+        switch (typ) {
+          case 1:
+            lv_label_set_text(id(voice_you), text.c_str());
+            lv_label_set_text(id(voice_answer), "denkt nach");
+            break;
+          case 2:
+            lv_label_set_text(id(voice_answer), text.c_str());
+            lv_obj_scroll_to_y(id(voice_box), 0, LV_ANIM_OFF);
+            break;
+          case 4:
+            lv_label_set_text(id(voice_answer), ("Fehler: " + text).c_str());
+            break;
+          default:
+            break;
+        }
+    - if:
+        condition: {lambda: 'return typ == 3 && id(tts_speaker) && !id(tk_cfg).ent("tts").empty();'}
+        then:
+          - homeassistant.service:
+              service: media_player.play_media
+              data:
+                entity_id: !lambda 'return id(tk_cfg).ent("tts");'
+                media_content_type: "music"
+              data_template:
+                media_content_id: "{{ url }}"
+              variables:
+                url: !lambda 'return text;'
+    - if:
+        condition: {lambda: 'return typ == 4 || typ == 5;'}
+        then:
+          - lambda: 'id(tunnel).voice_stop();'
+          - globals.set: {id: voice_active, value: "false"}
+          - script.execute: apply_mic_power
+          - lambda: 'id(kb).set_rssi_paused(false);'
+          - script.stop: voice_power_guard
+  # Bluetooth-Proxys, ueber die HA die Remote erreichen darf: im Konfigurator (Bluetooth > Proxys, cfg.bt.proxies),
+  # die Remote merkt sich die Liste mit der Konfiguration (NVS). HA waehlt den Proxy selbst (bester Empfang).
+
+text_sensor:
+  # Adresse von Home Assistant fuer den WLAN-Weg des Vermittlers (Attribut "basis", 2026-10-19)
+  - platform: homeassistant
+    id: ha_basis_tunnel
+    entity_id: sensor.esphomeremote_konfig_remote_wz_remotename
+    attribute: basis
+    internal: true
+    on_value:
+      - lambda: 'id(tunnel).set_ha_adresse(x);'
+  # Aktuelle Bluetooth-Werbeadresse (Platz-Adresse) - nur Diagnose, die Bruecke findet die Remote ueber ihre Werbung
+  - platform: template
+    name: "Link Adresse"
+    id: link_adresse
+    update_interval: 30s
+    lambda: |-
+      if (!id(ps_log_debug)) return {};   // Diagnose: nur im Debug-Modus an HA (vorher alle 30 s)
+      const uint8_t *a = id(kb).get_slot_addr(id(kb).active_host_slot());
+      char b[18];
+      snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", a[0], a[1], a[2], a[3], a[4], a[5]);
+      return std::string(b) + (id(kb).link_connected() ? " (Link)" : "");
+
+# Dienste nur auf Aufruf aus HA (kosten nichts, solange sie niemand aufruft)
+
+# Kein mDNS: sonst stellt HAs ESPHome-Integration die Adresse beim naechsten Fund wieder auf die WLAN-IP
+# zurueck - der Eintrag zeigt auf die Bruecke (127.0.0.1:16054).
+mdns:
+  disabled: true
+
+# "Nur Bluetooth": WLAN aus, HA nur ueber den Link (Rettung: Notanker in remote.yaml - 3 min ohne HA -> WLAN 3 min an,
+# der Modus bleibt eingeschaltet).
+# Kein Neustart in den Aktionen! Der Schalter fuehrt beim Start seinen gespeicherten Zustand aus -
+# die erste Remote Notaus-Schalter (Neustart in turn_off_action) hing deshalb in einer Boot-Schleife (2026-10-05).
+switch:
+  - platform: template
+    name: "Nur Bluetooth (WLAN aus)"
+    id: nur_ble
+    icon: mdi:wifi-off
+    # Beim Start nichts ausfuehren (2026-10-26): sonst lief turn_off_action -> set_ble_only(false) und schaltete das WLAN ein
+    restore_mode: DISABLED
+    # Zustand kommt aus dem Tunnel (gespeichert, ueberlebt Neustarts; nur der Schalter aendert ihn).
+    lambda: 'return id(tunnel).ble_only();'
+    # Zustand speichert ha_tunnel selbst (Template-Schalter mit Lambda stellt ihn nicht wieder her)
+    turn_on_action:
+      - lambda: 'id(tunnel).set_ble_only(true);'
+    turn_off_action:
+      - lambda: 'id(tunnel).set_ble_only(false);'
+
+# WLAN-Skripte der Remote (wlan_frueh_an, wake_backlight, Sparschalter) fragen wlan_zugriff::g_nur_ble.
+# Haken fuer die Firmware (esphomeremote-wlan.h): Nur-Bluetooth-Schalter, Sprache und HA-Symbol ueber den Tunnel.
+# Prioritaet -90 (nach dem Start der Komponenten): der Knopf "Nur Bluetooth" wird hier sichtbar gemacht.
+esphome:
+  on_boot:
+    - priority: -90
+      then:
+        - lambda: |-
+            // Parallel: HA-Link + aktiver Host + 1 geparkter. Mit 2 geparkten (4 Verbindungen) fiel das interne RAM
+            // auf 8 KB und der Tunnel bekam keine Sitzung mehr zustande (2026-10-06).
+            id(kb).set_max_parked(1);
+            wlan_zugriff::g_set_nur_ble = [](bool on) { id(tunnel).set_ble_only(on); };   // Menue-Schalter "Nur Bluetooth"
+            // Sofort den gespeicherten Stand spiegeln (2026-10-25), nicht erst im 1-s-Intervall: einst_sync::einrichten
+            // (on_boot -100) merkt sich den Wert als "gemeldet" - stand dort noch false, galt das als Umstellung an der
+            // Remote, HA gab "Nur Bluetooth aus" an die ganze Gruppe weiter und alle Remotes fuhren wieder WLAN.
+            wlan_zugriff::g_nur_ble = id(tunnel).ble_only();
+            wlan_zugriff::g_link_voice_start = []() { return id(tunnel).voice_start(); };   // Mikrofon-Taste ohne WLAN
+            wlan_zugriff::g_link_voice_stop = []() { id(tunnel).voice_stop(); };
+            wlan_zugriff::g_link_ha = []() { return id(tunnel).session_open(); };   // HA-Symbol blau
+            // Bilder/Konfiguration ueber das Dock (2026-10-20): laeuft im HTTP-Task des Tunnels
+            id(tunnel).set_http_dock([](int c, std::vector<uint8_t> &vorab) { return id(direkt).http_relay(c, vorab); });
+            // Tasten-Konfiguration auch ohne HA-Verbindung laden, wenn das Dock erreichbar ist (2026-10-25)
+            id(tk_cfg).laden_ueber_dock = []() { return id(http_dock) == 1 && id(tk_cfg).dock_weg() == 2; };
+            // Neue Belegung bei "Nur Bluetooth" (2026-10-25): WLAN fuer den Abruf einschalten (60 s Bedarf), bis zu 12 s
+            // darauf warten; kommt es nicht, geht es wie bisher ueber das Dock. Hoechstens alle 2 min neu anfordern.
+            id(tk_cfg).wlan_holen = []() -> bool {
+              static uint32_t ab = 0;
+              auto *w = wifi::global_wifi_component;
+              if (!wlan_zugriff::g_nur_ble || w == nullptr || w->is_connected()) return false;
+              if (ab == 0 || millis() - ab > 120000) { ab = millis() | 1; wlan_zugriff::bedarf(60000, "Konfiguration laden"); }
+              return millis() - ab < 12000;
+            };
+            id(tunnel).ohne_weg = []() { wlan_zugriff::bedarf(60000, "Bild/Konfiguration ohne Weg"); };
+            lv_obj_remove_flag(id(ps_nurble_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ps_nurble_h), LV_OBJ_FLAG_HIDDEN);
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          wlan_zugriff::g_nur_ble = id(tunnel).ble_only();
+          // HTTP ueber das Dock: Reihenfolge und Docks (Einstellung http_dock, Docks aus der Tasten-Konfiguration)
+          id(tunnel).set_http_weg(id(http_dock));
+          id(direkt).set_http_ziele(id(tk_cfg).dock_macs());
+          // Tunnel-Status ins HA-Log nur im Debug-Modus
+          id(tunnel).set_debug(id(ps_log_debug));
+          id(tunnel).set_ruhe(id(disp_off));   // uebernimmt auch "langsam" (kb.link_schlummer)
+          {   // Knopf "Nur Bluetooth": AN/AUS aktuell halten
+            static int8_t vorher = -1;
+            if ((int8_t) wlan_zugriff::g_nur_ble != vorher) {
+              vorher = wlan_zugriff::g_nur_ble;
+              lv_label_set_text(id(ps_nurble_lbl), wlan_zugriff::g_nur_ble ? "AN" : "AUS");
+              lv_obj_set_style_text_color(id(ps_nurble_lbl),
+                lv_color_hex(wlan_zugriff::g_nur_ble ? 0x22C55E : 0x8B94A3), LV_PART_MAIN);
+            }
+          }
+          // Wartungsfenster (Knopf "Wartungsfenster jetzt", Ladekabel, Dock "w") und WLAN-Bedarf (kein Dock erreicht,
+          // Sprache an HA - Funkkonzept 2026-10-25) duerfen das WLAN auch bei "Nur Bluetooth" einschalten
+          id(tunnel).set_wifi_erlaubt((int32_t) (millis() - id(wartung_bis)) < 0 || wlan_zugriff::bedarf_aktiv());
+
+# Mehr gleichzeitige Bluetooth-Verbindungen (2026-10-06): HA-Link + aktiver Host + 2 geparkte + 1 Platz fuer den
+# Aufbau beim Wechsel. Standard in die erste Remote Vorlage: 4.
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_BT_ACL_CONNECTIONS: "5"   # HA-Link + aktiver Host + 1 geparkter + 1 Platz fuer den Wechsel
+      CONFIG_BT_CTRL_BLE_MAX_ACT: "8"
+
+# RAM (2026-10-06): LVGL-Zeichenpuffer 19 % statt 25 % (~9 KB weniger im internen RAM) - mit Bluetooth-Tunnel
+# und parallelen Verbindungen wurde es eng (10 KB frei).
+lvgl:
+  buffer_size: 25%   # wieder 25 % (2026-10-07): altes Menue entfernt, ~13 KB internes RAM frei geworden. 19 % war zaeh

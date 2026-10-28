@@ -1,0 +1,47 @@
+# =============================================================================
+#  ESPHomeRemote - Einbinde-Datei ("adoptieren")
+# =============================================================================
+# Diese Datei ist der Einstiegspunkt zum Uebernehmen der Firmware in die eigene
+# ESPHome-/Home-Assistant-Installation - ohne das Repo lokal zu klonen.
+#
+# ESPHome-Oberflaeche -> "Neues Geraet" -> nicht verbinden -> Zahnrad/Editor ->
+# den Inhalt dieser Datei einfuegen (oder ueber den Button im README).
+# Dann secrets.yaml.example -> secrets.yaml ausfuellen und flashen.
+#
+# Die eigentliche Firmware + die eigenen Komponenten werden ueber die Pakete
+# unten direkt aus GitHub gezogen. Anpassen an dein Zuhause: im Konfigurator
+# in Home Assistant, nicht hier.
+# =============================================================================
+
+substitutions:
+  device_name:    "esphomeremote"
+  friendly_name:  "ESPHomeRemote"
+  ha_name:        "esphomeremote"   # = device_name mit _ statt - (so heissen die Entitaeten in Home Assistant)
+  # Passwoerter und Schluessel aus deiner secrets.yaml - die Firmware kommt als Paket von GitHub und darf selbst
+  # kein !secret lesen
+  wifi_ssid:         !secret wifi_ssid
+  wifi_password:     !secret wifi_password
+  ota_pw:            !secret ota_pw
+  ap_password:       !secret ap_password
+  direkt_schluessel: !secret direkt_schluessel
+  konfig_key:        !secret esphomeremote_konfig_key
+  # Alles andere (Media Player, Fernseher, Lautsprecher, Timer, Kameras, Klingel, Streamer) stellst du im
+  # Konfigurator ein (Seitenleiste "Fernbedienung") - ohne neue Firmware. Die Adresse von Home Assistant
+  # findet die Fernbedienung selbst.
+
+dashboard_import:
+  package_import_url: github://Aggro600/ESPHomeRemote/esphomeremote.yaml@stabil
+  import_full_config: false
+
+packages:
+  # Zweig "stabil" = letzter Release (tools/release.py); refresh 0s: "Alle aktualisieren" im Konfigurator holt immer
+  # den neuesten Stand
+  firmware:
+    url: https://github.com/Aggro600/ESPHomeRemote
+    ref: stabil
+    files: [esphomeremote-firmware.yaml]
+    refresh: 0s
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password

@@ -1,0 +1,1162 @@
+{
+"page_bright": [
+{
+"k": "btn",
+"obj": "back_bright",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Bildschirm"
+},
+{
+"k": "hdr",
+"name": "HELLIGKEIT"
+},
+{
+"k": "pair",
+"name": "Display",
+"wert": "disp_bri_lbl"
+},
+{
+"k": "sld",
+"obj": "disp_bri_sld"
+},
+{
+"k": "hint",
+"wert": "h_bri"
+},
+{
+"k": "btn",
+"obj": "kbd_light_btn",
+"name": "Tastenbeleuchtung",
+"wert": "kbd_light_lbl"
+},
+{
+"k": "hint",
+"wert": "h_kbdon"
+},
+{
+"k": "pair",
+"name": "Tastenbeleuchtung",
+"wert": "kbd_bri_lbl"
+},
+{
+"k": "sld",
+"obj": "kbd_bri_sld"
+},
+{
+"k": "hint",
+"wert": "h_kbdbri"
+},
+{
+"k": "hdr",
+"name": "AUSSCHALTEN"
+},
+{
+"k": "pair",
+"name": "Display aus nach",
+"wert": "to_val_lbl"
+},
+{
+"k": "sld",
+"obj": "to_sld"
+},
+{
+"k": "hint",
+"wert": "h_to"
+},
+{
+"k": "pair",
+"name": "Abdunkeln nach",
+"wert": "ps_dim_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_dim_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_dim"
+},
+{
+"k": "pair",
+"name": "Abdunkeln auf",
+"wert": "ps_dimp_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_dimp_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_dimp"
+}
+],
+"page_show": [
+{
+"k": "btn",
+"obj": "back_show",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Anzeige"
+},
+{
+"k": "hdr",
+"name": "STATUSLEISTE"
+},
+{
+"k": "btn",
+"obj": "show_ble_btn",
+"name": "Bluetooth-Symbol",
+"wert": "sh_ble_lbl"
+},
+{
+"k": "hint",
+"wert": "h_sh_ble"
+},
+{
+"k": "btn",
+"obj": "show_wifi_btn",
+"name": "WLAN-Symbol",
+"wert": "sh_wifi_lbl"
+},
+{
+"k": "hint",
+"wert": "h_sh_wifi"
+},
+{
+"k": "btn",
+"obj": "show_batt_btn",
+"name": "Akkustand",
+"wert": "sh_batt_lbl"
+},
+{
+"k": "hint",
+"wert": "h_sh_batt"
+},
+{
+"k": "btn",
+"obj": "show_clock_btn",
+"name": "Uhrzeit",
+"wert": "sh_clock_lbl"
+},
+{
+"k": "hint",
+"wert": "h_sh_clock"
+},
+{
+"k": "btn",
+"obj": "show_assi_btn",
+"name": "Assistenten-Symbol",
+"wert": "sh_assi_lbl"
+},
+{
+"k": "hint",
+"wert": "h_sh_assi"
+},
+{
+"k": "btn",
+"obj": "show_motion_btn",
+"name": "Bewegungs-Symbol",
+"wert": "sh_motion_lbl"
+},
+{
+"k": "txt",
+"name": "Kurzes Symbol neben der Uhr, sobald die Remote eine Bewegung bemerkt."
+},
+{
+"k": "btn",
+"obj": "show_ha_btn",
+"name": "Home-Assistant-Symbol",
+"wert": "sh_ha_lbl"
+},
+{
+"k": "hint",
+"wert": "h_sh_ha"
+},
+{
+"k": "hdr",
+"name": "COVER"
+},
+{
+"k": "btn",
+"obj": "cover_player_btn",
+"name": "Cover Player",
+"wert": "cover_player_lbl"
+},
+{
+"k": "hint",
+"wert": "h_cov_p"
+},
+{
+"k": "btn",
+"obj": "cover_home_btn",
+"name": "Cover Startseite",
+"wert": "cover_home_lbl"
+},
+{
+"k": "hint",
+"wert": "h_cov_h"
+},
+{
+"k": "hdr",
+"name": "MENÜ"
+},
+{
+"k": "pair",
+"name": "Menü merken für",
+"wert": "mem_lbl"
+},
+{
+"k": "sld",
+"obj": "mem_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_mem"
+},
+{
+"k": "pair",
+"name": "Menü schließen nach",
+"wert": "menu_close_lbl"
+},
+{
+"k": "sld",
+"obj": "menu_close_sld"
+},
+{
+"k": "hint",
+"wert": "h_menu_close"
+},
+{
+"k": "hdr",
+"name": "LOGOS"
+},
+{
+"k": "btn",
+"obj": "sd_logos_btn",
+"name": "Logos von SD-Karte",
+"wert": "sd_logos_lbl"
+},
+{
+"k": "hint",
+"wert": "h_sd_logos"
+}
+],
+"page_power": [
+{
+"k": "btn",
+"obj": "back_power",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Energie & Wecken"
+},
+{
+"k": "hdr",
+"name": "WLAN"
+},
+{
+"k": "btn",
+"obj": "ps_wifi_btn",
+"name": "WLAN-Sparmodus",
+"wert": "ps_wifi_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_wifi"
+},
+{
+"k": "btn",
+"obj": "ps_wifimax_btn",
+"name": "Sparmodus stark (Ruhe)",
+"wert": "ps_wifimax_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_wifimax"
+},
+{
+"k": "btn",
+"obj": "ps_wifi_off_btn",
+"name": "WLAN aus im Ruhezustand",
+"wert": "ps_off_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_off"
+},
+{
+"k": "pair",
+"name": "WLAN aus nach",
+"wert": "ps_wifis_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_wifis_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_offs"
+},
+{
+"k": "pair",
+"name": "WLAN aus bei TV an",
+"wert": "ps_wifitv_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_wifitv_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_wifitv"
+},
+{
+"k": "hdr",
+"name": "PROZESSOR & BLUETOOTH"
+},
+{
+"k": "pair",
+"name": "Prozessor drosseln",
+"wert": "ps_cpu_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_cpu_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_cpu"
+},
+{
+"k": "btn",
+"obj": "ps_light_btn",
+"name": "Leichtschlaf",
+"wert": "ps_light_lbl"
+},
+{
+"k": "txt",
+"name": "Bei gedrosseltem Prozessor schläft er zwischen Funk- und Tastenereignissen. WLAN und Bluetooth bleiben verbunden. Halbiert etwa den Ruhestrom (gemessen 29.09.)."
+},
+{
+"k": "btn",
+"obj": "ps_wfest_btn",
+"name": "WLAN-Schnellstart",
+"wert": "ps_wfest_lbl"
+},
+{
+"k": "txt",
+"name": "Feste IP statt DHCP, spart beim Verbinden nach einem Neustart oder Tiefschlaf Zeit. Wirkt ab dem nächsten Start. Die Kanalsuche wird immer übersprungen (Fast Connect)."
+},
+{
+"k": "btn",
+"obj": "ps_wfrueh_btn",
+"name": "WLAN früh einschalten",
+"wert": "ps_wfrueh_lbl"
+},
+{
+"k": "txt",
+"name": "Ist das WLAN im Ruhezustand aus, schalten es auch Tasten und Bewegung wieder ein, ohne das Display zu wecken. Das Ausschalten zählt ab der letzten Taste oder Bewegung."
+},
+{
+"k": "btn",
+"obj": "ps_nurble_btn",
+"name": "Nur Bluetooth",
+"wert": "ps_nurble_lbl"
+},
+{
+"k": "lbl",
+"wert": "ps_nurble_h",
+"text": "WLAN bleibt aus, Home Assistant, Bilder und Sprache laufen über Bluetooth. Für Updates schaltet das Wartungsfenster das WLAN kurz ein."
+},
+{
+"k": "btn",
+"obj": "ps_bleidle_btn",
+"name": "BLE-Verbindung langsam",
+"wert": "ps_bleidle_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_ble"
+},
+{
+"k": "pair",
+"name": "BLE langsam nach",
+"wert": "ps_bles_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_bles_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_bles"
+},
+{
+"k": "hdr",
+"name": "AUFWECKEN"
+},
+{
+"k": "pair",
+"name": "Aufwecken bei",
+"wert": "motion_mode_lbl"
+},
+{
+"k": "btn",
+"obj": "mm_0",
+"name": "Aus",
+"wert": "mm_0_mk"
+},
+{
+"k": "btn",
+"obj": "mm_1",
+"name": "Bewegung",
+"wert": "mm_1_mk"
+},
+{
+"k": "btn",
+"obj": "mm_2",
+"name": "Hochheben",
+"wert": "mm_2_mk"
+},
+{
+"k": "hint",
+"wert": "h_motion"
+},
+{
+"k": "pair",
+"name": "Empfindlichkeit",
+"wert": "motion_sens_lbl"
+},
+{
+"k": "sld",
+"obj": "ms_sld"
+},
+{
+"k": "hint",
+"wert": "h_sens"
+},
+{
+"k": "btn",
+"obj": "keys_wake_btn",
+"name": "Tasten wecken",
+"wert": "keys_wake_lbl"
+},
+{
+"k": "hint",
+"wert": "h_keys"
+},
+{
+"k": "btn",
+"obj": "menue_weckt_btn",
+"name": "Menütaste bei dunklem Display",
+"wert": "menue_weckt_lbl"
+},
+{
+"k": "hint",
+"wert": "h_menue_weckt"
+},
+{
+"k": "btn",
+"obj": "dim_wake_btn",
+"name": "Aufhellen bei Bewegung",
+"wert": "dim_wake_lbl"
+},
+{
+"k": "hint",
+"wert": "h_dim_wake"
+},
+{
+"k": "btn",
+"obj": "dim_hold_btn",
+"name": "Nicht abdunkeln bei Bewegung",
+"wert": "dim_hold_lbl"
+},
+{
+"k": "hint",
+"wert": "h_dim_hold"
+},
+{
+"k": "pair",
+"name": "Empfindlichkeit (beide oben)",
+"wert": "dim_sens_lbl"
+},
+{
+"k": "sld",
+"obj": "ds_sld"
+},
+{
+"k": "hint",
+"wert": "h_dim_sens"
+},
+{
+"k": "btn",
+"obj": "klopf_btn",
+"name": "Doppelt klopfen weckt",
+"wert": "klopf_lbl"
+},
+{
+"k": "pair",
+"name": "Klopf-Empfindlichkeit",
+"wert": "klopf_sens_lbl"
+},
+{
+"k": "sld",
+"obj": "kl_sld"
+},
+{
+"k": "hint",
+"wert": "h_klopf"
+},
+{
+"k": "btn",
+"obj": "ps_touch_btn",
+"name": "Touch weckt",
+"wert": "ps_touch_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_touch"
+},
+{
+"k": "pair",
+"name": "Touch-Abfrage",
+"wert": "ps_touchms_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_touchms_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_touchms"
+},
+{
+"k": "hdr",
+"name": "TIEFSCHLAF"
+},
+{
+"k": "btn",
+"obj": "ps_deep_btn",
+"name": "Tiefschlaf im Ruhezustand",
+"wert": "ps_deep_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_deep"
+},
+{
+"k": "btn",
+"obj": "ps_deepble_btn",
+"name": "Nur ohne Bluetooth",
+"wert": "ps_deepble_lbl"
+},
+{
+"k": "txt",
+"name": "Solange Streamer, TV oder Tablet verbunden sind, kein Tiefschlaf: die Verbindung bleibt im Spartakt, kein Neuverbinden und kein Bildzucken. WLAN geht trotzdem aus. Die Bluetooth-Verbindung zu Home Assistant zählt dabei nicht - sie allein verhindert den Tiefschlaf nicht."
+},
+{
+"k": "pair",
+"name": "Tiefschlaf nach",
+"wert": "ps_deeps_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_deeps_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_deeps"
+},
+{
+"k": "pair",
+"name": "Tiefschlaf bei TV an",
+"wert": "ps_deeptv_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_deeptv_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_deeptv"
+},
+{
+"k": "hdr",
+"name": "AKKU"
+},
+{
+"k": "pair",
+"name": "Sparmodus bei Akku unter",
+"wert": "ps_low_lbl"
+},
+{
+"k": "sld",
+"obj": "ps_low_sld"
+},
+{
+"k": "hint",
+"wert": "ps_h_low"
+},
+{
+"k": "hdr",
+"name": " "
+}
+],
+"page_voice_set": [
+{
+"k": "btn",
+"obj": "back_voice",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Sprache"
+},
+{
+"k": "btn",
+"obj": "tile_assi",
+"name": "Assistent",
+"wert": "assi_lbl"
+},
+{
+"k": "hint",
+"wert": "h_assi"
+},
+{
+"k": "btn",
+"obj": "tile_google_mode",
+"name": "Google-Modus",
+"wert": "google_mode_lbl"
+},
+{
+"k": "hint",
+"wert": "h_google_mode"
+},
+{
+"k": "btn",
+"obj": "tile_tts",
+"name": "Antwort hörbar",
+"wert": "tts_lbl"
+},
+{
+"k": "hint",
+"wert": "h_tts"
+},
+{
+"k": "btn",
+"obj": "tile_mic",
+"name": "Mikrofon: AN",
+"wert": "mic_lbl"
+},
+{
+"k": "btn",
+"obj": "tile_mic_warm",
+"name": "Mikrofon vorwärmen",
+"wert": "mic_warm_lbl"
+},
+{
+"k": "hint",
+"wert": "h_mic_warm"
+}
+],
+"page_ble": [
+{
+"k": "btn",
+"obj": "back_ble",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Bluetooth"
+},
+{
+"k": "hdr",
+"name": "GERÄTE"
+},
+{
+"k": "lbl",
+"wert": "ble_state_lbl",
+"text": "Nicht verbunden"
+},
+{
+"k": "btn",
+"obj": "ble_slot0",
+"name": "1  Platz 1",
+"wert": "ble_slot0_name"
+},
+{
+"k": "btn",
+"obj": "ble_slot1",
+"name": "2  Platz 2",
+"wert": "ble_slot1_name"
+},
+{
+"k": "btn",
+"obj": "ble_slot2",
+"name": "3  Platz 3",
+"wert": "ble_slot2_name"
+},
+{
+"k": "btn",
+"obj": "ble_slot3",
+"name": "4  Platz 4",
+"wert": "ble_slot3_name"
+},
+{
+"k": "lbl",
+"wert": "ble_target_lbl",
+"text": "Platz 1"
+},
+{
+"k": "btn",
+"obj": "ble_connect",
+"name": "Verbinden",
+"wert": null
+},
+{
+"k": "btn",
+"obj": "ble_pair",
+"name": "Koppeln",
+"wert": null
+},
+{
+"k": "btn",
+"obj": "ble_forget",
+"name": "Löschen",
+"wert": null
+},
+{
+"k": "hdr",
+"name": "EINGABE JE PLATZ"
+},
+{
+"k": "btn",
+"obj": "ble_eing0_btn",
+"name": "Eingabe Platz 1",
+"wert": "ble_eing0_lbl"
+},
+{
+"k": "btn",
+"obj": "ble_eing1_btn",
+"name": "Eingabe Platz 2",
+"wert": "ble_eing1_lbl"
+},
+{
+"k": "btn",
+"obj": "ble_eing2_btn",
+"name": "Eingabe Platz 3",
+"wert": "ble_eing2_lbl"
+},
+{
+"k": "btn",
+"obj": "ble_eing3_btn",
+"name": "Eingabe Platz 4",
+"wert": "ble_eing3_lbl"
+},
+{
+"k": "hint",
+"wert": "h_plaetze"
+},
+{
+"k": "hdr",
+"name": "VERBINDUNG"
+},
+{
+"k": "btn",
+"obj": "ble_par_btn",
+"name": "Parallel verbunden",
+"wert": "ble_par_lbl"
+},
+{
+"k": "txt",
+"name": "AN: Beim Aktivitätswechsel bleibt die bisherige Verbindung bestehen (geparkt). Kein Neuladen von Videos beim Wechseln, zurück ist sofort da. Im Tiefschlaf wird trotzdem getrennt."
+},
+{
+"k": "hdr",
+"name": "MAUS (TOUCHPAD)"
+},
+{
+"k": "pair",
+"name": "Zeigertempo",
+"wert": "maus_tempo_lbl"
+},
+{
+"k": "sld",
+"obj": "maus_tempo_sld"
+},
+{
+"k": "btn",
+"obj": "maus_dpad_btn",
+"name": "Steuerkreuz als Maus",
+"wert": "maus_dpad_lbl"
+},
+{
+"k": "pair",
+"name": "Tempo Steuerkreuz",
+"wert": "maus_dpad_lbl2"
+},
+{
+"k": "sld",
+"obj": "maus_dpad_sld"
+},
+{
+"k": "btn",
+"obj": "maus_zurueck_btn",
+"name": "Zurück-Taste",
+"wert": "maus_zurueck_lbl"
+},
+{
+"k": "hint",
+"wert": "h_maus_dpad"
+}
+],
+"page_akku": [
+{
+"k": "btn",
+"obj": "back_akku",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Akku"
+},
+{
+"k": "pair",
+"name": "Status",
+"wert": "ak_status"
+},
+{
+"k": "pair",
+"name": "Akkustand",
+"wert": "ak_pct"
+},
+{
+"k": "pair",
+"name": "Spannung",
+"wert": "ak_volt"
+},
+{
+"k": "hdr",
+"name": "VERBRAUCH"
+},
+{
+"k": "pair",
+"name": "Rate jetzt (Chip)",
+"wert": "ak_rate"
+},
+{
+"k": "pair",
+"name": "Letzte Stunde",
+"wert": "ak_r1"
+},
+{
+"k": "pair",
+"name": "Letzte 24 h",
+"wert": "ak_r24"
+},
+{
+"k": "pair",
+"name": "Restlaufzeit",
+"wert": "ak_rest"
+},
+{
+"k": "hdr",
+"name": "LADEN"
+},
+{
+"k": "pair",
+"name": "Zuletzt geladen",
+"wert": "ak_geladen"
+},
+{
+"k": "lbl",
+"wert": "ak_geladen2",
+"text": ""
+},
+{
+"k": "pair",
+"name": "Tiefschlaf seit Ladung",
+"wert": "ak_schlaf"
+},
+{
+"k": "hdr",
+"name": "VERLAUF 24 H"
+},
+{
+"k": "lbl",
+"wert": "ak_graph_leer",
+"text": "noch keine Daten"
+},
+{
+"k": "txt",
+"name": "vor 24 h"
+},
+{
+"k": "txt",
+"name": "jetzt"
+},
+{
+"k": "txt",
+"name": "Raten ohne Ladezeiten, aus Messpunkten alle 5 min - auch über den Tiefschlaf hinweg. Minus = Entladen."
+}
+],
+"page_extras": [
+{
+"k": "btn",
+"obj": "back_extras",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Smart Display"
+},
+{
+"k": "hdr",
+"name": "SMART DISPLAY"
+},
+{
+"k": "btn",
+"obj": "dock_an_btn",
+"name": "Smart Display im Dock",
+"wert": "dock_an_lbl"
+},
+{
+"k": "hint",
+"wert": "h_dock_an"
+},
+{
+"k": "btn",
+"obj": "dock_disp_btn",
+"name": "Display im Dock",
+"wert": "dock_disp_lbl"
+},
+{
+"k": "hint",
+"wert": "h_dock_disp"
+},
+{
+"k": "pair",
+"name": "an ab",
+"wert": "dock_von_lbl"
+},
+{
+"k": "sld",
+"obj": "dock_von_sld"
+},
+{
+"k": "pair",
+"name": "an bis",
+"wert": "dock_bis_lbl"
+},
+{
+"k": "sld",
+"obj": "dock_bis_sld"
+},
+{
+"k": "hdr",
+"name": "MUSIK-ANZEIGE"
+},
+{
+"k": "btn",
+"obj": "musik_dock_btn",
+"name": "Im Dock bei Musik",
+"wert": "musik_dock_lbl"
+},
+{
+"k": "hint",
+"wert": "h_musik_dock"
+},
+{
+"k": "btn",
+"obj": "musik_player_btn",
+"name": "Nur wenn Player spielt",
+"wert": "musik_player_lbl"
+},
+{
+"k": "hint",
+"wert": "h_musik_player"
+},
+{
+"k": "btn",
+"obj": "ha_dock_btn",
+"name": "HA-Befehle über das Dock",
+"wert": "ha_dock_lbl"
+},
+{
+"k": "hint",
+"wert": "h_ha_dock"
+},
+{
+"k": "btn",
+"obj": "ha_link_btn",
+"name": "HA-Verbindung in Ruhe",
+"wert": "ha_link_lbl"
+},
+{
+"k": "hint",
+"wert": "h_ha_link"
+},
+{
+"k": "btn",
+"obj": "ha_linkm_btn",
+"name": "HA in Ruhe: Art",
+"wert": "ha_linkm_lbl"
+},
+{
+"k": "hint",
+"wert": "h_ha_linkm"
+}
+],
+"page_service": [
+{
+"k": "btn",
+"obj": "back_service",
+"name": "<",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Wartung & Tests"
+},
+{
+"k": "hdr",
+"name": "TESTS"
+},
+{
+"k": "btn",
+"obj": "tile_touchtest",
+"name": "Touch-Test",
+"wert": null
+},
+{
+"k": "hint",
+"wert": "h_touch"
+},
+{
+"k": "btn",
+"obj": "tile_button_test",
+"name": "Tasten-Test",
+"wert": null
+},
+{
+"k": "hint",
+"wert": "h_btn"
+},
+{
+"k": "hdr",
+"name": "REINIGUNG"
+},
+{
+"k": "pair",
+"name": "Reinigungsdauer",
+"wert": "clean_dur_lbl"
+},
+{
+"k": "sld",
+"obj": "clean_dur_sld"
+},
+{
+"k": "hint",
+"wert": "h_cleandur"
+},
+{
+"k": "btn",
+"obj": "tile_clean",
+"name": "Reinigungsmodus",
+"wert": null
+},
+{
+"k": "hint",
+"wert": "h_clean"
+},
+{
+"k": "hdr",
+"name": "SD-KARTE"
+},
+{
+"k": "btn",
+"obj": "tile_sd",
+"name": "SD-Karte",
+"wert": null
+},
+{
+"k": "hint",
+"wert": "h_sd_tile"
+},
+{
+"k": "hdr",
+"name": "ENTWICKLER"
+},
+{
+"k": "btn",
+"obj": "ps_log_btn",
+"name": "Debug-Modus",
+"wert": "ps_log_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_log"
+},
+{
+"k": "btn",
+"obj": "testmod_btn",
+"name": "Testmodus (immer online)",
+"wert": "testmod_lbl"
+},
+{
+"k": "hint",
+"wert": "ps_h_test"
+},
+{
+"k": "hdr",
+"name": "FIRMWARE"
+},
+{
+"k": "btn",
+"obj": "tile_update",
+"name": "Firmware aktualisieren",
+"wert": "fw_upd_lbl"
+},
+{
+"k": "hint",
+"wert": "h_update"
+},
+{
+"k": "hdr",
+"name": "GERÄT"
+},
+{
+"k": "btn",
+"obj": "tile_shutdown",
+"name": "Gerät herunterfahren",
+"wert": null
+},
+{
+"k": "txt",
+"name": "Tiefschlaf ohne Bewegungswecker. Nur die Aus-Taste oder das Ladekabel schalten wieder ein."
+},
+{
+"k": "btn",
+"obj": "tile_restart",
+"name": "Gerät neu starten",
+"wert": "restart_lbl"
+},
+{
+"k": "hint",
+"wert": "h_restart"
+}
+]
+}

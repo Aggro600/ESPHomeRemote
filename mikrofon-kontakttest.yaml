@@ -1,0 +1,220 @@
+# =============================================================================
+#  Open Remote - Mikrofon-Kontakttest (MS3625 auf der OMOTE / Open Remote Rev6)
+# =============================================================================
+# Eigenstaendiges Pruefprogramm: aufspielen, das Geraet startet neu, prueft die
+# sechs Loetpads des Mikrofonmoduls und meldet das Ergebnis als Text-Sensoren
+# in Home Assistant (und im Log). Braucht keine der eigenen Komponenten.
+#
+# Zwei voneinander unabhaengige Verfahren:
+#
+#  ELEKTRISCH (beim Start, bevor das I2S die Pins uebernimmt)
+#    Ein angeschlossener Chip klemmt seine Anschluesse ueber die internen
+#    Schutzdioden auf die eigene Versorgung. Schaltet man MIC_VDD ab, zieht das
+#    die Leitung auf LOW - auch gegen einen aktiven Pull-up. Bleibt sie HIGH,
+#    haengt dort nichts. Damit pruefbar: SD (Pad 3), SCK (Pad 4), WS (Pad 5)
+#    und indirekt VDD und GND.
+#
+#  AKUSTISCH (danach, mit laufendem Mikrofon)
+#    L/R (Pad 6) haengt an Masse und an keinem Prozessor-Pin, ist elektrisch
+#    nicht pruefbar. Ohne festen L/R-Pegel sendet der MS3625 aber in keinem
+#    Zeitfenster - kommt Ton, ist L/R in Ordnung.
+# =============================================================================
+
+esphome:
+  name: open-remote-mic-test
+  friendly_name: "Open Remote Mic-Test"
+  on_boot:
+    # Elektrischer Teil, BEVOR das I2S die Pins uebernimmt. Spaeter gemessen
+    # zeigen SCK und WS nur den selbst getriebenen Ruhepegel der Prozessor-
+    # Ausgaenge - funktionierende Leitungen saehen dann defekt aus.
+    - priority: 900
+      then:
+        - lambda: |-
+            const gpio_num_t VDD = GPIO_NUM_45;
+            const gpio_num_t pins[3] = {GPIO_NUM_7, GPIO_NUM_15, GPIO_NUM_17};
+            auto vdd = [&](int an) {
+              gpio_reset_pin(VDD);
+              gpio_set_direction(VDD, GPIO_MODE_OUTPUT);
+              gpio_set_level(VDD, an);
+              delay(300);
+            };
+            auto haelt_high = [](gpio_num_t p) -> int {
+              gpio_reset_pin(p);
+              gpio_set_direction(p, GPIO_MODE_OUTPUT);
+              gpio_set_level(p, 1);
+              delayMicroseconds(3000);
+              gpio_set_direction(p, GPIO_MODE_INPUT);
+              gpio_set_pull_mode(p, GPIO_FLOATING);
+              return gpio_get_level(p);
+            };
+            int mit[3], ohne[3];
+            vdd(1); for (int i = 0; i < 3; i++) mit[i]  = haelt_high(pins[i]);
+            vdd(0); for (int i = 0; i < 3; i++) ohne[i] = haelt_high(pins[i]);
+            vdd(1);
+            // Angeloetet heisst: mit Versorgung haelt die Leitung ihren Pegel,
+            // ohne Versorgung wird sie von den Schutzdioden nach unten gezogen.
+            int *erg[3] = {&id(erg_sd), &id(erg_sck), &id(erg_ws)};
+            for (int i = 0; i < 3; i++)
+              *erg[i] = (mit[i] == 1 && ohne[i] == 0) ? 1 : 0;
+            // Wirkt das Abschalten der Versorgung ueberhaupt irgendwo?
+            id(erg_vdd) = (ohne[0] == 0 || ohne[1] == 0 || ohne[2] == 0) ? 1 : 0;
+    - priority: 100
+      then:
+        - delay: 3s
+        - microphone.capture: remote_mic
+        # Sechs Sekunden zuhoeren - genug, um Raumgeraeusche aufzunehmen.
+        - delay: 6s
+        - microphone.stop_capture: remote_mic
+        - globals.set: {id: fertig, value: "true"}
+        - lambda: |-
+            ESP_LOGW("test", "=== Ergebnis ===");
+            ESP_LOGW("test", "Pad 3 SD  : %s", id(erg_sd)  ? "OK" : "FEHLER");
+            ESP_LOGW("test", "Pad 4 SCK : %s", id(erg_sck) ? "OK" : "FEHLER");
+            ESP_LOGW("test", "Pad 5 WS  : %s", id(erg_ws)  ? "OK" : "FEHLER");
+            ESP_LOGW("test", "Pad 2 VDD : %s", id(erg_vdd) ? "OK" : "FEHLER");
+            ESP_LOGW("test", "Pegel     : %d", id(pegel));
+
+esp32:
+  board: esp32-s3-devkitc1-n16r8
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Open-Remote Mic-Test Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+globals:
+  - {id: erg_sd,   type: int, restore_value: false, initial_value: "0"}
+  - {id: erg_sck,  type: int, restore_value: false, initial_value: "0"}
+  - {id: erg_ws,   type: int, restore_value: false, initial_value: "0"}
+  - {id: erg_vdd,  type: int, restore_value: false, initial_value: "0"}
+  - {id: pegel,    type: int, restore_value: false, initial_value: "0"}
+  - {id: fertig,   type: bool, restore_value: false, initial_value: "false"}
+
+switch:
+  - platform: gpio
+    id: mic_power
+    name: "Mic Power (GPIO45)"
+    pin: GPIO45
+    restore_mode: ALWAYS_ON
+  - platform: gpio
+    id: sd_power_off
+    name: "SD aus (GPIO16)"
+    pin: GPIO16
+    restore_mode: ALWAYS_ON
+  - platform: gpio
+    id: sd_cs_idle
+    name: "SD CS (GPIO18)"
+    pin: GPIO18
+    restore_mode: ALWAYS_ON
+
+i2s_audio:
+  - id: i2s_mic_bus
+    i2s_lrclk_pin: GPIO17
+    i2s_bclk_pin: GPIO15
+
+microphone:
+  - platform: i2s_audio
+    id: remote_mic
+    i2s_audio_id: i2s_mic_bus
+    adc_type: external
+    i2s_din_pin: GPIO7
+    pdm: false
+    sample_rate: 16000
+    bits_per_sample: 32bit
+    channel: left
+    correct_dc_offset: true
+    on_data:
+      - lambda: |-
+          const int16_t *p = (const int16_t *) x.data();
+          for (size_t i = 0; i < x.size() / 2; i++) {
+            int v = p[i] < 0 ? -p[i] : p[i];
+            if (v > id(pegel)) id(pegel) = v;
+          }
+
+text_sensor:
+  - platform: template
+    name: "Pad 1 GND"
+    id: t_gnd
+    icon: "mdi:check-circle-outline"
+    lambda: |-
+      if (!id(fertig)) return std::string("Test läuft");
+      // Klemmt irgendeine Leitung, sind Masse und Versorgung zwangslaeufig da.
+      if (id(erg_sd) == 1 || id(erg_sck) == 1 || id(erg_ws) == 1)
+        return std::string("OK");
+      return std::string("FEHLER - keine Leitung klemmt");
+  - platform: template
+    name: "Pad 2 VDD"
+    id: t_vdd
+    icon: "mdi:check-circle-outline"
+    lambda: |-
+      if (!id(fertig)) return std::string("Test läuft");
+      return id(erg_vdd) == 1 ? std::string("OK")
+                              : std::string("FEHLER - Abschalten wirkt nicht");
+  - platform: template
+    name: "Pad 3 SD (Daten)"
+    id: t_sd
+    icon: "mdi:check-circle-outline"
+    lambda: |-
+      if (!id(fertig)) return std::string("Test läuft");
+      return id(erg_sd) == 1 ? std::string("OK") : std::string("FEHLER - nicht angelötet");
+  - platform: template
+    name: "Pad 4 SCK (Bit-Takt)"
+    id: t_sck
+    icon: "mdi:check-circle-outline"
+    lambda: |-
+      if (!id(fertig)) return std::string("Test läuft");
+      return id(erg_sck) == 1 ? std::string("OK") : std::string("FEHLER - nicht angelötet");
+  - platform: template
+    name: "Pad 5 WS (Wortwahl)"
+    id: t_ws
+    icon: "mdi:check-circle-outline"
+    lambda: |-
+      if (!id(fertig)) return std::string("Test läuft");
+      return id(erg_ws) == 1 ? std::string("OK") : std::string("FEHLER - nicht angelötet");
+  - platform: template
+    name: "Pad 6 L/R"
+    id: t_lr
+    icon: "mdi:check-circle-outline"
+    lambda: |-
+      if (!id(fertig)) return std::string("Test läuft");
+      if (id(pegel) > 40) return std::string("OK");
+      if (id(erg_sd) != 1 || id(erg_sck) != 1 || id(erg_ws) != 1)
+        return std::string("nicht prüfbar - erst Leitungen löten");
+      return std::string("FEHLER oder still - Brücke auf Masse prüfen");
+  - platform: template
+    name: "Teststatus"
+    id: t_status
+    icon: "mdi:progress-check"
+    lambda: |-
+      if (!id(fertig)) return std::string("Test läuft");
+      const bool elektrisch = id(erg_sd) == 1 && id(erg_sck) == 1 &&
+                              id(erg_ws) == 1 && id(erg_vdd) == 1;
+      if (elektrisch && id(pegel) > 40) return std::string("fertig - alles in Ordnung");
+      if (elektrisch) return std::string("fertig - Leitungen ok, kein Ton");
+      return std::string("fertig - Lötfehler gefunden");
+  - platform: template
+    name: "Gemessener Pegel"
+    id: t_pegel
+    icon: "mdi:waveform"
+    lambda: |-
+      char b[24]; snprintf(b, sizeof(b), "%d", id(pegel)); return std::string(b);
+
+button:
+  - platform: restart
+    name: "Test wiederholen (Neustart)"
+    icon: "mdi:restart"

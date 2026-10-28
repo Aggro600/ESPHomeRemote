@@ -1,0 +1,39 @@
+# =============================================================================
+#  ESPHomeRemote - Web-Installer-Variante (ohne Home Assistant)
+# =============================================================================
+# Zum Flashen direkt aus dem Browser (ESP Web Tools). Nach dem Aufspielen wird
+# das WLAN im Browser eingegeben (Improv ueber die serielle Verbindung) - eine
+# Home-Assistant-Installation ist dafuer nicht noetig.
+#
+#   Web-Installer:  https://aggro600.github.io/ESPHomeRemote/
+#
+# Wer ESPHome / Home Assistant nutzt, nimmt esphomeremote.yaml.
+#
+# Der veroeffentlichte Build nutzt neutrale Platzhalter-Secrets (Setup-WLAN,
+# unverschluesselte lokale API). Beim Booten ist das WLAN unkonfiguriert ->
+# Setup-Hotspot + Improv im Browser.
+# =============================================================================
+
+substitutions:
+  device_name:    "esphomeremote"
+  friendly_name:  "ESPHomeRemote"
+  # Web-Installer: keine secrets.yaml - Platzhalter (WLAN kommt per Improv im Browser, Schluessel spaeter ueber HA)
+  wifi_ssid:         "esphomeremote-einrichten"
+  wifi_password:     "esphomeremote-einrichten"
+  ota_pw:            "esphomeremote"
+  ap_password:       "esphomeremote"
+  direkt_schluessel: "00000000000000000000000000000000"
+  konfig_key:        "bitte-im-konfigurator-eintragen"
+
+packages:
+  # Zweig "stabil" = letzter Release (tools/release.py); refresh 0s: "Alle aktualisieren" im Konfigurator holt immer
+  # den neuesten Stand
+  firmware:
+    url: https://github.com/Aggro600/ESPHomeRemote
+    ref: stabil
+    files: [esphomeremote-firmware.yaml]
+    refresh: 0s
+
+# WLAN nach dem Flashen im Browser setzen (persistiert im Flash und hat Vorrang
+# vor den kompilierten Platzhaltern).
+improv_serial:

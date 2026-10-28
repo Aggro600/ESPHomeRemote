@@ -1,0 +1,41 @@
+# Docks beobachten (2026-10-25): faellt ein Dock aus dem WLAN oder wird sein Speicher knapp, eine Meldung in HA.
+# Hintergrund: am Morgen des 25.10. fiel das Couchtisch-Dock bei viel Verkehr (Updates, Protokolle) kurz aus, weil der
+# Speicher zerstueckelt war. Das Dock schuetzt sich selbst (Notbremse: Neustart, WLAN-Neustart nach 1 min) - die
+# Meldung zeigt, wann es passiert ist, damit man es den Protokollen zuordnen kann.
+automation:
+  - id: esphomeremote_dock_wache_offline
+    alias: "ESPHomeRemote: Dock nicht erreichbar"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.dock_wz_couchtisch_status
+        to: "off"
+        for: "00:00:30"
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: esphomeremote_dock_wache
+          title: "Dock nicht erreichbar"
+          message: >-
+            {{ state_attr(trigger.entity_id, 'friendly_name') or trigger.entity_id }} ist seit
+            {{ as_timestamp(trigger.from_state.last_changed) | timestamp_custom('%H:%M:%S') }} nicht mehr im WLAN
+            (Speicher zuletzt {{ states('sensor.dock_wz_couchtisch_freier_speicher') }} kB frei,
+            größter Block {{ states('sensor.dock_wz_couchtisch_groesster_freier_block') }} kB).
+
+  - id: esphomeremote_dock_wache_speicher
+    alias: "ESPHomeRemote: Dock-Speicher knapp"
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.dock_wz_couchtisch_groesster_freier_block
+        below: 6
+        for: "00:00:20"
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: esphomeremote_dock_speicher
+          title: "Dock-Speicher knapp"
+          message: >-
+            Couchtisch-Dock um {{ now().strftime('%H:%M:%S') }}: größter freier Block nur
+            {{ states('sensor.dock_wz_couchtisch_groesster_freier_block') }} kB,
+            frei {{ states('sensor.dock_wz_couchtisch_freier_speicher') }} kB.
