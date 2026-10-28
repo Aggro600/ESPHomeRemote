@@ -1,3 +1,5 @@
+<p align="center"><b>🇬🇧 <a href="README.md">English</a></b> · 🇩🇪 <a href="README.de.md">Deutsch</a></p>
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/bilder/logo-dunkel.png">
@@ -7,237 +9,247 @@
 
 # ESPHomeRemote
 
-**Eine Fernbedienung für Fernseher, Streamer und dein ganzes Smart Home** – mit Touchdisplay,
-Bluetooth und Sprachassistent, gebaut auf der *OMOTE / Open Remote Rev6*-Platine und komplett in
-**ESPHome**. Tasten, Menü und Startseite stellst du bequem im Browser in **Home Assistant** ein,
-ohne zu programmieren.
+**One remote for your TV, streamer and your whole smart home** – with touch display, Bluetooth and voice
+assistant, built on the *OMOTE / Open Remote Rev6* board and written entirely in **ESPHome**. You set up keys,
+menu and home screen comfortably in your browser inside **Home Assistant**, without programming.
 
-> Du brauchst keine Programmierkenntnisse. Wenn du Home Assistant schon benutzt, bist du in etwa
-> 30 Minuten fertig.
+> No programming skills needed. If you already use Home Assistant, you'll be done in about 30 minutes.
+>
+> **Language:** The configurator in Home Assistant and the texts on the remote's display are currently in
+> **German**. The names in this guide are given in German as they appear on screen, with the English meaning
+> next to them.
 
-<p align="center"><a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><img src="docs/bilder/showcase.png" alt="3D-Showcase: OpenRemote Rev6 im Dock mit Smart Display" width="900"></a></p>
-<p align="center"><b><a href="https://aggro600.github.io/ESPHomeRemote/showcase/">▶ Remote und Dockingstation in 3D ansehen</a></b><br>
-<sub>Interaktiv im Browser: aus den Original-CAD-Daten, mit der echten Display-Oberfläche, Andocken, Laden und Explosionsansicht</sub></p>
-
----
-
-## Was sie kann
-
-<p align="center"><img src="docs/bilder/uebersicht.png" alt="Konfigurator: Übersicht" width="900"></p>
-
-**Fernbedienung**
-- **Steuert Fernseher, Streamer, Tablets und PCs per Bluetooth** – 4 Geräte, Umschalten über „Aktivitäten“
-  wie bei Harmony. Je Gerät wählbar: nur Tasten, **Maus (Touchpad)**, **Tastatur** oder beides.
-- **Jede Taste frei belegbar** – kurz, doppelt und lang getrennt, je Aktivität anders, mit Halten und Wiederholen.
-  Dazu Schritte **beim Starten/Beenden** einer Aktivität (TV an, Eingang wählen …).
-- **Folgemodi** – nach einer Aktion gelten ein paar Sekunden andere Tasten (z. B. Kanal +/− dimmt die Lampe).
-- **Bewegungsgesten** – zweimal schütteln, kippen, und **eigene Gesten anlernen** (Kreis, Wischen …):
-  erkannt wird die Form, egal wie groß, schnell oder wie man die Remote hält.
-- **Touchpad** – das Display wird zur Maus, mit Scrollstreifen, Klicktasten und Tastenkürzel-Makros.
-- **Infrarot** – über 9000 Geräte aus der Flipper-IRDB, oder die alte Fernbedienung einfach **anlernen**.
-- **Sprachassistent** – Google auf dem Fernseher oder Home Assistant Assist.
-
-**Display & Smart Home**
-- **Eigenes Menü** – Seiten, Kacheln, Licht-Regler, Rollos, Anzeigen, Kamerabilder im Raster frei anordnen,
-  dazu **Popups**, die von selbst aufgehen („Es hat geklingelt“, Sleeptimer, Bildmodus bei Netflix …).
-- **Smart Display im Dock** – steht die Remote im Dock, zeigt sie Uhrzeit, Wetter, Raumklima, Termine und Ladestand.
-- **Helligkeit nach Lichtsensor** – Display, Tastenlicht und Dock-LED folgen dem Raumlicht; die Kurve lernt mit.
-- **Kamera und Klingel** – Bild auf der Fernbedienung, Kamera auf dem Fernseher (in drei Größen).
-- **Lange Akkulaufzeit** – Tiefschlaf, wacht auf beim Hochheben, Klopfen oder Tastendruck; die Weck-Taste und alles,
-  was während des Starts gedrückt wird, kommt trotzdem an.
-
-**Dockingstation (optional, ESP32-C3)**
-- **IR-Sender für Home Assistant** – jedes IR-Gerät wird ein Media-Player, eine Remote-Entität
-  (`remote.send_command` mit Harmony-Befehlsnamen) und je Befehl ein Button. Dazu **433 MHz** (CC1101).
-- **Aktivitäts-Schalter** – je Remote und Aktivität ein Schalter in Home Assistant.
-- **Funkbrücke zu Home Assistant** – Tastenbefehle, Stand (Player, Fernseher, Timer) und Cover gehen per ESP-NOW
-  verschlüsselt übers Dock: sofort nach dem Aufwachen, ohne dass die Remote erst eine Verbindung aufbaut.
-  Im Konfigurator wählbar: **WLAN**, **Bluetooth**, **Dock + Bluetooth** oder **Dock, sparsam**.
-
-**Konfigurator in Home Assistant** – alles im Browser, am PC und am Handy:
-Übersicht mit Akkuverlauf, **Suche mit Strg+K**, Tabelle aller Tasten, Änderungsliste mit Rückgängig,
-Sicherung, **Firmware-Updates per WLAN** (auch vormerken, wenn die Remote schläft) und **USB-Flashen im Browser**.
-Einstellungen gleichen sich in beide Richtungen ab: was du an der Remote umstellst, sieht der Konfigurator.
+<p align="center"><a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><img src="docs/bilder/showcase.png" alt="3D showcase: OpenRemote Rev6 in its dock with smart display" width="900"></a></p>
+<p align="center"><b><a href="https://aggro600.github.io/ESPHomeRemote/showcase/">▶ See the remote and docking station in 3D</a></b><br>
+<sub>Interactive in your browser: built from the original CAD data, with the real display UI, docking, charging and exploded view</sub></p>
 
 ---
 
-## Bilder
+## What it does
+
+<p align="center"><img src="docs/bilder/uebersicht.png" alt="Configurator: overview" width="900"></p>
+
+**Remote control**
+- **Controls TVs, streamers, tablets and PCs via Bluetooth** – 4 devices, switched by "activities" like a Harmony.
+  Per device: keys only, **mouse (touchpad)**, **keyboard** or both.
+- **Every key freely assignable** – short, double and long press separately, different per activity, with hold
+  and repeat. Plus steps **when starting/ending** an activity (turn the TV on, pick the input …).
+- **Follow-up modes** – after an action, other keys apply for a few seconds (e.g. channel +/− dims the lamp).
+- **Motion gestures** – shake twice, tilt, and **teach your own gestures** (circle, swipe …): the shape is
+  recognised no matter how large or fast, or how you hold the remote.
+- **Touchpad** – the display becomes a mouse, with scroll strip, click buttons and shortcut macros.
+- **Infrared** – about 270,000 devices from the Flipper IRDB and the Logitech Harmony archive (kept up to date from
+  GitHub), **learn** and manage your own codes; send through the remote, the dock or other IR blasters in Home
+  Assistant (Broadlink …).
+- **Voice assistant** – Google on the TV or Home Assistant Assist.
+
+**Display & smart home**
+- **Your own menu** – pages, tiles, light sliders, covers, sensors and camera images, freely arranged on a grid,
+  plus **popups** that open by themselves ("someone rang the doorbell", sleep timer, picture mode for Netflix …).
+- **Home screen per activity** – with widgets: clock, weather with forecast, media player, timer, camera.
+- **Smart display in the dock** – while docked, the remote shows time, weather, room climate, appointments and
+  battery level.
+- **Brightness from the light sensor** – display, key backlight and dock LED follow the room light; the curve
+  learns as you adjust it.
+- **Camera and doorbell** – image on the remote, camera on the TV (in three sizes).
+- **Long battery life** – deep sleep, wakes up when lifted, tapped or a key is pressed; the wake-up key and
+  everything pressed during start-up still arrives.
+
+**Docking station (optional, ESP32-C3)**
+- **IR blaster for Home Assistant** – every IR device becomes a media player, a remote entity
+  (`remote.send_command` with Harmony command names) and a button per command. Plus **433 MHz** (CC1101).
+- **Activity switches** – one switch per remote and activity in Home Assistant.
+- **Radio bridge to Home Assistant** – key commands, state (player, TV, timer) and cover art go encrypted via
+  ESP-NOW through the dock: right after waking up, without the remote having to connect first.
+  Selectable in the configurator: **Wi-Fi**, **Bluetooth**, **Dock + Bluetooth** or **Dock, power saving**.
+
+**Configurator in Home Assistant** – everything in the browser, on PC and phone:
+overview with battery history, **search with Ctrl+K**, table of all keys, change list with undo, backup,
+**firmware updates over Wi-Fi** (can be queued while the remote sleeps) and **USB flashing in the browser**.
+Settings sync both ways: what you change on the remote shows up in the configurator.
+
+---
+
+## Pictures
 
 | | |
 |---|---|
-| <img src="docs/bilder/kreisgeste.png" alt="Eigene Geste: Kreis"> | <img src="docs/bilder/lichtsensor.png" alt="Helligkeit nach Lichtsensor"> |
-| **Eigene Geste „Kreis“** – dreimal an der Remote ausgeführt, die Proben (X/Y/Z) im Konfigurator. | **Helligkeit nach Lichtsensor** – Punkte ziehen, die Kurve lernt beim Verstellen mit. |
-| <img src="docs/bilder/tasten.png" alt="Tasten belegen"> | <img src="docs/bilder/menue.png" alt="Menü-Editor"> |
-| **Tasten** – Fernbedienung antippen, je Druckart Aktionen anlegen. | **Menü-Editor** – mit Live-Vorschau des Displays. |
-| <img src="docs/bilder/gesten.png" alt="Gesten"> | <img src="docs/bilder/tabelle.png" alt="Tabelle"> |
-| **Gesten** – eingebaute und eigene, „wirkt wie Taste“ oder eigene Aktionen. | **Tabelle** – alle Aktivitäten und Folgemodi nebeneinander. |
-| <img src="docs/bilder/dock.png" alt="Dockingstation"> | <img src="docs/bilder/suche.png" alt="Suche"> |
-| **Dockingstation** – Dock-LED, Smart Display mit Vorschau, IR-Geräte. | **Suche (Strg+K)** – findet jede Taste, Einstellung und Menüseite. |
-| <img src="docs/bilder/bluetooth.png" alt="Bluetooth"> | <img src="docs/bilder/handy.png" alt="Am Handy" width="300"> <img src="docs/bilder/handy_tasten.png" alt="Tasten am Handy" width="300"> |
-| **Bluetooth** – vier Plätze, Eingabe je Gerät, Maus-Einstellungen. | **Am Handy** – gleiche Funktionen, Leiste unten. |
+| <img src="docs/bilder/kreisgeste.png" alt="Custom gesture: circle"> | <img src="docs/bilder/lichtsensor.png" alt="Brightness from light sensor"> |
+| **Custom gesture "circle"** – performed three times on the remote, the samples (X/Y/Z) in the configurator. | **Brightness from the light sensor** – drag the points; the curve learns while you adjust. |
+| <img src="docs/bilder/tasten.png" alt="Assigning keys"> | <img src="docs/bilder/menue.png" alt="Menu editor"> |
+| **Keys** – tap the remote, add actions per press type. | **Menu editor** – with a live preview of the display. |
+| <img src="docs/bilder/gesten.png" alt="Gestures"> | <img src="docs/bilder/tabelle.png" alt="Table"> |
+| **Gestures** – built-in and custom, "acts like key" or own actions. | **Table** – all activities and follow-up modes side by side. |
+| <img src="docs/bilder/dock.png" alt="Docking station"> | <img src="docs/bilder/suche.png" alt="Search"> |
+| **Docking station** – dock LED, smart display with preview, IR devices. | **Search (Ctrl+K)** – finds every key, setting and menu page. |
+| <img src="docs/bilder/bluetooth.png" alt="Bluetooth"> | <img src="docs/bilder/handy.png" alt="On the phone" width="300"> <img src="docs/bilder/handy_tasten.png" alt="Keys on the phone" width="300"> |
+| **Bluetooth** – four slots, input mode per device, mouse settings. | **On the phone** – same features, bar at the bottom. |
 
 ---
 
-## Was du brauchst
+## What you need
 
-- Die Fernbedienung: **OMOTE / Open Remote, Platine Rev6** (ESP32-S3).
+- The remote: **OMOTE / Open Remote, board Rev6** (ESP32-S3).
   Hardware: https://github.com/OMOTE-Community/OMOTE-Hardware
-  Du bekommst die PCBs evtl. über den Discord buy/sell: https://discord.com/invite/5PnYFAsKsG
-  
-- Ein **USB-C-Kabel** und einen PC mit **Chrome oder Edge** (zum ersten Aufspielen).
-- Für alle Funktionen: **Home Assistant** mit dem **ESPHome**-Add-on (oder „ESPHome Device Builder“)
-  und **HACS** (für den Konfigurator).
+  You may get PCBs via the Discord buy/sell channel: https://discord.com/invite/5PnYFAsKsG
+- A **USB-C cable** and a PC with **Chrome or Edge** (for the first flash).
+- For all features: **Home Assistant** with the **ESPHome** add-on ("ESPHome Device Builder")
+  and **HACS** (for the configurator).
 
 ---
 
-## Schnellstart
+## Quick start
 
-> **Web-Installer (ohne Home Assistant):** kommt zurück, sobald es fertig gebaute Firmware zum Herunterladen gibt.
-> Bis dahin geht es über Home Assistant (unten).
+> **Web installer (without Home Assistant):** will return as soon as there is ready-built firmware to download.
+> Until then, use the Home Assistant route below.
 
-### Mit Home Assistant (empfohlen)
+### With Home Assistant (recommended)
 
-**Schritt 1 – ESPHome bereitlegen**
-In Home Assistant: *Einstellungen → Add-ons → Add-on-Store →* **ESPHome Device Builder** installieren
-und starten.
+**Step 1 – Get ESPHome ready**
+In Home Assistant: *Settings → Add-ons → Add-on Store →* install and start **ESPHome Device Builder**.
 
-**Schritt 2 – Konfigurator installieren (über HACS)**
-1. Falls noch nicht da: **HACS** installieren (https://hacs.xyz – einmalig, 5 Minuten).
-2. In Home Assistant **HACS** öffnen → oben rechts **⋮** → **„Benutzerdefinierte Repositories“**.
-3. Einfügen: `https://github.com/Aggro600/ESPHomeRemote` – Typ **„Integration“** → **Hinzufügen**.
-4. In HACS nach **„ESPHomeRemote“** suchen → **Herunterladen**.
-5. Home Assistant **neu starten** (*Einstellungen → System → oben rechts ⏻ → Neu starten*).
-6. *Einstellungen → Geräte & Dienste →* **„+ Integration hinzufügen“** → **„ESPHomeRemote“**.
-   Den Namen der Fernbedienung so lassen (`esphomeremote`) → **Absenden**.
-7. Es erscheint eine Zeile wie `esphomeremote_konfig_key: "…"` – **kopieren**, die brauchst du gleich.
+**Step 2 – Install the configurator (via HACS)**
+1. If you don't have it yet: install **HACS** (https://hacs.xyz – once, 5 minutes).
+2. Open **HACS** in Home Assistant → **⋮** at the top right → **"Custom repositories"**.
+3. Paste `https://github.com/Aggro600/ESPHomeRemote` – type **"Integration"** → **Add**.
+4. Search HACS for **"ESPHomeRemote"** → **Download**.
+5. **Restart** Home Assistant (*Settings → System → ⏻ at the top right → Restart*).
+6. *Settings → Devices & services →* **"+ Add integration"** → **"ESPHomeRemote"**.
+   Keep the remote's name as it is (`esphomeremote`) → **Submit**.
+7. A line like `esphomeremote_konfig_key: "…"` appears – **copy** it, you'll need it in a moment.
 
-**Schritt 3 – Passwörter eintragen**
-Im ESPHome-Add-on oben rechts auf **„Secrets“** klicken und diese Zeilen ergänzen
-(WLAN steht meist schon drin, die Passwörter sind frei wählbar):
+**Step 3 – Enter passwords**
+In the ESPHome add-on, click **"Secrets"** at the top right and add these lines
+(Wi-Fi is usually already there; the passwords are up to you):
 ```yaml
-ota_pw: "ein-passwort"
-ap_password: "noch-ein-passwort"
-direkt_schluessel: "…"             # 32 Hex-Zeichen, z. B. von  openssl rand -hex 16  (Funkweg zum Dock)
-esphomeremote_konfig_key: "…"      # die kopierte Zeile aus Schritt 2
+ota_pw: "a-password"
+ap_password: "another-password"
+direkt_schluessel: "…"             # 32 hex characters, e.g. from  openssl rand -hex 16  (radio link to the dock)
+esphomeremote_konfig_key: "…"      # the line you copied in step 2
 ```
 
-**Schritt 4 – Fernbedienung aufspielen**
-1. Im ESPHome-Add-on **„+ Neues Gerät“** → **„Überspringen“** (bzw. „Leer anlegen“).
-2. Den Inhalt von [`esphomeremote.yaml`](esphomeremote.yaml) in den Editor kopieren – anpassen musst du nichts
-   (die Adresse von Home Assistant findet die Fernbedienung selbst).
-3. **Speichern** → **Installieren** → *„An diesen Computer anschließen“* → Fernbedienung per USB-C
-   anstecken und auswählen. Das erste Mal dauert es etwa 10 Minuten.
+**Step 4 – Flash the remote**
+1. In the ESPHome add-on: **"+ New device"** → **"Skip"** (or "Create empty").
+2. Copy the contents of [`esphomeremote.yaml`](esphomeremote.yaml) into the editor – no changes needed
+   (the remote finds Home Assistant's address by itself).
+3. **Save** → **Install** → *"Plug into this computer"* → connect the remote via USB-C and select it.
+   The first build takes about 10 minutes.
 
-**Schritt 5 – In Home Assistant übernehmen**
-1. Home Assistant meldet *„Neues Gerät gefunden“* (*Einstellungen → Geräte & Dienste*) → **Hinzufügen**.
-2. Beim Gerät auf **„Konfigurieren“** → **„Gerät darf Home-Assistant-Aktionen ausführen“** einschalten.
-3. Fertig! Links in der Seitenleiste ist jetzt **„Fernbedienung“** – dort stellst du alles ein.
+**Step 5 – Adopt it in Home Assistant**
+1. Home Assistant reports *"New device discovered"* (*Settings → Devices & services*) → **Add**.
+2. On the device, click **"Configure"** → turn on **"Allow the device to perform Home Assistant actions"**.
+3. Done! In the sidebar you now have **"Fernbedienung"** (remote) – that's where you set up everything.
 
 ---
 
-### Streamer-App (optional)
+### Streamer app (optional)
 
-Für Titel, Cover und das Tastatur-Popup von einem Android-TV-Streamer: am Streamer die Entwickleroptionen und
-USB-Debugging einschalten, in Home Assistant die Integration **Android Debug Bridge** mit seiner IP hinzufügen, dann
-im Konfigurator *Wiedergabe → Streamer anlegen* → **Einrichten**. Die App kommt mit der Integration mit; Updates und
-Deinstallieren gehen dort genauso. Auf dem Fernseher zeigt sie unter „ESPHomeRemote Streamer“, ob alles läuft.
+For title, cover art and the keyboard popup from an Android TV streamer: enable developer options and USB
+debugging on the streamer, add the **Android Debug Bridge** integration with its IP in Home Assistant, then in
+the configurator *Wiedergabe (playback) → Streamer anlegen (add streamer)* → **Einrichten (set up)**. The app ships
+with the integration; updating and uninstalling work the same way. On the TV, "ESPHomeRemote Streamer" shows
+whether everything is running. Details: [streamer-app/README.md](streamer-app/README.md).
 
 ### Updates
 
-- **Konfigurator:** Home Assistant meldet neue Versionen wie bei jeder HACS-Integration (*Einstellungen → Updates*),
-  mit der Liste, was neu ist. Installieren, Home Assistant neu starten – fertig.
-- **Fernbedienungen und Docks:** danach im Konfigurator unter *Firmware* steht „Neue Version …“ –
-  **Alle aktualisieren** baut und spielt sie auf (schlafende Remotes kurz anfassen).
-- Die Firmware kommt vom Zweig `stabil` (letzter Release).
-- **Alte Dateinamen:** Bis 27.10.2026 hießen die Dateien `open-remote.yaml` / `open-remote-firmware.yaml` und
-  `open-dock.yaml` / `open-dock-firmware.yaml`. Die alten Firmware-Namen funktionieren vorerst weiter; im
-  Konfigurator unter *Firmware* stellt **Umstellen** die Gerätedatei auf die neuen Namen um (die alte bleibt als
-  `.alt` liegen). Von Hand: den `packages:`-Block durch den aus [`esphomeremote.yaml`](esphomeremote.yaml) ersetzen.
-- Was neu ist: [CHANGELOG.md](CHANGELOG.md).
+- **Configurator:** Home Assistant announces new versions like any HACS integration (*Settings → Updates*),
+  with the list of what's new. Install, restart Home Assistant – done.
+- **Remotes and docks:** afterwards the configurator shows "Neue Version …" (new version) under *Firmware* –
+  **Alle aktualisieren** (update all) builds and flashes them (touch sleeping remotes briefly).
+- The firmware comes from the `stabil` branch (latest release).
+- **Old file names:** until 27 Oct 2026 the files were called `open-remote.yaml` / `open-remote-firmware.yaml` and
+  `open-dock.yaml` / `open-dock-firmware.yaml`. The old firmware names still work for now; in the configurator
+  under *Firmware*, **Umstellen** (switch over) changes the device file to the new names (the old one is kept as
+  `.alt`). By hand: replace the `packages:` block with the one from [`esphomeremote.yaml`](esphomeremote.yaml).
+- What's new: [CHANGELOG.md](CHANGELOG.md).
 
 
-## Der Konfigurator
+## The configurator
 
-In der Seitenleiste **„Fernbedienung“** (am Handy und am PC). Links stehen deine Fernbedienungen mit Akkustand,
-darunter je Remote ihre Seiten:
+In the sidebar, **"Fernbedienung"** (remote) – on phone and PC. On the left are your remotes with battery level,
+below each remote its pages:
 
-| Seite | Was du dort machst |
+| Page | What you do there |
 |---|---|
-| **Übersicht** | Alle Remotes und Docks: Akku mit 24-h-Verlauf, Verbindung, Firmware, Hinweise mit Knöpfen zum Erledigen. |
-| **Tasten** | Jede Taste je Aktivität belegen: kurz / doppelt / lang. Bluetooth, Home-Assistant-Aktion, Infrarot, 433 MHz, Funktion der Remote. Aktivitäten und Folgemodi anlegen, Tabellenansicht. |
-| **Startseite** | Bereiche (Player, Kameras, Menü-Knopf, Leiste) per Ziehen verschieben und in der Größe ändern. |
-| **Menü** | Seiten, Unterseiten und Popups im Raster gestalten, mit Vorschau. |
-| **Gesten** | Schütteln, Kippen und eigene Gesten belegen; Touchpad-Makros. |
-| **Bluetooth / Infrarot** | Plätze koppeln, Eingabe je Gerät, IR-Sendeweg und IR-Datenbank. |
-| **Verknüpfungen** | Welche Geräte aus Home Assistant die Remote nutzt: Wiedergabe-Player (Startseite, Media-Seite, Musik-Anzeige), Fernseher, Multiroom, Lautsprecher für den Assistenten, Streamer für Texteingabe, Timer neben der Uhr. |
-| **Einstellungen** | Alle Einstellungen der Remote, sofort übertragen; Helligkeit nach Lichtsensor. |
-| **Wiedergabe** | „Jetzt läuft“-Player anlegen: fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu einem Media Player zusammen. Streamer mit der App „ESPHomeRemote Streamer“ (Titel, Cover, Position jeder App, Tastatur-Popup). |
-| **Klingel** | Bis zu zwei Klingeln: Auslöser und Kamera – beim Klingeln kommt das Bild auf die Remotes. |
-| **Dockingstation** | IR-Geräte, Dock-LED, Smart Display. |
-| **Firmware & Geräte** | Updates per WLAN oder USB, neue Docks anlegen und einbinden. |
-| **Werkstatt** | Neue Fernbedienung, alles kopieren, Sicherung, Platinen-Test, Entwicklermodus. |
+| **Übersicht** (overview) | All remotes and docks: battery with 24 h history, connection, firmware, hints with buttons to fix them. |
+| **Tasten** (keys) | Assign every key per activity: short / double / long. Bluetooth, Home Assistant action, infrared, 433 MHz, remote functions. Create activities and follow-up modes, table view. |
+| **Startseite** (home screen) | A home screen per activity with entries and widgets (clock, weather, media, timer, camera) – or adjust the built-in one. |
+| **Menü** (menu) | Design pages, sub-pages and popups on a grid, with preview. |
+| **Gesten** (gestures) | Assign shake, tilt and custom gestures; touchpad macros. |
+| **Bluetooth / Infrarot** (infrared) | Pair slots, input mode per device, IR route (remote, dock, other IR blasters). |
+| **Verknüpfungen** (links) | Which Home Assistant devices the remote uses: playback player (home screen, media page, music display), TV, multiroom, speaker for the assistant, streamer for text input, timer next to the clock. |
+| **Einstellungen** (settings) | All remote settings, applied immediately; brightness from the light sensor. |
+| **Wiedergabe** (playback) | Create "now playing" players: combines TV, streamer, multiroom music and Chromecast into one media player. Streamer with the "ESPHomeRemote Streamer" app (title, cover, position of every app, keyboard popup). |
+| **Klingel** (doorbell) | Up to two doorbells: trigger and camera – when someone rings, the image appears on the remotes. |
+| **Dockingstation** (docking station) | IR devices, dock LED, smart display, known bugs. |
+| **IR-Codes** | IR databases (Flipper, Harmony) kept in sync with GitHub; learn, organise and export your own codes. |
+| **Firmware & Geräte** (firmware & devices) | Updates over Wi-Fi or USB, add and adopt new docks. |
+| **Werkstatt** (workshop) | New remote, copy everything, backup, board test, developer mode. |
 
-**Speichern** (oder Strg+S) schickt alles an die Fernbedienung – schläft sie, holt sie es beim nächsten Aufwachen ab.
-
----
-
-## Bedienung in Kürze
-
-- **Menü-Taste**: Menü öffnen / schließen. Doppelt: Display aus.
-- **Steuerkreuz + OK**: im Menü bewegen, auf der Startseite steuert es das aktive Gerät.
-- **Zurück**: eine Seite zurück, in Popups schließen.
-- **Leiste unten auf der Startseite**: zwischen Fernseher, Streamer usw. umschalten.
-- **Bluetooth koppeln**: Menü → Einstellungen → Bluetooth → Platz wählen → „Neu koppeln“,
-  dann am Fernseher / Streamer nach „ESPHomeRemote“ suchen.
+**Speichern** (save, or Ctrl+S) sends everything to the remote – if it's asleep, it picks it up the next time it
+wakes up.
 
 ---
 
-## Häufige Fragen
+## Operation in brief
 
-**Die Fernbedienung schaltet in Home Assistant nichts.**
-Beim ESPHome-Gerät „Gerät darf Home-Assistant-Aktionen ausführen“ einschalten (Schritt 5).
+- **Menu key**: open / close the menu. Double press: display off.
+- **D-pad + OK**: move around in the menu; on the home screen it controls the active device.
+- **Back**: one page back, closes popups.
+- **Bar at the bottom of the home screen**: switch between TV, streamer etc.
+- **Pair Bluetooth**: Menu → Einstellungen (settings) → Bluetooth → pick a slot → "Neu koppeln" (pair new),
+  then search for "ESPHomeRemote" on the TV / streamer.
 
-**Im Konfigurator steht „noch nicht übertragen“.**
-Die Fernbedienung schläft. Einmal eine Taste drücken – sie holt die Belegung dann ab.
-Klappt es nie: Stimmt `esphomeremote_konfig_key` in den ESPHome-Secrets mit dem Schlüssel der
-Integration überein (*ESPHomeRemote → Konfigurieren* zeigt ihn) und `ha_host` in der YAML?
+---
 
-**Mehrere Fernbedienungen?**
-Für jede in ESPHome ein eigenes Gerät mit eigenem `device_name`/`ha_name` anlegen (Schritt 4).
-Dann bei der Integration *ESPHomeRemote* auf **„Konfigurieren“** und den neuen Namen mit Komma ergänzen.
+## FAQ
 
-**Seiten zeigen „nicht verfügbar“.**
-Einige eingebaute Seiten (Startseite-Player, Klingel, Sleeptimer) nutzen die Entitäten aus
-`esphomeremote.yaml` → `substitutions`. Trage dort deine ein oder lass sie weg – das Menü baust du
-ohnehin im Konfigurator.
+**The remote doesn't switch anything in Home Assistant.**
+Turn on "Allow the device to perform Home Assistant actions" on the ESPHome device (step 5).
 
-**Kamera auf dem Fernseher in Klein / Mittel / Groß** (optional):
-Beispiel in `home-assistant/packages/beispiel_kamera_tv.yaml` und die Blaupause in
+**The configurator says "noch nicht übertragen" (not yet transferred).**
+The remote is asleep. Press a key once – it then fetches the assignment.
+If it never works: does `esphomeremote_konfig_key` in the ESPHome secrets match the integration's key
+(*ESPHomeRemote → Configure* shows it), and is `ha_host` in the YAML correct?
+
+**Several remotes?**
+Create a separate device in ESPHome for each, with its own `device_name`/`ha_name` (step 4).
+Then click **"Configure"** on the *ESPHomeRemote* integration and add the new name, separated by a comma.
+
+**Pages show "nicht verfügbar" (unavailable).**
+Some built-in pages (home screen player, doorbell, sleep timer) use the entities from
+`esphomeremote.yaml` → `substitutions`. Enter yours there or leave them out – you build the menu in the
+configurator anyway.
+
+**Camera on the TV in small / medium / large** (optional):
+example in `home-assistant/packages/beispiel_kamera_tv.yaml` and the blueprint in
 `home-assistant/blueprints/script/esphomeremote/`.
 
 ---
 
-## Für Entwickler
+## For developers
 
-- `esphomeremote-firmware.yaml` wird aus der Entwickler-Fassung erzeugt (`tools/veroeffentlichen.py`
-  im Entwickler-Setup) – Änderungen bitte dort, nicht hier.
-- Eigene Komponenten in `components/`: Display (`ili9341_i80`), Tastenfeld (`tca8418`), Akku
-  (`max17048`), Lagesensor (`lis3dh`), Bluetooth-HID (`espidf_ble_keyboard`, `atv_voice`),
-  Konfigurator (`tasten_konfig`, `menue`), SD-Karte, Touch (`ft63x6`).
-- `custom_components/esphomeremote_konfig`: Integration mit Panel
-  (`frontend/konfigurator.js`), liefert die Belegung per HTTP an die Fernbedienung.
+- `esphomeremote-firmware.yaml` is generated from the developer version (`tools/veroeffentlichen.py` in the
+  developer setup) – please make changes there, not here.
+- Custom components in `components/`: display (`ili9341_i80`), keypad (`tca8418`), battery gauge
+  (`max17048`), motion sensor (`lis3dh`), Bluetooth HID (`espidf_ble_keyboard`, `atv_voice`),
+  configurator (`tasten_konfig`, `menue`), SD card, touch (`ft63x6`).
+- `custom_components/esphomeremote_konfig`: integration with panel (`frontend/konfigurator.js`), delivers the
+  assignment to the remote over HTTP.
+- Code comments and the developer notes in `docs/entwicklung/` are in German.
 
-**Entwickler-Fassung (1:1 wie im Einsatz)** – zusätzlich zur einfachen Fassung oben liegt hier alles, womit die
-Remotes tatsächlich gebaut werden:
-- `templates/remote.yaml` (Firmware) und `templates/remote-halink.yaml` (Bluetooth-Schicht „Nur Bluetooth“,
-  HA über BLE/Dock – diese Datei wird geflasht), `templates/dock-basis.yaml` (Dockingstation),
-  `remote-dev-tests.yaml` (Testwerkzeuge, abschaltbar).
-- `tools/remotes.py` erzeugt daraus je Remote `remote-wz-<name>.yaml` und `remote-wz-<name>-halink.yaml`
-  (Liste in `tools/remotes.json`, IP-Secret `ip_remote_wz_<name>`). Bauen/Flashen: `tools/esphome_run.mjs`.
-- `components/ha_tunnel`, `components/network` (Bluetooth-Schicht), `components/dock_direkt`, `dock_hid`,
-  `bluetooth_connection` (Dock), `custom_components/esphomeremote_konfig/ble_link.py` (HA-Gegenstück der Bluetooth-Schicht),
-  `home-assistant/packages/` (Pakete, wie im Einsatz), `docs/entwicklung/` (Architektur, Funkkonzept, Messungen).
+**Developer version (1:1 as in use)** – in addition to the simple version above, this repository contains
+everything the remotes are actually built with:
+- `templates/remote.yaml` (firmware) and `templates/remote-halink.yaml` (Bluetooth layer "Bluetooth only",
+  HA via BLE/dock – this file is flashed), `templates/dock-basis.yaml` (docking station),
+  `remote-dev-tests.yaml` (test tools, can be turned off).
+- `tools/remotes.py` generates `remote-wz-<name>.yaml` and `remote-wz-<name>-halink.yaml` per remote
+  (list in `tools/remotes.json`, IP secret `ip_remote_wz_<name>`). Build/flash: `tools/esphome_run.mjs`.
+- `components/ha_tunnel`, `components/network` (Bluetooth layer), `components/dock_direkt`, `dock_hid`,
+  `bluetooth_connection` (dock), `custom_components/esphomeremote_konfig/ble_link.py` (HA counterpart of the
+  Bluetooth layer), `home-assistant/packages/` (packages, as in use), `docs/entwicklung/` (architecture, radio
+  concept, measurements).
 
-## Lizenz
+## License
 
-MIT, siehe [LICENSE](LICENSE). Fremd-Assets: [THIRD-PARTY.md](THIRD-PARTY.md).
+MIT, see [LICENSE](LICENSE). Third-party assets: [THIRD-PARTY.md](THIRD-PARTY.md).

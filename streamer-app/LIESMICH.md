@@ -1,3 +1,5 @@
+🇬🇧 [English](README.md) · 🇩🇪 Deutsch
+
 # ESPHomeRemote Streamer (Android TV)
 
 Kleine App fuer Android-TV-Streamer (z. B. Google TV Streamer, Chromecast mit Google TV, Shield). Sie meldet
