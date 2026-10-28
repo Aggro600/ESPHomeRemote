@@ -61,7 +61,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.10.28.4"
+    version: "2026.10.29.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
@@ -402,6 +402,18 @@ esphome:
             then:
               - globals.set: {id: testmodus, value: "false"}
               - lambda: 'ESP_LOGI("test", "Echter Boot -> Testmodus AUS");'
+        # Aktivitaet beim Einschalten (2026-10-29, Konfigurator: Aktivitaeten): letzte (Standard), keine oder eine
+        # bestimmte. Beim echten Start; nach dem Tiefschlaf nur mit "start_akt_tief". Ohne Schritte (nichts schalten).
+        - lambda: |-
+            if (!id(boot_grace) && !(id(tk_cfg).wurzel()["start_akt_tief"] | false)) return;
+            JsonVariantConst sa = id(tk_cfg).wurzel()["start_akt"];
+            if (sa.isNull() || !id(tk_cfg).aktiv()) return;
+            if (sa.is<const char *>() && strcmp(sa.as<const char *>(), "ohne") == 0) id(akt_an) = false;
+            else if (sa.is<int>() && sa.as<int>() >= 0 && sa.as<int>() < id(tk_cfg).aktivitaeten()) { id(activity) = sa.as<int>(); id(akt_an) = true; }
+            else return;
+            ESP_LOGI("tasten", "Start-Aktivitaet: %s", id(akt_an) ? id(tk_cfg).aktivitaet_name(id(activity)).c_str() : "keine");
+            id(apply_activity).execute();
+            if (id(cur_page) == 0) { tasten::startseite_anwenden(); tasten::dock_anwenden(id(activity)); }
         # Log-Ausfuehrlichkeit aus der Einstellung (Standard INFO).
         - if:
             condition: {lambda: 'return id(ps_log_debug);'}
@@ -2523,7 +2535,7 @@ script:
           const uint8_t wk = id(keypad).nachlesen();
           if (wk == 0 || id(weck_dock) != 0 || id(weck_tasten) != 2) return;
           id(tk_cfg).bt_weg_modus = []() { return (int) id(bt_weg); };   // sonst erst in tasten::einrichten (-100)
-          if (id(tk_cfg).weck_frueh(wk, id(activity), true)) {
+          if (id(tk_cfg).weck_frueh(wk, id(tk_cfg).tasten_akt(id(activity), id(akt_an)), true)) {
             id(keypad).weck_erledigt();
             id(last_input_ms) = millis();
             weck_log("Taste beim Start uebers Dock gesendet");
@@ -7075,14 +7087,15 @@ lvgl:
             scrollbar_mode: "off"
             hidden: true
         # Aktivitaetsleiste (Dock): durchgehende schwarze Leiste ueber die ganze Breite, buendig mit dem unteren
-        # Rand (270..320), oben eine blaue Linie. Die Knoepfe (Aktivitaeten aus dem Konfigurator) legt
+        # Rand (280..320, seit 2026-10-28 40 statt 50 px: darueber passen 6 volle Rasterzeilen der eigenen
+        # Startseite), oben eine blaue Linie. Die Knoepfe (Aktivitaeten aus dem Konfigurator) legt
         # tasten::dock_anwenden an - Segmente ohne Rundung, durch 2 px getrennt, das aktive blau.
         - obj:
             id: home_dock
             align: BOTTOM_MID
             y: 12
             width: 240
-            height: 50
+            height: 40
             radius: 0
             bg_color: 0x000000
             bg_opa: COVER

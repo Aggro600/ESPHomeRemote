@@ -450,7 +450,15 @@ class EsphomeremoteKonfigurator extends HTMLElement {
 
   get cfg() { return this.s.cfg[this.s.dev]; }
   // Folgemodus gewaehlt (s.modus = Index in cfg.modi): der Tasten-Editor bearbeitet dessen Tasten
-  get activity() { return this.s.modus != null && this.cfg.modi?.[this.s.modus] ? this.cfg.modi[this.s.modus] : this.cfg.activities[this.s.act]; }
+  get activity() { return this.s.modus != null && this.cfg.modi?.[this.s.modus] ? this.cfg.modi[this.s.modus] : this.s.act === -1 ? this._ohne() : this.cfg.activities[this.s.act]; }
+  // "Keine Aktivitaet" (2026-10-29): gilt auf der Remote, solange keine Aktivitaet laeuft. Belegte Tasten ersetzen die
+  // der zuletzt gelaufenen Aktivitaet, leere bleiben wie dort. Name nur fuer die Anzeige (nicht gespeichert).
+  _ohne() {
+    const o = (this.cfg.ohne ||= {});
+    o.keys ||= {};
+    if (!Object.getOwnPropertyDescriptor(o, "name")) Object.defineProperty(o, "name", { value: "Keine Aktivität", enumerable: false, writable: true });
+    return o;
+  }
   modusName(id) { return (this.cfg.modi || []).find((m) => m.id === id)?.name || id || "–"; }
   keyCfg(k = this.s.key) { return this.activity.keys[String(k)] || {}; }
   _commit(kc) {
@@ -538,6 +546,14 @@ class EsphomeremoteKonfigurator extends HTMLElement {
 
   // Wovon wird der Folgemodus gestartet? Schritte "Folgemodus starten" in allen Aktivitaeten und Menue-Eintraege
   // mit "Danach Folgemodus" - als Spruenge zur Stelle (2026-10-18, vorher nirgends sichtbar).
+  // Aktivitaet beim Einschalten (2026-10-29): letzte / keine / bestimmte; optional auch nach dem Tiefschlaf
+  _startAktHtml() {
+    const c = this.cfg, sa = c.start_akt ?? "";
+    const opt = (v, n) => `<option value="${v}" ${String(sa) === String(v) ? "selected" : ""}>${esc(n)}</option>`;
+    return `<label class="inl2" title="Mit welcher Aktivität die Remote nach dem Einschalten bzw. einem Neustart startet – ohne deren Schritte auszuführen">Beim Einschalten
+        <select data-sa="wahl">${opt("", "Letzte Aktivität")}${opt("ohne", "Keine Aktivität")}${(c.activities || []).map((a, i) => opt(i, a.name || "Aktivität " + (i + 1))).join("")}</select></label>
+      ${sa === "" ? "" : `<label class="sw small" title="Aufwachen aus dem Tiefschlaf zählt sonst nicht als Einschalten"><input type="checkbox" data-sa="tief" ${c.start_akt_tief ? "checked" : ""}><span>auch nach dem Tiefschlaf</span></label>`}`;
+  }
   _modStarter(mo) {
     const L = [];
     (this.cfg.activities || []).forEach((a, ai) => {
@@ -743,15 +759,16 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     const sub = kc.short?.[0] ? this.stepText(kc.short[0]) : kc.long?.[0] ? "lang: " + this.stepText(kc.long[0]) : kc.double?.[0] ? "2×: " + this.stepText(kc.double[0])
       : kc.short_offline?.[0] ? "ohne HA: " + this.stepText(kc.short_offline[0]) : "frei";
     return `<button class="key ${this.s.key === k ? "sel" : ""} ${k === 34 ? "ok" : ""} ${col ? "color" : ""} ${menu ? "menukey" : ""}" data-a="key" data-k="${k}" title="${esc(KEYNAME[k])}">
-      ${col ? `<span class="cdot" style="background:${col}"></span>` : icon ? `<ha-icon icon="${icon}"></ha-icon>` : `<span class="okt">${label}</span>`}
+      ${col ? `<span class="cdot" style="background:${col}"></span>` : icon ? `<ha-icon icon="${icon}"></ha-icon>` : `<span class="okt">${label}</span>`}${k >= 900 ? `<b class="evl">${esc(label)}</b>` : ""}
       <span class="kl">${esc(sub)}</span><span class="dots">${dots}</span>
       ${NAV_KEYS.has(k) ? `<ha-icon class="lock" icon="mdi:lock"></ha-icon>` : ""}${menu ? `<ha-icon class="mstar" icon="mdi:star-four-points"></ha-icon>` : ""}</button>`;
   }
 
   // Remote als Vorderansicht des echten Modells (2026-10-28, RM aus esphome/tools/remote_ansicht.mjs): graues
   // Frontcover, schwarze Tasten mit weissen Symbolen, Farbtasten bunt. Im Display die Startseite der Aktivitaet.
+  _rf(d = this.s.dev) { return { ...RF_STD, ...(this.s.cfg[d]?.rfarben || {}) }; }
   _remoteHtml() {
-    const farbe = { 23: "#e53935", 25: "#43a047", 24: "#fdd835", 21: "#1e88e5" };
+    const rf = this._rf(), farbe = { 23: rf.rot, 25: rf.gruen, 24: rf.gelb, 21: rf.blau };
     const alle = [...ROWS.flat(), POWER];
     const tasten = alle.map(([k]) => {
       const kc = this.keyCfg(k), [px, py] = RM.punkt[k] || [0, 0];
@@ -765,30 +782,37 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       const dots = punkte.map((c, n) => `<circle cx="${(px + (n - (punkte.length - 1) / 2) * 1.5).toFixed(2)}" cy="${py}" r="0.55" fill="${c}"/>`).join("");
       return `<g class="rk ${this.s.key === k ? "sel" : ""} ${frei ? "frei" : ""}" data-a="key" data-k="${k}">
         <title>${esc(KEYNAME[k])} – ${esc(sub)}${NAV_KEYS.has(k) ? " (im Menü der Remote: Navigation)" : ""}</title>
-        <path class="rkf" d="${RM.tasten[k]}" fill="${farbe[k] || "#161616"}"/>${RM.symbole[k] ? `<path class="rks" d="${RM.symbole[k]}" fill-rule="evenodd"/>` : ""}${dots}
+        <path class="rkf" d="${RM.tasten[k]}" fill="${farbe[k] || rf.taste}"/>${RM.symbole[k] ? `<path class="rks" d="${RM.symbole[k]}" fill-rule="evenodd" style="fill:${rf.symbol}"/>` : ""}${dots}
         ${menu ? `<path d="M${(px - punkte.length * 0.75 - 1.4).toFixed(2)} ${py - 1}l.4 .6.6.4-.6.4-.4.6-.4-.6-.6-.4.6-.4z" fill="#ffca28"/>` : ""}</g>`;
     }).join("");
     const akt = this.activity, seite = (this.menu?.pages || []).find((pg) => pg.id === akt?.home);
-    const inhalt = seite ? `<div class="rshome">${this._mPreview(seite)}</div>`
+    // Aktivitaeten-Leiste unten im Display (wie tasten::dock_anwenden: die Aktivitaeten "in der Leiste", die aktuelle blau)
+    const leiste = (this.cfg?.activities || []).map((a, i) => [a, i]).filter(([a, i]) => a.dock ?? i < 4).slice(0, 4)
+      .map(([a, i]) => `<span class="${i === this.s.act ? "an" : ""}"><small>${esc(a.name)}</small></span>`).join("");
+    const fe = seite ? hFenster(seite) : { o: 36, u: 276, st: true, l: "unten" };
+    const inhalt = seite ? `<div class="rshome" style="top:${fe.o}px;height:${fe.u - fe.o}px">${this._mPreview(seite)}</div>`
       : `<div class="rsstd"><b>${esc(akt?.name || "")}</b><small>Eingebaute Startseite</small></div>`;
     return `<div class="rmodell" style="--rs:.72">
       <svg viewBox="0 0 ${RM.breite} ${RM.hoehe}" aria-label="Remote">
-        <path d="${RM.gehaeuse}" fill="#4a4f57"/><path d="${RM.abdeckung}" fill="#9ea3a9" fill-rule="evenodd"/>
-        <path d="${RM.glas}" fill="#0b0c0e"/>${tasten}</svg>
+        <path d="${RM.gehaeuse}" fill="${rf.rahmen}"/><path d="${RM.abdeckung}" fill="${rf.gehaeuse}" fill-rule="evenodd"/>
+        <path d="${RM.glas}" fill="${rf.display}"/>${tasten}</svg>
       <button class="rscreen" data-a="mode" data-m="home" title="Startseite dieser Aktivität bearbeiten"><div class="rsinhalt">
-        <div class="rsbar"><i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i><span class="grow"></span><ha-icon icon="mdi:bluetooth"></ha-icon><ha-icon icon="mdi:battery-80"></ha-icon></div>
-        ${inhalt}<span class="rsstift"><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite</span></div></button>
+        <div class="rsbar" ${fe.st ? "" : "hidden"}><i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i><span class="grow"></span><span class="rsstift"><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite bearbeiten</span><span class="grow"></span><ha-icon icon="mdi:bluetooth"></ha-icon><ha-icon icon="mdi:battery-80"></ha-icon></div>
+        ${inhalt}${fe.l === "aus" ? "" : `<div class="rsleiste ${fe.l === "oben" ? "oben" : ""}" style="${this._leisteStil()};${fe.l === "oben" ? `top:${fe.st ? 36 : 0}px` : ""}">${leiste}</div>`}${fe.st ? "" : `<span class="rsstift rsstift2"><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite bearbeiten</span>`}</div></button>
       </div>
-      <div class="row r2 aktev">${AKT_EVENTS.map((k) => this._keyBtn(k)).join("")}</div>`;
+      <div class="aktev"><small>Keine Tasten – Schritte beim Wechsel der Aktivität „${esc(akt?.name || "")}“ (Leiste, Taste, HA-Schalter):</small>
+        <div class="row r2">${AKT_EVENTS.map((k) => this._keyBtn(k)).join("")}</div></div>
+      ${this._mGrp("rfarben", "mdi:palette-outline", "Farben dieser Remote", Object.keys(this.cfg?.rfarben || {}).length ? "angepasst" : "Standard", `
+        <div class="lsfarben">${RF_NAMEN.map(([k, n]) => `<label class="farbe"><input type="color" data-rf="${k}" value="${rf[k]}"><span>${n}</span>${this.cfg?.rfarben?.[k] ? `<button class="icon sm" data-a="rfweg" data-k="${k}" title="Standard"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</label>`).join("")}</div>
+        <small class="note">Nur für die Ansicht hier, links in der Navigation und in der Übersicht – damit du die Remotes auseinanderhältst.</small>`, false)}`;
   }
   // Display-Inhalt (240 x 320 wie die Remote) auf die Groesse des Displayfensters skalieren
   _rmSkala() {
     const sc = this.shadowRoot?.querySelector(".rscreen");
     if (sc && sc.clientWidth) sc.parentElement.style.setProperty("--rs", (sc.clientWidth / 240).toFixed(4));
-    if (!this._rmBeob && window.ResizeObserver) {
-      this._rmBeob = new ResizeObserver(() => this._rmSkala());
-      this._rmBeob.observe(this);
-    }
+    // Das Displayfenster selbst beobachten - die Remote wird auch mit der Fensterhoehe kleiner (Breite des Panels gleich)
+    if (!this._rmBeob && window.ResizeObserver) this._rmBeob = new ResizeObserver(() => this._rmSkala());
+    if (this._rmBeob && sc !== this._rmEl) { this._rmBeob.disconnect(); if (sc) this._rmBeob.observe(sc); this._rmEl = sc; }
   }
 
   _editorHtml() {
@@ -932,7 +956,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     } else if (st.t === "int") {
       body = `<select data-f="fn" ${id}>${INT_FNS.map(([v, l]) => `<option value="${v}" ${st.fn === v ? "selected" : ""} ${v === "voice_ptt" && g !== "long" ? "disabled" : ""}>${esc(l)}</option>`).join("")}</select>
         ${st.fn === "activity" ? `<select data-f="arg" ${id}>${this.cfg.activities.map((a, j) => `<option value="${j}" ${st.arg === j ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : ""}
-        ${st.fn === "popup_open" ? `<select data-f="page" ${id}>${(this.cfg.menu?.pages || []).map((pg) => `<option value="${esc(pg.id)}" ${st.page === pg.id ? "selected" : ""}>${esc(pg.title || pg.id)}${pg.popup ? " (Popup)" : ""}</option>`).join("")}</select>
+        ${st.fn === "popup_open" ? `<select data-f="page" ${id}>${(this.cfg.menu?.pages || []).map((pg) => `<option value="${esc(pg.id)}" ${st.page === pg.id ? "selected" : ""}>${esc(pg.title || pg.id)}${pg.popup ? " (Popup)" : ""}</option>`).join("")}${M_INHALTE.filter(([k]) => !(this.cfg.menu?.pages || []).some((pg) => pg.popup && pg.inhalt === k))
+            .map(([k, l]) => `<option value="__neu_${k}">+ ${esc(l)} als Popup anlegen</option>`).join("")}</select>
           <small class="note">Zeigt die Seite sofort als Popup (weckt das Display). Schließen mit X/Zurück, die Menütaste legt es weg.</small>` : ""}`;
     } else if (st.t === "ir") {
       body = this._irStepBody(st, id);
@@ -1234,15 +1259,20 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       case "actdel": {
         const acts = this.cfg.activities;
         if (acts.length <= 1 || !confirm(`Aktivität „${this.activity.name}“ mit ihrer ganzen Tastenbelegung löschen?`)) return;
+        const sa = this.cfg.start_akt;
+        if (sa === s.act) delete this.cfg.start_akt; else if (typeof sa === "number" && sa > s.act) this.cfg.start_akt = sa - 1;
         acts.splice(s.act, 1); s.act = Math.max(0, s.act - 1); s.key = null; this._touch();
         s.msg = { text: "Aktivität gelöscht. Hinweis: Knöpfe „Aktivität wechseln zu …“ zählen nach Position – bitte prüfen." };
         break;
       }
       case "actmove": {
         const acts = this.cfg.activities, j = s.act + Number(t.dataset.d);
-        [acts[s.act], acts[j]] = [acts[j], acts[s.act]]; s.act = j; this._touch();
+        [acts[s.act], acts[j]] = [acts[j], acts[s.act]];
+        if (this.cfg.start_akt === s.act) this.cfg.start_akt = j; else if (this.cfg.start_akt === j) this.cfg.start_akt = s.act;
+        s.act = j; this._touch();
         break;
       }
+      case "rfweg": { const r = this.cfg.rfarben || {}; delete r[t.dataset.k]; if (!Object.keys(r).length) delete this.cfg.rfarben; this._touch(); break; }
       case "key": s.key = Number(t.dataset.k); break;
       case "close": s.key = null; break;
       case "save": await this._save(); return;
@@ -1487,6 +1517,17 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       else mo.s = Math.max(2, Math.min(60, Number(t.value) || 7));
       this._touch(); return this._render();
     }
+    if (t.dataset.rf) {   // Farben der Remote-Ansicht (2026-10-29)
+      (this.cfg.rfarben ||= {})[t.dataset.rf] = t.value;
+      this._touch(); return this._render();
+    }
+    if (t.dataset.sa) {   // Aktivitaet beim Einschalten (2026-10-29)
+      const c = this.cfg;
+      if (t.dataset.sa === "tief") { if (t.checked) c.start_akt_tief = true; else delete c.start_akt_tief; }
+      else if (t.value === "") { delete c.start_akt; delete c.start_akt_tief; }
+      else c.start_akt = t.value === "ohne" ? "ohne" : Number(t.value);
+      this._touch(); return this._render();
+    }
     if (t.dataset.akt) {
       if (t.dataset.akt === "dock") {
         // Fehlende Angaben festschreiben (Standard: die ersten vier), dann umschalten
@@ -1565,7 +1606,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       case "fn": st.fn = v; if (v === "activity") st.arg = 0; else delete st.arg;
         if (v === "popup_open") st.page = st.page || (this.cfg.menu?.pages || []).find((pg) => pg.popup)?.id || this.cfg.menu?.pages?.[0]?.id || ""; else delete st.page;
         break;
-      case "page": st.page = v; break;
+      case "page": st.page = v.startsWith("__neu_") ? this._popupInhalt(v.slice(6)) : v; break;
       case "arg": st.arg = Number(v); break;
       case "proto": st.proto = v; delete st.n; break;
       case "addr": st.addr = parseNum(v); delete st.n; break;
@@ -1970,6 +2011,18 @@ const MenuEditor = {
       <div class="inl" style="justify-content:flex-end"><button class="btn primary" data-a="mvorlage_ok"><ha-icon icon="mdi:check"></ha-icon>Anlegen</button></div></div></div>`;
   },
 
+  // Popup mit eingebautem Inhalt (Tastatur, Ziffern, Touchpad) anlegen - aus der Auswahl "Menüseite als Popup öffnen"
+  // (2026-10-28: bisher nur ueber Menü > Neues Popup erreichbar)
+  _popupInhalt(art) {
+    const menu = this.menu, alt = menu.pages.find((pg) => pg.popup && pg.inhalt === art);
+    if (alt) return alt.id;
+    const titel = { tastatur: "Tastatur", ziffern: "Ziffern", touchpad: "Touchpad" }[art];
+    const id = this._mNewId("popup_" + art);
+    menu.pages.push({ id, title: titel, remember: false, flow: false, popup: { open: [], close: [], timeout: 0, wake: true }, items: [], inhalt: art });
+    this.s.msg = { text: `Popup „${titel}“ angelegt (Menü-Editor: ${titel}).` };
+    return id;
+  },
+
   _mVorlageAnlegen() {
     const s = this.s, m = s.modal, menu = this.menu;
     const NAMEN = { leer: "Neues Popup", medien: "Medien", klingel: "Klingel", tastatur: "Tastatur", ziffern: "Ziffern", touchpad: "Touchpad", frage: "Frage", timer: "Timer" };
@@ -2128,6 +2181,9 @@ const MenuEditor = {
       else if (it.t === "widget") inner = this._mWidgetVorschau(it, l);
       else if (tall && it.t === "setting" && M_EINST_K[it.src]?.[1] === "s") inner = `<span class="row1"><b>${esc(txt)}</b><i>Wert</i></span><span class="sl"><span style="width:50%"></span></span>`;
       else if (tall && (it.t === "light" || it.t === "cover" || it.t === "number")) inner = `<span class="row1"><b>${esc(txt)}</b><i>${esc(st)}</i></span>${it.t === "light" || it.t === "number" ? '<span class="sl"><span style="width:' + (parseInt(st.replace(/\D+/g, "")) || 0) + '%"></span></span>' : '<span class="cb"><em>Zu</em><em>Stop</em><em>Auf</em></span>'}`;
+      // Einzeilig ab 4 Spalten (2026-10-29, wie menue.cpp regler_einzeilig_): Name, Regler, Wert in einer Zeile
+      else if (!tall && l.w >= 4 && (it.t === "light" || it.t === "number" || (it.t === "setting" && M_EINST_K[it.src]?.[1] === "s")))
+        inner = `<b class="rz1">${esc(txt)}</b><span class="sl sl1"><span style="width:${it.t === "setting" ? 50 : parseInt(st.replace(/\D+/g, "")) || 0}%"></span></span><i class="rz1w">${esc(it.t === "setting" ? "Wert" : st)}</i>`;
       else if (it.lay === "i") inner = ic || `<b class="c">${esc(txt)}</b>`;
       else if (it.lay === "2") inner = `${ic}<span class="zz"><b>${esc(txt)}</b><i>${esc(st || sub)}</i></span>`;
       else if (it.lay === "g") inner = `<span class="gw ${tall ? "hoch" : ""}"><small>${esc(txt)}</small><b>${esc(st || sub || "–")}</b></span>${ic}`;
@@ -2148,8 +2204,9 @@ const MenuEditor = {
     // Displayrand (2026-10-25): unter der Kopfzeile zeigt die Remote 7 Rasterzeilen (konf_root 280 px), der Rest wird
     // gescrollt - Linie je Bildschirmhoehe, darunter abgedunkelt
     const inhalt = Math.max(0, ...L.map((l) => l.y + l.h));
-    // Eigene Startseite: nur der Platz zwischen Statusleiste und Aktivitaeten-Leiste (230 px, tasten::startseite_anwenden)
-    const sicht = p.startseite ? 230 / 40 : 7, sichtZ = Math.floor(sicht);
+    // Eigene Startseite: nur der Platz zwischen Statusleiste und Aktivitaeten-Leiste (seit 2026-10-28 240 px = 6 Zeilen,
+    // tasten::startseite_anwenden)
+    const sicht = p.startseite ? (hFenster(p).u - hFenster(p).o) / 40 : 7, sichtZ = Math.floor(sicht);
     const screens = Math.ceil(Math.max(rows, sicht) / sicht);
     const rand = Array.from({ length: screens - 1 }, (_, k) => { const y = M_PAD + (k + 1) * sicht * M_ROW - M_GAP / 2;
       return `<div class="pscr" style="top:${y}px"><span>${k === 0 ? "Displayende – ab hier scrollen" : `Ende Bildschirm ${k + 1}`}</span></div>`; }).join("")
@@ -2499,7 +2556,7 @@ const MenuEditor = {
       const gruppen = [...new Set(M_EINST.map((e) => e[3]))];
       const art = { b: "Schalter", s: "Regler", i: "Anzeige", g: "Diagramm" };
       body += `<label>Einstellung<select data-mi="src">${it.src && !M_EINST_K[it.src] ? `<option selected>${esc(it.src)} (unbekannt)</option>` : ""}${gruppen.map((g) => `<optgroup label="${esc(g)}">${M_EINST.filter((e) => e[3] === g).map((e) => `<option value="${e[0]}" ${it.src === e[0] ? "selected" : ""}>${esc(e[2])} · ${art[e[1]]}</option>`).join("")}</optgroup>`).join("")}</select></label>
-        <small class="note">Bedient direkt die Einstellung der Remote (gleiche Wirkung und Speicherung wie die eingebaute Seite). Regler: ab Höhe 2 mit Schieber, sonst Links/Rechts bzw. Antippen zum Weiterschalten.</small>`;
+        <small class="note">Bedient direkt die Einstellung der Remote (gleiche Wirkung und Speicherung wie die eingebaute Seite). Regler: mit Schieber ab Höhe 2 oder ab 4 Spalten Breite (dann Name, Schieber und Wert in einer Zeile), sonst Links/Rechts bzw. Antippen zum Weiterschalten.</small>`;
     }
     if (it.t === "camera") {
       body += `<label>Bildquelle<select data-mi="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${it.src === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -3134,6 +3191,7 @@ code { font-size:12px; background:rgba(127,127,127,.15); padding:1px 4px; border
 .pi .tx { color:var(--fg, #8b94a3); font-size:var(--fs, 11px); text-align:var(--al, left); } .pi .tx.wrap { white-space:normal; align-self:flex-start; line-height:1.25; }
 .pi .row1 { display:flex; width:100%; justify-content:space-between; position:absolute; top:4px; left:0; padding:0 8px; box-sizing:border-box; }
 .pi .sl { position:absolute; bottom:8px; left:5%; width:90%; height:6px; background:#4b5563; border-radius:3px; } .pi .sl span { display:block; height:100%; background:#3b82f6; border-radius:3px; }
+.pi b.rz1 { width:30%; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .pi .sl.sl1 { position:static; flex:1; margin:0 10px; width:auto; } .pi .rz1w { width:36px; flex:none; text-align:right; }
 .pi .cb { position:absolute; bottom:3px; left:0; width:100%; display:flex; justify-content:space-between; padding:0 6px; box-sizing:border-box; }
 .pi .cb em { font-style:normal; font-size:10px; background:#232a35; border-radius:6px; width:31%; text-align:center; padding:4px 0; }
 .pi.t-camera { background:#000; flex-direction:column; justify-content:center; }
@@ -3445,14 +3503,28 @@ ha-icon { --mdc-icon-size:20px; }
   background:#000; color:#f1f3f5; font-size:15px; }
 .rsbar { display:flex; align-items:center; gap:4px; height:30px; padding:0 8px; font-size:14px; color:#cfd3d8; } .rsbar ha-icon { --mdc-icon-size:16px; }
 .rsbar i { font-style:normal; font-weight:600; }
-.rshome { position:absolute; top:32px; left:0; width:240px; }
+.rshome { position:absolute; top:36px; left:0; width:240px; height:240px; overflow:hidden; }
 .rshome .phone { width:240px; padding:0; background:none; box-shadow:none; border-radius:0; }
+.rshome .pgrid { zoom:1; }   /* im Editor 1,25-fach vergroessert - im Display 1:1 (240 px) */
+.rsleiste { position:absolute; left:0; right:0; bottom:0; height:40px; display:flex; gap:2px; box-sizing:border-box; background:var(--lg); border-top:var(--ll) solid var(--la); }
+.rsleiste.oben { bottom:auto; border-top:0; border-bottom:var(--ll) solid var(--la); }
+.rsleiste span { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; background:var(--lf); color:var(--lt); }
+.rsleiste span.an { background:var(--la); color:var(--lat); }
+.rsstift2 { position:absolute; right:6px; top:4px; } .rsbar[hidden] { display:none; }
+.lsvor { display:flex; gap:2px; height:40px; width:240px; max-width:100%; background:var(--lg); border-top:var(--ll) solid var(--la); box-sizing:border-box; margin:4px 0 8px; }
+.lsvor span { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; background:var(--lf); color:var(--lt); font-size:var(--lfs); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.lsvor span.an { background:var(--la); color:var(--lat); }
+.lsfarben { display:flex; flex-wrap:wrap; gap:6px 12px; margin-bottom:8px; }
+.hleisten { flex-wrap:wrap; gap:6px 14px; align-items:center; } .hleisten small { color:var(--sec,#8b94a3); }
+.rsleiste small { font-size:var(--lfs); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rshome .phead, .rshome .pinfo, .rshome .gl, .rshome .pscr, .rshome .pdunkel, .rshome .rs { display:none; }
 .rsstd { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; height:250px; text-align:center; }
 .rsstd b { font-size:22px; } .rsstd small { color:#8a919b; font-size:13px; }
-.rsstift { position:absolute; right:6px; bottom:6px; display:flex; align-items:center; gap:3px; padding:2px 8px; border-radius:10px;
+.rsstift { display:flex; align-items:center; gap:3px; padding:2px 8px; border-radius:10px;
   background:rgba(255,255,255,.12); font-size:12px; color:#cfd3d8; } .rsstift ha-icon { --mdc-icon-size:13px; }
-.aktev { margin-top:12px; max-width:330px; margin-left:auto; margin-right:auto; }
+.aktev { margin-top:14px; max-width:330px; margin-left:auto; margin-right:auto; display:flex; flex-direction:column; gap:6px; }
+.aktev > small { color:var(--sec,#8b94a3); font-size:12px; line-height:1.3; }
+.key .evl { font-weight:500; font-size:13px; }
 .row { display:grid; gap:8px; }
 .row.r3 { grid-template-columns:repeat(3,minmax(0,1fr)); } .row.r4 { grid-template-columns:repeat(4,minmax(0,1fr)); }
 .row.power { grid-template-columns:1fr 64px; align-items:stretch; margin-bottom:6px; }
@@ -3554,6 +3626,26 @@ const H_AREAS = [
   ["apps", "Apps-Knopf", "mdi:apps", "Öffnet die App-Auswahl", { x: 3, y: 6, w: 3, h: 1 }, { minw: 1, minh: 1 }],
   ["dock", "Aktivitäten-Leiste", "mdi:dock-bottom", "Umschalten der Aktivitäten", { x: 0, y: 7, w: 6, h: 1 }, { minw: 3, minh: 1, maxh: 1 }],
 ];
+// Aktivitaetsleiste (2026-10-28): Standardfarben wie tasten::leiste_stil, Schrift k/n/m/g = 11/13/15/18 px
+const L_STD = { grund: "#000000", feld: "#1a1f27", text: "#8b94a3", akt: "#3b82f6", akt_text: "#f1f3f5" };
+const L_FARBEN = [["akt", "Aktiv & Linie"], ["akt_text", "Text aktiv"], ["feld", "Felder"], ["text", "Text"], ["grund", "Fugen"]];
+const L_FS = { k: 11, n: 13, m: 15, g: 18 };
+// Platz der eigenen Startseite in Displaypixeln (wie tasten::startseite_anwenden): oben/unten, Leiste oben/unten/aus
+// Farben der Remote-Ansicht je Remote (2026-10-29, Konfig "rfarben", nur Anzeige im Konfigurator)
+const RF_STD = { rahmen: "#4a4f57", gehaeuse: "#9ea3a9", taste: "#161616", symbol: "#ffffff", display: "#0b0c0e", rot: "#e53935", gruen: "#43a047", gelb: "#fdd835", blau: "#1e88e5" };
+const RF_NAMEN = [["gehaeuse", "Abdeckung"], ["rahmen", "Rahmen"], ["taste", "Tasten"], ["symbol", "Symbole"], ["display", "Displayglas"], ["rot", "Rot-Taste"], ["gruen", "Grün-Taste"], ["gelb", "Gelb-Taste"], ["blau", "Blau-Taste"]];
+// Kleine Remote (Navigation, Uebersicht) in den Farben der Remote
+const miniRemote = (f, h = 24) => `<svg class="mini" viewBox="0 0 14 26" style="height:${h}px;width:${h * 14 / 26}px"><rect x=".5" y=".5" width="13" height="25" rx="4" fill="${f.rahmen}"/><rect x="2" y="2" width="10" height="22" rx="3" fill="${f.gehaeuse}"/>
+  <rect x="3.2" y="3.2" width="7.6" height="7" rx=".8" fill="${f.display}"/><circle cx="7" cy="14.2" r="2.2" fill="${f.taste}"/><circle cx="7" cy="14.2" r=".7" fill="${f.symbol}"/>
+  <circle cx="4" cy="18.6" r=".9" fill="${f.rot}"/><circle cx="6" cy="18.6" r=".9" fill="${f.gruen}"/><circle cx="8" cy="18.6" r=".9" fill="${f.gelb}"/><circle cx="10" cy="18.6" r=".9" fill="${f.blau}"/>
+  <rect x="4" y="20.6" width="2.4" height="1.6" rx=".5" fill="${f.taste}"/><rect x="7.6" y="20.6" width="2.4" height="1.6" rx=".5" fill="${f.taste}"/></svg>`;
+const hFenster = (p) => {
+  const st = p.status !== false, l = p.leiste || "unten";
+  // ohne Statusleiste ab 0 (2026-10-29, vorher 8: 6 Zeilen + 28 px Rest) - jede Kombination in ganzen Zeilen
+  let o = st ? 36 : 0, u = (l === "aus" ? 320 : 280) - (st ? 4 : 0);
+  if (l === "oben") { o = (st ? 36 : 0) + 40; u = o + (st ? 240 : 280); }
+  return { o, u, st, l };
+};
 const H_DEF = () => ({ custom: false, areas: Object.fromEntries(H_AREAS.map(([k, , , , d]) => [k, { ...d, on: true }])) });
 
 const HomeEditor = {
@@ -3624,7 +3716,12 @@ const HomeEditor = {
       return `<label class="hzu"><span><ha-icon icon="${aktIcon(a.name || "")}"></ha-icon>${esc(a.name || "Aktivität " + (i + 1))}</span>
         <select data-hakt="${i}"><option value="">Standard (eingebaut)</option>${starts.map((pg) => `<option value="${esc(pg.id)}" ${pg.id === id ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}
           <option value="__neu">+ Neue aus Vorlage</option><option value="__leer">+ Neue leere Seite</option></select></label>`;
-    }).join("");
+    }).join("") + (() => {   // "Keine Aktivitaet" (2026-10-29): leer = wie die zuletzt gelaufene
+      const id = starts.some((pg) => pg.id === this.cfg.ohne?.home) ? this.cfg.ohne.home : "";
+      return `<label class="hzu"><span><ha-icon icon="mdi:power-off"></ha-icon>Keine Aktivität</span>
+        <select data-hakt="ohne"><option value="">Wie zuletzt gelaufene Aktivität</option>${starts.map((pg) => `<option value="${esc(pg.id)}" ${pg.id === id ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}
+          <option value="__neu">+ Neue aus Vorlage</option><option value="__leer">+ Neue leere Seite</option></select></label>`;
+    })();
     const zeile = (on, a, id, icon, titel, unter) => `<div class="pgr"><span class="tog0"></span><button class="pg ${on ? "on" : ""}" data-a="${a}" ${id ? `data-id="${esc(id)}"` : ""}>
         <ha-icon class="pic" icon="${icon}"></ha-icon><span><b>${esc(titel)}</b><small>${esc(unter)}</small></span></button></div>`;
     const std = fuer("");
@@ -3632,7 +3729,27 @@ const HomeEditor = {
       <div class="pgsep">Seiten<span class="grow"></span><button class="btn small" data-a="hneuseite" title="Neue Startseite aus der Vorlage (Uhr, Wetter, Medien, Menü/Apps)"><ha-icon icon="mdi:plus"></ha-icon>Startseite</button></div>
       ${zeile(!p, "hstdsel", "", "mdi:home-outline", "Standard (eingebaut)", std.length ? "für " + std.join(", ") : "von keiner Aktivität benutzt")}
       ${starts.map((pg) => { const f = fuer(pg.id); return zeile(p?.id === pg.id, "mpage", pg.id, "mdi:home-variant-outline", pg.title || pg.id, `${f.length ? "für " + f.join(", ") : "keiner Aktivität zugeordnet"} · ${(pg.items || []).length} Einträge`); }).join("")}
-      <small class="note">Eigene Startseiten zeigt die Remote zwischen Statusleiste und Aktivitäten-Leiste – mit allen Einträgen und Widgets wie im Menü.</small>`;
+      <small class="note">Eigene Startseiten zeigt die Remote zwischen Statusleiste und Aktivitäten-Leiste – mit allen Einträgen und Widgets wie im Menü.</small>
+      ${this._hLeisteHtml()}`;
+  },
+  // Aussehen der Aktivitaetsleiste (2026-10-28) - gilt fuer alle Startseiten, auch die eingebaute
+  _hLeisteHtml() {
+    const l = this.home.leiste || {};
+    const farben = L_FARBEN.map(([k, n]) => `<label class="farbe"><input type="color" data-hls="${k}" value="${l[k] || L_STD[k]}"><span>${n}</span>${l[k] ? `<button class="icon sm" data-a="hlsweg" data-k="${k}" title="Standard"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</label>`).join("");
+    const fs = [["k", "klein"], ["", "normal"], ["m", "groß"], ["g", "sehr groß"]].map(([v, n]) => `<button class="${(l.fs || "") === v ? "on" : ""}" data-a="hlsfs" data-v="${v}">${n}</button>`).join("");
+    const vor = (this.cfg.activities || []).map((a, i) => [a, i]).filter(([a, i]) => a.dock ?? i < 4).slice(0, 4)
+      .map(([a, i]) => `<span class="${i === this.s.act ? "an" : ""}">${esc(a.name)}</span>`).join("");
+    return this._mGrp("hleiste", "mdi:dock-bottom", "Aktivitäten-Leiste", Object.keys(l).length ? "angepasst" : "Standard", `
+      <div class="lsvor" style="${this._leisteStil()}">${vor}</div>
+      <div class="lsfarben">${farben}</div>
+      <label class="inl2">Schrift <div class="seg sm">${fs}</div></label>
+      <label class="sw small"><input type="checkbox" data-hls="linie" ${l.linie === "aus" ? "" : "checked"}><span>Linie zur Seite (in der Farbe „Aktiv“)</span></label>
+      <small class="note">Gilt für alle Startseiten, auch die eingebaute. Lage (unten/oben/aus) und Statusleiste stellst du je Startseite oben über der Vorschau ein.</small>`, false);
+  },
+  // CSS-Variablen der Leiste fuer Vorschauen
+  _leisteStil() {
+    const l = this.home?.leiste || this.cfg.home?.leiste || {}, f = (k) => l[k] || L_STD[k];
+    return `--lg:${f("grund")};--lf:${f("feld")};--lt:${f("text")};--la:${f("akt")};--lat:${f("akt_text")};--lfs:${L_FS[l.fs || "n"]}px;--ll:${l.linie === "aus" ? 0 : 3}px`;
   },
   _hPageHead(p) {
     return `<div class="phd">
@@ -3641,6 +3758,9 @@ const HomeEditor = {
         <label class="sw small"><input type="checkbox" data-mp="flow" ${p.flow !== false ? "checked" : ""}><span>Automatisch anordnen (nach Reihenfolge)</span></label>
         ${p.flow === false ? `<label class="sw small" title="Beim Verschieben oder Vergrößern rutschen getroffene Karten nach unten statt überdeckt zu werden"><input type="checkbox" data-ausw="1" ${ausweichenAn() ? "checked" : ""}><span>Andere ausweichen lassen</span></label>` : ""}
       </div>
+      <div class="inl hleisten"><label class="sw small"><input type="checkbox" data-hps="status" ${p.status !== false ? "checked" : ""}><span>Statusleiste</span></label>
+        <label class="inl2">Aktivitäten-Leiste <select data-hps="leiste">${[["", "unten"], ["oben", "oben"], ["aus", "aus"]].map(([v, l]) => `<option value="${v}" ${(p.leiste || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <small>${(() => { const f = hFenster(p), z = (f.u - f.o) / 40; return Number.isInteger(z) ? `${z} Zeilen ohne Scrollen` : `${Math.floor(z)} Zeilen ohne Scrollen (+${f.u - f.o - Math.floor(z) * 40} px)`; })()}</small></div>
       <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
         ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
         <button class="btn small ghost" data-a="mers" title="Eine Entität überall durch eine andere ersetzen (z. B. anderer Media Player)"><ha-icon icon="mdi:find-replace"></ha-icon>Entität ersetzen</button>
@@ -3663,12 +3783,12 @@ const HomeEditor = {
       ${zeilen || '<div class="none">Keine Aktivitäten.</div>'}</div>`;
   },
   _hVorlage(i, leer = false) {
-    const c = this.cfg, a = c.activities[i] || {}, m = this.menu, H = this._hass.states;
+    const c = this.cfg, a = i === "ohne" ? this._ohne() : c.activities[i] || {}, m = this.menu, H = this._hass.states;
     const wetter = Object.keys(H).find((e) => e.startsWith("weather."));
     // Media Player: der in der Belegung schon benutzte, sonst der erste
     const benutzt = JSON.stringify(c).match(/"(media_player\.[a-z0-9_]+)"/);
     const player = benutzt ? benutzt[1] : Object.keys(H).find((e) => e.startsWith("media_player."));
-    const base = "start_" + (a.name || (i >= 0 ? "akt" + (i + 1) : "seite")).toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const base = i === "ohne" ? "start_ohne" : "start_" + (a.name || (i >= 0 ? "akt" + (i + 1) : "seite")).toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
     const id = this._mNewId(base || "start");
     const items = [{ t: "widget", art: "kombi", teile: ["uhr", "wetter"], ...(wetter ? { we: wetter } : {}), w: 6, h: 2 }];   // 2 + 2 + 1 Zeilen passen ohne Scrollen
     if (player) items.push({ t: "widget", art: "medien", entity: player, leer: "weg", w: 6, h: 2 });
@@ -3676,7 +3796,7 @@ const HomeEditor = {
     if (m.pages.some((p) => p.id === "apps")) items.push({ t: "action", label: "Apps", icon: "dots-horizontal", w: 3, h: 1, steps: [{ t: "int", fn: "popup_open", page: "apps" }] });
     if (leer) items.length = 0;
     m.pages.push({ id, title: a.name ? "Start " + a.name : "Neue Startseite", startseite: true, remember: false, flow: true, items });
-    if (i >= 0) a.home = id;
+    if (i === "ohne" || i >= 0) a.home = id;
     return id;
   },
   _hClick(a, t) {
@@ -3684,12 +3804,26 @@ const HomeEditor = {
     if (a === "hneuseite") { const id = this._hVorlage(-1); Object.assign(this.s, { hstd: false, mpage: id, mitem: null }); this.s.msg = { text: "Startseite angelegt – links einer Aktivität zuordnen. Speichern nicht vergessen." }; this._touch(); return true; }
     if (a === "hakt_neu") { const id = this._hVorlage(Number(t.dataset.i)); this.s.msg = { text: "Startseite angelegt – „Bearbeiten“ öffnet sie im Menü-Editor. Speichern nicht vergessen." }; this.s.hneu = id; this._touch(); return true; }
     if (a === "hakt_edit") { Object.assign(this.s, { mode: "home", hstd: false, mpage: t.dataset.id, mitem: null }); this._nachOben = true; return true; }
-    if (a === "hstd") { const c = this.home.custom; this.cfg.home = H_DEF(); this.cfg.home.custom = c; this.s.harea = null; this._touch(); return true; }
+    if (a === "hstd") { const c = this.home.custom, l = this.home.leiste; this.cfg.home = H_DEF(); this.cfg.home.custom = c; if (l) this.cfg.home.leiste = l; this.s.harea = null; this._touch(); return true; }
+    if (a === "hlsweg") { const l = this.home.leiste || {}; delete l[t.dataset.k]; if (!Object.keys(l).length) delete this.home.leiste; this._touch(); return true; }
+    if (a === "hlsfs") { const l = (this.home.leiste ||= {}); if (t.dataset.v) l.fs = t.dataset.v; else delete l.fs; if (!Object.keys(l).length) delete this.home.leiste; this._touch(); return true; }
     return false;
   },
   _hChange(t) {
+    if (t.dataset.hps) {   // je Startseite: Statusleiste, Lage der Aktivitaetsleiste
+      const p = this.mpage;
+      if (t.dataset.hps === "status") { if (t.checked) delete p.status; else p.status = false; }
+      else if (t.value) p.leiste = t.value; else delete p.leiste;
+      this._touch(); return true;
+    }
+    if (t.dataset.hls) {   // Aussehen der Aktivitaetsleiste (alle Startseiten)
+      const l = (this.home.leiste ||= {}), k = t.dataset.hls;
+      if (k === "linie") { if (t.checked) delete l.linie; else l.linie = "aus"; } else l[k] = t.value;
+      if (!Object.keys(l).length) delete this.home.leiste;
+      this._touch(); return true;
+    }
     if (t.dataset.hakt != null) {
-      const i = Number(t.dataset.hakt), a = this.cfg.activities[i];
+      const i = t.dataset.hakt === "ohne" ? "ohne" : Number(t.dataset.hakt), a = i === "ohne" ? this._ohne() : this.cfg.activities[i];
       if (t.value === "__neu" || t.value === "__leer") {
         const id = this._hVorlage(i, t.value === "__leer");
         Object.assign(this.s, { hstd: false, mpage: id, mitem: null });
@@ -6976,7 +7110,7 @@ kbd { font-family:inherit; font-size:10.5px; line-height:1.4; padding:1px 6px; b
 .rk:hover { background:color-mix(in srgb, var(--primary-text-color) 6%, transparent); } .rgruppe.auf .rk:hover { background:none; }
 .ava { position:relative; width:40px; height:40px; flex:0 0 40px; display:inline-flex; align-items:center; justify-content:center; }
 .ava svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
-.ava b { font-size:14px; } .ava::after { content:""; position:absolute; right:-1px; bottom:-1px; width:12px; height:12px; border-radius:50%; border:2.5px solid var(--side-bg); background:#6b7280; }
+.ava b { font-size:14px; } .ava svg.mini { position:static; transform:none; inset:auto; } .rkopf h2 svg.mini { vertical-align:-5px; margin-right:8px; } .ava::after { content:""; position:absolute; right:-1px; bottom:-1px; width:12px; height:12px; border-radius:50%; border:2.5px solid var(--side-bg); background:#6b7280; }
 .ava.wlan::after { background:var(--ok); } .ava.ble::after { background:var(--blau); } .ava.dock::after { background:#a855f7; }
 svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, transparent); } svg .rv { fill:none; stroke-linecap:round; transition:stroke-dasharray .6s ease; }
 .rkt { display:flex; flex-direction:column; min-width:0; flex:1; line-height:1.3; } .rkt b { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -7078,6 +7212,7 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .aktk > span:last-child { display:flex; flex-direction:column; } .aktk b { font-size:14px; font-weight:600; } .aktk small { font-size:11px; color:var(--sec); white-space:nowrap; max-width:130px; overflow:hidden; text-overflow:ellipsis; }
 .aktk.on { border-color:var(--acc); background:var(--acc-s); box-shadow:0 4px 14px var(--acc-s); } .aktk.on .ai { background:var(--acc); color:#fff; }
 .aktk.nodock { opacity:.62; } .aktk.nodock b { font-style:italic; }
+.aktk.ohne { border-style:dotted; }
 .aktk.plus { padding:0; width:44px; height:44px; justify-content:center; border-style:dashed; color:var(--sec); background:transparent; }
 .akts.modi .aktk { border-style:dashed; } .akts.modi .aktk.on { border-style:solid; } .akts.modi .ai { width:28px; height:28px; }
 .trenner { width:1px; align-self:stretch; min-height:32px; background:var(--rand); margin:0 2px; }
@@ -7469,7 +7604,7 @@ const OberflaecheTab = {
       const sub = auf ? `<div class="subnav">${SEITEN_REMOTE.map(([m, t, i]) => `<button class="ni ${s.bereich === "remote" && s.mode === m ? "on" : ""}" data-a="o_geh" data-b="remote" data-m="${m}" title="${esc(t)}">
           <ha-icon icon="${i}"></ha-icon><span>${esc(t)}</span>${m === "einst" && (s.meta[d]?.einst_offen || []).length ? '<i class="punkt" title="Änderungen unterwegs"></i>' : ""}</button>`).join("")}</div>` : "";
       return `<div class="rgruppe ${auf ? "auf" : ""}"><button class="rk ${auf && s.bereich === "remote" ? "on" : ""}" data-a="o_rem" data-d="${esc(d)}" title="${esc(name)} · ${esc(L.kurz)}">
-          <span class="ava ${L.zustand}">${ring(L.akku ?? 0, akkuFarbe(L.akku), 5)}<b>${esc(name.replace(/^Remote /, "").slice(0, 1).toUpperCase())}</b></span>
+          <span class="ava ${L.zustand}">${ring(L.akku ?? 0, akkuFarbe(L.akku), 5)}${miniRemote(this._rf(d), 22)}</span>
           <span class="rkt"><b>${esc(name)}</b><small>${esc(L.kurz)}</small></span>${s.dirty[d] ? '<i class="punkt warn" title="nicht gespeichert"></i>' : ""}</button>${sub}</div>`;
     }).join("") || `<div class="none">Keine Remote</div>`;
   },
@@ -7707,7 +7842,10 @@ const OberflaecheTab = {
     const modi = this.cfg.modi || [];
     if (s.modus != null && !modi[s.modus]) s.modus = null;
     const tabelle = s.ansicht === "tabelle";
-    const aktKn = acts.map((a, i) => `<button class="aktk ${i === s.act && s.modus == null ? "on" : ""} ${imDock(a, i) ? "" : "nodock"}" data-a="act" data-i="${i}"
+    const ohneN = Object.keys(this.cfg.ohne?.keys || {}).length;
+    const ohneKn = `<button class="aktk ohne ${s.act === -1 && s.modus == null ? "on" : ""}" data-a="act" data-i="-1" title="Gilt, solange auf der Remote keine Aktivität läuft (nach „Aktivität beenden“)">
+        <span class="ai"><ha-icon icon="mdi:power-off"></ha-icon></span><span><b>Keine Aktivität</b><small>${ohneN ? ohneN + " eigene Tasten" : "wie zuletzt"}</small></span></button>`;
+    const aktKn = ohneKn + acts.map((a, i) => `<button class="aktk ${i === s.act && s.modus == null ? "on" : ""} ${imDock(a, i) ? "" : "nodock"}" data-a="act" data-i="${i}"
         title="${esc(a.name)} · ${esc(this.slotName(a.slot))}${imDock(a, i) ? "" : " · nicht in der Leiste (nur über Menü/Tasten)"}"><span class="ai"><ha-icon icon="${aktIcon(a.name)}"></ha-icon></span>
         <span><b>${esc(a.name)}</b><small>${esc(this.slotName(a.slot))}</small></span></button>`).join("")
       + (acts.length < 16 ? `<button class="aktk plus" data-a="actadd" title="Aktivität hinzufügen"><ha-icon icon="mdi:plus"></ha-icon></button>` : "");
@@ -7724,6 +7862,8 @@ const OberflaecheTab = {
       <button class="icon sm" data-a="moddel" title="Folgemodus löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
       ${this._modStarter(mo)}
       <p class="hint modhint">Solange der Modus läuft, gelten die Tasten unten statt der Aktivität – jede Taste frei belegbar (Taste antippen). Jeder Druck verlängert um die Standard-Dauer (${mo.s || 7} s) oder die eigene Zeit der Taste. Leere Tasten behalten ihre normale Belegung. Oben auf der Remote zeigt eine Leiste den Modus und die Restzeit.</p>`
+      : s.act === -1 ? `<div class="aktset">${this._startAktHtml()}<span class="grow"></span></div>
+      <p class="hint modhint">Gilt, solange auf der Remote keine Aktivität läuft (z. B. nach „Aktivität beenden“). Belegte Tasten ersetzen die der zuletzt gelaufenen Aktivität, leere Tasten bleiben wie dort. Startseite: unter Startseite. Unter der Remote: Schritte beim Beenden einer Aktivität („Beim Starten“ von „Keine Aktivität“) und beim Start der nächsten („Beim Beenden“).</p>`
       : `<div class="aktset">
       <label class="inl2">Name <input data-akt="name" value="${esc(akt.name)}" maxlength="16"></label>
       <label class="inl2">Bluetooth-Gerät <select data-akt="slot">${[0, 1, 2, 3].map((d) => `<option value="${d}" ${akt.slot === d ? "selected" : ""}>${esc(this.slotName(d))}</option>`).join("")}</select></label>
@@ -7731,7 +7871,8 @@ const OberflaecheTab = {
       <span class="grow"></span>
       <button class="icon sm" data-a="actmove" data-d="-1" ${s.act > 0 ? "" : "disabled"} title="in der Leiste nach links"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
       <button class="icon sm" data-a="actmove" data-d="1" ${s.act < acts.length - 1 ? "" : "disabled"} title="nach rechts"><ha-icon icon="mdi:arrow-right"></ha-icon></button>
-      <button class="icon sm" data-a="actdel" ${acts.length > 1 ? "" : "disabled"} title="Aktivität löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`;
+      <button class="icon sm" data-a="actdel" ${acts.length > 1 ? "" : "disabled"} title="Aktivität löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
+      <div class="aktset">${this._startAktHtml()}</div>`;
     const leiste = `<div class="aktleiste">
         <div class="akts">${aktKn}</div><span class="trenner"></span><div class="akts modi">${modKn}</div>
         <span class="grow"></span>
@@ -7896,7 +8037,7 @@ const OberflaecheTab = {
     const fwT = !g ? ["–", ""] : g.vorgemerkt ? ["Update vorgemerkt", "busy"] : g.update ? ["Update bereit", "warn"] : g.geflasht ? [`Aktuell${g.version ? " · " + g.version : ""}`, "ok"] : ["Nicht geflasht", ""];
     return `<article class="rkarte ${L.zustand}">
       <header><div class="ringw">${ring(L.akku ?? 0, akkuFarbe(L.akku))}<div class="rw"><b>${L.akku != null ? Math.round(L.akku) : "–"}<small>%</small></b>${L.laden ? '<ha-icon icon="mdi:lightning-bolt"></ha-icon>' : ""}</div></div>
-        <div class="rkopf"><h2>${esc(devName(d))}</h2><span class="zst ${L.zustand}"><i></i>${esc(L.ztext)}</span>
+        <div class="rkopf"><h2>${miniRemote(this._rf(d), 26)}${esc(devName(d))}</h2><span class="zst ${L.zustand}"><i></i>${esc(L.ztext)}</span>
           <small>${L.laden ? "Lädt am Kabel" : L.restH ? `Akku reicht noch ≈ ${fmtStd(L.restH)}` : ""}${L.rate != null && Math.abs(L.rate) >= 0.1 ? ` · ${L.rate > 0 ? "+" : ""}${L.rate.toFixed(1).replace(".", ",")} %/h` : ""}${L.gemeldet ? ` · ${fmtZeit(L.gemeldet)}` : ""}</small></div></header>
       ${this._kurve(s.verlauf?.daten?.[d], akkuFarbe(L.akku), "kg_" + L.slug)}
       <div class="fakten">

@@ -1395,7 +1395,9 @@ void Menue::karte_(Item &it) {
     lv_obj_set_style_border_width(k, 0, 0);
     it.durchsichtig = true;
   }
-  if (hoch && it.typ == T_EINST && it.einst.typ == 's' && it.einst.obj != nullptr) {
+  // Regler auch einzeilig (2026-10-29, Nutzer: "geht nur, wenn der zweizeilig ist"): ab 4 Spalten Name, Regler, Wert
+  const bool regler_zeile = hoch || it.w >= 4;
+  if (regler_zeile && it.typ == T_EINST && it.einst.typ == 's' && it.einst.obj != nullptr) {
     // Kopfzeile Name / Wert, darunter ein Regler mit dem Bereich des Originals
     lv_obj_t *l = text_(k, label, f, C_TEXT);
     it.name = l;
@@ -1418,10 +1420,11 @@ void Menue::karte_(Item &it) {
     }, LV_EVENT_VALUE_CHANGED, this);
     lv_obj_add_event_cb(sl, [](lv_event_t *e) { ((Menue *) lv_event_get_user_data(e))->hoehen_pruefen_(); }, LV_EVENT_RELEASED, this);
     it.regler = sl;
+    if (!hoch) regler_einzeilig_(it, k, sl);
     return;
   }
 
-  if (hoch && (it.typ == T_LIGHT || it.typ == T_COVER || it.typ == T_ZAHL)) {
+  if ((hoch && (it.typ == T_LIGHT || it.typ == T_COVER || it.typ == T_ZAHL)) || (regler_zeile && (it.typ == T_LIGHT || it.typ == T_ZAHL))) {
     // Kopfzeile: Name links, Wert rechts; darunter Regler bzw. Rollo-Knoepfe
     lv_obj_t *l = text_(k, label, f, C_TEXT);
     it.name = l;
@@ -1435,6 +1438,7 @@ void Menue::karte_(Item &it) {
       lv_obj_set_user_data(sl, (void *) (intptr_t) (&it - items_.data()));
       lv_obj_add_event_cb(sl, Menue::regler_cb_, LV_EVENT_RELEASED, this);
       it.regler = sl;
+      if (!hoch) regler_einzeilig_(it, k, sl);
     } else {
       static const char *const T[3] = {"Zu", "Stop", "Auf"};
       for (int d = 0; d < 3; d++) {
@@ -2450,6 +2454,20 @@ std::string Menue::quelle_(JsonObjectConst q, const Item &it) const {
   std::string r = z->state.c_str();
   if (!z->unit.empty()) { r += " "; r += z->unit.c_str(); }
   return r;
+}
+
+// Einzeiliger Regler (2026-10-29): Name links, Regler in der Mitte, Wert rechts - alles senkrecht mittig
+void Menue::regler_einzeilig_(Item &it, lv_obj_t *k, lv_obj_t *sl) {
+  const int innen = (int) (it.w * zelle_) - LUECKE - 2 * lv_obj_get_style_pad_left(k, LV_PART_MAIN);
+  const int nb = innen * 30 / 100, wb = 36;
+  lv_obj_set_width(it.name, nb);
+  lv_obj_align(it.name, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_label_set_long_mode(it.wert, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(it.wert, wb);
+  lv_obj_set_style_text_align(it.wert, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(it.wert, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_width(sl, innen - nb - wb - 20);   // Knopf ragt 10 px ueber die Enden
+  lv_obj_align(sl, LV_ALIGN_LEFT_MID, nb + 10, 0);
 }
 
 // Eigene Anordnungen: 2 = zweizeilig (Name oben, Wert/zweite Zeile darunter), g = grosser Wert, i = nur Symbol

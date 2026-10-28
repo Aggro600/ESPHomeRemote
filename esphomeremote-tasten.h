@@ -142,17 +142,23 @@ inline int aktivitaet_von_platz(int platz) {
 }
 
 inline void startseite_anwenden();   // weiter unten
+inline void dock_anwenden(int a);   // weiter unten
 // Aktivitaet starten (2026-10-16, wie Harmony): laeuft eine andere, fuehrt sie erst "Beim Beenden" aus
 // (Pseudo-Taste 901), dann die neue "Beim Starten" (900). akt_an = false: keine Aktivitaet laeuft.
 inline void aktivitaet_setzen(int a) {
   if (a < 0 || a >= aktivitaeten_anzahl()) return;
   const int alt = activity->value();
-  const bool start = !akt_an->value() || alt != a;
-  if (akt_an->value() && alt != a) tk_cfg->aktivitaet_ereignis(alt, false);
+  const bool war_an = akt_an->value();
+  const bool start = !war_an || alt != a;
+  if (war_an && alt != a) tk_cfg->aktivitaet_ereignis(alt, false);
+  if (!war_an && tk_cfg->hat_ohne()) tk_cfg->aktivitaet_ereignis(tasten_konfig::TastenKonfig::OHNE, false);   // "Keine Aktivitaet" endet
   activity->value() = a;
   akt_an->value() = true;
+  // Eigene Startseite je Aktivitaet (2026-10-27) VOR apply_activity: das baut die Leiste (dock_anwenden) und startet
+  // die Aufbau-Animation schon auf der fertigen Anordnung. Danach nochmal anwenden faerbte das Feld sofort fertig
+  // und schob die Leiste unter der laufenden Animation weg (Nutzer 2026-10-28: "Animation verkackt").
+  if (cur_page->value() == 0 && (alt != a || (!war_an && tk_cfg->hat_ohne()))) startseite_anwenden();
   apply_activity->execute();
-  if (cur_page->value() == 0 && alt != a) startseite_anwenden();   // eigene Startseite je Aktivitaet (2026-10-27)
   if (start) tk_cfg->aktivitaet_ereignis(a, true);
   mn->ereignis("aktivitaet", tk_cfg->aktivitaet_name(a));   // Popup-Ausloeser (z. B. "TV auf HDMI umschalten?")
 }
@@ -161,12 +167,31 @@ inline void aktivitaet_aus() {
   if (!akt_an->value()) return;
   tk_cfg->aktivitaet_ereignis(activity->value(), false);
   akt_an->value() = false;
+  // "Keine Aktivitaet" (2026-10-29): eigene Startseite und Schritte "Beim Starten"
+  if (cur_page->value() == 0 && tk_cfg->hat_ohne()) startseite_anwenden();
   apply_activity->execute();
+  if (tk_cfg->hat_ohne()) tk_cfg->aktivitaet_ereignis(tasten_konfig::TastenKonfig::OHNE, true);
 }
 
 // Aktivitaetsleiste der Startseite aus der Konfiguration bauen und die aktive markieren.
 struct Dock { std::vector<lv_obj_t *> knoepfe; std::vector<int> akt; std::string sig; int slot = -1; lv_obj_t *ecke[2] = {nullptr, nullptr}; };
 inline Dock &dock() { static Dock d; return d; }
+// Aussehen der Aktivitaetsleiste (2026-10-28, Konfigurator: Startseite > Aktivitäten-Leiste, Konfig home.leiste):
+// Farben als "#RRGGBB" (leer = Standard), Schrift k/n/m/g, Linie "aus". leiste_oben: eigene Startseite mit Leiste oben.
+struct LeisteStil { uint32_t grund, feld, text, akt, akt_text; bool linie; const lv_font_t *font; };
+inline bool &leiste_oben() { static bool o = false; return o; }
+inline uint32_t leiste_farbe_(const char *k, uint32_t std) {
+  const char *v = tk_cfg->wurzel()["home"]["leiste"][k] | "";
+  if (*v == '#') v++;
+  if (strlen(v) != 6) return std;
+  return (uint32_t) strtoul(v, nullptr, 16);
+}
+inline LeisteStil leiste_stil() {
+  const char *fs = tk_cfg->wurzel()["home"]["leiste"]["fs"] | "";
+  return {leiste_farbe_("grund", 0x000000), leiste_farbe_("feld", 0x1A1F27), leiste_farbe_("text", 0x8B94A3),
+          leiste_farbe_("akt", 0x3B82F6), leiste_farbe_("akt_text", 0xF1F3F5), strcmp(tk_cfg->wurzel()["home"]["leiste"]["linie"] | "", "aus") != 0,
+          !strcmp(fs, "k") ? a11->get_lv_font() : !strcmp(fs, "m") ? a15->get_lv_font() : !strcmp(fs, "g") ? a18->get_lv_font() : a13->get_lv_font()};
+}
 // Abgerundete Ecke (LCARS) am Nachbarfeld des aktiven Felds: blaues 10x10-Quadrat ueber der Fuge, darin ein
 // Kreis in Feldfarbe - ergibt die runde obere Ecke des Nachbarn. links=true: Ecke rechts oben am linken Nachbarn.
 inline void dock_ecke(lv_obj_t *&e, bool links) {
@@ -326,6 +351,7 @@ inline void kopf_anim(lv_obj_t *hd, lv_obj_t *btn, uint32_t verzoegerung = 150) 
   lv_anim_start(&f);
 }
 inline void dock_anim_aufraeumen();   // unten (Dock-Animation)
+inline bool dock_anim_laeuft();        // unten
 inline void dock_anwenden(int a) {
   // Im Dock: die als "dock" markierten Aktivitaeten (hoechstens 4), der Rest nur ueber Menue/Tasten
   std::vector<int> akt;
@@ -336,7 +362,8 @@ inline void dock_anwenden(int a) {
   std::string sig;
   for (int i : akt) sig += std::to_string(i) + ":" + tk_cfg->aktivitaet_name(i) + "|";
   const int W = lv_obj_get_width(home_dock);
-  sig += std::to_string(W);
+  const LeisteStil st = leiste_stil();
+  sig += std::to_string(W) + "|" + std::to_string((uintptr_t) st.font);   // andere Schrift: Knoepfe neu
   if (sig != D.sig) {
     dock_anim_aufraeumen();   // Fuellung haengt an einem Knopf, der gleich geloescht wird
     // Felder nebeneinander, 2 px Fuge (im YAML geht ein Flex-Layout ohne feste Kinder nicht)
@@ -357,7 +384,7 @@ inline void dock_anwenden(int a) {
       lv_obj_set_style_shadow_width(k, 0, 0);
       lv_obj_t *l = lv_label_create(k);
       lv_label_set_text(l, tk_cfg->aktivitaet_name(akt[i]).c_str());
-      lv_obj_set_style_text_font(l, a13->get_lv_font(), 0);
+      lv_obj_set_style_text_font(l, st.font, 0);
       lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
       lv_obj_set_width(l, breite - 6);
       lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
@@ -372,25 +399,39 @@ inline void dock_anwenden(int a) {
     // dann markiert blieb (Nutzer 2026-10-28, nach jedem Neustart). Auf der Startseite gibt es keine Markierung.
     if (cur_page->value() == 0) focus_apply->execute();
   }
+  // Laeuft die Aufbau-Animation, nicht dazwischenfaerben (das Feld war sonst sofort fertig blau, die Ecken da):
+  // an ihrem Ende ruft sie dock_anwenden selbst mit der dann aktuellen Aktivitaet auf.
+  D.slot = aktivitaet_slot(a);   // Geraet merken: bleibt aktiv, auch wenn die Reihenfolge sich aendert
+  if (dock_anim_laeuft()) return;
   int pos = -1;   // Position der aktiven Aktivitaet im Dock (-1 = nicht im Dock)
   for (int i = 0; i < n; i++) {
     const bool an = akt_an->value() && D.akt[i] == a;   // beendet: nichts markiert
     if (an) pos = i;
-    lv_obj_set_style_bg_color(D.knoepfe[i], lv_color_hex(an ? 0x3B82F6 : 0x1A1F27), 0);
-    lv_obj_set_style_text_color(D.knoepfe[i], lv_color_hex(an ? 0xF1F3F5 : 0x8B94A3), 0);
+    lv_obj_set_style_bg_color(D.knoepfe[i], lv_color_hex(an ? st.akt : st.feld), 0);
+    lv_obj_set_style_text_color(D.knoepfe[i], lv_color_hex(an ? st.akt_text : st.text), 0);
   }
-  D.slot = aktivitaet_slot(a);   // Geraet merken: bleibt aktiv, auch wenn die Reihenfolge sich aendert
+  // Leiste: Grund (Fugen), Linie in der Farbe des aktiven Felds - oben, bei der Leiste oben unten
+  lv_obj_set_style_bg_color(home_dock, lv_color_hex(st.grund), 0);
+  lv_obj_set_style_border_color(home_dock, lv_color_hex(st.akt), 0);
+  lv_obj_set_style_border_width(home_dock, st.linie ? 3 : 0, 0);
+  lv_obj_set_style_border_side(home_dock, leiste_oben() ? LV_BORDER_SIDE_BOTTOM : LV_BORDER_SIDE_TOP, 0);
   // Runde Ecken an den Nachbarn des aktiven Felds (fuer 2, 3 und 4 Felder, auch bei verschobenem Dock)
   dock_ecke(D.ecke[0], true);
   dock_ecke(D.ecke[1], false);
-  for (auto *e : D.ecke) lv_obj_add_flag(e, LV_OBJ_FLAG_HIDDEN);
-  if (pos >= 0 && !lv_obj_has_flag(home_dock, LV_OBJ_FLAG_HIDDEN)) {
+  for (int i = 0; i < 2; i++) {   // Farben aus dem Stil; Leiste oben: Ausrundung an der unteren Ecke
+    lv_obj_add_flag(D.ecke[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(D.ecke[i], lv_color_hex(st.akt), 0);
+    lv_obj_t *kreis = lv_obj_get_child(D.ecke[i], 0);
+    lv_obj_set_style_bg_color(kreis, lv_color_hex(st.feld), 0);
+    lv_obj_set_pos(kreis, i == 0 ? -10 : 0, leiste_oben() ? -10 : 0);
+  }
+  if (st.linie && pos >= 0 && !lv_obj_has_flag(home_dock, LV_OBJ_FLAG_HIDDEN)) {
     lv_obj_update_layout(home_dock);
     lv_obj_t *seite = lv_obj_get_parent(home_dock);
     lv_area_t s, k;
     lv_obj_get_content_coords(seite, &s);
     lv_obj_get_coords(D.knoepfe[pos], &k);
-    const int y = k.y1 - s.y1;
+    const int y = leiste_oben() ? k.y2 - 9 - s.y1 : k.y1 - s.y1;
     if (pos > 0) {   // linker Nachbar: Ecke endet am Anfang des aktiven Felds (deckt die Fuge)
       lv_obj_set_pos(D.ecke[0], k.x1 - 10 - s.x1, y);
       lv_obj_remove_flag(D.ecke[0], LV_OBJ_FLAG_HIDDEN);
@@ -411,6 +452,7 @@ inline void dock_anwenden(int a) {
 struct DockAnim { lv_obj_t *li{nullptr}, *re{nullptr}, *oben{nullptr}, *fuell{nullptr}, *knopf{nullptr};
                   int16_t lx, lw, rx, rw, fh; uint8_t ecken{0}; };
 inline DockAnim &dock_anim_zustand() { static DockAnim a; return a; }
+inline bool dock_anim_laeuft() { return dock_anim_zustand().knopf != nullptr; }
 inline void dock_anim_aufraeumen() {
   DockAnim &A = dock_anim_zustand();
   lv_anim_delete(&A, nullptr);
@@ -423,8 +465,10 @@ inline void dock_anim_aufraeumen() {
 // verz: Wartezeit in ms vor dem Start (Seitenwechsel/Display an: sonst ist alles vorbei, bevor man hinsieht)
 inline void dock_anim(uint32_t verz = 0) {
   const uint32_t T_LINIE = 300 * mn->zeitlupe, T_FUELL = 180 * mn->zeitlupe;
-  static const uint32_t BLAU = 0x3B82F6;
+  const LeisteStil st = leiste_stil();
+  const uint32_t BLAU = st.akt;
   dock_anim_aufraeumen();
+  if (leiste_oben() || !st.linie) return;   // Aufbau-Animation nur fuer die Leiste unten mit Linie
   Dock &D = dock();
   if (lv_obj_has_flag(home_dock, LV_OBJ_FLAG_HIDDEN) || D.knoepfe.empty()) return;
   int pos = -1;
@@ -463,7 +507,7 @@ inline void dock_anim(uint32_t verz = 0) {
   A.fuell = teil(A.knopf, -lv_obj_get_style_pad_left(A.knopf, LV_PART_MAIN), -lv_obj_get_style_pad_top(A.knopf, LV_PART_MAIN),
                  k.x2 - k.x1 + 1, 0);
   lv_obj_move_background(A.fuell);
-  lv_obj_set_style_bg_color(A.knopf, lv_color_hex(0x1A1F27), 0);
+  lv_obj_set_style_bg_color(A.knopf, lv_color_hex(st.feld), 0);
   lv_obj_set_style_border_opa(home_dock, LV_OPA_TRANSP, 0);
   A.ecken = 0;   // welche Nachbar-Ecken dock_anwenden gezeigt hat: kommen mit der Fuellung wieder
   for (int i = 0; i < 2; i++)
@@ -719,7 +763,8 @@ inline void startseite_anwenden() {
   // Erst die eingebaute Anordnung (Werte wie im YAML von page_home) - falls vorher eine eigene galt
   lv_obj_align(menu_home_btn, LV_ALIGN_BOTTOM_MID, -54, -46); lv_obj_set_size(menu_home_btn, 104, 44);
   lv_obj_align(app_home_btn, LV_ALIGN_BOTTOM_MID, 54, -46); lv_obj_set_size(app_home_btn, 104, 44);
-  lv_obj_align(home_dock, LV_ALIGN_BOTTOM_MID, 0, 12); lv_obj_set_size(home_dock, 240, 50);
+  lv_obj_align(home_dock, LV_ALIGN_BOTTOM_MID, 0, 12); lv_obj_set_size(home_dock, 240, 40);
+  leiste_oben() = false;
   for (lv_obj_t *o : {home_status_bar, menu_home_btn, app_home_btn, home_dock, home_player_btn}) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
   // Beschriftung der Knoepfe aus dem Konfigurator (2026-10-26), leer = Standard
   auto knopftext = [&](lv_obj_t *knopf, const char *bereich, const char *std) {
@@ -736,6 +781,8 @@ inline void startseite_anwenden() {
     JsonArrayConst akt = t->wurzel()["activities"];
     const int a = activity->value();
     if (a >= 0 && a < (int) akt.size()) seite = akt[a]["home"] | "";
+    // "Keine Aktivitaet" (2026-10-29): eigene Startseite, sonst die der zuletzt gelaufenen
+    if (!akt_an->value() && t->hat_ohne() && *(t->wurzel()["ohne"]["home"] | "")) seite = t->wurzel()["ohne"]["home"] | "";
     if (!seite.empty() && mn_home->hat_seite(seite)) {
       int x, y, w, h;
       bool st_an = true, dock_an = true;
@@ -744,8 +791,24 @@ inline void startseite_anwenden() {
       lv_obj_t *sp = lv_obj_get_parent(home_dock);
       const int pl = lv_obj_get_style_pad_left(sp, LV_PART_MAIN), pt = lv_obj_get_style_pad_top(sp, LV_PART_MAIN);
       // Wie die eingebaute Startseite (2026-10-27, vorher 26/270 - die erste Zeile klebte an der Statusleiste):
-      // Statusleiste endet bei 34, die Karte beginnt dort bei 38 (+2 Rand der Menue-Zeilen); unten 4 px Luft zur Leiste
-      const int oben = st_an ? 36 : 8, unten = dock_an ? 266 : 316;
+      // Statusleiste endet bei 34, die Karte beginnt dort bei 38 (+2 Rand der Menue-Zeilen); unten 4 px Luft zur Leiste.
+      // 2026-10-28: Leiste 40 px hoch (280..320) -> 240 px = 6 volle Rasterzeilen wie im Menue (vorher 230 = 5 3/4)
+      // Je Seite (2026-10-28): "status" false = ohne Statusleiste, "leiste" unten/oben/aus (ohne Leiste 7 Zeilen)
+      JsonObjectConst pg;
+      for (JsonObjectConst x : t->wurzel()["menu"]["pages"].as<JsonArrayConst>())
+        if (seite == (x["id"] | "")) { pg = x; break; }
+      if (pg["status"].is<bool>()) st_an = pg["status"].as<bool>();
+      const char *lage = pg["leiste"] | "";
+      if (!strcmp(lage, "aus")) dock_an = false; else if (*lage) dock_an = true;
+      // 2026-10-29: ohne Statusleiste ab 0 (vorher 8 -> 6 Zeilen + 28 px Rest); Karten haben 2 px Rand wie im Menue
+      int oben = st_an ? 36 : 0, unten = dock_an ? 280 - (st_an ? 4 : 0) : 320 - (st_an ? 4 : 0);
+      if (dock_an && !strcmp(lage, "oben")) {   // Leiste unter der Statusleiste, darunter wieder 6 Zeilen
+        leiste_oben() = true;
+        const int dy = st_an ? 36 : 0;
+        lv_obj_set_align(home_dock, LV_ALIGN_TOP_LEFT);
+        lv_obj_set_pos(home_dock, -pl, dy - pt);
+        oben = dy + 40; unten = oben + (st_an ? 240 : 280);   // ohne Statusleiste 40..320 = 7 Zeilen
+      }
       for (lv_obj_t *o : {menu_home_btn, app_home_btn, home_player_btn}) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
       if (st_an) lv_obj_remove_flag(home_status_bar, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(home_status_bar, LV_OBJ_FLAG_HIDDEN);
       if (dock_an) lv_obj_remove_flag(home_dock, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(home_dock, LV_OBJ_FLAG_HIDDEN);
@@ -941,7 +1004,7 @@ inline bool ereignis(int keycode, bool pressed) {
   // Sprachantwort (26) ebenso (2026-10-28, Nutzer: "keine Ausnahme fuer diesen Bildschirm").
   const bool darf = t->aktiv() && !button_test_mode->value() &&
                     (t->modus_taste(keycode) || !(p != 0 && p != 24 && p != 26 && p != 50 && p != 51 && !dunkel && nav_taste(keycode)));
-  const bool r = t->ereignis(keycode, pressed, activity->value(), key_was_dark->value(), darf);
+  const bool r = t->ereignis(keycode, pressed, t->tasten_akt(activity->value(), akt_an->value()), key_was_dark->value(), darf);
   if (r && pressed) held_key->value() = 0;
   return r;
 }
@@ -950,7 +1013,7 @@ inline bool ereignis(int keycode, bool pressed) {
 inline bool weckt(int keycode) {
   auto *t = tk_cfg;
   if (!t->aktiv()) return keycode == 31;
-  return t->weckt(keycode, activity->value());
+  return t->weckt(keycode, t->tasten_akt(activity->value(), akt_an->value()));
 }
 
 }  // namespace tasten

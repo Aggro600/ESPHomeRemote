@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.10.29.1 (2026-10-29)
+
+Start page without status bar now fits the grid (7 or 8 rows). New: 'No activity' with its own start page, own keys (unset keys behave like the last activity) and start/stop steps. New: activity at power-on (last, none or a specific one; optionally also after deep sleep). Menu: sliders also in single-row items (from 4 columns). Configurator: colors per remote (view, navigation, overview). Activity bar: colors, font, line, position per start page (bottom/top/off), status bar per start page, 40 px high (6 full rows). Fixed the activity bar build-up animation. Create digits/touchpad popups. Fix: popups (e.g. camera) did not arrive via the dock for 5 min after the remote had been on WLAN (dock firmware). Fix: the WLAN button kept switching the remote's WLAN on for up to 10 min.
+
+<details><summary>Deutsch</summary>
+
+Startseite ohne Statusleiste passt ins Raster (7 bzw. 8 Zeilen). Neu: „Keine Aktivität“ mit eigener Startseite, eigenen Tasten (leere wie die zuletzt gelaufene Aktivität) und Schritten beim Beenden/Starten. Neu: Aktivität beim Einschalten (letzte, keine oder bestimmte; optional auch nach dem Tiefschlaf). Menü: Regler auch einzeilig (ab 4 Spalten). Konfigurator: Farben je Remote (Ansicht, Navigation, Übersicht). Aktivitäten-Leiste: Farben, Schrift, Linie, Lage je Startseite (unten/oben/aus), Statusleiste je Startseite, 40 px hoch (6 volle Zeilen). Aufbau-Animation der Leiste repariert. Popups als Ziffern/Touchpad anlegen. Fix: Popups (z. B. Kamera) kamen nach einer WLAN-Phase der Remote 5 min lang nicht über das Dock (Dock-Firmware). Fix: WLAN-Knopf schaltete das WLAN der Remote bis zu 10 min immer wieder ein.
+
+</details>
+
 ## 2026.10.28.4 (2026-10-28)
 
 - **Configurator:** The *Keys* page now shows a faithful front view of the remote (grey front cover, black keys with white symbols, coloured keys). Dots below each symbol show the assignment (short/double/long/without HA); the display shows the activity's start page.

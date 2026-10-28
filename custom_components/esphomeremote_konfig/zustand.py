@@ -131,6 +131,7 @@ class DockStand:
         self.devs: list[str] = []
         self._ausl: dict[str, list[tuple[str, str]]] = {}   # geraet -> Popup-Ausloeser
         self._wartung: dict[str, float] = {}   # geraet -> Wartungsfenster angefordert bis (monotonic)
+        self._wartung_abo: dict[str, object] = {}   # geraet -> Abo "WLAN aktiv" (beendet die Anforderung)
         # Kurze Ausloeser halten (2026-10-25): ein Skript steht nur Sekundenbruchteile auf "on" - die Remote fragt das
         # Dock aber nur alle 2 s und verpasste es (Kamera-Popup). Erreicht ein Ausloeser einen Popup-Wert, meldet das
         # Dock ihn HALTEN_S lang, auch wenn er schon zurueckgesprungen ist.
@@ -235,8 +236,26 @@ class DockStand:
         Firmware-Update ohne Bluetooth-Link zu HA. Gilt, bis sie sich meldet oder die Zeit um ist."""
         self._wartung[dev] = time.monotonic() + sekunden
         self._planen(dev, 0.2)
+        # Sobald das WLAN der Remote steht, ist die Anforderung erledigt (2026-10-28): sonst sah die Remote nach dem Ende
+        # ihres 3-min-Fensters wieder "w" und schaltete das WLAN erneut an - bis zu 10 min lang (WLAN-Knopf). Jede
+        # WLAN-Phase stoert ausserdem den Dock-Weg, s. dock_direkt "Kam das Paket per Funk".
+        if (alt := self._wartung_abo.pop(dev, None)) is not None:
+            alt()
+        eid = f"binary_sensor.{dev.replace('-', '_')}_wlan_aktiv"
+
+        @callback
+        def _wlan(ev: Event, d=dev) -> None:
+            neu = ev.data.get("new_state")
+            if neu is not None and neu.state == "on":
+                if (ab := self._wartung_abo.pop(d, None)) is not None:
+                    ab()
+                self.wartung_fertig(d)
+
+        self._wartung_abo[dev] = async_track_state_change_event(self.hass, [eid], _wlan)
 
     def wartung_fertig(self, dev: str) -> None:
+        if (ab := self._wartung_abo.pop(dev, None)) is not None:
+            ab()
         if self._wartung.pop(dev, None) is not None:
             self._planen(dev, 0.2)
 

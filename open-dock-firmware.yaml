@@ -37,7 +37,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote-dock
-    version: "2026.10.28.4"
+    version: "2026.10.29.1"
   includes:
     - <esp_mac.h>
     - <esp_heap_caps.h>

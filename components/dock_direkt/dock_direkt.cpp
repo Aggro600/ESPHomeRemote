@@ -428,6 +428,12 @@ void DockDirekt::loop() {
 #endif
   for (auto &f : s_fach) {
     if (!f.voll) continue;
+#ifdef DD_EMPFANG
+    // Kam das Paket per Funk, antworten wir auch per Funk (2026-10-28): nach einer WLAN-Phase der Remote (Flashen,
+    // Wartungsfenster, WLAN-Knopf) gingen Staende 5 min lang ans Heimnetz - die Remote war da schon wieder ohne WLAN,
+    // UDP merkt das nicht. Folge: keine Popups (Kamera), keine Startseiten-Werte. HTTP lief schon immer per Funk.
+    if (NetzZiel *z = netz_ziel_(f.mac)) z->bevorzugt_bis = millis();
+#endif
     verarbeiten_(f.mac, f.d, f.len);
     f.voll = false;
   }

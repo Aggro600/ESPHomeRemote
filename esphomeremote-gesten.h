@@ -359,7 +359,7 @@ inline void ausloesen(const char *art, const std::string &id, const std::string 
   if (!hat_steps && taste <= 0) { hinweis("Geste: " + name + " (frei)"); return; }
   hinweis("Geste: " + name);
   if (hat_steps) tk_cfg->schritte(steps, disp_off->value());
-  if (taste > 0) tk_cfg->taste_kurz(taste, activity->value(), disp_off->value());
+  if (taste > 0) tk_cfg->taste_kurz(taste, tk_cfg->tasten_akt(activity->value(), akt_an->value()), disp_off->value());
 }
 
 inline bool fest_an(const char *art) {

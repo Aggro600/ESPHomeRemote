@@ -45,7 +45,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "135"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "140"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -109,6 +109,29 @@ def validate_config(cfg: dict) -> dict:
     if sum(1 for a in out_acts if a["dock"]) > 4:
         raise vol.Invalid("Hoechstens 4 Aktivitaeten passen in die Leiste")
     out = {"v": 1, "activities": out_acts}
+    # "Keine Aktivitaet" (2026-10-29): eigene Tasten (inkl. 900/901 Beim Starten/Beenden) und Startseite, solange
+    # keine Aktivitaet laeuft. Fehlt es, bleibt die Belegung der zuletzt gelaufenen Aktivitaet (wie bisher).
+    if isinstance(cfg.get("ohne"), dict):
+        o = cfg["ohne"]
+        out["ohne"] = {}
+        if isinstance(o.get("keys"), dict):   # nur mit eigener Belegung - leer hiesse: alle Tasten frei
+            out["ohne"]["keys"] = validate_keys(o["keys"], "")
+        if re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", str(o.get("home") or "")):
+            out["ohne"]["home"] = str(o["home"])
+        if o.get("slot") is not None and str(o.get("slot")) != "":
+            out["ohne"]["slot"] = max(0, min(3, int(o["slot"])))
+    # Beim Einschalten (2026-10-29): "" = letzte Aktivitaet, "ohne" = keine, Zahl = diese Aktivitaet
+    sa = cfg.get("start_akt")
+    if sa == "ohne" or (isinstance(sa, int) and not isinstance(sa, bool) and 0 <= sa < len(out_acts)):
+        out["start_akt"] = sa
+        if cfg.get("start_akt_tief") is True:
+            out["start_akt_tief"] = True   # auch nach dem Tiefschlaf (zaehlt sonst nicht als Einschalten)
+    # Farben der Remote-Ansicht im Konfigurator (2026-10-29, nur Anzeige): Gehaeuse, Tasten, Symbole, ...
+    if isinstance(cfg.get("rfarben"), dict):
+        rf = {k: str(v) for k, v in cfg["rfarben"].items()
+              if k in ("rahmen", "gehaeuse", "taste", "symbol", "display", "rot", "gruen", "gelb", "blau") and re.fullmatch(r"#[0-9A-Fa-f]{6}", str(v))}
+        if rf:
+            out["rfarben"] = rf
     if "menu" in cfg:
         out["menu"] = validate_menu(cfg["menu"])
     if isinstance(cfg.get("home"), dict):
@@ -376,7 +399,17 @@ def validate_home(h: dict) -> dict:
         for k2, b in an[i + 1:]:
             if not (a["x"] + a["w"] <= b["x"] or b["x"] + b["w"] <= a["x"] or a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"]):
                 raise vol.Invalid(f"Startseite: {k1} und {k2} ueberlappen sich")
-    return {"custom": bool(h.get("custom")), "areas": areas}
+    out = {"custom": bool(h.get("custom")), "areas": areas}
+    # Aussehen der Aktivitaetsleiste (2026-10-28, gilt fuer alle Startseiten): Farben, Schrift, Linie
+    l = h.get("leiste") if isinstance(h.get("leiste"), dict) else {}
+    leiste = {k: l[k] for k in ("grund", "feld", "text", "akt", "akt_text") if isinstance(l.get(k), str) and FARBE.fullmatch(l[k])}
+    if l.get("fs") in ("k", "m", "g"):
+        leiste["fs"] = l["fs"]
+    if l.get("linie") == "aus":
+        leiste["linie"] = "aus"
+    if leiste:
+        out["leiste"] = leiste
+    return out
 
 
 ITEM_TYPES = {"text", "page", "special", "action", "toggle", "light", "number", "select", "cover", "sensor", "camera", "setting",
@@ -647,6 +680,10 @@ def validate_menu(m: dict) -> dict:
                 pg["popup"]["if"] = cond
         if p.get("startseite"):   # Startseite einer Aktivitaet (2026-10-27)
             pg["startseite"] = True
+            if p.get("status") is False:   # ohne Statusleiste (2026-10-28)
+                pg["status"] = False
+            if p.get("leiste") in ("oben", "aus"):   # Aktivitaetsleiste oben / ausgeblendet, fehlt = unten
+                pg["leiste"] = p["leiste"]
         if p.get("inhalt") in ("tastatur", "ziffern", "touchpad"):   # eingebauter Inhalt statt Eintraegen (2026-10-13, Ziffern/Touchpad 2026-10-27)
             pg["inhalt"] = p["inhalt"]
         out_pages.append(pg)

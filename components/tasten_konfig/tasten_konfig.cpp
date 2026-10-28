@@ -583,8 +583,13 @@ std::string TastenKonfig::aktivitaet_name(int i) const {
   if (doc_ == nullptr) return "";
   return (*doc_)["activities"][i]["name"] | "";
 }
+bool TastenKonfig::hat_ohne() const {
+  return doc_ != nullptr && an_ && (*doc_)["ohne"].is<JsonObjectConst>();
+}
 int TastenKonfig::aktivitaet_slot(int i) const {
   if (doc_ == nullptr) return i;
+  if (i == OHNE) return (*doc_)["ohne"]["slot"] | -1;
+  if (i <= OHNE_AB) return (*doc_)["ohne"]["slot"] | aktivitaet_slot(OHNE_AB - i);
   return (*doc_)["activities"][i]["slot"] | i;
 }
 
@@ -1256,6 +1261,12 @@ JsonObjectConst TastenKonfig::taste_cfg_(int aktivitaet, int taste) {
   snprintf(k, sizeof(k), "%d", taste);
   JsonObjectConst m = modus_keys_()[k];   // Folgemodus geht vor
   if (!m.isNull()) return m;
+  if (aktivitaet == OHNE) return (*doc_)["ohne"]["keys"][k];
+  if (aktivitaet <= OHNE_AB) {   // "Keine Aktivitaet": eigene Belegung, sonst die der zuletzt gelaufenen
+    JsonObjectConst o = (*doc_)["ohne"]["keys"][k];
+    if (!o.isNull()) return o;
+    aktivitaet = OHNE_AB - aktivitaet;
+  }
   JsonArrayConst acts = (*doc_)["activities"];
   if (aktivitaet < 0 || aktivitaet >= (int) acts.size()) return JsonObjectConst();
   return acts[aktivitaet]["keys"][k];

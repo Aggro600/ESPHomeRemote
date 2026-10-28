@@ -284,6 +284,7 @@ class Menue : public Component {
   // Stil je Zustand "zst", Bedingung "wenn", Regler "vmin"/"vmax"/"live"/"rf", Rahmen "rad"/"rc"/"transp",
   // lang druecken "lang", Sicherheitsabfrage "sicher", Preset-Leiste (vpreset "werte"), Medien "z2"/"lauf"/"bar"
   void layout_eigen_(Item &it, lv_obj_t *k, const char *ic, const char *label, bool mit_wert, char lay);
+  void regler_einzeilig_(Item &it, lv_obj_t *k, lv_obj_t *sl);
   void extras_(Item &it);
   void extras_zustand_(Item &it, std::string &wert);
   std::string quelle_(JsonObjectConst q, const Item &it) const;

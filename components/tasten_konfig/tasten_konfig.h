@@ -92,6 +92,12 @@ class TastenKonfig : public Component {
   int aktivitaeten() const;
   std::string aktivitaet_name(int i) const;
   int aktivitaet_slot(int i) const;
+  // "Keine Aktivitaet" (2026-10-29, Konfig "ohne": keys/home wie eine Aktivitaet): gilt, solange keine laeuft.
+  // Tasten: Index OHNE_AB - a (a = zuletzt gelaufene Aktivitaet) - belegte Tasten aus "ohne", die uebrigen wie in a.
+  // OHNE (nur "Beim Starten/Beenden" 900/901 von "ohne"). Ohne Eintrag "ohne" alles wie bisher.
+  static const int OHNE = -2, OHNE_AB = -100;
+  bool hat_ohne() const;
+  int tasten_akt(int a, bool an) const { return (!an && hat_ohne()) ? OHNE_AB - a : a; }
   bool aktivitaet_im_dock(int i) const;   // "dock" (fehlt: die ersten vier)
   // Startseite (config.home, 2026-10-04): true = eigener Aufbau aktiv. Bereich in Rasterzellen (6 x 8, 40 px).
   bool home_eigen() const;
