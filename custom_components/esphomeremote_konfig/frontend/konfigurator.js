@@ -766,9 +766,9 @@ class EsphomeremoteKonfigurator extends HTMLElement {
 
   // Remote als Vorderansicht des echten Modells (2026-10-28, RM aus esphome/tools/remote_ansicht.mjs): graues
   // Frontcover, schwarze Tasten mit weissen Symbolen, Farbtasten bunt. Im Display die Startseite der Aktivitaet.
-  _rf(d = this.s.dev) { return { ...RF_STD, ...(this.s.cfg[d]?.rfarben || {}) }; }
+  _rf(d = this.s.dev) { const r = this.s.cfg[d]?.rfarben || {}, f = { ...RF_STD, ...r }; if (!r.power) f.power = f.taste; return f; }   // Ein/Aus ohne eigene Farbe wie die Tasten
   _remoteHtml() {
-    const rf = this._rf(), farbe = { 23: rf.rot, 25: rf.gruen, 24: rf.gelb, 21: rf.blau };
+    const rf = this._rf(), farbe = { 23: rf.rot, 25: rf.gruen, 24: rf.gelb, 21: rf.blau, [POWER[0]]: rf.power };
     const alle = [...ROWS.flat(), POWER];
     const tasten = alle.map(([k]) => {
       const kc = this.keyCfg(k), [px, py] = RM.punkt[k] || [0, 0];
@@ -3632,8 +3632,8 @@ const L_FARBEN = [["akt", "Aktiv & Linie"], ["akt_text", "Text aktiv"], ["feld",
 const L_FS = { k: 11, n: 13, m: 15, g: 18 };
 // Platz der eigenen Startseite in Displaypixeln (wie tasten::startseite_anwenden): oben/unten, Leiste oben/unten/aus
 // Farben der Remote-Ansicht je Remote (2026-10-29, Konfig "rfarben", nur Anzeige im Konfigurator)
-const RF_STD = { rahmen: "#4a4f57", gehaeuse: "#9ea3a9", taste: "#161616", symbol: "#ffffff", display: "#0b0c0e", rot: "#e53935", gruen: "#43a047", gelb: "#fdd835", blau: "#1e88e5" };
-const RF_NAMEN = [["gehaeuse", "Abdeckung"], ["rahmen", "Rahmen"], ["taste", "Tasten"], ["symbol", "Symbole"], ["display", "Displayglas"], ["rot", "Rot-Taste"], ["gruen", "Grün-Taste"], ["gelb", "Gelb-Taste"], ["blau", "Blau-Taste"]];
+const RF_STD = { rahmen: "#4a4f57", gehaeuse: "#9ea3a9", taste: "#161616", power: "#161616", symbol: "#ffffff", display: "#0b0c0e", rot: "#e53935", gruen: "#43a047", gelb: "#fdd835", blau: "#1e88e5" };
+const RF_NAMEN = [["gehaeuse", "Abdeckung"], ["rahmen", "Rahmen"], ["taste", "Tasten"], ["power", "Ein/Aus-Taste"], ["symbol", "Symbole"], ["display", "Displayglas"], ["rot", "Rot-Taste"], ["gruen", "Grün-Taste"], ["gelb", "Gelb-Taste"], ["blau", "Blau-Taste"]];
 // Kleine Remote (Navigation, Uebersicht) in den Farben der Remote
 const miniRemote = (f, h = 24) => `<svg class="mini" viewBox="0 0 14 26" style="height:${h}px;width:${h * 14 / 26}px"><rect x=".5" y=".5" width="13" height="25" rx="4" fill="${f.rahmen}"/><rect x="2" y="2" width="10" height="22" rx="3" fill="${f.gehaeuse}"/>
   <rect x="3.2" y="3.2" width="7.6" height="7" rx=".8" fill="${f.display}"/><circle cx="7" cy="14.2" r="2.2" fill="${f.taste}"/><circle cx="7" cy="14.2" r=".7" fill="${f.symbol}"/>

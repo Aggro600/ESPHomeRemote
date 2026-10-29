@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.10.29.2 (2026-10-29)
+
+Configurator: the power key of the remote view can be colored separately (defaults to the key color).
+
+<details><summary>Deutsch</summary>
+
+Konfigurator: Ein/Aus-Taste der Remote-Ansicht eigens einfärbbar (ohne eigene Farbe wie die übrigen Tasten).
+
+</details>
+
 ## 2026.10.29.1 (2026-10-29)
 
 Start page without status bar now fits the grid (7 or 8 rows). New: 'No activity' with its own start page, own keys (unset keys behave like the last activity) and start/stop steps. New: activity at power-on (last, none or a specific one; optionally also after deep sleep). Menu: sliders also in single-row items (from 4 columns). Configurator: colors per remote (view, navigation, overview). Activity bar: colors, font, line, position per start page (bottom/top/off), status bar per start page, 40 px high (6 full rows). Fixed the activity bar build-up animation. Create digits/touchpad popups. Fix: popups (e.g. camera) did not arrive via the dock for 5 min after the remote had been on WLAN (dock firmware). Fix: the WLAN button kept switching the remote's WLAN on for up to 10 min.

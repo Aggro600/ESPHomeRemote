@@ -45,7 +45,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "140"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "141"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -129,7 +129,7 @@ def validate_config(cfg: dict) -> dict:
     # Farben der Remote-Ansicht im Konfigurator (2026-10-29, nur Anzeige): Gehaeuse, Tasten, Symbole, ...
     if isinstance(cfg.get("rfarben"), dict):
         rf = {k: str(v) for k, v in cfg["rfarben"].items()
-              if k in ("rahmen", "gehaeuse", "taste", "symbol", "display", "rot", "gruen", "gelb", "blau") and re.fullmatch(r"#[0-9A-Fa-f]{6}", str(v))}
+              if k in ("rahmen", "gehaeuse", "taste", "power", "symbol", "display", "rot", "gruen", "gelb", "blau") and re.fullmatch(r"#[0-9A-Fa-f]{6}", str(v))}
         if rf:
             out["rfarben"] = rf
     if "menu" in cfg:
