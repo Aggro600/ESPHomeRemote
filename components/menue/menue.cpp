@@ -374,7 +374,12 @@ void Menue::abfrage_starten_() {
     const char *e = it.j["entity"] | "";
     const bool extras = !it.j["zst"].isNull() || !it.j["map"].isNull();
     if (it.wert != nullptr || it.teil != P_KEIN || extras || it.typ == T_WIDGET) dazu(e);
-    if (it.typ == T_WIDGET) { dazu(it.j["we"] | ""); dazu(it.j["me"] | ""); }
+    if (it.typ == T_WIDGET) {
+      dazu(it.j["we"] | "");
+      dazu(it.j["me"] | "");
+      for (JsonObjectConst l : it.j["lichter"].as<JsonArrayConst>()) dazu(l["e"] | "");   // Licht-Widget
+      dazu(it.j["gruppe"] | "");
+    }
     // Quellen fuer zweite Zeile, Abzeichen und Bedingung (2026-10-26): andere Entitaet bzw. Attribut ("e:a")
     for (const char *q : {"sub", "badge", "wenn"}) {
       JsonObjectConst o = it.j[q];
@@ -418,6 +423,8 @@ void Menue::abfrage_einmal_(Menue *self) {
   cfg.url = self->abf_url_.c_str();
   cfg.timeout_ms = 3000;
   cfg.buffer_size = 512;
+  // Sendepuffer nach der URL (2026-10-29): Licht-Widgets fragen viele Lampen ab - mit 512 Byte "Out of buffer"
+  cfg.buffer_size_tx = std::max<int>(512, (int) self->abf_url_.size() + 256);
   cfg.keep_alive_enable = false;
   esp_http_client_handle_t c = esp_http_client_init(&cfg);
   int status = -1;
@@ -514,6 +521,17 @@ void Menue::abfrage_auswerten_() {
           z.attr[PStr("dauer")] = t;
           z.attr[PStr("name")] = a[6] | "";
           z.pos_ms = millis();
+        } else if (strncmp(key, "light.", 6) == 0 && a.size() >= 12) {
+          // Licht-Widget (2026-10-29): Farbmodus, Farbton, Saettigung, Kelvin, Kelvin min/max, Faehigkeiten, Name
+          char t[12];
+          z.attr[PStr("cm")] = a[4] | "";
+          for (int k = 5; k <= 10; k++) {
+            static const char *const N[] = {"h", "s", "k", "kmin", "kmax", "caps"};
+            const int w = a[k] | -1;
+            if (w < 0) z.attr[PStr(N[k - 5])] = "";
+            else { snprintf(t, sizeof(t), "%d", w); z.attr[PStr(N[k - 5])] = t; }
+          }
+          z.attr[PStr("name")] = a[11] | "";
         } else if (a.size() >= 7) { z.mn = a[4] | 0.0f; z.mx = a[5] | 100.0f; z.schritt = a[6] | 1.0f; }
       }
       for (auto &it : items_) zustand_(it);
@@ -1786,6 +1804,8 @@ void Menue::klick_cb_(lv_event_t *e) {
   if (i < 0 || i >= (int) self->items_.size()) return;
   self->fokus_setzen_(i);
   if (self->lang_war_) { self->lang_war_ = false; return; }   // war ein langer Druck ("lang")
+  // Licht-Widget: Tippen auf die Karte markiert nur - geschaltet wird ueber den Knopf (OK-Taste schaltet weiter)
+  if (self->items_[i].typ == T_WIDGET && self->items_[i].wart == W_LICHT) return;
   self->ausloesen_(self->items_[i]);
 }
 

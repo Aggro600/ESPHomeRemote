@@ -45,7 +45,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "141"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "146"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -543,7 +543,27 @@ def kachel_optionen(it: dict, pid: str) -> dict:
 
 def widget_optionen(it: dict) -> dict:
     """Felder eines Widgets: art, teile (Kombi), we/me (Entitaeten), mz, leer, datum, takt, bild"""
-    o = {"art": it.get("art") if it.get("art") in ("uhr", "wetter", "akku", "medien", "timer", "kamera", "kombi") else "uhr"}
+    o = {"art": it.get("art") if it.get("art") in ("uhr", "wetter", "akku", "medien", "timer", "kamera", "kombi", "licht") else "uhr"}
+    if o["art"] == "licht":   # Licht-Widget (2026-10-29): Lampen [{e, n}], Gruppe fuer "Alle", Szenen, Unterseite, Teile
+        la = []
+        for x in (it.get("lichter") or [])[:12]:
+            e = str((x or {}).get("e") if isinstance(x, dict) else x or "")
+            if re.fullmatch(r"light\.[a-z0-9_]+", e):
+                la.append({"e": e, **({"n": str(x["n"])[:16]} if isinstance(x, dict) and x.get("n") else {})})
+        o["lichter"] = la
+        if re.fullmatch(r"light\.[a-z0-9_]+", str(it.get("gruppe") or "")):
+            o["gruppe"] = it["gruppe"]
+        sz = []
+        for x in (it.get("szenen") or [])[:8]:
+            e = str((x or {}).get("e") if isinstance(x, dict) else x or "")
+            if re.fullmatch(r"(scene|script)\.[a-z0-9_]+", e):
+                sz.append({"e": e, **({"n": str(x["n"])[:14]} if isinstance(x, dict) and x.get("n") else {})})
+        if sz:
+            o["szenen"] = sz
+        if re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", str(it.get("ziel") or "")):
+            o["ziel"] = it["ziel"]
+        if isinstance(it.get("lteile"), list):
+            o["lteile"] = [x for x in it["lteile"] if x in ("hell", "temp", "farbe", "palette", "szenen", "lampen")]
     if isinstance(it.get("teile"), list):
         o["teile"] = [x for x in it["teile"] if x in ("uhr", "wetter", "akku", "medien")][:3]
     for k, dom in (("we", "weather."), ("me", "media_player.")):
@@ -1131,6 +1151,9 @@ class StatesView(HomeAssistantView):
                 eintrag += wetter_eintrag(self.wetter, st)
             elif e.startswith("timer."):   # Widget Timer: Restzeit, Dauer, Name
                 eintrag += timer_eintrag(st)
+            elif e.startswith("light."):   # Licht-Widget (2026-10-29): Farbe, Farbtemperatur, Faehigkeiten, Name
+                from .licht_widget import licht_eintrag   # noqa: PLC0415
+                eintrag += licht_eintrag(st)
             out[e] = eintrag
         return web.Response(body=json.dumps(out, separators=(",", ":"), ensure_ascii=False).encode(),
                             content_type="application/json", headers={"Cache-Control": "no-store"})
@@ -1217,6 +1240,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     websocket_api.async_register_command(hass, ws_save)
     websocket_api.async_register_command(hass, ws_sicherung)
     websocket_api.async_register_command(hass, ws_wlan_an)
+    websocket_api.async_register_command(hass, ws_reihenfolge_save)
     websocket_api.async_register_command(hass, ws_einspielen)
     websocket_api.async_register_command(hass, ws_default)
     websocket_api.async_register_command(hass, ws_werk_speichern)
@@ -1278,6 +1302,10 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .blaster import registrieren as blaster_registrieren
 
     blaster_registrieren(hass)   # fremde IR-/RF-Sender wie ein Dock (Aktion blaster_senden)
+
+    from .licht_widget import registrieren as licht_registrieren
+
+    licht_registrieren(hass)   # Licht-Widget (2026-10-29): Aktion esphomeremote_konfig.licht
 
     from .fehler import einrichten as fehler_einrichten
 
@@ -1494,7 +1522,7 @@ def ws_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg:
             "slug": dev_slug(dev),
             "entfernbar": kd.entfernbar(dev),
         }
-    connection.send_result(msg["id"], {"devices": out, "order": kd.devices, "einst_standard": kd.data.get("einst_standard") or {},
+    connection.send_result(msg["id"], {"devices": out, "order": reihenfolge(kd), "einst_standard": kd.data.get("einst_standard") or {},
                                        "max_bytes": MAX_BYTES})
 
 
@@ -1591,7 +1619,24 @@ async def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     connection.send_result(msg["id"], {"hash": h, "bytes": len(kd.payload(dev)), "abgeglichen": kd.abgeglichen})
 
 
-@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/wlan_an", vol.Required("device"): str})
+def reihenfolge(kd) -> list[str]:
+    """Remotes in der Reihenfolge aus dem Konfigurator (2026-10-29, Ziehen in Navigation/Uebersicht), neue hinten."""
+    soll = [d for d in kd.data.get("reihenfolge") or [] if d in kd.devices]
+    return soll + [d for d in kd.devices if d not in soll]
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/reihenfolge_save", vol.Required("order"): [str]})
+@websocket_api.async_response
+async def ws_reihenfolge_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    kd: KonfigData = hass.data[DOMAIN]
+    kd.data["reihenfolge"] = [d for d in msg["order"] if d in kd.devices]
+    await kd.store.async_save(kd.data)
+    connection.send_result(msg["id"], {"order": reihenfolge(kd)})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/wlan_an", vol.Required("device"): str,
+                                  vol.Optional("sekunden", default=180): vol.All(int, vol.Range(min=0, max=28800)),
+                                  vol.Optional("grund", default="Konfigurator"): str})
 @websocket_api.async_response
 async def ws_wlan_an(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """WLAN der Remote fuer ein paar Minuten einschalten (2026-10-26, Konfigurator Bluetooth-Plaetze): ueber den
@@ -1602,21 +1647,43 @@ async def ws_wlan_an(hass: HomeAssistant, connection: websocket_api.ActiveConnec
     if dev not in kd.devices:
         connection.send_error(msg["id"], "unknown_device", "Unbekannte Remote")
         return
-    knopf = f"button.{dev.replace('-', '_')}_wartungsfenster_jetzt"
-    st = hass.states.get(knopf)
-    if st is not None and st.state != "unavailable":
+    sek, grund = msg["sekunden"], msg["grund"][:16]
+    weg = await wlan_fenster(hass, dev, sek, grund)
+    if weg:
+        connection.send_result(msg["id"], {"weg": weg})
+        return
+    connection.send_error(msg["id"], "kein_weg", "Weder direkte Verbindung noch Dock")
+
+
+async def wlan_fenster(hass: HomeAssistant, dev: str, sek: int, grund: str = "Konfigurator") -> str | None:
+    """WLAN der Remote fuer sek Sekunden an (0 = jetzt aus), 2026-10-29. Weg: eigene Verbindung (Dienst wlan_fenster,
+    neue Firmware; sonst Knopf "Wartungsfenster jetzt" = 3 min), sonst ueber das Dock. Gibt "direkt"/"dock" oder None."""
+    slug = dev.replace("-", "_")
+    if hass.services.has_service("esphome", f"{slug}_wlan_fenster"):
         try:
-            await hass.services.async_call("button", "press", {"entity_id": knopf}, blocking=True)
-            connection.send_result(msg["id"], {"weg": "direkt"})
-            return
-        except Exception:  # noqa: BLE001 - Knopf nach HA-Neustart "verfuegbar", Remote aber nie verbunden: Dock
+            await hass.services.async_call("esphome", f"{slug}_wlan_fenster", {"sekunden": sek, "grund": grund}, blocking=True)
+            return "direkt"
+        except Exception:  # noqa: BLE001 - Dienst registriert, Remote aber gerade nicht verbunden: Dock
             pass
     ds = hass.data.get("esphomeremote_konfig_dockstand")
+    if sek <= 0:
+        if ds is None:
+            return None
+        ds.wlan_aus(dev)
+        return "dock"
+    knopf = f"button.{slug}_wartungsfenster_jetzt"
+    st = hass.states.get(knopf)
+    # Alte Firmware ohne Dienst: Knopf (immer 3 min)
+    if st is not None and st.state != "unavailable" and not hass.services.has_service("esphome", f"{slug}_wlan_fenster"):
+        try:
+            await hass.services.async_call("button", "press", {"entity_id": knopf}, blocking=True)
+            return "direkt"
+        except Exception:  # noqa: BLE001 - Knopf nach HA-Neustart "verfuegbar", Remote aber nie verbunden: Dock
+            pass
     if ds is None:
-        connection.send_error(msg["id"], "kein_weg", "Weder direkte Verbindung noch Dock")
-        return
-    ds.wartung_anfordern(dev, 600)
-    connection.send_result(msg["id"], {"weg": "dock"})
+        return None
+    ds.wartung_anfordern(dev, 600, sek, grund)
+    return "dock"
 
 
 # ---- Sicherung (2026-10-26): alles, was der Konfigurator verwaltet, und Einspielen ohne Abgleich ----
@@ -1637,7 +1704,7 @@ async def ws_sicherung(hass: HomeAssistant, connection: websocket_api.ActiveConn
     glob = {k: copy.deepcopy(kd.data[k]) for k in SICHERUNG_GLOBAL if kd.data.get(k) is not None}
     if kd.data.get("sync"):
         glob["sync"] = {k: copy.deepcopy(kd.data["sync"].get(k)) for k in ("an", "geraete", "aus")}
-    connection.send_result(msg["id"], {"order": list(kd.devices), "remotes": geraete, "global": glob})
+    connection.send_result(msg["id"], {"order": reihenfolge(kd), "remotes": geraete, "global": glob})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/einspielen", vol.Required("device"): str,

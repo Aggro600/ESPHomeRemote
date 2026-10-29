@@ -395,28 +395,18 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
         ip = fest or ip
         ziel = ip or "OTA"
         if g["art"] == "remote" and ip and not await hass.async_add_executor_job(_offen, ip, 3232):
-            knopf = f"button.remote_wz_{g['slug']}_wartungsfenster_jetzt"
-            st = hass.states.get(knopf)
+            from . import wlan_fenster   # noqa: PLC0415 - Kreisimport vermeiden
             ds = hass.data.get("esphomeremote_konfig_dockstand")
             dev = g.get("name") or ""
-            gedrueckt = False
-            if st is not None and st.state != "unavailable":
-                j["schritt"] = f"{name}: Wartungsfenster oeffnen (WLAN 3 min an)"
-                _log(j, j["schritt"])
-                try:
-                    await hass.services.async_call("button", "press", {"entity_id": knopf}, blocking=True)
-                    gedrueckt = True
-                except Exception as err:  # noqa: BLE001
-                    # Nach einem HA-Neustart steht der Knopf auf "verfuegbar", obwohl die Remote nie verbunden war
-                    # (2026-10-25) - dann ueber das Dock
-                    _log(j, f"{name}: Knopf nicht erreichbar ({err}) - versuche es ueber das Dock")
-            if gedrueckt:
+            # WLAN fuer das Update (2026-10-29): Fenster 10 min "Update" - endet mit dem Neustart nach dem Flashen
+            # (Nur Bluetooth), bei Fehler schaltet der Auftrag es danach aus. Alte Firmware: Knopf, 3 min.
+            j["schritt"] = f"{name}: WLAN fuer das Update einschalten"
+            _log(j, j["schritt"])
+            weg = await wlan_fenster(hass, dev, 600, "Update") if dev else None
+            if weg == "direkt":
                 frist, ueber_dock = 120, False
-            elif ds is not None and dev:
-                # Ohne HA-Verbindung (Funkkonzept "Dock, WLAN als Ausweg", 2026-10-25): ueber den Dock-Stand anfordern -
-                # die Remote schaltet ihr WLAN an, sobald sie das Dock das naechste Mal fragt (beim Benutzen sofort)
-                ds.wartung_anfordern(dev)
-                j["schritt"] = f"{name}: Wartungsfenster ueber das Dock angefordert - Remote kurz benutzen (Taste druecken)"
+            elif weg == "dock":
+                j["schritt"] = f"{name}: WLAN ueber das Dock angefordert - Remote kurz benutzen (Taste druecken)"
                 _log(j, j["schritt"])
                 frist, ueber_dock = 900, True
             else:
@@ -449,6 +439,23 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
     else:
         ok = await _mit_versuch(hass, j, name, "bauen", "firmware/compile", {"configuration": datei})
     j["ergebnisse"][datei] = "ok" if ok else (j["fehler"] or "Fehler")
+    if g["art"] == "remote" and port == "OTA" and g.get("name"):
+        # WLAN danach (2026-10-29): Fehler -> gleich aus; geklappt -> der Neustart beendet das Update-Fenster, auf Wunsch
+        # danach noch ein Fenster (nachher Minuten)
+        from . import wlan_fenster   # noqa: PLC0415
+        nachher = int(j.get("wlan_nachher") or 0)
+        try:
+            if not ok:
+                await wlan_fenster(hass, g["name"], 0)
+                _log(j, f"{name}: WLAN wieder aus")
+            elif nachher:
+                await asyncio.sleep(20)   # Neustart abwarten
+                await wlan_fenster(hass, g["name"], nachher * 60, "Konfigurator")
+                _log(j, f"{name}: WLAN bleibt noch {nachher} min an")
+            else:
+                _log(j, f"{name}: WLAN geht mit dem Neustart wieder aus")
+        except Exception as err:  # noqa: BLE001
+            _log(j, f"{name}: WLAN danach: {err}")
     if ok and port:   # aufgespielte Version merken - Remotes ueber das Dock melden sie HA selten (keine API-Verbindung)
         from homeassistant.loader import async_get_integration
         v = str((await async_get_integration(hass, DOMAIN)).version or "")
@@ -574,7 +581,8 @@ async def ws_liste(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/fw_installieren",
-                                  vol.Required("dateien"): [str], vol.Required("port"): str})
+                                  vol.Required("dateien"): [str], vol.Required("port"): str,
+                                  vol.Optional("wlan_nachher", default=0): vol.All(int, vol.Range(min=0, max=480))})
 @websocket_api.async_response
 async def ws_installieren(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     port = msg["port"]
@@ -598,13 +606,14 @@ async def ws_installieren(hass: HomeAssistant, connection: websocket_api.ActiveC
     if any(not j["fertig"] for j in _jobs.values()):
         connection.send_error(msg["id"], "laeuft", "Es laeuft schon ein Firmware-Auftrag")
         return
-    j = _starten(hass, geraete, port)
+    j = _starten(hass, geraete, port, msg["wlan_nachher"])
     connection.send_result(msg["id"], {"job_id": j["job_id"]})
 
 
-def _starten(hass: HomeAssistant, geraete: list[dict], port: str) -> dict:
+def _starten(hass: HomeAssistant, geraete: list[dict], port: str, wlan_nachher: int = 0) -> dict:
     titel = (geraete[0].get("friendly") or geraete[0]["datei"]) if len(geraete) == 1 else f"{len(geraete)} Geraete"
     j = _job(titel, [g["datei"] for g in geraete], port)
+    j["wlan_nachher"] = wlan_nachher   # Minuten WLAN nach dem Update (0 = nur fuers Update, 2026-10-29)
     hass.async_create_background_task(_ablauf(hass, j, geraete, port), f"{DOMAIN} firmware {j['job_id']}")
     # Remotes per WLAN: Stand laufend auf der Remote zeigen (Wartung & Tests)
     if port == "OTA":
@@ -638,7 +647,7 @@ def _klartext(schritt: str, name: str) -> str:
             "bauen und installieren": "Firmware ist gebaut und wird gleich übertragen.",
             "bauen und installieren (2. Versuch)": "Firmware wird gleich übertragen (2. Versuch).",
             "Remote-Dateien aus der Vorlage erzeugen": "Update wird vorbereitet.",
-            "Wartungsfenster oeffnen (WLAN 3 min an)": "WLAN wird für die Übertragung eingeschaltet.",
+            "WLAN fuer das Update einschalten": "WLAN wird für die Übertragung eingeschaltet.",
             "hochladen": "Firmware wird übertragen. Die Remote startet danach neu."}.get(
         t, t[:1].upper() + t[1:] + "." if t else "Update läuft.")
 

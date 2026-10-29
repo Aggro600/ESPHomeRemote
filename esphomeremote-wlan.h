@@ -8,7 +8,9 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <cstring>
 #include <functional>
+#include <string>
 namespace wlan_zugriff {
 struct Sta {
   using type = esphome::FixedVector<esphome::wifi::WiFiAP> esphome::wifi::WiFiComponent::*;
@@ -44,10 +46,32 @@ inline uint32_t g_bedarf_bis = 0;
 // Neuer Bedarf (WLAN war aus): HA ueber das Dock vorwarnen, damit es sofort verbindet statt erst beim naechsten
 // 15-s-Versuch (2026-10-25, Sprache an HA lief vorher in die 12-s-Frist). Gesetzt in remote.yaml.
 inline std::function<void()> g_bedarf_neu;
+// WLAN-Zustand (2026-10-29, Nutzer: "verwirrend"): Grund und Restzeit fuer Schnelleinstellungen, HA und Konfigurator.
+// g_bedarf_grund: letzter Bedarf; g_fenster_*: naechstes Wartungsfenster (Dauer/Grund, vor script wartungsfenster setzen);
+// g_still_bis: nach "WLAN jetzt aus" 10 min keinen automatischen Bedarf (sonst ging es bei Dock weg gleich wieder an).
+inline const char *g_bedarf_grund = "";
+inline uint32_t g_fenster_s = 180;
+inline std::string g_fenster_grund = "Wartung";
+inline std::string g_aktiv_grund = "Wartung";   // Grund des laufenden Fensters (Anzeige)
+inline uint32_t g_still_bis = 0;
+inline std::string g_zustand = "aus";   // aus | immer | geht aus | <Grund> (dann g_rest Sekunden)
+inline uint32_t g_rest = 0;
+inline void fenster(uint32_t sek, const char *grund) { g_fenster_s = sek; g_fenster_grund = grund; }
+// Kurzname fuer die Kachel der Schnelleinstellungen
+inline const char *kurz(const std::string &g) {
+  if (g.find("kein Dock") != std::string::npos) return "kein Dock";
+  if (g.find("Dock") != std::string::npos) return "Dock weg";
+  if (g.find("Sprache") != std::string::npos) return "Sprache";
+  if (g.find("Konfiguration") != std::string::npos || g.find("Bild") != std::string::npos) return "Laden";
+  if (g == "Konfigurator") return "Konfig.";
+  if (g == "Ladekabel") return "Laden";
+  return g.c_str();
+}
 inline void bedarf(uint32_t ms, const char *grund) {
+  if ((int32_t) (esphome::millis() - g_still_bis) < 0 && strstr(grund, "Sprache") == nullptr) return;
   const uint32_t bis = esphome::millis() + ms;
   const bool neu = (int32_t) (esphome::millis() - g_bedarf_bis) >= 0;
-  if (neu || (int32_t) (bis - g_bedarf_bis) > 0) g_bedarf_bis = bis;
+  if (neu || (int32_t) (bis - g_bedarf_bis) > 0) { g_bedarf_bis = bis; g_bedarf_grund = grund; }
   if (neu) {
     ESP_LOGI("wlan", "WLAN-Bedarf: %s (%u s)", grund, (unsigned) (ms / 1000));
     if (g_bedarf_neu) g_bedarf_neu();

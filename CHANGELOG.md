@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.10.29.3 (2026-10-29)
+
+New: light widget (single or all lamps, brightness, colour temperature, colour, palette, scenes, sub page) with action esphomeremote_konfig.light. WLAN: real state with reason and remaining time in quick settings, in the configurator (menu 3/10/30 min, until off, off now, also per remote under firmware) and as sensor; updates keep WLAN on only for the update (optionally 10/30 min longer). Remote order by drag and drop, remote collapsible in the sidebar, popup sub pages shown under their popup. Playback settings as a dialog in menu/start page, streamer app under firmware. Key dots removed, clipboard per session only. Fix: radio to the dock hung after switching WLAN off (no covers, HA calls dropped). Fix: state polling with many entities (buffer).
+
+<details><summary>Deutsch</summary>
+
+Neu: Licht-Widget (Lampen einzeln oder alle, Helligkeit, Farbtemperatur, Farbe, Palette, Szenen, Unterseite) mit Aktion esphomeremote_konfig.licht. WLAN: echter Zustand mit Grund und Restzeit in den Schnelleinstellungen, im Konfigurator (Menü 3/10/30 min, bis aus, jetzt aus, auch je Remote unter Firmware) und als Sensor „WLAN-Zustand“; Updates halten das WLAN nur fürs Update (wahlweise danach noch 10/30 min). Reihenfolge der Remotes per Ziehen, Remote links einklappbar, Popup-Unterseiten im Seitenbaum unter ihrem Popup. Wiedergabe-Einstellungen als Dialog in Menü/Startseite, Streamer-App unter Firmware. Punkte an den Tasten entfernt, Zwischenablage nur für die Sitzung. Fix: Funk zum Dock hing nach dem WLAN-Abschalten (keine Cover, HA-Aufrufe verworfen). Fix: Zustandsabfrage mit vielen Entitäten (Puffer).
+
+</details>
+
 ## 2026.10.29.2 (2026-10-29)
 
 Configurator: the power key of the remote view can be colored separately (defaults to the key color).

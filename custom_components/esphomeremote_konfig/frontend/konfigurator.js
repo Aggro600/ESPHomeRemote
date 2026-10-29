@@ -203,7 +203,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     this.shadowRoot.addEventListener("click", (ev) => this._click(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._change(ev));
     this.s = { loaded: false, dev: null, act: 0, key: null, cfg: {}, enabled: {}, meta: {}, dirty: {}, hist: {}, base: {}, saved: {}, order: [], modal: null, msg: null, clip: null, undo: null, mode: "keys", mpage: null, mitem: null };
-    try { this.s.clip = JSON.parse(localStorage.getItem("erk_clip") || "null"); } catch (e) { /* egal */ }
+    // Zwischenablage nur fuer diese Sitzung (2026-10-29: im localStorage stand sie bei jedem Oeffnen wieder da)
+    try { localStorage.removeItem("erk_clip"); this.s.clip = JSON.parse(sessionStorage.getItem("erk_clip") || "null"); } catch (e) { /* egal */ }
     this._onKey = (ev) => this._shortcut(ev);
   }
 
@@ -254,7 +255,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   // ------------------------------------------------------ Kopieren/Einfuegen/Tauschen
   _setClip(clip) {
     this.s.clip = clip;
-    try { localStorage.setItem("erk_clip", JSON.stringify(clip)); } catch (e) { /* egal */ }
+    try { sessionStorage.setItem("erk_clip", JSON.stringify(clip)); } catch (e) { /* egal */ }
   }
   _origin() { return `${KEYNAME[this.s.key]} · ${this.activity.name}${this.s.order.length > 1 ? " · " + devName(this.s.dev).replace("Remote ", "") : ""}`; }
   _copy(g) {
@@ -671,8 +672,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (p) { const alt = this._syncAlt, h = this._syncPillKnopf(); if (h !== alt) p.outerHTML = h; }
     const x = r.querySelector("#syncx");
     if (x) { const h = this._statusHtml(); if (h !== x.innerHTML) x.innerHTML = h; }
-    const wp = r.querySelector("#wlanp");
-    if (wp && this.s.bereich === "remote") { const h = this._wlanKnopf(); if (h !== this._wlanAlt) { this._wlanAlt = h; wp.innerHTML = h; } }
+    this._wlanTicken();
+    this._wlanT ||= setInterval(() => this._wlanTicken(), 1000);
     const al = r.querySelector("#aktivl");
     if (al) { const h = this._aktivLeisteHtml(); if (h !== al.innerHTML) al.innerHTML = h; }
   }
@@ -779,7 +780,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         : kc.short_offline?.[0] ? "ohne HA: " + this.stepText(kc.short_offline[0]) : "frei";
       const frei = !belegt.length && !offl;
       const punkte = [...belegt.map((g) => ({ short: "#4fc3f7", double: "#ffb74d", long: "#ba68c8" })[g]), ...(offl ? ["#90a4ae"] : [])];
-      const dots = punkte.map((c, n) => `<circle cx="${(px + (n - (punkte.length - 1) / 2) * 1.5).toFixed(2)}" cy="${py}" r="0.55" fill="${c}"/>`).join("");
+      const dots = "";   // Punkte je Druckart weg (2026-10-29, Nutzer: "komplett ueberfluessig") - steht im Tooltip/Editor
       return `<g class="rk ${this.s.key === k ? "sel" : ""} ${frei ? "frei" : ""}" data-a="key" data-k="${k}">
         <title>${esc(KEYNAME[k])} – ${esc(sub)}${NAV_KEYS.has(k) ? " (im Menü der Remote: Navigation)" : ""}</title>
         <path class="rkf" d="${RM.tasten[k]}" fill="${farbe[k] || rf.taste}"/>${RM.symbole[k] ? `<path class="rks" d="${RM.symbole[k]}" fill-rule="evenodd" style="fill:${rf.symbol}"/>` : ""}${dots}
@@ -995,6 +996,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       </div></div>`;
     }
     if (m.type === "lernen") return this._lernModal();
+    if (m.type === "jetzt") return this._jetztModal();
     if (m.type === "addart") return this._addArtModal();
     if (m.type === "btset") return this._btModal();
     if (m.type === "pick") {
@@ -1095,6 +1097,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     this._pruefBind();
     this._dockBind();
     this._lichtBind();
+    this._ordnungBind();
     if (this.s.bereich !== "remote") return;
     if (this.s.mode === "menu") { this._mBindDrag(); this._mBaumBind(); }
     if (this.s.mode === "home") { if (this.s.hstd || !this.mpage) this._hBindDrag(); else this._mBindDrag(); }
@@ -1113,6 +1116,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   async _click(ev) {
     const t = ev.target.closest("[data-a]");
     if (this.s.syncOffen && !ev.target.closest(".syncw")) { this.s.syncOffen = false; if (!t) { this._render(); return; } }
+    if (this.s.wlanMenu && !ev.target.closest(".wlanw")) { this.s.wlanMenu = null; if (!t) { this._render(); return; } }
     if (!t) return;
     const a = t.dataset.a;
     const g = t.dataset.g, i = Number(t.dataset.i);
@@ -1172,12 +1176,18 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         s.msg = { text: `${was[0].toUpperCase() + was.slice(1)} aus der ${wer} übernommen – noch nicht gespeichert.${a === "werk_laden" ? " Die Einstellungen gehen beim nächsten Aufwachen an die Remote." : ""}` };
         break;
       }
+      case "o_jetzt": if (!s.jetzt) this._jetztLaden(); s.modal = { type: "jetzt" }; break;
+      case "o_wlanm": s.wlanMenu = s.wlanMenu === t.dataset.d ? null : t.dataset.d; break;
       case "o_wlan": {
+        const d = t.dataset.d || s.dev, sek = Number(t.dataset.s ?? 180);
+        s.wlanMenu = null;
         try {
-          const r = await this._hass.callWS({ type: "esphomeremote_konfig/wlan_an", device: s.dev });
-          (s.wlanAn ||= {})[s.dev] = Date.now();
-          s.msg = { text: r.weg === "dock" ? `WLAN von ${devName(s.dev)} angefordert – sie schaltet es ein, sobald sie das Dock das nächste Mal fragt (ist das Display an, sofort; sonst eine Taste drücken).` : `WLAN von ${devName(s.dev)} wird eingeschaltet.` };
-        } catch (e) { s.msg = { err: true, text: "WLAN einschalten ging nicht: " + (e.message || e.code) }; }
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/wlan_an", device: d, sekunden: sek });
+          if (sek > 0) (s.wlanAn ||= {})[d] = Date.now(); else delete s.wlanAn?.[d];
+          const dauer = sek >= 28800 ? "bis du es ausschaltest" : `für ${sek / 60} Minuten`;
+          s.msg = { text: sek === 0 ? `WLAN von ${devName(d)} wird ausgeschaltet${r.weg === "dock" ? " (über das Dock, sobald sie es fragt)" : ""}.`
+            : r.weg === "dock" ? `WLAN von ${devName(d)} angefordert (${dauer}) – sie schaltet es ein, sobald sie das Dock das nächste Mal fragt (ist das Display an, sofort; sonst eine Taste drücken).` : `WLAN von ${devName(d)} ist ${dauer} an.` };
+        } catch (e) { s.msg = { err: true, text: "WLAN schalten ging nicht: " + (e.message || e.code) }; }
         break;
       }
       case "push": {
@@ -1517,6 +1527,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       else mo.s = Math.max(2, Math.min(60, Number(t.value) || 7));
       this._touch(); return this._render();
     }
+    if (t.dataset.fwwlan != null) { this.s.fw.wlanNachher = Number(t.value); try { localStorage.setItem("esphomeremote_fwwlan", t.value); } catch (e) { /* egal */ } return; }
     if (t.dataset.rf) {   // Farben der Remote-Ansicht (2026-10-29)
       (this.cfg.rfarben ||= {})[t.dataset.rf] = t.value;
       this._touch(); return this._render();
@@ -1650,7 +1661,10 @@ const M_TYPES = [
 const M_WIDGETS = [["uhr", "Uhr & Datum", "mdi:clock-outline", ""], ["wetter", "Wetter", "mdi:weather-partly-cloudy", "weather"],
   ["akku", "Akku der Remote", "mdi:battery-70", ""], ["medien", "Medien", "mdi:play-box-outline", "media_player"],
   ["timer", "Timer", "mdi:timer-outline", "timer"], ["kamera", "Kamera", "mdi:cctv", "camera"],
-  ["kombi", "Kombi (bis zu 3 nebeneinander)", "mdi:view-column-outline", ""]];
+  ["kombi", "Kombi (bis zu 3 nebeneinander)", "mdi:view-column-outline", ""], ["licht", "Licht (Lampen, Farbe, Szenen)", "mdi:lightbulb-group-outline", ""]];
+// Licht-Widget (2026-10-29): Teile von oben nach unten - was nicht in die Hoehe passt, faellt auf der Remote weg
+const L_TEILE = [["lampen", "Lampen"], ["hell", "Helligkeit"], ["temp", "Farbtemperatur"], ["farbe", "Farbe"], ["palette", "Palette"], ["szenen", "Szenen"]];
+const L_PAL = ["#ff9f45", "#ffb46b", "#ffe4c4", "#e6f0ff", "#ff3b30", "#ff9500", "#34c759", "#0a84ff", "#bf5af2", "#ff2d78"];
 const M_WTEILE = [["uhr", "Uhr"], ["wetter", "Wetter"], ["akku", "Akku"], ["medien", "Medien"]];
 const WETTER_TXT = { sunny: ["mdi:weather-sunny", "Sonnig"], "clear-night": ["mdi:weather-night", "Klar"], partlycloudy: ["mdi:weather-partly-cloudy", "Teils bewölkt"],
   cloudy: ["mdi:weather-cloudy", "Bewölkt"], fog: ["mdi:weather-fog", "Nebel"], hail: ["mdi:weather-hail", "Hagel"], lightning: ["mdi:weather-lightning", "Gewitter"],
@@ -1833,7 +1847,8 @@ const MenuEditor = {
     const s = this.s, m = this.menu, p = this.mpage;
     // Seiten als Baum (Unterseiten-Verweise ab der Startseite), auf-/zuklappbar und sortierbar
     const byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg]));
-    const kinder = (pg) => (pg.items || []).filter((it) => it.t === "page" && byId[it.target]).map((it) => it.target);
+    // Unterseiten: Kacheln "page" und das Ziel von Licht-Widgets (2026-10-29)
+    const kinder = (pg) => (pg.items || []).map((it) => (it.t === "page" ? it.target : it.ziel)).filter((z) => z && byId[z]);
     const zu = this._mZu();
     const seen = new Set(), rows = [];
     const walk = (id, depth, parent) => {
@@ -1858,18 +1873,27 @@ const MenuEditor = {
     const markiere = (id) => { const pg = byId[id]; if (!pg) return; for (const kid of kinder(pg)) if (!seen.has(kid)) { seen.add(kid); markiere(kid); } };
     for (const id of zu) if (seen.has(id)) markiere(id);
     const rest = m.pages.filter((pg) => pg.popup && !pg.startseite);
+    // Unterseiten von Popups stehen unter ihrem Popup (2026-10-29, Nutzer: "normale Seiten und Popups")
+    const popupKinder = {};
+    for (const pg of rest) {
+      const vorher = rows.length;
+      seen.add(pg.id);
+      if (!zu.has(pg.id)) for (const kid of kinder(pg)) walk(kid, 1, pg.id);
+      popupKinder[pg.id] = rows.splice(vorher).join("");
+    }
     const lose = m.pages.filter((pg) => !seen.has(pg.id) && !pg.popup && !pg.startseite);
     const pages = rows.join("")
-      + (lose.length ? '<div class="pgsep">Nicht im Menü – auf eine Seite oben ziehen oder „Einhängen“</div>' + lose.map((pg) => `<div class="pgr" draggable="true" data-pgid="${esc(pg.id)}" data-pgpar=""><span class="tog0"></span><button class="pg ${pg.id === p?.id ? "on" : ""}" data-a="mpage" data-id="${esc(pg.id)}">
+      + (lose.length ? '<div class="pgsep">Ohne Verweis – auf eine Seite oben ziehen</div>' + lose.map((pg) => `<div class="pgr" draggable="true" data-pgid="${esc(pg.id)}" data-pgpar=""><span class="tog0"></span><button class="pg ${pg.id === p?.id ? "on" : ""}" data-a="mpage" data-id="${esc(pg.id)}">
           <ha-icon class="pic" icon="mdi:link-variant-off"></ha-icon><span><b>${esc(pg.title || pg.id)}</b><small>${(pg.items || []).length} Einträge</small></span></button></div>`).join("") : "")
       + '<div class="pgsep">Popups<span class="grow"></span><button class="btn small" data-a="maddpopup" title="Neues Popup – leer oder aus einer Vorlage"><ha-icon icon="mdi:plus"></ha-icon>Popup</button></div>'
       + rest.map((pg) => `<div class="pgr"><span class="tog0"></span><button class="pg ${pg.id === p?.id ? "on" : ""}" data-a="mpage" data-id="${esc(pg.id)}">
-          <ha-icon class="pic" icon="${pg.popup ? "mdi:message-badge-outline" : "mdi:card-outline"}"></ha-icon><span><b>${esc(pg.title || pg.id)}</b><small>${pg.popup ? ((pg.popup.open || []).length ? `${pg.popup.open.length} Auslöser` : "ohne Auslöser") : "ohne Auslöser – nur per HA-Dienst"} · ${(pg.items || []).length} Einträge</small></span></button></div>`).join("");
+          <ha-icon class="pic" icon="${pg.popup ? "mdi:message-badge-outline" : "mdi:card-outline"}"></ha-icon><span><b>${esc(pg.title || pg.id)}</b><small>${pg.popup ? ((pg.popup.open || []).length ? `${pg.popup.open.length} Auslöser` : "ohne Auslöser") : "ohne Auslöser – nur per HA-Dienst"} · ${(pg.items || []).length} Einträge</small></span></button></div>${popupKinder[pg.id] || ""}`).join("");
     return `<div class="mbar">
         <label class="inl2" title="Erste Seite, wenn das Menü aufgeht">Menü beginnt mit <select data-mf="start">${m.pages.filter((pg) => !pg.startseite).map((pg) => `<option value="${esc(pg.id)}" ${pg.id === m.start ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}</select></label>
         <button class="btn small ghost" data-a="werk_menu" title="Menü (alle Seiten und Popups) aus der Werkseinstellung übernehmen"><ha-icon icon="mdi:backup-restore"></ha-icon>Standardmenü laden</button>
         <label class="inl2" title="Rahmen der Markierung, Regler und Zurück-Knopf im ganzen Menü">Hervorhebung
           <select data-mf="hl">${M_FOKUSFARBEN.map(([v, n]) => `<option value="${v}" ${(m.hl || "") === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        <button class="btn small ghost" data-a="o_jetzt" title="„Jetzt läuft“-Player: was Medien-Einträge und -Widgets zeigen (gilt für alle Remotes)"><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon>Wiedergabe …</button>
       </div>
       <div class="mmain ${s.mitem != null ? "editing" : ""}">
         <div class="mpages"><h3>Seiten<span class="grow"></span>${this.s.clip?.type === "page" ? `<button class="btn small" data-a="mpastepage" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen</button>` : ""}<button class="btn small" data-a="maddpage"><ha-icon icon="mdi:plus"></ha-icon>Seite</button></h3>${pages}</div>
@@ -1880,17 +1904,21 @@ const MenuEditor = {
 
   // Seitenbaum (2026-10-27): Weg von der Startseite zur Seite (Elternseiten ueber die Unterseiten-Kacheln)
   _mEltern() {
-    const m = this.menu, byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg])), eltern = {}, q = [m.start];
-    eltern[m.start] = null;
+    // auch von Popups aus und ueber das "ziel" von Licht-Widgets (2026-10-29)
+    const m = this.menu, byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg])), eltern = {}, q = [m.start, ...m.pages.filter((pg) => pg.popup).map((pg) => pg.id)];
+    for (const id of q) eltern[id] = null;
     while (q.length) {
       const id = q.shift();
-      for (const it of byId[id]?.items || []) if (it.t === "page" && byId[it.target] && !(it.target in eltern)) { eltern[it.target] = id; q.push(it.target); }
+      for (const it of byId[id]?.items || []) {
+        const z = it.t === "page" ? it.target : it.ziel;
+        if (z && byId[z] && !(z in eltern)) { eltern[z] = id; q.push(z); }
+      }
     }
     return eltern;
   },
   _mPfadHtml(p) {
     const el = this._mEltern(), weg = [];
-    if (!(p.id in el)) return `<div class="mpfad"><ha-icon icon="mdi:${p.popup ? "message-badge-outline" : "link-variant-off"}"></ha-icon><b>${esc(p.title || p.id)}</b><small>${p.popup ? "Popup" : "nicht im Menü verlinkt"}</small></div>`;
+    if (p.popup || !(p.id in el)) return `<div class="mpfad"><ha-icon icon="mdi:${p.popup ? "message-badge-outline" : "link-variant-off"}"></ha-icon><b>${esc(p.title || p.id)}</b><small>${p.popup ? "Popup" : "nicht im Menü verlinkt"}</small></div>`;
     for (let id = p.id; id != null; id = el[id]) weg.unshift(id);
     const byId = Object.fromEntries(this.menu.pages.map((pg) => [pg.id, pg]));
     return `<div class="mpfad"><ha-icon icon="mdi:home-outline"></ha-icon>${weg.map((id, k) => k === weg.length - 1 ? `<b>${esc(byId[id].title || id)}</b>`
@@ -1915,6 +1943,28 @@ const MenuEditor = {
     this.s.msg = { text: `„${byId[id].title || id}“ hängt jetzt unter „${byId[neu].title || neu}“ (als letzter Eintrag).`, undo: true };
     return true;
   },
+  // Reihenfolge der Remotes (2026-10-29): in der Navigation und in der Uebersicht ziehen, gespeichert in HA
+  _ordnungBind() {
+    const r = this.shadowRoot;
+    r.querySelectorAll(".rgruppe[data-od], .rkarte[data-od]").forEach((el) => {
+      el.draggable = true;
+      el.ondragstart = (e) => { e.dataTransfer.setData("text/x-remote", el.dataset.od); e.dataTransfer.effectAllowed = "move"; el.classList.add("drag"); };
+      el.ondragend = () => r.querySelectorAll("[data-od]").forEach((x) => x.classList.remove("drag", "drop"));
+      el.ondragover = (e) => { if (!e.dataTransfer.types.includes("text/x-remote")) return; e.preventDefault(); el.classList.add("drop"); };
+      el.ondragleave = () => el.classList.remove("drop");
+      el.ondrop = async (e) => {
+        e.preventDefault(); el.classList.remove("drop");
+        const von = e.dataTransfer.getData("text/x-remote"), nach = el.dataset.od, o = this.s.order;
+        if (!von || von === nach || !o.includes(von)) return;
+        const runter = o.indexOf(von) < o.indexOf(nach);   // nach unten gezogen: hinter das Ziel, sonst davor
+        o.splice(o.indexOf(von), 1);
+        o.splice(o.indexOf(nach) + (runter ? 1 : 0), 0, von);
+        this._render();
+        try { this.s.order = (await this._hass.callWS({ type: "esphomeremote_konfig/reihenfolge_save", order: o })).order; }
+        catch (err) { this.s.msg = { err: true, text: "Reihenfolge speichern ging nicht: " + (err.message || err.code) }; this._render(); }
+      };
+    });
+  },
   _mBaumBind() {
     const r = this.shadowRoot;
     r.querySelectorAll(".mpages .pgr").forEach((row) => {
@@ -1935,8 +1985,10 @@ const MenuEditor = {
   },
   _mReachable() {
     const m = this.menu, byId = Object.fromEntries(m.pages.map((pg) => [pg.id, pg])), seen = new Set();
-    const walk = (id) => { const pg = byId[id]; if (!pg || seen.has(id)) return; seen.add(id); for (const it of pg.items || []) if (it.t === "page") walk(it.target); };
+    const kinder = (pg) => { for (const it of pg.items || []) { if (it.t === "page") walk(it.target); if (it.ziel) walk(it.ziel); } };   // ziel: Licht-Widget (2026-10-29)
+    const walk = (id) => { const pg = byId[id]; if (!pg || seen.has(id)) return; seen.add(id); kinder(pg); };
     walk(m.start);
+    for (const pg of m.pages) if (pg.popup) kinder(pg);   // Unterseiten von Popups gelten auch als erreichbar
     return seen;
   },
   _mTrigRows(p, art) {
@@ -2253,6 +2305,7 @@ const MenuEditor = {
       return "";
     };
     const art = it.art || "uhr";
+    if (art === "licht") return this._mLichtVorschau(it, l);
     if (art !== "kombi") return `<span class="wbox">${teil(art)}</span>`;
     let tl = (it.teile || ["uhr", "wetter"]).slice(0, 3);
     const laeuft = ["playing", "paused"].includes(H[it.me]?.state);
@@ -2512,8 +2565,8 @@ const MenuEditor = {
     };
     const sel = (k, opts, std, titel) => `<label>${titel}<select data-mk="${k}">${opts.map(([v, l]) => `<option value="${v}" ${(it[k] ?? std) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
     let h = `<label>Widget<select data-mk="art">${M_WIDGETS.map(([a, l]) => `<option value="${a}" ${a === art ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-      <div class="seg sm" style="margin:6px 0"><button class="${(it.h || 1) >= 2 ? "on" : ""}" data-a="mwgr" data-v="g">Groß (3 Zeilen)</button><button class="${(it.h || 1) < 2 ? "on" : ""}" data-a="mwgr" data-v="s">Schmal (1 Zeile)</button></div>
-      <small class="note">Höhe und Breite lassen sich auch frei ziehen – ab 2 Zeilen gilt die große Darstellung.</small>`;
+      ${art === "licht" ? "" : `<div class="seg sm" style="margin:6px 0"><button class="${(it.h || 1) >= 2 ? "on" : ""}" data-a="mwgr" data-v="g">Groß (3 Zeilen)</button><button class="${(it.h || 1) < 2 ? "on" : ""}" data-a="mwgr" data-v="s">Schmal (1 Zeile)</button></div>
+      <small class="note">Höhe und Breite lassen sich auch frei ziehen – ab 2 Zeilen gilt die große Darstellung.</small>`}`;
     if (W[3]) h += ent("entity", W[3], { weather: "Wetter-Entität", media_player: "Media Player", timer: "Timer", camera: "Kamera" }[W[3]]);
     if (art === "uhr" || (art === "kombi" && (it.teile || ["uhr", "wetter"]).includes("uhr"))) h += sel("datum", [["nach", "Datum unter / rechts neben der Uhrzeit"], ["vor", "Datum über / links vor der Uhrzeit"], ["aus", "Ohne Datum"]], "nach", "Datum");
     if (art === "medien") h += sel("leer", [["", "Immer zeigen („Nichts läuft“)"], ["weg", "Nur während der Wiedergabe – sonst rückt die Seite zusammen"]], "", "Wenn nichts läuft");
@@ -2526,8 +2579,57 @@ const MenuEditor = {
       if (tl.includes("wetter")) h += ent("we", "weather", "Wetter-Entität");
       if (tl.includes("medien")) h += ent("me", "media_player", "Media Player") + sel("mz", [["immer", "Medien immer zeigen"], ["nur", "Medien nur während der Wiedergabe (die anderen teilen sich sonst den Platz)"], ["ueber", "Medien übernimmt das ganze Widget, solange etwas läuft"]], "immer", "Medien");
     }
-    if (art === "medien" || art === "timer" || (art === "kombi" && (it.teile || []).includes("medien"))) h += `<small class="note">${art === "timer" ? "OK / Antippen: Timer starten bzw. anhalten." : "OK / Antippen: Wiedergabe/Pause, ⏮ ⏭ auf dem Display."}</small>`;
+    if (art === "licht") h += this._mLichtEditor(it);
+    if (art === "medien" || art === "timer" || (art === "kombi" && (it.teile || []).includes("medien"))) h += `<small class="note">${art === "timer" ? "OK / Antippen: Timer starten bzw. anhalten." : "OK / Antippen: Wiedergabe/Pause, ⏮ ⏭ auf dem Display."}${art === "timer" ? "" : ' <button class="linkbtn" data-a="o_jetzt">„Jetzt läuft“-Player einstellen …</button>'}</small>`;
     return h;
+  },
+  // Vorschau wie auf der Remote (licht_bauen_): Kopf 34, Lampen 30, je Regler 28, Palette 28, Szenen 30 px
+  _mLichtVorschau(it, l) {
+    const H = this._hass.states, la = it.lichter || [], tl = it.lteile || L_TEILE.map(([k]) => k);
+    const an = la.filter((x) => H[x.e]?.state === "on"), z = H[it.gruppe] || H[an[0]?.e];
+    const hs = z?.attributes.hs_color, k = z?.attributes.color_temp_kelvin;
+    const farbe = !an.length ? "" : z?.attributes.color_mode === "color_temp" && k ? `hsl(${k < 4000 ? 35 : 210} ${k < 4000 ? 100 : 60}% ${k < 4000 ? 70 : 90}%)` : hs ? `hsl(${hs[0]} ${Math.max(hs[1], 25)}% 60%)` : "#ffc870";
+    const bri = z?.attributes.brightness, pct = an.length && bri != null ? Math.round(bri / 2.55) : null;
+    const hoehe = l.h * M_ROW - 8;
+    let y = 34, teile = "";
+    const passt = (h) => y + h <= hoehe + 2 ? (y += h, true) : false;
+    if (la.length > 1 && tl.includes("lampen") && passt(30)) teile += `<span class="lchips"><i class="on">Alle</i>${la.map((x) => `<i class="${H[x.e]?.state === "on" ? "an" : ""}">${esc(x.n || H[x.e]?.attributes.friendly_name || x.e)}</i>`).join("")}</span>`;
+    const regler = (cls, ic, w) => `<span class="lreg ${cls}"><ha-icon icon="${ic}"></ha-icon><span><b style="width:${w}%"></b><u style="left:${w}%"></u></span></span>`;
+    if (tl.includes("hell") && passt(28)) teile += regler("hell", "mdi:brightness-6", pct ?? 60);
+    if (tl.includes("temp") && passt(28)) teile += regler("temp", "mdi:thermometer", k ? Math.round((k - 2000) / 45) : 30);
+    if (tl.includes("farbe") && passt(28)) teile += regler("farbe", "mdi:palette", hs ? Math.round(hs[0] / 3.6) : 10);
+    if (tl.includes("palette") && passt(28)) teile += `<span class="lpal">${L_PAL.map((c) => `<i style="background:${c}"></i>`).join("")}</span>`;
+    if ((it.szenen || []).length && tl.includes("szenen") && passt(30)) teile += `<span class="lsz">${it.szenen.map((x) => `<i>${esc(x.n || H[x.e]?.attributes.friendly_name || x.e)}</i>`).join("")}</span>`;
+    return `<span class="wlicht"><span class="lkopf"><i class="lpw" style="${farbe ? `background:${farbe};color:#111` : ""}"><ha-icon icon="mdi:${an.length ? "lightbulb-on" : "lightbulb"}"></ha-icon></i>
+      <span class="lnm"><b>${esc(it.label || H[it.gruppe]?.attributes.friendly_name || "Licht")}</b><small>${la.length > 1 ? (an.length ? `${an.length} von ${la.length} an` : "alle aus") : an.length ? "an" : "aus"}</small></span>
+      ${pct != null ? `<b class="lpct">${pct} %</b>` : ""}${it.ziel ? '<ha-icon class="lzi" icon="mdi:chevron-right"></ha-icon>' : ""}</span>${teile}</span>`;
+  },
+  // Licht-Widget bearbeiten (2026-10-29): Gruppe, Lampen (mit Kurznamen), Szenen, Unterseite, Teile
+  _mLichtEditor(it) {
+    const H = this._hass.states, name = (e) => H[e]?.attributes.friendly_name || e;
+    const lichter = it.lichter || [], szenen = it.szenen || [];
+    const gruppen = Object.keys(H).filter((e) => e.startsWith("light.") && Array.isArray(H[e].attributes.entity_id)).sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const alle = Object.keys(H).filter((e) => e.startsWith("light.") && H[e].state !== "unavailable" && !lichter.some((l) => l.e === e)).sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const mitglieder = it.gruppe ? H[it.gruppe]?.attributes.entity_id || [] : [];
+    const raum = (it.label || name(it.gruppe || "") || "").toLowerCase().split(/\s+/)[0] || "";
+    const sz = Object.keys(H).filter((e) => (e.startsWith("scene.") || e.startsWith("script.")) && !szenen.some((x) => x.e === e))
+      .sort((a, b) => (raum && name(b).toLowerCase().includes(raum)) - (raum && name(a).toLowerCase().includes(raum)) || name(a).localeCompare(name(b), "de"));
+    const tl = it.lteile || L_TEILE.map(([k]) => k);
+    const faehig = (e) => { const m = H[e]?.attributes.supported_color_modes || []; return [m.some((x) => x !== "onoff") ? "dimmbar" : "", m.includes("color_temp") ? "Weißton" : "", m.some((x) => ["hs", "xy", "rgb", "rgbw", "rgbww"].includes(x)) ? "Farbe" : ""].filter(Boolean).join(" · ") || "nur an/aus"; };
+    return `<div class="seg sm" style="margin:6px 0"><button class="${(it.h || 1) >= 5 ? "on" : ""}" data-a="mlgr" data-v="6">Voll (6 Zeilen)</button><button class="${(it.h || 1) >= 2 && (it.h || 1) < 5 ? "on" : ""}" data-a="mlgr" data-v="2">Kompakt (2)</button><button class="${(it.h || 1) < 2 ? "on" : ""}" data-a="mlgr" data-v="1">1 Zeile</button></div>
+      <label>Gruppe (für „Alle“ und den Schalter)<select data-mk="gruppe"><option value="">— keine: alle Lampen unten —</option>${gruppen.map((e) => `<option value="${esc(e)}" ${e === it.gruppe ? "selected" : ""}>${esc(name(e))}</option>`).join("")}</select></label>
+      ${mitglieder.length ? `<button class="btn small" data-a="mlgruppe"><ha-icon icon="mdi:lightbulb-group-outline"></ha-icon>Lampen der Gruppe übernehmen (${mitglieder.length})</button>` : ""}
+      <label>Lampen (einzeln wählbar, Name kurz halten)</label>
+      <div class="mlliste">${lichter.map((l, i) => `<div class="mlz"><ha-icon icon="mdi:lightbulb-outline"></ha-icon><span><input data-mk="lichter.${i}.n" value="${esc(l.n || "")}" placeholder="${esc(name(l.e))}" maxlength="16"><small>${esc(l.e)} · ${esc(faehig(l.e))}</small></span>
+        <button class="icon sm" data-a="mlweg" data-i="${i}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("") || '<div class="none">noch keine</div>'}</div>
+      <select data-ml="add"><option value="">+ Lampe hinzufügen …</option>${alle.map((e) => `<option value="${esc(e)}">${esc(name(e))}</option>`).join("")}</select>
+      <label>Szenen (Knöpfe unten)</label>
+      <div class="mlliste">${szenen.map((x, i) => `<div class="mlz"><ha-icon icon="mdi:palette-outline"></ha-icon><span><input data-mk="szenen.${i}.n" value="${esc(x.n || "")}" placeholder="${esc(name(x.e))}" maxlength="14"><small>${esc(x.e)}</small></span>
+        <button class="icon sm" data-a="mlszweg" data-i="${i}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("") || '<div class="none">keine</div>'}</div>
+      ${szenen.length < 8 ? `<select data-ml="szene"><option value="">+ Szene hinzufügen …</option>${sz.map((e) => `<option value="${esc(e)}">${esc(name(e))}</option>`).join("")}</select>` : ""}
+      <label>Kopf antippen öffnet<select data-mk="ziel"><option value="">— nichts —</option>${this.menu.pages.filter((pg) => pg.id !== this.mpage?.id && !pg.startseite).map((pg) => `<option value="${esc(pg.id)}" ${pg.id === it.ziel ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}</select></label>
+      <label>Teile (von oben nach unten, was nicht passt, fällt weg)</label><div class="chips">${L_TEILE.map(([k, n]) => `<button class="chip ${tl.includes(k) ? "on" : ""}" data-a="mlteil" data-v="${k}">${n}</button>`).join("")}</div>
+      <small class="note">Runder Knopf: alle bzw. die gewählte Lampe an/aus. Lampen-Chips wählen, was die Regler steuern. Was eine Lampe nicht kann, ist gedimmt (Farbtemperatur geht bei Farblampen als Farbe). OK-Taste: an/aus, Links/Rechts: dunkler/heller.</small>`;
   },
   // Gruppe im Eintrags-Editor (2026-10-28): auf-/zuklappbar, zugeklappt mit Kurzinfo; offen/zu gilt fuer alle Eintraege
   _mGrp(key, icon, titel, info, inhalt, auf) {
@@ -2727,6 +2829,21 @@ const MenuEditor = {
       case "mkweg": this._mkSetzen(t.dataset.k, undefined); this._touch(); return true;
       case "mkpick": s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", mk: t.dataset.k, ...(t.dataset.dom ? { domains: [t.dataset.dom] } : {}) }; return true;
       case "mwgr": { const it = this.mitem; it.w = 6; it.h = t.dataset.v === "g" ? 3 : 1; this._touch(); return true; }
+      case "mlgr": { const it = this.mitem; it.w = 6; it.h = Number(t.dataset.v); this._touch(); return true; }
+      case "mlgruppe": {   // Lampen der Gruppe uebernehmen (vorhandene Namen bleiben)
+        const it = this.mitem, H = this._hass.states, alt = Object.fromEntries((it.lichter || []).map((l) => [l.e, l]));
+        it.lichter = (H[it.gruppe]?.attributes.entity_id || []).filter((e) => e.startsWith("light.")).slice(0, 12).map((e) => alt[e] || { e });
+        this._touch(); return true;
+      }
+      case "mlweg": { const it = this.mitem; it.lichter.splice(i, 1); this._touch(); return true; }
+      case "mlszweg": { const it = this.mitem; it.szenen.splice(i, 1); if (!it.szenen.length) delete it.szenen; this._touch(); return true; }
+      case "mlteil": {
+        const it = this.mitem, v = t.dataset.v, l = [...(it.lteile || L_TEILE.map(([k]) => k))], j = l.indexOf(v);
+        if (j >= 0) l.splice(j, 1); else l.push(v);
+        it.lteile = L_TEILE.map(([k]) => k).filter((k) => l.includes(k));
+        if (it.lteile.length === L_TEILE.length) delete it.lteile;
+        this._touch(); return true;
+      }
       case "mwteil": {   // Kombi: Teil an/aus (hoechstens 3)
         const it = this.mitem, v = t.dataset.v, l = [...(it.teile || ["uhr", "wetter"])];
         const j = l.indexOf(v);
@@ -2892,10 +3009,18 @@ const MenuEditor = {
       this._touch(); return true;
     }
     if (t.dataset.vl && this.s.modal?.type === "vorlage") { this.s.modal[t.dataset.vl] = t.value; return t.tagName === "SELECT"; }
+    if (t.dataset.ml && this.mitem && t.value) {   // Licht-Widget: Lampe/Szene hinzufuegen
+      const it = this.mitem;
+      if (t.dataset.ml === "add") (it.lichter ||= []).push({ e: t.value });
+      else (it.szenen ||= []).push({ e: t.value });
+      this._touch(); return true;
+    }
     if (t.dataset.mk && this.mitem) {
       let v = t.type === "checkbox" ? t.checked : t.value;
       if (t.dataset.mk === "wenn.neg") v = !!t.value;
-      this._mkSetzen(t.dataset.mk, v, t.dataset.typ); this._touch(); return true;
+      this._mkSetzen(t.dataset.mk, v, t.dataset.typ);
+      if (t.dataset.mk === "art" && v === "licht") { this.mitem.w = 6; this.mitem.h = Math.max(this.mitem.h || 1, 6); }
+      this._touch(); return true;
     }
     if (t.dataset.mkq && this.mitem) {
       const k = t.dataset.mkq, it = this.mitem;
@@ -3730,6 +3855,7 @@ const HomeEditor = {
       ${zeile(!p, "hstdsel", "", "mdi:home-outline", "Standard (eingebaut)", std.length ? "für " + std.join(", ") : "von keiner Aktivität benutzt")}
       ${starts.map((pg) => { const f = fuer(pg.id); return zeile(p?.id === pg.id, "mpage", pg.id, "mdi:home-variant-outline", pg.title || pg.id, `${f.length ? "für " + f.join(", ") : "keiner Aktivität zugeordnet"} · ${(pg.items || []).length} Einträge`); }).join("")}
       <small class="note">Eigene Startseiten zeigt die Remote zwischen Statusleiste und Aktivitäten-Leiste – mit allen Einträgen und Widgets wie im Menü.</small>
+      <button class="btn small ghost" data-a="o_jetzt" title="„Jetzt läuft“-Player: was Wiedergabe-Karte und Medien-Widgets zeigen (gilt für alle Remotes)"><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon>Wiedergabe …</button>
       ${this._hLeisteHtml()}`;
   },
   // Aussehen der Aktivitaetsleiste (2026-10-28) - gilt fuer alle Startseiten, auch die eingebaute
@@ -5391,8 +5517,9 @@ const FirmwareTab = {
     const beschaeftigt = (fw.job && !fw.job.fertig) || (fw.usb && !fw.usb.fertig);
     const knopf = weg === "" ? ["download", "Bauen + herunterladen"] : weg === "usb" ? ["usb-port", "Per USB flashen"] : ["upload", "Installieren"];
     const meins = (fw.job && fw.job.dateien?.includes(g.datei) && (fw.job.dateien.length === 1 || !fw.job.fertig)) || (fw.usb && fw.usb.datei === g.datei);
+    const wlan = g.art === "remote" && g.name ? `<span class="wlanp" data-d="${esc(g.name)}">${this._wlanKnopf(g.name)}</span>` : "";
     return `<div class="karte hw">
-      <div class="kopf"><ha-icon icon="${g.art === "dock" ? "mdi:dock-window" : g.art === "test" ? "mdi:clipboard-check-outline" : "mdi:remote"}"></ha-icon><b>${esc(g.friendly || g.name)}</b><small>${esc(g.datei)}${g.fw ? ` · Version ${esc(g.fw)}` : ""}</small><span class="grow"></span>${g.veraltet ? '<span class="badge warn">Neue Version</span>' : ""}${this._fwBadges(g)}</div>
+      <div class="kopf"><ha-icon icon="${g.art === "dock" ? "mdi:dock-window" : g.art === "test" ? "mdi:clipboard-check-outline" : "mdi:remote"}"></ha-icon><b>${esc(g.friendly || g.name)}</b>${wlan}<small>${esc(g.datei)}${g.fw ? ` · Version ${esc(g.fw)}` : ""}</small><span class="grow"></span>${g.veraltet ? '<span class="badge warn">Neue Version</span>' : ""}${this._fwBadges(g)}</div>
       ${extra}
       ${g.alt ? `<div class="haweg klein"><ha-icon icon="mdi:file-alert-outline"></ha-icon><div><b>Datei in alter Form</b>
         <span>${g.art === "dock" ? "Sie bindet <code>templates/dock-basis.yaml</code> ein – die gibt es nur beim Entwickler." : "Sie holt die Firmware von <code>@master</code> bzw. reicht die Passwörter nicht durch – das Bauen scheitert."}
@@ -5485,7 +5612,7 @@ const FirmwareTab = {
     });
   },
   async _fwStarten(dateien, port) {
-    const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_installieren", dateien, port });
+    const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_installieren", dateien, port, wlan_nachher: Number(this.s.fw.wlanNachher || 0) });
     this.s.fw.job = { job_id: r.job_id, dateien, port, titel: "", status: "laeuft", fertig: false, log: [] };
     return this._fwFolgen(r.job_id);
   },
@@ -5604,6 +5731,7 @@ const FirmwareTab = {
   _fwHtml() {
     const fw = this.s.fw;
     if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return `<div class="fw">Lade …</div>`; }
+    if (fw.wlanNachher == null) { try { fw.wlanNachher = Number(localStorage.getItem("esphomeremote_fwwlan") || 0); } catch (e) { fw.wlanNachher = 0; } }
     if (fw.fehlerWs) return `<div class="fw"><div class="msg err">${esc(fw.fehlerWs)}</div></div>`;
     const rem = fw.geraete.filter((g) => g.art === "remote");
     // ausgeschaltete Docks nicht mitnehmen (Remotes schlafen dagegen oft - die weckt das Wartungsfenster)
@@ -5613,6 +5741,8 @@ const FirmwareTab = {
     const sammel = fw.job && fw.job.dateien?.length > 1 ? `<div class="karte hw">${this._fwJobHtml()}</div>` : "";
     return `<div class="fw">
       <div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware &amp; Geräte</h2><span class="grow"></span>
+        <label class="inl2" title="Remotes mit „Nur Bluetooth“: wie lange ihr WLAN nach einem Update noch an bleibt">WLAN beim Update
+          <select data-fwwlan>${[[0, "nur fürs Update"], [10, "danach noch 10 min"], [30, "danach noch 30 min"]].map(([v, n]) => `<option value="${v}" ${Number(fw.wlanNachher || 0) === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
         <button class="btn small" data-a="fw_reload" title="Neu laden"><ha-icon icon="mdi:refresh"></ha-icon></button>
         <button class="btn primary" data-a="fw_alle" ${updates.length && !beschaeftigt ? "" : "disabled"}><ha-icon icon="mdi:update"></ha-icon>Alle aktualisieren${updates.length ? ` (${updates.length})` : ""}</button></div>
       <p class="hint">${fw.lokal ? `Eine Quelle für alle: Remotes entstehen aus <code>esphome/templates/remote.yaml</code> und <code>remote-halink.yaml</code> (vor jedem Bauen neu erzeugt), Docks aus <code>esphome/templates/dock-basis.yaml</code>.`
@@ -5631,6 +5761,7 @@ const FirmwareTab = {
         <button class="btn small" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
       ${rem.map((g) => this._fwKarte(g, g.bruecke ? `<div class="ents">Feste IP <code>${esc(g.bruecke.ip || "per Router")}</code> · Bluetooth-Brücke in HA <code>127.0.0.1:${g.bruecke.port}</code>${g.bruecke.ota ? " · Updates auch über Bluetooth" : ""}${g.bruecke.aktiv ? "" : ` <span class="badge warn">Brücke läuft nicht</span>`}</div>` : "")).join("") || `<div class="karte">Keine.</div>`}
       ${this._fwDockHtml()}
+      ${this._fwStreamerHtml()}
       ${this._fwTestHtml()}
     </div>`;
   },
@@ -6172,7 +6303,9 @@ const EinstTab = {
     }
     return false;
   },
-  _jetztHtml() {
+  // Wiedergabe (2026-10-29): kein eigener Menuepunkt mehr - Dialog aus Menue/Startseite/Medien-Eintrag (mitStreamer=false),
+  // die Streamer-App steht auf der Seite "Firmware & Geraete"
+  _jetztHtml(mitStreamer = true) {
     const d = this.s.jetzt, st = this._hass.states;
     if (!d) { this._jetztLaden(); return `<div class="einst">Lade …</div>`; }
     if (d.fehler) return `<div class="einst"><div class="msg err">${esc(d.fehler)}</div></div>`;
@@ -6200,7 +6333,18 @@ const EinstTab = {
       <p class="hint">Ein <b>„Jetzt läuft“-Player</b> fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu <b>einem</b> Media Player zusammen – er zeigt immer, was gerade läuft (Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher). Welche Remote welchen nutzt, stellst du unter <i>Verknüpfungen</i> ein. Jede Quelle ist optional; Änderungen gelten sofort.</p>
       <div class="egrid">${karten}</div>
       <p><button class="btn" data-a="jz_add"><ha-icon icon="mdi:plus"></ha-icon>„Jetzt läuft“-Player anlegen</button></p>
-      ${this._strmHtml(name)}</div>`;
+      ${mitStreamer ? this._strmHtml(name) : `<small class="note">Streamer (App, Titel, Cover) richtest du unter <button class="linkbtn" data-a="o_geh" data-b="fw">Firmware &amp; Geräte</button> ein.</small>`}</div>`;
+  },
+  _jetztModal() {
+    return `<div class="modal" data-a="modalbg"><div class="dlg wide jzdlg">
+      <div class="dh"><h2><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon> Wiedergabe („Jetzt läuft“)</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      ${this._jetztHtml(false)}</div></div>`;
+  },
+  // Streamer auf der Firmware-Seite (2026-10-29)
+  _fwStreamerHtml() {
+    if (!this.s.strm) { this._jetztLaden(); return ""; }
+    const st = this._hass.states, name = (e) => st[e]?.attributes.friendly_name || e;
+    return `<div class="karte hw fwstrm">${this._strmHtml(name)}</div>`;
   },
   // Streamer-App verwalten (2026-10-26): Status, Einrichten/Aktualisieren, Deinstallieren - ueber die ADB-Entitaet
   _strmAppHtml(x, si) {
@@ -7110,7 +7254,7 @@ kbd { font-family:inherit; font-size:10.5px; line-height:1.4; padding:1px 6px; b
 .rk:hover { background:color-mix(in srgb, var(--primary-text-color) 6%, transparent); } .rgruppe.auf .rk:hover { background:none; }
 .ava { position:relative; width:40px; height:40px; flex:0 0 40px; display:inline-flex; align-items:center; justify-content:center; }
 .ava svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
-.ava b { font-size:14px; } .ava svg.mini { position:static; transform:none; inset:auto; } .rkopf h2 svg.mini { vertical-align:-5px; margin-right:8px; } .ava::after { content:""; position:absolute; right:-1px; bottom:-1px; width:12px; height:12px; border-radius:50%; border:2.5px solid var(--side-bg); background:#6b7280; }
+.ava b { font-size:14px; } .ava svg.mini { position:relative; z-index:1; transform:none; inset:auto; flex:none; } .rkopf h2 svg.mini { vertical-align:-5px; margin-right:8px; } .ava::after { content:""; position:absolute; right:-1px; bottom:-1px; width:12px; height:12px; border-radius:50%; border:2.5px solid var(--side-bg); background:#6b7280; }
 .ava.wlan::after { background:var(--ok); } .ava.ble::after { background:var(--blau); } .ava.dock::after { background:#a855f7; }
 svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, transparent); } svg .rv { fill:none; stroke-linecap:round; transition:stroke-dasharray .6s ease; }
 .rkt { display:flex; flex-direction:column; min-width:0; flex:1; line-height:1.3; } .rkt b { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -7133,6 +7277,26 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .syncw { position:relative; }
 .pill { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--rand); background:var(--card); color:var(--primary-text-color); border-radius:999px; padding:5px 13px 5px 5px; font-size:13px; cursor:pointer; white-space:nowrap; }
 .pill:hover, .pill.auf { border-color:color-mix(in srgb, var(--primary-text-color) 28%, transparent); }
+.mlliste { display:flex; flex-direction:column; gap:4px; margin:4px 0; } .mlz { display:flex; align-items:center; gap:8px; } .mlz > span { flex:1; display:flex; flex-direction:column; min-width:0; } .mlz small { opacity:.6; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wlicht { position:absolute; inset:2px 4px; display:flex; flex-direction:column; gap:0; overflow:hidden; text-align:left; }
+.wlicht .lkopf { display:flex; align-items:center; gap:8px; height:34px; flex:none; }
+.wlicht .lpw { width:28px; height:28px; border-radius:50%; background:#2e3643; display:inline-flex; align-items:center; justify-content:center; flex:none; } .wlicht .lpw ha-icon { --mdc-icon-size:17px; }
+.wlicht .lnm { display:flex; flex-direction:column; min-width:0; flex:1; line-height:1.15; } .wlicht .lnm b { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .wlicht .lnm small { font-size:10px; opacity:.6; }
+.wlicht .lpct { font-size:13px; } .wlicht .lzi { --mdc-icon-size:16px; opacity:.6; }
+.wlicht .lchips { display:flex; gap:4px; height:30px; align-items:center; overflow:hidden; flex:none; } .wlicht .lchips i { font-style:normal; font-size:10px; padding:4px 9px; border-radius:11px; background:#2e3643; white-space:nowrap; opacity:.6; } .wlicht .lchips i.an { opacity:1; } .wlicht .lchips i.on { background:#3b82f6; opacity:1; }
+.wlicht .lreg { display:flex; align-items:center; gap:8px; height:28px; flex:none; } .wlicht .lreg ha-icon { --mdc-icon-size:15px; opacity:.6; }
+.wlicht .lreg > span { position:relative; flex:1; height:8px; border-radius:4px; background:#4b5563; margin-right:6px; } .wlicht .lreg b { position:absolute; inset:0 auto 0 0; border-radius:4px; background:#ffd58a; }
+.wlicht .lreg u { position:absolute; top:50%; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%; background:#f1f3f5; border:2px solid #111; }
+.wlicht .lreg.temp > span { background:linear-gradient(90deg,#ff9f45,#dde8ff); } .wlicht .lreg.farbe > span { background:linear-gradient(90deg,red,#ff0,lime,cyan,blue,#f0f,red); } .wlicht .lreg.temp b, .wlicht .lreg.farbe b { display:none; }
+.wlicht .lpal { display:flex; justify-content:space-evenly; align-items:center; height:28px; flex:none; } .wlicht .lpal i { width:16px; height:16px; border-radius:50%; border:2px solid #111; }
+.wlicht .lsz { display:flex; flex-wrap:wrap; gap:4px; } .wlicht .lsz i { font-style:normal; font-size:10px; padding:5px 9px; border-radius:7px; background:#2e3643; }
+.linkbtn { background:none; border:0; padding:0; color:var(--acc,#03a9f4); cursor:pointer; font:inherit; text-decoration:underline; }
+[data-od].drag { opacity:.4; } [data-od].drop { outline:2px dashed var(--acc,#03a9f4); outline-offset:2px; border-radius:12px; }
+.wlanw { position:relative; display:inline-flex; } .pill .pfeil { --mdc-icon-size:16px; color:var(--sec); margin-left:-4px; }
+.wlanmenu { position:absolute; top:calc(100% + 6px); right:0; z-index:20; min-width:190px; display:flex; flex-direction:column; padding:6px; border-radius:12px; background:var(--card); border:1px solid var(--rand); box-shadow:0 8px 24px rgba(0,0,0,.3); }
+.wlanmenu small { color:var(--sec); padding:4px 8px; } .wlanmenu hr { border:0; border-top:1px solid var(--rand); margin:4px 0; width:100%; }
+.wlanmenu button { text-align:left; background:none; border:0; color:inherit; padding:8px; border-radius:8px; cursor:pointer; font:inherit; } .wlanmenu button:hover { background:var(--flaeche); }
+.karte.hw .kopf .wlanw { margin-left:10px; } .karte.hw .kopf .wlanmenu { left:0; right:auto; }
 .pill .pd { width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--flaeche); color:var(--sec); } .pill .pd ha-icon { --mdc-icon-size:16px; }
 .pill.ok .pd { background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
 .pill.warn .pd, .pill.wait .pd { background:color-mix(in srgb, var(--gelb) 20%, transparent); color:var(--gelb); }
@@ -7449,7 +7613,7 @@ const SEITEN_REMOTE = [
 // Verknuepfungen je Remote (cfg.ents, spiegel.py): welche HA-Entitaeten die eingebauten Funktionen nutzen
 const VERKN = [
   ["jetzt", "Wiedergabe („Jetzt läuft“)", "mdi:play-box-multiple-outline", ["media_player"],
-    "Wiedergabe-Karte der Startseite, Media-Seite und Musik-Anzeige zeigen Titel, Cover und Position dieses Players. Am besten ein „Jetzt läuft“-Player (Seite Wiedergabe), der Fernseher, Streamer und Musik zusammenfasst."],
+    "Wiedergabe-Karte der Startseite, Media-Seite und Musik-Anzeige zeigen Titel, Cover und Position dieses Players. Am besten ein „Jetzt läuft“-Player (Menü → „Wiedergabe …“), der Fernseher, Streamer und Musik zusammenfasst."],
   ["tv", "Fernseher", "mdi:television", ["media_player"],
     "Ob der Fernseher läuft: längere Energie-Zeiten bei laufendem TV, Knopf „Fernseher einschalten“ auf der Media-Seite."],
   ["multiroom", "Multiroom-Musik", "mdi:speaker-multiple", ["media_player"],
@@ -7462,7 +7626,6 @@ const VERKN = [
     "Läuft dieser Timer, zeigt die Statusleiste den Countdown."],
 ];
 const SEITEN_SYSTEM = [
-  ["jetzt", "Wiedergabe", "mdi:play-box-multiple-outline"],
   ["klingel", "Klingel", "mdi:doorbell-video"],
   ["dock", "Dockingstation", "mdi:dock-window"],
   ["ircodes", "IR-Codes", "mdi:remote-tv"],
@@ -7599,11 +7762,11 @@ const OberflaecheTab = {
   _remListeHtml() {
     const s = this.s;
     return s.order.map((d) => {
-      const L = this._live(d), auf = d === s.dev;
+      const L = this._live(d), auf = d === s.dev && !s.remZu;
       const name = devName(d);
       const sub = auf ? `<div class="subnav">${SEITEN_REMOTE.map(([m, t, i]) => `<button class="ni ${s.bereich === "remote" && s.mode === m ? "on" : ""}" data-a="o_geh" data-b="remote" data-m="${m}" title="${esc(t)}">
           <ha-icon icon="${i}"></ha-icon><span>${esc(t)}</span>${m === "einst" && (s.meta[d]?.einst_offen || []).length ? '<i class="punkt" title="Änderungen unterwegs"></i>' : ""}</button>`).join("")}</div>` : "";
-      return `<div class="rgruppe ${auf ? "auf" : ""}"><button class="rk ${auf && s.bereich === "remote" ? "on" : ""}" data-a="o_rem" data-d="${esc(d)}" title="${esc(name)} · ${esc(L.kurz)}">
+      return `<div class="rgruppe ${auf ? "auf" : ""}" data-od="${esc(d)}" title="Ziehen = Reihenfolge ändern"><button class="rk ${auf && s.bereich === "remote" ? "on" : ""}" data-a="o_rem" data-d="${esc(d)}" title="${esc(name)} · ${esc(L.kurz)}">
           <span class="ava ${L.zustand}">${ring(L.akku ?? 0, akkuFarbe(L.akku), 5)}${miniRemote(this._rf(d), 22)}</span>
           <span class="rkt"><b>${esc(name)}</b><small>${esc(L.kurz)}</small></span>${s.dirty[d] ? '<i class="punkt warn" title="nicht gespeichert"></i>' : ""}</button>${sub}</div>`;
     }).join("") || `<div class="none">Keine Remote</div>`;
@@ -7620,14 +7783,43 @@ const OberflaecheTab = {
       ${rem ? this._syncPillHtml() : ""}
     </header>`;
   },
-  // WLAN der Remote einschalten (2026-10-27, Nutzerwunsch): ueber "Wartungsfenster jetzt" bzw. das Dock (Flag "w" im
-  // Stand - die Remote fragt das Dock, solange sie wach ist, und schaltet ihr WLAN dann 3 min ein)
-  _wlanKnopf() {
-    const s = this.s, d = s.dev, st = this._hass.states[`binary_sensor.${d.replace(/-/g, "_")}_wlan_aktiv`]?.state;
-    if (st === "on") return `<span class="pill ok" title="Das WLAN der Remote ist gerade an"><span class="pd"><ha-icon icon="mdi:wifi"></ha-icon></span><span class="ptx">WLAN an</span></span>`;
-    const warte = s.wlanAn?.[d] && Date.now() - s.wlanAn[d] < 180000;
-    return `<button class="pill ${warte ? "wait" : ""}" data-a="o_wlan" title="${warte ? "Angefordert – die Remote schaltet es ein, sobald sie das Dock fragt (Taste drücken / Display an)" : "WLAN der Remote für ein paar Minuten einschalten"}">
-      <span class="pd"><ha-icon icon="${warte ? "mdi:wifi-sync" : "mdi:wifi-off"}"></ha-icon></span><span class="ptx">${warte ? "WLAN angefordert" : "WLAN einschalten"}</span></button>`;
+  // WLAN einer Remote (2026-10-29, Nutzer: "verwirrend"): echter Zustand aus "WLAN aktiv" und "WLAN-Zustand"
+  // (Grund|Restsekunden, Firmware ab 2026.10.29.3) - Restzeit zaehlt hier weiter. Klick: Menue mit Dauer bzw. "Jetzt aus".
+  _wlanInfo(d) {
+    const slug = d.replace(/-/g, "_"), H = this._hass.states;
+    const an = H[`binary_sensor.${slug}_wlan_aktiv`]?.state === "on";
+    const z = H[`sensor.${slug}_wlan_zustand`];
+    let grund = "", rest = 0;
+    if (z && !["unknown", "unavailable"].includes(z.state)) {
+      const [g, r] = z.state.split("|");
+      grund = g;
+      if (r) { rest = Math.round(Number(r) - (Date.now() - new Date(z.last_changed).getTime()) / 1000); if (rest <= 0) { rest = 0; grund = an ? "geht aus" : "aus"; } }
+    }
+    return { an, grund, rest };
+  },
+  _wlanKnopf(d = this.s.dev) {
+    const s = this.s, w = this._wlanInfo(d);
+    const KURZ = [["kein Dock", "kein Dock"], ["Dock", "Dock nicht erreicht"], ["Sprache", "Sprache an HA"], ["Konfiguration", "Laden"], ["Bild", "Laden"]];
+    const g = w.grund, kurz = (KURZ.find(([k]) => g.includes(k)) || [, g])[1];
+    const zeit = w.rest ? ` ${Math.floor(w.rest / 60)}:${String(w.rest % 60).padStart(2, "0")}` : "";
+    const warte = !w.an && s.wlanAn?.[d] && Date.now() - s.wlanAn[d] < 180000;
+    const [cls, icon, text, tip] = w.an
+      ? (g === "immer" ? ["ok", "mdi:wifi", "WLAN immer an", "„Nur Bluetooth“ ist auf der Remote aus – das WLAN bleibt an."]
+        : ["ok", "mdi:wifi", `WLAN an${kurz && !["aus", "geht aus"].includes(g) ? " · " + kurz : ""}${zeit}`, g ? `Grund: ${g}${zeit ? " – geht in" + zeit + " min aus" : ""}` : "Das WLAN der Remote ist gerade an"])
+      : warte ? ["wait", "mdi:wifi-sync", "WLAN angefordert", "Die Remote schaltet es ein, sobald sie das Dock fragt (Taste drücken / Display an)"]
+        : ["", "mdi:wifi-off", "WLAN aus", "WLAN der Remote einschalten"];
+    const offen = s.wlanMenu === d;
+    const opt = (sek, t) => `<button data-a="o_wlan" data-d="${esc(d)}" data-s="${sek}">${t}</button>`;
+    return `<span class="wlanw"><button class="pill ${cls}" data-a="o_wlanm" data-d="${esc(d)}" title="${esc(tip)}"><span class="pd"><ha-icon icon="${icon}"></ha-icon></span><span class="ptx">${esc(text)}</span><ha-icon class="pfeil" icon="mdi:chevron-down"></ha-icon></button>
+      ${offen ? `<span class="wlanmenu"><small>WLAN einschalten für</small>${opt(180, "3 Minuten")}${opt(600, "10 Minuten")}${opt(1800, "30 Minuten")}${opt(28800, "bis ich es ausschalte")}${w.an && g !== "immer" ? `<hr>${opt(0, "Jetzt aus")}` : ""}</span>` : ""}</span>`;
+  },
+  // Restzeiten jede Sekunde nachfuehren (Kopf und Firmware-Seite)
+  _wlanTicken() {
+    if (!this.isConnected) return;
+    const r = this.shadowRoot;
+    const wp = r?.querySelector("#wlanp");
+    if (wp && this.s.bereich === "remote") { const h = this._wlanKnopf(); if (h !== this._wlanAlt) { this._wlanAlt = h; wp.innerHTML = h; } }
+    for (const el of r?.querySelectorAll(".wlanp[data-d]") || []) { const h = this._wlanKnopf(el.dataset.d); if (h !== el._alt) { el._alt = h; el.innerHTML = h; } }
   },
   _syncPillKnopf() {
     const s = this.s, z = this._syncStand();
@@ -8035,7 +8227,7 @@ const OberflaecheTab = {
     const fakt = (icon, label, wert, cls = "") => `<div class="fakt ${cls}"><ha-icon icon="${icon}"></ha-icon><span><small>${label}</small><b title="${esc(wert)}">${esc(wert)}</b></span></div>`;
     const syncT = { dirty: ["Nicht gespeichert", "warn"], ok: ["Aktiv", "ok"], laedt: [z.text, "busy"], verbinde: ["Verbindet …", "busy"], fehler: ["Fehler", "err"], wartet: ["Wartet auf die Remote", "warn"], unbekannt: ["Unbekannt", ""] }[z.art];
     const fwT = !g ? ["–", ""] : g.vorgemerkt ? ["Update vorgemerkt", "busy"] : g.update ? ["Update bereit", "warn"] : g.geflasht ? [`Aktuell${g.version ? " · " + g.version : ""}`, "ok"] : ["Nicht geflasht", ""];
-    return `<article class="rkarte ${L.zustand}">
+    return `<article class="rkarte ${L.zustand}" data-od="${esc(d)}">
       <header><div class="ringw">${ring(L.akku ?? 0, akkuFarbe(L.akku))}<div class="rw"><b>${L.akku != null ? Math.round(L.akku) : "–"}<small>%</small></b>${L.laden ? '<ha-icon icon="mdi:lightning-bolt"></ha-icon>' : ""}</div></div>
         <div class="rkopf"><h2>${miniRemote(this._rf(d), 26)}${esc(devName(d))}</h2><span class="zst ${L.zustand}"><i></i>${esc(L.ztext)}</span>
           <small>${L.laden ? "Lädt am Kabel" : L.restH ? `Akku reicht noch ≈ ${fmtStd(L.restH)}` : ""}${L.rate != null && Math.abs(L.rate) >= 0.1 ? ` · ${L.rate > 0 ? "+" : ""}${L.rate.toFixed(1).replace(".", ",")} %/h` : ""}${L.gemeldet ? ` · ${fmtZeit(L.gemeldet)}` : ""}</small></div></header>
@@ -8237,7 +8429,9 @@ const OberflaecheTab = {
     const s = this.s;
     switch (a) {
       case "o_geh": this._geh(t.dataset.b, t.dataset.m); return true;
-      case "o_rem": this._remWahl(t.dataset.d); this._geh("remote", t.dataset.m); return true;
+      case "o_rem":   // nochmal auf die offene Remote: Unterpunkte ein-/ausklappen (2026-10-29)
+        if (t.dataset.d === s.dev && s.bereich === "remote") { s.remZu = !s.remZu; return true; }
+        s.remZu = false; this._remWahl(t.dataset.d); this._geh("remote", t.dataset.m); return true;
       case "o_navauf": s.nav = true; return true;
       case "o_navzu": s.nav = false; return true;
       case "o_pal": s.pal = { q: "", i: 0 }; s.nav = false; return true;

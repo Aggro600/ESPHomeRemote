@@ -49,6 +49,7 @@ WERTE = {
     "h": ("sensor", "tasten_konfiguration", str),
     "t": ("sensor", "tiefschlaf_status", str),
     "n": ("sensor", "letzter_neustart", str),
+    "w": ("sensor", "wlan_zustand", str),   # 2026-10-29: aus | immer | Grund|Restsekunden
 }
 FREI = ("unavailable", "unknown")
 

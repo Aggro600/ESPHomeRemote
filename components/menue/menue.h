@@ -52,10 +52,14 @@ enum Typ : uint8_t { T_TEXT, T_PAGE, T_SPECIAL, T_ACTION, T_TOGGLE, T_LIGHT, T_C
 // sonst schmal (eine Zeile). Kombi: "teile" (bis zu 3 aus uhr/wetter/akku/medien), Wetter "we", Medien "me";
 // "mz" immer | nur (Medien nur waehrend der Wiedergabe) | ueber (Medien uebernimmt waehrend der Wiedergabe).
 // Medien "leer": "weg" = ohne Wiedergabe keine Zeilen (die Seite rueckt zusammen). Kamera "takt" (s), Uhr "datum" vor|nach|aus.
-enum WidgetArt : uint8_t { W_KEIN, W_UHR, W_WETTER, W_AKKU, W_MEDIEN, W_TIMER, W_KAMERA, W_KOMBI };
+// Licht (2026-10-29): "lichter" [{e, n}], "gruppe" (fuer "Alle"), "szenen" [{e, n}], "ziel" (Seite beim Antippen des Kopfs),
+// "lteile" (lampen, hell, temp, farbe, palette, szenen; fehlt = alle, soweit Platz). Bedienung ueber esphomeremote_konfig.licht.
+enum WidgetArt : uint8_t { W_KEIN, W_UHR, W_WETTER, W_AKKU, W_MEDIEN, W_TIMER, W_KAMERA, W_KOMBI, W_LICHT };
 // Rollen der Unter-Widgets (Item::wo)
 enum WRolle : uint8_t { WR_ZEIT, WR_DATUM, WR_W_ICON, WR_W_TEMP, WR_W_TEXT, WR_W_FC, WR_A_WERT, WR_A_ICON, WR_A_BAR, WR_M_TITEL,
-                        WR_M_SUB, WR_M_BAR, WR_M_PLAY, WR_M_BILD, WR_T_ZEIT, WR_T_BAR, WR_T_NAME, WR_K_BILD, WR_K_PH, WR_ANZAHL };
+                        WR_M_SUB, WR_M_BAR, WR_M_PLAY, WR_M_BILD, WR_T_ZEIT, WR_T_BAR, WR_T_NAME, WR_K_BILD, WR_K_PH,
+                        WR_L_POWER, WR_L_ICON, WR_L_NAME, WR_L_INFO, WR_L_PCT, WR_L_CHIPS, WR_L_HELL, WR_L_TEMP, WR_L_FARBE,
+                        WR_L_PAL, WR_L_SZENEN, WR_ANZAHL };
 // T_PLAYER (2026-10-26): Medien-Elemente, jedes frei platzierbar mit eigener Entitaet (Item::teil):
 // t "mtitel" = Titel/Interpret/Zustand, "mtaste" (fn) = Taste, "vpreset" (wert %) = Lautstaerke setzen.
 // Lautstaerke-Regler ist ein T_ZAHL mit media_player (ok: "mute", st: Schritt in %). Seiten-Option "vol": Lauter/
@@ -103,8 +107,10 @@ struct Item {
   int8_t wslot{-1};           // T_WIDGET: Bildplatz (wbild) fuer Kamera/Cover, -1 = keiner
   uint32_t wtakt_ms{0};       // T_WIDGET: naechstes Nachladen des Bilds
   lv_obj_t *wo[WR_ANZAHL]{};  // T_WIDGET: Unter-Widgets nach Rolle
+  int8_t lwahl{-1};           // W_LICHT: gewaehlte Lampe (-1 = alle)
+  uint32_t lsend_ms{0};       // W_LICHT: letzter Aufruf beim Ziehen (hoechstens alle 350 ms)
   bool fokusierbar() const {
-    if (typ == T_WIDGET) return !gesperrt && (wart == W_MEDIEN || wart == W_TIMER || wart == W_KOMBI);
+    if (typ == T_WIDGET) return !gesperrt && (wart == W_MEDIEN || wart == W_TIMER || wart == W_KOMBI || wart == W_LICHT);
     return typ != T_TEXT && teil != P_INFO && !gesperrt && !(typ == T_EINST && einst.typ != 'b' && einst.typ != 's' && !info);
   }
 };
@@ -386,6 +392,11 @@ class Menue : public Component {
   void widget_zustand_(Item &it);
   void widget_tick_();
   void widget_ausloesen_(Item &it, int richtung);
+  void licht_bauen_(Item &it);
+  void licht_zustand_(Item &it);
+  void licht_senden_(Item &it, const char *aktion, const std::string &wert);
+  std::string licht_ziele_(const Item &it, bool fuer_aufruf) const;
+  static void licht_cb_(lv_event_t *e);
   void widget_bild_(Item &it, bool sofort);
   bool widget_weg_(JsonObjectConst j) const;   // Medien-Widget ohne Wiedergabe ausblenden?
   bool medien_laeuft_(const char *e) const;

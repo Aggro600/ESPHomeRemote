@@ -61,7 +61,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.10.29.2"
+    version: "2026.10.29.3"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
@@ -740,6 +740,14 @@ api:
     - service: menue_popup_zu
       then:
         - lambda: 'tasten::menue_popup_zu();'
+    # WLAN fuer eine Zeit an (Konfigurator, 2026-10-29): sekunden <= 0 = jetzt aus; grund erscheint auf der Remote und in HA
+    - service: wlan_fenster
+      variables: {sekunden: int, grund: string}
+      then:
+        - lambda: |-
+            if (sekunden <= 0) { id(wlan_jetzt_aus)->execute(); return; }
+            wlan_zugriff::fenster(std::min<int>(28800, std::max<int>(60, sekunden)), grund.empty() ? "Konfigurator" : grund.c_str());
+            id(wartungsfenster)->execute();
     # Tasten-Konfigurator: Belegung sofort neu aus HA holen
     - service: tasten_neu_laden
       then:
@@ -1459,9 +1467,16 @@ dock_direkt:
         id(zustand_da) = true;
         // Wartungsfenster ueber das Dock (2026-10-25): HA will die Firmware aufspielen ("w": 1) - WLAN 3 min an. So geht
         // ein Update auch ohne Bluetooth-Link zu HA; einmal je Fenster.
+        // 2026-10-29: "wd" Dauer in s, "wg" Grund (Konfigurator: 3/10/30 min, Update); "wa" = Nummer von "WLAN jetzt aus"
         if ((d["w"] | 0) == 1 && (int32_t) (millis() - id(wartung_bis)) >= 0) {
           ESP_LOGI("wartung", "Wartungsfenster vom Dock angefordert");
+          wlan_zugriff::fenster(std::max<int>(60, std::min<int>(28800, (int) (d["wd"] | 180))), d["wg"] | "Konfigurator");
           id(wartungsfenster)->execute();
+        }
+        if (!d["wa"].isNull()) {
+          static uint32_t wa_nr = 0;
+          const uint32_t nr = d["wa"] | 0u;
+          if (nr != 0 && nr != wa_nr) { wa_nr = nr; id(wlan_jetzt_aus)->execute(); }   // HA schickt "wa" nur 60 s lang
         }
         // Konfigurator "Auf der Remote zeigen" (2026-10-25): Seite als Popup oeffnen, einmal je Nummer
         if (!d["tp"].isNull()) {
@@ -1930,6 +1945,32 @@ interval:
                                     (id(last_motion_ms) != 0 && jetzt - id(last_motion_ms) < 60000);
           if (!in_benutzung || id(ha_dock) == 0 || api::global_api_server->is_connected()) return;
           id(tk_cfg).zustand_anfragen();
+  # WLAN-Zustand (2026-10-29): Grund + Restzeit fuer die Kachel der Schnelleinstellungen, HA (Sensor "WLAN-Zustand") und
+  # den Konfigurator. Sensor nur bei neuem Grund oder Verlaengerung ("Grund|Sekunden" - der Konfigurator zaehlt selbst runter).
+  - interval: 1s
+    then:
+      - lambda: |-
+          const uint32_t jetzt = millis();
+          auto *w = wifi::global_wifi_component;
+          const bool an = w != nullptr && !w->is_disabled();
+          std::string g;
+          uint32_t rest = 0;
+          if (!wlan_zugriff::g_nur_ble) g = "immer";
+          else if (id(ota_aktiv)) g = "Update";
+          else if ((int32_t) (id(wartung_bis) - jetzt) > 0) { g = wlan_zugriff::g_aktiv_grund; rest = (id(wartung_bis) - jetzt) / 1000; }
+          else if (wlan_zugriff::bedarf_aktiv()) { g = wlan_zugriff::g_bedarf_grund; rest = (wlan_zugriff::g_bedarf_bis - jetzt) / 1000; }
+          else g = an ? "geht aus" : "aus";
+          wlan_zugriff::g_zustand = g;
+          wlan_zugriff::g_rest = rest;
+          static std::string alt;
+          static uint32_t ende = 0;
+          const uint32_t neu_ende = jetzt / 1000 + rest;
+          if (g != alt || (rest > 0 && std::abs((int32_t) (neu_ende - ende)) > 5)) {   // auch verkuerzt
+            alt = g;
+            ende = neu_ende;
+            id(wlan_zustand).publish_state(rest > 0 ? g + "|" + std::to_string(rest) : g);
+          }
+          if (!lv_obj_has_flag(id(qs_panel), LV_OBJ_FLAG_HIDDEN)) id(qs_refresh).execute();
   # Dock-Anzeige (im Dock? zurueck zur Dock-Seite, Uhr, Daten) und Bewegungsgesten (FIFO abholen), 2026-10-17
   - interval: 250ms
     then:
@@ -1955,6 +1996,7 @@ interval:
           if (jetzt - ohne_ha < 180000 || (letzter != 0 && jetzt - letzter < 600000) || jetzt < id(wartung_bis)) return;
           letzter = jetzt;
           weck_log("HA 3 min weg - WLAN-Notanker");
+          wlan_zugriff::fenster(180, "Notanker");
           id(wartungsfenster)->execute();
   # Positionsanzeige weiterzaehlen (Media-Seite offen und Wiedergabe laeuft - oder Startseite mit
   # ausgeklappter, grosser Player-Karte: dort zeigt der Fortschrittsbalken jetzt mit, Nutzerwunsch
@@ -2557,12 +2599,14 @@ script:
           if (id(tk_status).has_state()) d["h"] = id(tk_status).state;
           d["t"] = schlaf ? std::string("Tiefschlaf") : (id(schlaf_status_txt).has_state() ? id(schlaf_status_txt).state : std::string(""));
           if (id(letzter_neustart).has_state()) d["n"] = id(letzter_neustart).state;
+          // WLAN-Zustand (2026-10-29): Restzeit aktuell, als Aenderung zaehlt nur der Grund
+          d["w"] = wlan_zugriff::g_rest > 0 ? wlan_zugriff::g_zustand + "|" + std::to_string(wlan_zugriff::g_rest) : wlan_zugriff::g_zustand;
           // Nur bei Aenderung, sonst hoechstens alle 10 min; vor dem Tiefschlaf immer (2026-10-25, vorher jede Minute -
           // Funk und Dock-Last). Spannung zaehlt nicht als Aenderung (schwankt staendig).
           static std::string zuletzt;
           static uint32_t zuletzt_ms = 0;
           std::string vergleich;
-          for (auto &kv : d) if (kv.first != "v") vergleich += kv.first + "=" + kv.second + ";";
+          for (auto &kv : d) if (kv.first != "v") vergleich += kv.first + "=" + (kv.first == "w" ? kv.second.substr(0, kv.second.find('|')) : kv.second) + ";";
           if (schlaf || vergleich != zuletzt || zuletzt_ms == 0 || millis() - zuletzt_ms > 600000) {
             zuletzt = vergleich;
             zuletzt_ms = millis() | 1;
@@ -3445,19 +3489,37 @@ script:
   - id: fw_fenster
     mode: restart
     then:
-      - lambda: 'id(wartung_bis) = millis() + 300000UL;'
+      - lambda: 'id(wartung_bis) = millis() + 300000UL; wlan_zugriff::g_aktiv_grund = "Update"; wlan_zugriff::g_still_bis = 0;'
       - wifi.enable:
       - delay: 300s
       - lambda: 'if ((int32_t) (id(wartung_bis) - millis()) < 2000) id(wartung_bis) = millis();'
+  # "WLAN jetzt aus" (Schnelleinstellungen, Konfigurator, 2026-10-29): Fenster und Bedarf beenden; 10 min kein automatischer
+  # Bedarf (Dock weg o. ae.), sonst ging es gleich wieder an. Bei "Nur Bluetooth" aus, sonst bleibt es (WLAN "immer").
+  - id: wlan_jetzt_aus
+    then:
+      - script.stop: wartungsfenster
+      - script.stop: fw_fenster
+      - lambda: |-
+          id(wartung_bis) = millis();
+          wlan_zugriff::g_bedarf_bis = 0;
+          wlan_zugriff::g_still_bis = millis() + 600000;
+          wlan_zugriff::fenster(180, "Wartung");
+          ESP_LOGI("wlan", "WLAN jetzt aus (von Hand)");
+          if (wlan_zugriff::g_nur_ble) id(wlan_zustand).publish_state("aus");   // HA noch per WLAN Bescheid geben
+      # Abschalten macht der Bluetooth-Tunnel wie am Ende jedes Fensters (nicht selbst wifi.disable: kollidierte mit dem
+      # Funk fuers Dock - ESP_ERR_WIFI_STOP_STATE, danach ging nichts mehr uebers Dock, 2026-10-29)
   - id: wartungsfenster
     mode: restart
     then:
       - lambda: |-
-          id(wartung_bis) = millis() + 180000UL;
-          ESP_LOGI("wartung", "Wartungsfenster: WLAN 3 min erzwungen an");
-          weck_log("Wartungsfenster (WLAN 3 min)");
+          // Dauer und Grund setzen die Aufrufer vorher (wlan_zugriff::fenster), sonst 3 min "Wartung" (2026-10-29)
+          id(wartung_bis) = millis() + wlan_zugriff::g_fenster_s * 1000UL;
+          wlan_zugriff::g_still_bis = 0;
+          wlan_zugriff::g_aktiv_grund = wlan_zugriff::g_fenster_grund;
+          ESP_LOGI("wartung", "Wartungsfenster: WLAN %u s erzwungen an (%s)", (unsigned) wlan_zugriff::g_fenster_s, wlan_zugriff::g_fenster_grund.c_str());
+          weck_log(("Wartungsfenster (" + wlan_zugriff::g_fenster_grund + ")").c_str());
       - wifi.enable:
-      - delay: 180s
+      - delay: !lambda 'const uint32_t s = wlan_zugriff::g_fenster_s; wlan_zugriff::fenster(180, "Wartung"); return s * 1000UL;'
       - lambda: 'if ((int32_t) (id(wartung_bis) - millis()) < 2000) id(wartung_bis) = millis();'
       - if:
           condition:
@@ -3706,9 +3768,20 @@ script:
             lv_obj_set_style_bg_color(btn, lv_color_hex(an ? 0x1E3A8A : 0x232A35), LV_PART_MAIN);
             lv_obj_set_style_border_color(btn, lv_color_hex(an ? 0x3B82F6 : 0x232A35), LV_PART_MAIN);
           };
-          const bool wlan = !wlan_zugriff::g_nur_ble;
+          // Echter Zustand mit Grund und Restzeit (2026-10-29): "immer"/"verbunden", "Dock weg 0:25", "Konfig. 9:41", AUS
+          const bool wlan_an = !wifi::global_wifi_component->is_disabled();
           const bool wlan_ok = wifi::global_wifi_component->is_connected();
-          kachel(id(qs_wlan_btn), id(qs_wlan_lbl), wlan, !wlan ? "AUS" : (wlan_ok ? "verbunden" : "AN"));
+          std::string wt;
+          const std::string &z = wlan_zugriff::g_zustand;
+          if (z == "immer") wt = wlan_ok ? "verbunden" : "AN";
+          else if (z == "aus" || !wlan_an) wt = "AUS";
+          else if (z == "Update") wt = "Update";
+          else {
+            wt = wlan_zugriff::kurz(z);
+            char b[12];
+            if (wlan_zugriff::g_rest > 0) { snprintf(b, sizeof(b), " %u:%02u", (unsigned) (wlan_zugriff::g_rest / 60), (unsigned) (wlan_zugriff::g_rest % 60)); wt += b; }
+          }
+          kachel(id(qs_wlan_btn), id(qs_wlan_lbl), wlan_an, wt.c_str());
           const bool bt = !id(kb).funk_aus();
           // wie WLAN: "verbunden", sobald ein Geraet (Streamer, TV ...) gekoppelt verbunden ist
           kachel(id(qs_bt_btn), id(qs_bt_lbl), bt, !bt ? "AUS" : (id(ble_paired).state ? "verbunden" : "AN"));
@@ -3738,14 +3811,21 @@ script:
   # Tunnel). Ohne Tunnel (keine g_set_nur_ble) wirkt es nur bis zum Neustart.
   - id: qs_wlan_toggle
     then:
-      - lambda: |-
-          wlan_zugriff::g_nur_ble = !wlan_zugriff::g_nur_ble;
-          if (wlan_zugriff::g_set_nur_ble) wlan_zugriff::g_set_nur_ble(wlan_zugriff::g_nur_ble);
+      # Automatisch an (Fenster, Dock weg ...): ein Tippen schaltet es sofort aus (2026-10-29, vorher erst an, dann aus)
       - if:
-          condition: {lambda: "return wlan_zugriff::g_nur_ble;"}
-          then: [{wifi.disable:}]
-          # nach dem Aufwachen startet das WLAN erst nach dem Zeitfenster fuer den Funk zum Dock (on_boot -150)
-          else: [{if: {condition: {lambda: "return !id(wlan_nach_weck);"}, then: [{wifi.enable:}]}}]
+          condition: {lambda: 'return wlan_zugriff::g_nur_ble && !wifi::global_wifi_component->is_disabled();'}
+          then:
+            - script.execute: wlan_jetzt_aus
+            - delay: 100ms
+          else:
+            - lambda: |-
+                wlan_zugriff::g_nur_ble = !wlan_zugriff::g_nur_ble;
+                if (wlan_zugriff::g_set_nur_ble) wlan_zugriff::g_set_nur_ble(wlan_zugriff::g_nur_ble);
+            - if:
+                condition: {lambda: "return wlan_zugriff::g_nur_ble;"}
+                then: [{wifi.disable:}]
+                # nach dem Aufwachen startet das WLAN erst nach dem Zeitfenster fuer den Funk zum Dock (on_boot -150)
+                else: [{if: {condition: {lambda: "return !id(wlan_nach_weck);"}, then: [{wifi.enable:}]}}]
       - script.execute: qs_refresh
       - script.execute: apply_power
       - script.execute: hide_bri_overlay
@@ -4647,7 +4727,7 @@ script:
               ESP_LOGI("akku", "Ladegeraet angesteckt -> Wartungsfenster");
               id(wake_backlight)->execute();
               // "Nur Bluetooth": kein WLAN beim Einstecken - Updates laufen durch den Tunnel (2026-10-07)
-              if (!wlan_zugriff::g_nur_ble) id(wartungsfenster)->execute();
+              if (!wlan_zugriff::g_nur_ble) { wlan_zugriff::fenster(180, "Ladekabel"); id(wartungsfenster)->execute(); }
             }
           }
       - script.execute: apply_charge_icon
@@ -6227,6 +6307,7 @@ button:
     icon: "mdi:wifi-refresh"
     entity_category: diagnostic
     on_press:
+      - lambda: 'wlan_zugriff::fenster(180, "Wartung");'
       - script.execute: wartungsfenster
 
 
@@ -6292,7 +6373,7 @@ binary_sensor:
             # WLAN bleibt aus (2026-10-07, Nutzerwunsch). Notausgang: Knopf "Wartungsfenster jetzt" in HA.
             - if:
                 condition: {lambda: 'return !wlan_zugriff::g_nur_ble;'}
-                then: [{script.execute: wartungsfenster}]
+                then: [{lambda: 'wlan_zugriff::fenster(180, "Ladekabel");'}, {script.execute: wartungsfenster}]
             - script.execute: lade_popup
     # Icon jetzt direkt hier (apply_charge_icon), nicht mehr nur ueber den
     # Umweg refresh_laden -> CRATE-Register - das reagiert traege, s.
@@ -6686,6 +6767,12 @@ text_sensor:
           // sonst zeigt die Markierung ins Leere.
           if (id(cur_page) == 6) id(focus_apply)->execute();
 
+  # WLAN-Zustand (2026-10-29): aus | immer | geht aus | <Grund>|<Restsekunden> (s. interval oben)
+  - platform: template
+    id: wlan_zustand
+    name: "WLAN-Zustand"
+    icon: "mdi:wifi-cog"
+    entity_category: diagnostic
   - platform: template
     id: weck_text
     name: "Weckprotokoll"

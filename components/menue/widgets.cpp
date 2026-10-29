@@ -101,7 +101,7 @@ bool Menue::widget_weg_(JsonObjectConst j) const {
 
 void Menue::widget_karte_(Item &it) {
   static const struct { const char *n; WidgetArt a; } ARTEN[] = {{"uhr", W_UHR}, {"wetter", W_WETTER}, {"akku", W_AKKU},
-      {"medien", W_MEDIEN}, {"timer", W_TIMER}, {"kamera", W_KAMERA}, {"kombi", W_KOMBI}};
+      {"medien", W_MEDIEN}, {"timer", W_TIMER}, {"kamera", W_KAMERA}, {"kombi", W_KOMBI}, {"licht", W_LICHT}};
   const char *art = it.j["art"] | "uhr";
   it.wart = W_UHR;
   for (auto &a : ARTEN) if (!strcmp(a.n, art)) it.wart = a.a;
@@ -131,6 +131,7 @@ void Menue::widget_karte_(Item &it) {
 void Menue::widget_teile_(Item &it) {
   lv_obj_clean(it.obj);
   for (auto &o : it.wo) o = nullptr;
+  if (it.wart == W_LICHT) { licht_bauen_(it); return; }
   const uint8_t m = widget_maske_(it);
   it.wbau = m;
   const bool gross = it.h >= 2;
@@ -372,6 +373,7 @@ void Menue::widget_teil_(Item &it, lv_obj_t *p, uint8_t art, int breite, int hoe
 
 void Menue::widget_zustand_(Item &it) {
   if (it.obj == nullptr) return;
+  if (it.wart == W_LICHT) { licht_zustand_(it); return; }
   // Kombi: Medien kommt/geht mit der Wiedergabe -> Inhalt neu aufbauen
   if (it.wart == W_KOMBI && widget_maske_(it) != it.wbau) widget_teile_(it);
   const char *e = it.j["entity"] | "";
@@ -590,6 +592,14 @@ void Menue::wbild_fertig(int slot) {
 }
 
 void Menue::widget_ausloesen_(Item &it, int richtung) {
+  if (it.wart == W_LICHT) {   // OK: an/aus, Links/Rechts: dunkler/heller
+    if (richtung == 0) { licht_senden_(it, "toggle", ""); return; }
+    if (it.wo[WR_L_HELL] == nullptr) return;
+    const int v = std::max(1, std::min(100, (int) lv_slider_get_value(it.wo[WR_L_HELL]) + richtung * 10));
+    lv_slider_set_value(it.wo[WR_L_HELL], v, LV_ANIM_ON);
+    licht_senden_(it, "hell", std::to_string(v));
+    return;
+  }
   const char *e = it.wart == W_KOMBI ? (it.j["me"] | "") : (it.j["entity"] | "");
   if (!*e) return;
   if (it.wart == W_TIMER) {
@@ -611,6 +621,411 @@ void Menue::wknopf_cb_(lv_event_t *e) {
   if (i < 0 || i >= (int) self->items_.size()) return;
   lv_event_stop_bubbling(e);
   self->widget_ausloesen_(self->items_[i], fn - 1);
+}
+
+
+// ============================================================================ Licht (2026-10-29)
+// Kopf (Schalter in Lampenfarbe, Name, Zustand, Prozent) | Lampen | Helligkeit | Farbtemperatur | Farbton | Palette | Szenen.
+// Was nicht in die Hoehe passt, entfaellt von unten. Kann die gewaehlte Lampe etwas nicht, ist die Zeile gedimmt.
+namespace {
+enum LCode : int { LC_POWER = 0, LC_KOPF = 1, LC_HELL = 2, LC_TEMP = 3, LC_FARBE = 4, LC_CHIP = 8, LC_PAL = 25, LC_SZENE = 40 };
+struct PalEintrag { bool kelvin; int wert; uint32_t farbe; };
+const PalEintrag PALETTE[] = {{true, 2200, 0xFF9F45}, {true, 2700, 0xFFB46B}, {true, 4000, 0xFFE4C4}, {true, 6500, 0xE6F0FF},
+                              {false, 0, 0xFF3B30}, {false, 30, 0xFF9500}, {false, 120, 0x34C759}, {false, 210, 0x0A84FF},
+                              {false, 280, 0xBF5AF2}, {false, 330, 0xFF2D78}};
+const uint32_t REGENBOGEN[] = {0xFF0000, 0xFFFF00, 0x00FF00, 0x00FFFF, 0x0000FF, 0xFF00FF, 0xFF0000};
+uint32_t kelvin_rgb(int k) {   // Naeherung (Tanner Helland) - nur fuer die Anzeige
+  const float t = k / 100.0f;
+  float r, g, b;
+  if (t <= 66) { r = 255; g = 99.47f * logf(t) - 161.12f; b = t <= 19 ? 0 : 138.52f * logf(t - 10) - 305.04f; }
+  else { r = 329.7f * powf(t - 60, -0.1332f); g = 288.12f * powf(t - 60, -0.0755f); b = 255; }
+  auto c = [](float v) { return (uint32_t) std::max(0.0f, std::min(255.0f, v)); };
+  return (c(r) << 16) | (c(g) << 8) | c(b);
+}
+uint32_t hsv_rgb(int h, int s) { return lv_color_to_u32(lv_color_hsv_to_rgb((uint16_t) (h % 360), (uint8_t) s, 100)) & 0xFFFFFF; }
+lv_obj_t *lbox(lv_obj_t *p, int x, int y, int w, int h, uint32_t farbe, int radius) {
+  lv_obj_t *o = lv_obj_create(p);
+  lv_obj_remove_style_all(o);
+  lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_pos(o, x, y);
+  lv_obj_set_size(o, w, h);
+  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(o, lv_color_hex(farbe), 0);
+  lv_obj_set_style_radius(o, radius, 0);
+  return o;
+}
+std::string kurzname(const char *e) {   // light.kuche_deckenlampe -> "kuche deckenlampe"
+  const char *p = strchr(e, '.');
+  std::string s = p ? p + 1 : e;
+  for (auto &c : s) if (c == '_') c = ' ';
+  return s;
+}
+}  // namespace
+
+std::string Menue::licht_ziele_(const Item &it, bool fuer_aufruf) const {
+  JsonArrayConst la = it.j["lichter"];
+  if (it.lwahl >= 0 && it.lwahl < (int) la.size()) return la[it.lwahl]["e"] | "";
+  const char *g = it.j["gruppe"] | "";
+  if (fuer_aufruf && *g) return g;
+  std::string s;
+  for (JsonObjectConst l : la) { if (!s.empty()) s += ","; s += l["e"] | ""; }
+  return s;
+}
+
+void Menue::licht_bauen_(Item &it) {
+  const int idx = &it - items_.data();
+  const int W = (int) (it.w * zelle_) - LUECKE - 4, H = it.h * ZEILE - LUECKE - 4;
+  JsonArrayConst la = it.j["lichter"];
+  const int n = std::min<int>(la.size(), 15);
+  JsonArrayConst tl = it.j["lteile"];
+  auto teil = [&](const char *t) {
+    if (tl.isNull()) return true;
+    for (JsonVariantConst v : tl) if (!strcmp(v | "", t)) return true;
+    return false;
+  };
+  auto klick = [&](lv_obj_t *o, int code) {
+    lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_user_data(o, (void *) (intptr_t) (idx * 64 + code));
+    lv_obj_add_event_cb(o, Menue::licht_cb_, LV_EVENT_CLICKED, this);
+  };
+  const lv_font_t *f_xs = f_xs_ ? f_xs_ : f_klein_, *f_ic = f_icon_ ? f_icon_ : f_text_;
+  const bool ziel = *(it.j["ziel"] | "");
+  int y = 2;
+  // Kopf: runder Schalter (Lampenfarbe, wenn an), Name + Zustand, Prozent, ">" bei Unterseite
+  lv_obj_t *pw = lbox(it.obj, 3, y, 30, 30, 0x2E3643, LV_RADIUS_CIRCLE);
+  klick(pw, LC_POWER);
+  lv_obj_set_ext_click_area(pw, 4);
+  const char *gl = icon_("lightbulb");
+  it.wo[WR_L_POWER] = pw;
+  it.wo[WR_L_ICON] = wtext_(pw, gl ? gl : "", f_ic, C_TEXT);
+  lv_obj_center(it.wo[WR_L_ICON]);
+  lv_obj_t *kopf = wbox_(it.obj);
+  lv_obj_set_pos(kopf, 40, y);
+  lv_obj_set_size(kopf, W - 40, 30);
+  if (ziel) klick(kopf, LC_KOPF);
+  const char *label = it.j["label"] | "Licht";
+  const int tb = W - 40 - (ziel ? 62 : 48);
+  it.wo[WR_L_NAME] = wtext_(kopf, label, f_text_, C_TEXT);
+  lv_obj_set_width(it.wo[WR_L_NAME], tb);
+  punkte_(it.wo[WR_L_NAME]);
+  lv_obj_align(it.wo[WR_L_NAME], LV_ALIGN_TOP_LEFT, 0, -1);
+  it.wo[WR_L_INFO] = wtext_(kopf, "", f_xs, C_GRAU);
+  lv_obj_set_width(it.wo[WR_L_INFO], tb);
+  punkte_(it.wo[WR_L_INFO]);
+  lv_obj_align(it.wo[WR_L_INFO], LV_ALIGN_BOTTOM_LEFT, 0, 1);
+  it.wo[WR_L_PCT] = wtext_(kopf, "", f_text_, C_TEXT);
+  lv_obj_align(it.wo[WR_L_PCT], LV_ALIGN_RIGHT_MID, ziel ? -16 : -4, 0);
+  if (ziel) {
+    const char *ch = icon_("chevron-right");
+    lv_obj_align(wtext_(kopf, ch ? ch : ">", ch ? f_ic : f_text_, C_GRAU), LV_ALIGN_RIGHT_MID, 2, 0);
+  }
+  y += 34;
+  auto platz = [&](int h) { return y + h <= H + 2; };
+  // Lampen als Chips ("Alle" + je Lampe), waagerecht scrollbar
+  if (n > 1 && teil("lampen") && platz(26)) {
+    lv_obj_t *r = lv_obj_create(it.obj);
+    lv_obj_remove_style_all(r);
+    lv_obj_set_pos(r, 3, y);
+    lv_obj_set_size(r, W - 4, 26);
+    lv_obj_set_layout(r, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(r, 4, 0);
+    lv_obj_set_scroll_dir(r, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(r, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(r, LV_OBJ_FLAG_SCROLL_CHAIN_HOR);
+    it.wo[WR_L_CHIPS] = r;
+    for (int i = -1; i < n; i++) {
+      lv_obj_t *c = lv_obj_create(r);
+      lv_obj_remove_style_all(c);
+      lv_obj_set_size(c, LV_SIZE_CONTENT, 24);
+      lv_obj_set_style_radius(c, 12, 0);
+      lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+      lv_obj_set_style_bg_color(c, lv_color_hex(0x2E3643), 0);
+      lv_obj_set_style_pad_hor(c, 10, 0);
+      lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_flag(c, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+      std::string nm = i < 0 ? std::string("Alle") : std::string(la[i]["n"] | "");
+      if (nm.empty()) {
+        const EntZustand *z = ez_(la[i]["e"] | "");
+        nm = kurzname(la[i]["e"] | "");
+        if (z != nullptr) { auto a = z->attr.find(PStr("name")); if (a != z->attr.end() && !a->second.empty()) nm = a->second.c_str(); }
+      }
+      lv_obj_center(wtext_(c, nm.c_str(), f_klein_, C_TEXT));
+      klick(c, LC_CHIP + i + 1);
+    }
+    y += 30;
+  }
+  // Regler: Symbol links, Schieber; Farbe/Temperatur mit Verlauf im Hintergrund
+  auto regler = [&](int code, int lo, int hi, const char *icon, bool verlauf) {
+    const char *g = icon_(icon);
+    lv_obj_t *ic = wtext_(it.obj, g ? g : "", f_ic, C_GRAU);
+    lv_obj_set_pos(ic, 6, y + 1);
+    const int x0 = 34, sw = W - x0 - 12;
+    if (verlauf && code == LC_FARBE) {   // Farbton: 6 Verlaufsstuecke (LVGL kann hier nur 2 Farben je Verlauf)
+      for (int s = 0; s < 6; s++) {
+        const int xa = x0 + s * sw / 6, xb = x0 + (s + 1) * sw / 6;
+        lv_obj_t *b = lbox(it.obj, xa, y + 8, xb - xa + (s < 5 ? 1 : 0), 10, REGENBOGEN[s], s == 0 || s == 5 ? 5 : 0);
+        lv_obj_set_style_bg_grad_color(b, lv_color_hex(REGENBOGEN[s + 1]), 0);
+        lv_obj_set_style_bg_grad_dir(b, LV_GRAD_DIR_HOR, 0);
+      }
+    }
+    lv_obj_t *sl = lv_slider_create(it.obj);
+    lv_slider_set_range(sl, lo, hi);
+    lv_obj_set_size(sl, sw, 10);
+    lv_obj_set_pos(sl, x0, y + 8);
+    lv_obj_set_style_radius(sl, 5, LV_PART_MAIN);
+    lv_obj_set_style_radius(sl, 5, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(0x4B5563), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFD58A), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(C_TEXT), LV_PART_KNOB);
+    lv_obj_set_style_pad_all(sl, 5, LV_PART_KNOB);
+    lv_obj_set_style_border_width(sl, 2, LV_PART_KNOB);
+    lv_obj_set_style_border_color(sl, lv_color_hex(0x111111), LV_PART_KNOB);
+    if (verlauf) {
+      lv_obj_set_style_bg_opa(sl, LV_OPA_TRANSP, LV_PART_INDICATOR);
+      if (code == LC_FARBE) lv_obj_set_style_bg_opa(sl, LV_OPA_TRANSP, LV_PART_MAIN);
+      else {
+        lv_obj_set_style_bg_color(sl, lv_color_hex(0xFF9F45), LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_color(sl, lv_color_hex(0xDDE8FF), LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_dir(sl, LV_GRAD_DIR_HOR, LV_PART_MAIN);
+      }
+    }
+    lv_obj_set_ext_click_area(sl, 8);
+    lv_obj_remove_flag(sl, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_user_data(sl, (void *) (intptr_t) (idx * 64 + code));
+    lv_obj_add_event_cb(sl, Menue::licht_cb_, LV_EVENT_VALUE_CHANGED, this);
+    lv_obj_add_event_cb(sl, Menue::licht_cb_, LV_EVENT_RELEASED, this);
+    y += 28;
+    return sl;
+  };
+  if (teil("hell") && platz(24)) it.wo[WR_L_HELL] = regler(LC_HELL, 1, 100, "brightness-6", false);
+  if (teil("temp") && platz(24)) it.wo[WR_L_TEMP] = regler(LC_TEMP, 2000, 6500, "thermometer", true);
+  if (teil("farbe") && platz(24)) it.wo[WR_L_FARBE] = regler(LC_FARBE, 0, 359, "palette", true);
+  // Palette: Weisstoene und Farben zum Antippen
+  if (teil("palette") && platz(24)) {
+    lv_obj_t *r = wbox_(it.obj);
+    lv_obj_set_pos(r, 3, y);
+    lv_obj_set_size(r, W - 4, 24);
+    lv_obj_set_layout(r, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(r, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    it.wo[WR_L_PAL] = r;
+    const int d = std::min(20, (W - 4) / 10 - 3);
+    for (int i = 0; i < (int) (sizeof(PALETTE) / sizeof(PALETTE[0])); i++) {
+      lv_obj_t *c = lbox(r, 0, 0, d, d, PALETTE[i].farbe, LV_RADIUS_CIRCLE);
+      lv_obj_set_style_border_width(c, 2, 0);
+      lv_obj_set_style_border_color(c, lv_color_hex(0x111111), 0);
+      lv_obj_set_ext_click_area(c, 3);
+      klick(c, LC_PAL + i);
+    }
+    y += 28;
+  }
+  // Szenen: Knoepfe, umbrechend, so viele Zeilen wie Platz ist
+  JsonArrayConst sz = it.j["szenen"];
+  if (!sz.isNull() && sz.size() > 0 && teil("szenen") && platz(26)) {
+    lv_obj_t *r = wbox_(it.obj);
+    lv_obj_set_pos(r, 3, y);
+    lv_obj_set_size(r, W - 4, std::max(26, ((H + 2 - y) / 30) * 30 - 4));
+    lv_obj_set_layout(r, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(r, 4, 0);
+    lv_obj_set_style_pad_row(r, 4, 0);
+    it.wo[WR_L_SZENEN] = r;
+    int i = 0;
+    for (JsonObjectConst s : sz) {
+      if (i >= 8) break;
+      lv_obj_t *b = lbox(r, 0, 0, 10, 26, 0x2E3643, 8);
+      lv_obj_set_size(b, LV_SIZE_CONTENT, 26);
+      lv_obj_set_style_pad_hor(b, 10, 0);
+      lv_obj_set_style_bg_color(b, lv_color_hex(hl_), LV_STATE_PRESSED);
+      std::string nm = s["n"] | "";
+      if (nm.empty()) nm = kurzname(s["e"] | "");
+      lv_obj_center(wtext_(b, nm.c_str(), f_klein_, C_TEXT));
+      klick(b, LC_SZENE + i++);
+    }
+  }
+  licht_zustand_(it);
+}
+
+void Menue::licht_zustand_(Item &it) {
+  if (it.obj == nullptr || it.wo[WR_L_POWER] == nullptr) return;
+  JsonArrayConst la = it.j["lichter"];
+  const int n = std::min<int>(la.size(), 15);
+  int an = 0, bri_sum = 0, bri_n = 0, caps = 0, erreichbar = 0;
+  const EntZustand *zeig = nullptr;   // Lampe, deren Farbe/Werte gezeigt werden
+  for (int i = 0; i < n; i++) {
+    if (it.lwahl >= 0 && i != it.lwahl) continue;
+    const EntZustand *z = ez_(la[i]["e"] | "");
+    if (z == nullptr) continue;
+    if (z->state != "unavailable") erreichbar++;
+    auto c = z->attr.find(PStr("caps"));
+    if (c != z->attr.end()) caps |= atoi(c->second.c_str());
+    if (z->state == "on") {
+      an++;
+      if (z->bri >= 0) { bri_sum += z->bri; bri_n++; }
+      if (zeig == nullptr) zeig = z;
+    }
+  }
+  const char *g = it.j["gruppe"] | "";
+  if (it.lwahl < 0 && *g) {   // Gruppe: ihre Helligkeit/Farbe ist der Mittelwert der Lampen (HA)
+    const EntZustand *z = ez_(g);
+    if (z != nullptr && z->state == "on") { zeig = z; if (z->bri >= 0) { bri_sum = z->bri; bri_n = 1; } }
+  }
+  auto attr = [](const EntZustand *z, const char *k, int std) {
+    if (z == nullptr) return std;
+    auto a = z->attr.find(PStr(k));
+    return a != z->attr.end() && !a->second.empty() ? atoi(a->second.c_str()) : std;
+  };
+  // Farbe der Lampe fuer Schalter und Regler
+  uint32_t farbe = 0xFFC870;
+  const int h = attr(zeig, "h", -1), sat = attr(zeig, "s", -1), k = attr(zeig, "k", -1);
+  std::string cm;
+  if (zeig != nullptr) { auto a = zeig->attr.find(PStr("cm")); if (a != zeig->attr.end()) cm = a->second.c_str(); }
+  if (cm == "color_temp" && k > 0) farbe = kelvin_rgb(k);
+  else if (h >= 0 && sat >= 0 && cm != "brightness" && cm != "onoff" && cm != "white") farbe = hsv_rgb(h, std::max(sat, 25));
+  else if (k > 0) farbe = kelvin_rgb(k);
+  lv_obj_set_style_bg_color(it.wo[WR_L_POWER], lv_color_hex(an ? farbe : 0x2E3643), 0);
+  const char *gl = icon_(an ? "lightbulb-on" : "lightbulb");
+  if (gl) lv_label_set_text(it.wo[WR_L_ICON], gl);
+  lv_obj_set_style_text_color(it.wo[WR_L_ICON], lv_color_hex(an ? 0x1A1A1A : C_TEXT), 0);
+  char b[40];
+  const int pct = bri_n ? (bri_sum / bri_n * 100 + 127) / 255 : -1;
+  if (it.lwahl < 0 && n > 1) {
+    if (an) snprintf(b, sizeof(b), "%d von %d an", an, n);
+    else snprintf(b, sizeof(b), erreichbar ? "alle aus" : "–");
+  } else {
+    const EntZustand *z = it.lwahl >= 0 ? ez_(la[it.lwahl]["e"] | "") : (n ? ez_(la[0]["e"] | "") : nullptr);
+    snprintf(b, sizeof(b), "%s%s", it.lwahl >= 0 ? "" : "", z == nullptr ? "–" : z->state == "on" ? "an" : z->state == "unavailable" ? "nicht erreichbar" : "aus");
+    if (it.lwahl >= 0) {
+      std::string t = std::string(la[it.lwahl]["n"] | "");
+      if (t.empty() && z) { auto a = z->attr.find(PStr("name")); t = a != z->attr.end() ? a->second.c_str() : kurzname(la[it.lwahl]["e"] | ""); }
+      t += " · ";
+      t += b;
+      snprintf(b, sizeof(b), "%s", t.c_str());
+    }
+  }
+  lv_label_set_text(it.wo[WR_L_INFO], b);
+  if (an && pct >= 0) snprintf(b, sizeof(b), "%d %%", pct); else b[0] = 0;
+  lv_label_set_text(it.wo[WR_L_PCT], b);
+  // Regler (nicht, waehrend man zieht)
+  auto frei = [](lv_obj_t *o) { return o != nullptr && !lv_obj_has_state(o, LV_STATE_PRESSED); };
+  auto kann = [](lv_obj_t *o, bool ok) {
+    if (o == nullptr) return;
+    lv_obj_set_style_opa(o, ok ? LV_OPA_COVER : LV_OPA_30, 0);
+    if (ok) lv_obj_remove_state(o, LV_STATE_DISABLED); else lv_obj_add_state(o, LV_STATE_DISABLED);
+  };
+  const bool unbekannt = caps == 0 && zeig == nullptr;   // noch keine Daten: alles bedienbar lassen
+  if (frei(it.wo[WR_L_HELL]) && pct >= 0) lv_slider_set_value(it.wo[WR_L_HELL], pct, LV_ANIM_ON);
+  if (it.wo[WR_L_HELL]) lv_obj_set_style_bg_color(it.wo[WR_L_HELL], lv_color_hex(an ? farbe : 0x6B7280), LV_PART_INDICATOR);
+  kann(it.wo[WR_L_HELL], unbekannt || (caps & 1));
+  if (it.wo[WR_L_TEMP] != nullptr) {
+    const int kmin = attr(zeig, "kmin", 2000), kmax = attr(zeig, "kmax", 6500);
+    if (frei(it.wo[WR_L_TEMP])) {
+      lv_slider_set_range(it.wo[WR_L_TEMP], kmin, std::max(kmin + 100, kmax));
+      if (k > 0) lv_slider_set_value(it.wo[WR_L_TEMP], k, LV_ANIM_ON);
+    }
+    kann(it.wo[WR_L_TEMP], unbekannt || (caps & 6));
+  }
+  if (it.wo[WR_L_FARBE] != nullptr) {
+    if (frei(it.wo[WR_L_FARBE]) && h >= 0 && cm != "color_temp") lv_slider_set_value(it.wo[WR_L_FARBE], h, LV_ANIM_ON);
+    kann(it.wo[WR_L_FARBE], unbekannt || (caps & 4));
+  }
+  if (it.wo[WR_L_PAL] != nullptr) {
+    for (int i = 0; i < (int) lv_obj_get_child_count(it.wo[WR_L_PAL]); i++)
+      kann(lv_obj_get_child(it.wo[WR_L_PAL], i), unbekannt || (PALETTE[i].kelvin ? (caps & 6) : (caps & 4)));
+  }
+  if (it.wo[WR_L_CHIPS] != nullptr) {
+    for (int i = -1; i < n && i + 1 < (int) lv_obj_get_child_count(it.wo[WR_L_CHIPS]); i++) {
+      lv_obj_t *c = lv_obj_get_child(it.wo[WR_L_CHIPS], i + 1);
+      const EntZustand *z = i >= 0 ? ez_(la[i]["e"] | "") : nullptr;
+      const bool ein = i < 0 ? an > 0 || it.lwahl >= 0 : (z != nullptr && z->state == "on");
+      lv_obj_set_style_bg_color(c, lv_color_hex(it.lwahl == i ? hl_ : 0x2E3643), 0);
+      lv_obj_t *l = lv_obj_get_child(c, 0);
+      if (l) lv_obj_set_style_text_color(l, lv_color_hex(it.lwahl == i || ein ? C_TEXT : C_GRAU), 0);
+    }
+  }
+}
+
+void Menue::licht_senden_(Item &it, const char *aktion, const std::string &wert) {
+  const std::string ziele = licht_ziele_(it, true);
+  if (ziele.empty() || tk_ == nullptr) return;
+  tk_->ha_aufruf("esphomeremote_konfig.licht", {{"entity_id", ziele}, {"aktion", aktion}, {"wert", wert}});
+  // Gleich zeigen, was passieren wird (die Abfrage bestaetigt es kurz danach)
+  JsonArrayConst la = it.j["lichter"];
+  bool irgendwas = false;
+  for (int i = 0; i < (int) la.size(); i++) {
+    if (it.lwahl >= 0 && i != it.lwahl) continue;
+    const EntZustand *z = ez_(la[i]["e"] | "");
+    irgendwas |= z != nullptr && z->state == "on";
+  }
+  for (int i = 0; i < (int) la.size(); i++) {
+    if (it.lwahl >= 0 && i != it.lwahl) continue;
+    EntZustand &z = zustand_cache_[PStr(la[i]["e"] | "")];
+    if (z.state == "unavailable") continue;
+    if (!strcmp(aktion, "toggle")) z.state = irgendwas ? "off" : "on";
+    else if (!strcmp(aktion, "hell")) { z.state = "on"; z.bri = atoi(wert.c_str()) * 255 / 100; }
+    else z.state = "on";
+  }
+  const char *g = it.j["gruppe"] | "";
+  if (*g && it.lwahl < 0) {
+    EntZustand &z = zustand_cache_[PStr(g)];
+    if (!strcmp(aktion, "toggle")) z.state = irgendwas ? "off" : "on";
+    else { z.state = "on"; if (!strcmp(aktion, "hell")) z.bri = atoi(wert.c_str()) * 255 / 100; }
+  }
+  licht_zustand_(it);
+  abf_ab_ = millis() + 800;
+}
+
+void Menue::licht_cb_(lv_event_t *e) {
+  auto *self = (Menue *) lv_event_get_user_data(e);
+  lv_obj_t *o = (lv_obj_t *) lv_event_get_current_target(e);
+  const int v = (int) (intptr_t) lv_obj_get_user_data(o), i = v / 64, code = v % 64;
+  if (i < 0 || i >= (int) self->items_.size()) return;
+  Item &it = self->items_[i];
+  const lv_event_code_t c = lv_event_get_code(e);
+  lv_event_stop_bubbling(e);
+  if (code == LC_HELL || code == LC_TEMP || code == LC_FARBE) {
+    if (lv_obj_has_state(o, LV_STATE_DISABLED)) return;
+    // beim Ziehen hoechstens alle 350 ms, beim Loslassen immer
+    if (c != LV_EVENT_RELEASED && millis() - it.lsend_ms < 350) return;
+    it.lsend_ms = millis();
+    const int w = lv_slider_get_value(o);
+    if (code == LC_HELL) self->licht_senden_(it, "hell", std::to_string(w));
+    else if (code == LC_TEMP) self->licht_senden_(it, "kelvin", std::to_string(w));
+    else self->licht_senden_(it, "farbe", std::to_string(w) + ",100");
+    return;
+  }
+  if (c != LV_EVENT_CLICKED) return;
+  self->fokus_setzen_(i);
+  if (code == LC_POWER) {
+    self->licht_senden_(it, "toggle", "");
+  } else if (code == LC_KOPF) {   // Unterseite (ausserhalb des Ereignisses: die Seite wird dabei neu gebaut)
+    static std::string ziel;
+    ziel = it.j["ziel"] | "";
+    lv_async_call([](void *p) {
+      auto *m = (Menue *) p;
+      if (m->seite_index_(ziel.c_str()) < 0) return;
+      if (m->nur_anzeige_) { if (m->seite_oeffnen) m->seite_oeffnen(ziel); return; }
+      if (m->fokus_ >= 0 && !m->stapel_.empty()) m->fokus_mem_[PStr(m->stapel_.back().c_str())] = m->fokus_;
+      m->stapel_.push_back(ziel.c_str());
+      m->rutsch_ = 1;
+      m->bauen_();
+      m->rutschen_(1);
+    }, self);
+  } else if (code >= LC_CHIP && code < LC_PAL) {
+    it.lwahl = code - LC_CHIP - 1;
+    self->licht_zustand_(it);
+  } else if (code >= LC_PAL && code < LC_SZENE) {
+    if (lv_obj_has_state(o, LV_STATE_DISABLED)) return;
+    const PalEintrag &p = PALETTE[code - LC_PAL];
+    self->licht_senden_(it, p.kelvin ? "kelvin" : "farbe", p.kelvin ? std::to_string(p.wert) : std::to_string(p.wert) + ",100");
+  } else if (code >= LC_SZENE) {
+    const char *s = it.j["szenen"][code - LC_SZENE]["e"] | "";
+    if (*s) self->tk_->ha_aufruf("esphomeremote_konfig.licht", {{"entity_id", s}, {"aktion", "szene"}, {"wert", s}});
+    self->abf_ab_ = millis() + 1200;
+  }
 }
 
 }  // namespace menue

@@ -536,7 +536,12 @@ void DockDirekt::loop() {
     esp_wifi_get_mode(&m);
     if (m == WIFI_MODE_NULL) esp_wifi_set_mode(WIFI_MODE_STA);
     const esp_err_t e = esp_wifi_start();
-    if (e != ESP_OK) ESP_LOGW(TAG, "Funk starten: %s", esp_err_to_name(e));
+    if (e != ESP_OK) {
+      // 2026-10-29: z. B. ESP_ERR_WIFI_STOP_STATE (WLAN faehrt gerade herunter) - NICHT als geliehen merken, sonst hing
+      // der Funkweg (keine Cover, HA-Aufrufe verworfen), bis die Remote neu startete. Gleich noch einmal versuchen.
+      ESP_LOGW(TAG, "Funk starten: %s - neuer Versuch", esp_err_to_name(e));
+      return;
+    }
     funk_geliehen_ = true;
     funk_ab_ms_ = millis() + 30;   // STA-Start laeuft asynchron
     ESP_LOGD(TAG, "Funk fuer ESP-NOW eingeschaltet (WLAN ist aus)");

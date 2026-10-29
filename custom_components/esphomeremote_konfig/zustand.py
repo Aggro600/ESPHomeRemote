@@ -132,6 +132,9 @@ class DockStand:
         self._ausl: dict[str, list[tuple[str, str]]] = {}   # geraet -> Popup-Ausloeser
         self._wartung: dict[str, float] = {}   # geraet -> Wartungsfenster angefordert bis (monotonic)
         self._wartung_abo: dict[str, object] = {}   # geraet -> Abo "WLAN aktiv" (beendet die Anforderung)
+        self._wdauer: dict[str, tuple[int, str]] = {}
+        self._wa: dict[str, tuple[int, float]] = {}   # geraet -> ("WLAN jetzt aus"-Nummer, gueltig bis)
+        self._wa_nr = int(time.time()) % 100000
         # Kurze Ausloeser halten (2026-10-25): ein Skript steht nur Sekundenbruchteile auf "on" - die Remote fragt das
         # Dock aber nur alle 2 s und verpasste es (Kamera-Popup). Erreicht ein Ausloeser einen Popup-Wert, meldet das
         # Dock ihn HALTEN_S lang, auch wenn er schon zurueckgesprungen ist.
@@ -231,10 +234,11 @@ class DockStand:
 
         self._geplant[dev] = async_call_later(self.hass, s, _los)
 
-    def wartung_anfordern(self, dev: str, sekunden: float = 900) -> None:
+    def wartung_anfordern(self, dev: str, sekunden: float = 900, dauer: int = 180, grund: str = "Konfigurator") -> None:
         """Wartungsfenster ueber das Dock (2026-10-25): die Remote sieht "w" im Stand und schaltet ihr WLAN 3 min an -
         Firmware-Update ohne Bluetooth-Link zu HA. Gilt, bis sie sich meldet oder die Zeit um ist."""
         self._wartung[dev] = time.monotonic() + sekunden
+        self._wdauer[dev] = (int(dauer), str(grund)[:16])   # Dauer/Grund des Fensters auf der Remote (2026-10-29)
         self._planen(dev, 0.2)
         # Sobald das WLAN der Remote steht, ist die Anforderung erledigt (2026-10-28): sonst sah die Remote nach dem Ende
         # ihres 3-min-Fensters wieder "w" und schaltete das WLAN erneut an - bis zu 10 min lang (WLAN-Knopf). Jede
@@ -252,6 +256,14 @@ class DockStand:
                 self.wartung_fertig(d)
 
         self._wartung_abo[dev] = async_track_state_change_event(self.hass, [eid], _wlan)
+
+    def wlan_aus(self, dev: str) -> None:
+        """WLAN der Remote jetzt aus (2026-10-29): "wa" (Nummer) steht 60 s im Stand, die Remote fuehrt es einmal aus."""
+        self.wartung_fertig(dev)
+        self._wa_nr += 1
+        self._wa[dev] = (self._wa_nr, time.monotonic() + 60)
+        self._planen(dev, 0)
+        async_call_later(self.hass, 60.5, lambda _now, d=dev: self._planen(d, 0))
 
     def wartung_fertig(self, dev: str) -> None:
         if (ab := self._wartung_abo.pop(dev, None)) is not None:
@@ -281,6 +293,9 @@ class DockStand:
         st = _stand(self.hass, dev.replace("-", "_"), self._ausl.get(dev), self._gehalten)
         if self._wartung.get(dev, 0) > time.monotonic():
             st["w"] = 1
+            st["wd"], st["wg"] = self._wdauer.get(dev, (180, "Konfigurator"))
+        if (wa := self._wa.get(dev)) and wa[1] > time.monotonic():
+            st["wa"] = wa[0]
         if (t := self._test.get(dev)) and t[2] > time.monotonic():
             st["tp"] = [t[0], t[1]]
         # Docks, die gerade online sind (2026-10-25): die Remote probiert sie zuerst

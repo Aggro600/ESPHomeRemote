@@ -126,3 +126,25 @@ blaster_senden:
         number:
           min: 1
           max: 30
+licht:
+  name: Licht steuern (Licht-Widget)
+  description: "Bedienung des Licht-Widgets der Remote: schaltet, dimmt, setzt Farbtemperatur oder Farbe je Lampe nur so weit, wie sie es kann, oder aktiviert eine Szene."
+  fields:
+    entity_id:
+      name: Lampen
+      description: "Komma-getrennt, z. B. light.wohnzimmer,light.stehlampe"
+      required: true
+      selector:
+        text:
+    aktion:
+      name: Aktion
+      description: "an, aus, toggle, hell, kelvin, farbe oder szene"
+      required: true
+      selector:
+        select:
+          options: ["an", "aus", "toggle", "hell", "kelvin", "farbe", "szene"]
+    wert:
+      name: Wert
+      description: "hell: Prozent, kelvin: z. B. 2700, farbe: Farbton,Sättigung (z. B. 30,100), szene: scene.xyz"
+      selector:
+        text:
