@@ -45,7 +45,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "153"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "157"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -1259,6 +1259,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     websocket_api.async_register_command(hass, ws_sicherung)
     websocket_api.async_register_command(hass, ws_wlan_an)
     websocket_api.async_register_command(hass, ws_reihenfolge_save)
+    websocket_api.async_register_command(hass, ws_docks_einst_save)
     websocket_api.async_register_command(hass, ws_einspielen)
     websocket_api.async_register_command(hass, ws_default)
     websocket_api.async_register_command(hass, ws_werk_speichern)
@@ -1541,7 +1542,7 @@ def ws_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg:
             "entfernbar": kd.entfernbar(dev),
         }
     connection.send_result(msg["id"], {"devices": out, "order": reihenfolge(kd), "einst_standard": kd.data.get("einst_standard") or {},
-                                       "max_bytes": MAX_BYTES})
+                                       "docks_einst": docks_einst(kd), "max_bytes": MAX_BYTES})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/einst_set", vol.Required("device"): str,
@@ -1650,6 +1651,35 @@ async def ws_reihenfolge_save(hass: HomeAssistant, connection: websocket_api.Act
     kd.data["reihenfolge"] = [d for d in msg["order"] if d in kd.devices]
     await kd.store.async_save(kd.data)
     connection.send_result(msg["id"], {"order": reihenfolge(kd)})
+
+
+def docks_einst(kd) -> dict:
+    """Docks im Konfigurator (2026-10-30): Reihenfolge in Leiste/Uebersicht und Farben der Dock-Symbole."""
+    e = kd.data.get("docks_einst") or {}
+    return {"ordnung": list(e.get("ordnung") or []), "farben": dict(e.get("farben") or {})}
+
+
+_FARBE = vol.Match(r"^#[0-9a-fA-F]{6}$")
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/docks_einst_save",
+                                  vol.Optional("ordnung"): [vol.Match(r"^[a-z0-9-]{1,40}$")],
+                                  vol.Optional("dock"): vol.Match(r"^[a-z0-9-]{1,40}$"),
+                                  vol.Optional("farben"): vol.Any(None, {vol.Optional(k): _FARBE for k in ("gehaeuse", "led")})})
+@websocket_api.async_response
+async def ws_docks_einst_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    kd: KonfigData = hass.data[DOMAIN]
+    e = docks_einst(kd)
+    if "ordnung" in msg:
+        e["ordnung"] = list(dict.fromkeys(msg["ordnung"]))[:50]
+    if "dock" in msg and "farben" in msg:
+        if msg["farben"]:
+            e["farben"][msg["dock"]] = msg["farben"]
+        else:
+            e["farben"].pop(msg["dock"], None)
+    kd.data["docks_einst"] = e
+    await kd.store.async_save(kd.data)
+    connection.send_result(msg["id"], e)
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/wlan_an", vol.Required("device"): str,

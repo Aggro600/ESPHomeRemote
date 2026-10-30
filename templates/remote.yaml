@@ -48,7 +48,7 @@ esphome:
   friendly_name: Remote WZ Remotename
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.10.30.1"
+    version: "2026.10.30.2"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message

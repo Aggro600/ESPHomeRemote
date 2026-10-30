@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.10.30.2 (2026-10-30)
+
+Docks in the configurator like the remotes: in the sidebar with status and short info, expandable with their own pages (overview, Bluetooth, LED, infrared, firmware), order by drag and drop (sidebar and overview), custom colours per dock. Firmware: build queue – build several devices one after another, 'scheduled' builds all, cancel jobs. Fix: remote icons in the sidebar off-centre/too small and state sometimes outdated.
+
+<details><summary>Deutsch</summary>
+
+Docks im Konfigurator wie die Remotes: links in der Leiste mit Status und Kurzinfo, aufklappbar mit eigenen Seiten (Übersicht, Bluetooth, LED, Infrarot, Firmware), Reihenfolge per Ziehen (Leiste und Übersicht), eigene Farben je Dock. Firmware: Warteschlange – mehrere Geräte nacheinander bauen, „Vorgemerkte“ baut alle, Aufträge abbrechen. Fix: Remote-Symbole in der Leiste verschoben/zu klein und Zustand teils veraltet.
+
+</details>
+
 ## 2026.10.30.1 (2026-10-30)
 
 Doorbells: any number (up to 8), configured directly in the popup editor, one shared image buffer on the remote. Media widget: new 'card' style (cover as background, volume keys), sources of the 'now playing' player right in the widget; the player forwards play/pause/next/volume to the active source (widgets and card did nothing before). Start page: live display in the editor (custom and built-in), settings on the right, status bar icons in the configurator, one grid with the menu. Activity bar: alignment, corners, gaps, icons per activity, all font sizes. Font sizes 7-28 px freely selectable. Function 'close menu'. Configurator: page tree no longer scrolls away while dragging, icon picker, mini remote with outline.

@@ -231,7 +231,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (strg && k === "k") { ev.preventDefault(); s.pal = s.pal ? null : { q: "", i: 0 }; this._render(); return; }
     if (strg && k === "s") {
       ev.preventDefault();
-      if (s.bereich === "dock" && s.dock?.dirty) this._click({ target: this._knopf("dk_save") });
+      if (["dock", "dockgeraet"].includes(s.bereich) && s.dock?.dirty) this._click({ target: this._knopf("dk_save") });
       else if (s.dirty[s.dev]) this._save();
       else { s.msg = { text: "Alles gespeichert – nichts zu tun." }; this._render(); }
       return;
@@ -410,11 +410,14 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         this._hwAlt = this._hwSig; this._render();
       }
       // Bluetooth-Geraete am Dock: Verbinden/Koppeln live (Restzeit der Kopplung zaehlt)
-      else if (this.s.bereich === "dock" && !this.s.modal && !this.s.pal && !tippt
+      else if (["dock", "dockgeraet"].includes(this.s.bereich) && !this.s.modal && !this.s.pal && !tippt
         && (this._dbtSig = this._dbtDocks().map((d) => JSON.stringify([d.k, d.ks, d.p])).join("|") + this._scanSig()) !== this._dbtAlt) {
         this._dbtAlt = this._dbtSig; this._render();
       }
-      else { const l = r.querySelector(".rliste"), h = this._remListeHtml(); if (l && h !== this._listeAlt) { l.innerHTML = h; this._listeAlt = h; } }
+      else {
+        const l = r.querySelector(".rliste"), h = this._remListeHtml(); if (l && h !== this._listeAlt) { l.innerHTML = h; this._listeAlt = h; }
+        const dl = r.querySelector(".dliste"), dh = dl && this._dockListeHtml(); if (dl && dh !== this._dlisteAlt) { dl.innerHTML = dh; this._dlisteAlt = dh; this._ordnungBind(); }
+      }
     }, 3000);
   }
   set narrow(n) { this._narrow = n; }
@@ -436,11 +439,12 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       try { last = localStorage.getItem("erk_dev"); } catch (e) { /* egal */ }
       this.s.dev = r.order.includes(last) ? last : r.order[0];
       this.s.einstStandard = r.einst_standard || {};
+      this.s.dockEinst = r.docks_einst || { ordnung: [], farben: {} };
       this.s.maxBytes = r.max_bytes || 90000;
       this.s.loaded = true;
       if (!this._seiteDa) {
         this._seiteDa = true;
-        try { const x = JSON.parse(localStorage.getItem("erk_seite") || "null"); if (Array.isArray(x)) { this.s.bereich = x[0]; this.s.mode = x[1] || "keys"; } } catch (e) { /* egal */ }
+        try { const x = JSON.parse(localStorage.getItem("erk_seite") || "null"); if (Array.isArray(x) && x[0] === "dockgeraet") { this.s.bereich = x[0]; this.s.dockSel = x[1]; this.s.dockMode = x[2] || "ueber"; } else if (Array.isArray(x)) { this.s.bereich = x[0]; this.s.mode = x[1] || "keys"; } } catch (e) { /* egal */ }
         this.s.bereich ||= "start";
         this._fwSicher();
       }
@@ -700,7 +704,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         : `<span class="logo"><ha-icon icon="mdi:remote-tv"></ha-icon></span><span class="spin"></span>`}</div>`;
       return;
     }
-    if (!["start", "remote", ...SEITEN_SYSTEM.map(([k]) => k)].includes(s.bereich)) s.bereich = "start";
+    if (!["start", "remote", "dockgeraet", ...SEITEN_SYSTEM.map(([k]) => k)].includes(s.bereich)) s.bereich = "start";
     if (!SEITEN_REMOTE.some(([m]) => m === s.mode)) s.mode = "keys";
     const alsSeite = this._modalAlsSeite();
     root.innerHTML = `${css}<div class="huelle"><div class="app ${s.nav ? "navauf" : ""}">
@@ -1533,6 +1537,10 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       this._touch(); return this._render();
     }
     if (t.dataset.fwwlan != null) { this.s.fw.wlanNachher = Number(t.value); try { localStorage.setItem("esphomeremote_fwwlan", t.value); } catch (e) { /* egal */ } return; }
+    if (t.dataset.dfarbe) {   // Farben eines Docks (2026-10-30)
+      const n = t.dataset.d, alt = this.s.dockEinst?.farben?.[n] || {};
+      return this._dockFarbe(n, { ...alt, [t.dataset.dfarbe]: t.value });
+    }
     if (t.dataset.rf) {   // Farben der Remote-Ansicht (2026-10-29)
       (this.cfg.rfarben ||= {})[t.dataset.rf] = t.value;
       this._touch(); return this._render();
@@ -1969,6 +1977,26 @@ const MenuEditor = {
         o.splice(o.indexOf(nach) + (runter ? 1 : 0), 0, von);
         this._render();
         try { this.s.order = (await this._hass.callWS({ type: "esphomeremote_konfig/reihenfolge_save", order: o })).order; }
+        catch (err) { this.s.msg = { err: true, text: "Reihenfolge speichern ging nicht: " + (err.message || err.code) }; this._render(); }
+      };
+    });
+    // Docks (2026-10-30): eigene Reihenfolge, gleiche Bedienung
+    r.querySelectorAll(".rgruppe[data-odk], .dkarte[data-odk]").forEach((el) => {
+      el.draggable = true;
+      el.ondragstart = (e) => { e.dataTransfer.setData("text/x-dock", el.dataset.odk); e.dataTransfer.effectAllowed = "move"; el.classList.add("drag"); };
+      el.ondragend = () => r.querySelectorAll("[data-odk]").forEach((x) => x.classList.remove("drag", "drop"));
+      el.ondragover = (e) => { if (!e.dataTransfer.types.includes("text/x-dock")) return; e.preventDefault(); el.classList.add("drop"); };
+      el.ondragleave = () => el.classList.remove("drop");
+      el.ondrop = async (e) => {
+        e.preventDefault(); el.classList.remove("drop");
+        const von = e.dataTransfer.getData("text/x-dock"), nach = el.dataset.odk, o = this._docks().map((g) => g.name);
+        if (!von || von === nach || !o.includes(von)) return;
+        const runter = o.indexOf(von) < o.indexOf(nach);
+        o.splice(o.indexOf(von), 1);
+        o.splice(o.indexOf(nach) + (runter ? 1 : 0), 0, von);
+        (this.s.dockEinst ||= { ordnung: [], farben: {} }).ordnung = o;
+        this._render();
+        try { this.s.dockEinst = await this._hass.callWS({ type: "esphomeremote_konfig/docks_einst_save", ordnung: o }); }
         catch (err) { this.s.msg = { err: true, text: "Reihenfolge speichern ging nicht: " + (err.message || err.code) }; this._render(); }
       };
     });
@@ -3862,6 +3890,11 @@ const miniRemote = (f, h = 24) => `<svg class="mini" viewBox="0 0 14 26" style="
   <rect x="3.2" y="3.2" width="7.6" height="7" rx=".8" fill="${f.display}"/><circle cx="7" cy="14.2" r="2.2" fill="${f.taste}"/><circle cx="7" cy="14.2" r=".7" fill="${f.symbol}"/>
   <circle cx="4" cy="18.6" r=".9" fill="${f.rot}"/><circle cx="6" cy="18.6" r=".9" fill="${f.gruen}"/><circle cx="8" cy="18.6" r=".9" fill="${f.gelb}"/><circle cx="10" cy="18.6" r=".9" fill="${f.blau}"/>
   <rect x="4" y="20.6" width="2.4" height="1.6" rx=".5" fill="${f.taste}"/><rect x="7.6" y="20.6" width="2.4" height="1.6" rx=".5" fill="${f.taste}"/></svg>`;
+// Kleines Dock (Navigation, Uebersicht) in den Farben des Docks (2026-10-30, docks_einst.farben)
+const DF_STD = { gehaeuse: "#3a3f47", led: "#03a9f4" };
+const DF_NAMEN = [["gehaeuse", "Gehäuse"], ["led", "LED"]];
+const miniDock = (f, h = 14) => `<svg class="minidock" viewBox="0 0 26 14" style="height:${h}px;width:${h * 26 / 14}px"><path d="M3.2 4.5h19.6l2.1 7a1.5 1.5 0 0 1-1.4 2H2.5a1.5 1.5 0 0 1-1.4-2z" fill="${f.gehaeuse}" stroke="rgba(255,255,255,.45)" stroke-width=".7"/>
+  <rect x="7.5" y="2.6" width="11" height="3.4" rx="1.3" fill="rgba(0,0,0,.5)"/><circle cx="13" cy="10" r="1.4" fill="${f.led}"/></svg>`;
 const hFenster = (p) => {
   const st = p.status !== false, l = p.leiste || "unten";
   // ohne Statusleiste ab 0 (2026-10-29, vorher 8: 6 Zeilen + 28 px Rest) - jede Kombination in ganzen Zeilen
@@ -4964,8 +4997,8 @@ const DockBt = {
     return out;
   },
   _dbtName(slug, p) { return this._dbtGeraete().find((x) => x.slug === slug && x.p === p)?.name || `Dock-Platz ${(p || 0) + 1}`; },
-  _dbtHtml() {
-    const docks = this._dbtDocks();
+  _dbtHtml(nur = "") {
+    const docks = this._dbtDocks().filter((d) => !nur || d.slug === nur);
     if (!docks.length) return "";
     const ent = (this.s.dbt ||= {});
     const karten = docks.map((d) => {
@@ -5329,12 +5362,46 @@ const DockEditor = {
     const d = this.s.dock;
     if (!d) { this._dockLaden(); return `<div class="dock">Lade …</div>`; }
     if (d.fehler) return `<div class="dock"><div class="msg err">${esc(d.fehler)}</div></div>`;
+    const schalter = Object.entries(d.schalter || {}).map(([dev, ids]) => {
+      const acts = this.s.cfg[dev]?.activities || [];
+      return `<tr><td class="nm"><b>${esc(devName(dev))}</b></td><td>${acts.map((a, i) => {
+        const id = ids[i];
+        const st = id ? this._hass.states[id] : null;
+        return `<span class="badge ${st?.state === "on" ? "eigen" : ""}" title="${esc(id || "nach dem Speichern")}">${esc(a.name)}${st ? ` · ${st.state === "on" ? "läuft" : st.state === "off" ? "aus" : "?"}` : ""}</span>`;
+      }).join(" ")}</td></tr>`;
+    }).join("");
+    // Sprungleiste (2026-10-26): die Dock-Seite ist lang - jeder Bereich als eigener Punkt (LED-Helligkeit u. a.)
+    const SPR = [["dk-zustand", "Zustand", "mdi:heart-pulse"], ["dk-bt", "Bluetooth", "mdi:bluetooth"], ["dk-led", "LED-Helligkeit", "mdi:led-on"],
+      ["dk-anz", "Smart Display", "mdi:monitor-dashboard"], ["dk-suche", "Suchtempo", "mdi:radar"], ["dk-ir", "IR-Geräte", "mdi:remote-tv"],
+      ["dk-fehler", "Bekannte Fehler", "mdi:bug-check-outline"]];
+    return `<div class="dock">
+      ${this._dockLeiste()}
+      <nav class="dkspr">${SPR.map(([id, l, i]) => `<button class="chip" data-a="dk_spring" data-z="${id}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</nav>
+      <div id="dk-zustand">${this._dockZustandHtml()}</div>
+      <div id="dk-bt">${this._dbtHtml()}</div>
+      <div id="dk-led">${this._lichtDockHtml()}</div>
+      <div id="dk-anz">${this._anzHtml()}</div>
+      <div id="dk-suche">${this._scanHtml()}</div>
+      <div id="dk-ir">${this._dockIrHtml()}</div>
+      <div class="dkopf"><h2><ha-icon icon="mdi:toggle-switch-outline"></ha-icon> Aktivitäts-Schalter</h2></div>
+      <p class="hint">Je Remote und Aktivität ein Schalter in Home Assistant (<code>switch.…_aktivitat_…</code>): an = läuft auf der Remote, einschalten startet sie, ausschalten beendet sie.
+        Was dabei passieren soll (z. B. TV einschalten, Eingang wählen), steht unter Fernbedienung › Tasten bei <b>Beim Starten</b> / <b>Beim Beenden</b> der Aktivität. Schläft die Remote, wird beim nächsten Verbinden nachgeholt.</p>
+      <div class="karte schalter"><table>${schalter}</table></div>
+      <div id="dk-fehler">${this._fehlerHtml()}</div>
+    </div>`;
+  },
+  // IR-Geraete (2026-10-30 aus _dockHtml geloest): alle oder nur die, die ueber einen bestimmten IR-Sender senden
+  _dockIrHtml(nurSender = "") {
+    const d = this.s.dock;
+    if (!d) { this._dockLaden(); return `<p class="hint">Lade …</p>`; }
+    if (d.fehler) return `<div class="msg err">${esc(d.fehler)}</div>`;
     const senderOpt = (g) => {
       const liste = [...d.sender];
       if (g.sender && !liste.some((x) => x.entity_id === g.sender)) liste.push({ entity_id: g.sender, name: g.sender + " (nicht gefunden)" });
       return liste.map((x) => `<option value="${esc(x.entity_id)}" ${x.entity_id === g.sender ? "selected" : ""}>${esc(x.name)}${x.online === false ? " – offline" : ""}</option>`).join("");
     };
     const karten = d.geraete.map((g, gi) => {
+      if (nurSender && g.sender !== nurSender) return "";
       const bf = this._dockBefehle(g);
       const ents = d.entitaeten[g.id] || {};
       const offen = d.offen[g.id];
@@ -5366,38 +5433,12 @@ const DockEditor = {
         ${offen ? `<table>${zeilen || `<tr><td>Noch keine Befehle.</td></tr>`}</table>` : ""}
       </div>`;
     }).join("");
-    const schalter = Object.entries(d.schalter || {}).map(([dev, ids]) => {
-      const acts = this.s.cfg[dev]?.activities || [];
-      return `<tr><td class="nm"><b>${esc(devName(dev))}</b></td><td>${acts.map((a, i) => {
-        const id = ids[i];
-        const st = id ? this._hass.states[id] : null;
-        return `<span class="badge ${st?.state === "on" ? "eigen" : ""}" title="${esc(id || "nach dem Speichern")}">${esc(a.name)}${st ? ` · ${st.state === "on" ? "läuft" : st.state === "off" ? "aus" : "?"}` : ""}</span>`;
-      }).join(" ")}</td></tr>`;
-    }).join("");
-    // Sprungleiste (2026-10-26): die Dock-Seite ist lang - jeder Bereich als eigener Punkt (LED-Helligkeit u. a.)
-    const SPR = [["dk-zustand", "Zustand", "mdi:heart-pulse"], ["dk-bt", "Bluetooth", "mdi:bluetooth"], ["dk-led", "LED-Helligkeit", "mdi:led-on"],
-      ["dk-anz", "Smart Display", "mdi:monitor-dashboard"], ["dk-suche", "Suchtempo", "mdi:radar"], ["dk-ir", "IR-Geräte", "mdi:remote-tv"],
-      ["dk-fehler", "Bekannte Fehler", "mdi:bug-check-outline"]];
-    return `<div class="dock">
-      ${this._dockLeiste()}
-      <nav class="dkspr">${SPR.map(([id, l, i]) => `<button class="chip" data-a="dk_spring" data-z="${id}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</nav>
-      <div id="dk-zustand">${this._dockZustandHtml()}</div>
-      <div id="dk-bt">${this._dbtHtml()}</div>
-      <div id="dk-led">${this._lichtDockHtml()}</div>
-      <div id="dk-anz">${this._anzHtml()}</div>
-      <div id="dk-suche">${this._scanHtml()}</div>
-      <div class="dkopf" id="dk-ir"><h2><ha-icon icon="mdi:remote-tv"></ha-icon> IR-Geräte</h2><span class="grow"></span>
-        <button class="btn primary" data-a="dk_neu"><ha-icon icon="mdi:plus"></ha-icon>IR-Gerät</button></div>
+    return `<div class="dkopf"><h2><ha-icon icon="mdi:remote-tv"></ha-icon> IR-Geräte</h2><span class="grow"></span>
+        <button class="btn primary" data-a="dk_neu" ${nurSender ? `data-sender="${esc(nurSender)}"` : ""}><ha-icon icon="mdi:plus"></ha-icon>IR-Gerät</button></div>
       <p class="hint">Geräte, die Home Assistant per Infrarot über das Dock steuert. Befehlsnamen wie bei der Harmony (PowerOn, VolumeUp, InputNext, DirectionUp, Select …):
         <code>remote.send_command</code> mit <code>command: VolumeUp</code> an die Remote-Entität des Geräts. Eigene Befehle überschreiben die Vorlage; Befehle namens „Input…“ werden Quellen des Media-Players.</p>
       ${d.sender.length ? "" : `<div class="msg err">Kein IR-Sender (infrared-Entität) in Home Assistant gefunden.</div>`}
-      ${karten || `<div class="karte">Noch kein IR-Gerät. „+ IR-Gerät“ legt eines an.</div>`}
-      <div class="dkopf"><h2><ha-icon icon="mdi:toggle-switch-outline"></ha-icon> Aktivitäts-Schalter</h2></div>
-      <p class="hint">Je Remote und Aktivität ein Schalter in Home Assistant (<code>switch.…_aktivitat_…</code>): an = läuft auf der Remote, einschalten startet sie, ausschalten beendet sie.
-        Was dabei passieren soll (z. B. TV einschalten, Eingang wählen), steht unter Fernbedienung › Tasten bei <b>Beim Starten</b> / <b>Beim Beenden</b> der Aktivität. Schläft die Remote, wird beim nächsten Verbinden nachgeholt.</p>
-      <div class="karte schalter"><table>${schalter}</table></div>
-      <div id="dk-fehler">${this._fehlerHtml()}</div>
-    </div>`;
+      ${karten.trim() || `<div class="karte">Noch kein IR-Gerät${nurSender ? " über dieses Dock" : ""}. „+ IR-Gerät“ legt eines an.</div>`}`;
   },
   // Bekannte Fehler fremder Software (2026-10-28, fehler.py): Link zum Fehlerbericht, Pruefen-Knopf und Antwort auf
   // "lohnt es sich, die Umgehung abzuschalten?" - offen/geschlossen und ob die betroffene Bibliothek neu ist
@@ -5502,7 +5543,7 @@ const DockEditor = {
       case "dk_neu": {
         let n = 1;
         while (d.geraete.some((x) => x.id === `geraet_${n}`)) n++;
-        d.geraete.push({ id: `geraet_${n}`, name: `IR-Gerät ${n}`, vorlage: "leer", sender: d.sender[0]?.entity_id || "", befehle: {} });
+        d.geraete.push({ id: `geraet_${n}`, name: `IR-Gerät ${n}`, vorlage: "leer", sender: t.dataset.sender || d.sender[0]?.entity_id || "", befehle: {} });
         d.offen[`geraet_${n}`] = true;
         d.dirty = true; return true;
       }
@@ -5637,7 +5678,8 @@ const FirmwareTab = {
     try {
       const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_liste" });
       Object.assign(fw, r, { fehlerWs: "", geladen: true, zeit: Date.now() });
-      if (!fw.job && r.jobs.length) this._fwFolgen(r.jobs[0].job_id);
+      fw.schlange = r.jobs;
+      if ((!fw.job || fw.job.fertig) && r.jobs.length) { const j = r.jobs.find((x) => x.status === "laeuft") || r.jobs[0]; fw.job = { ...j, fertig: false, log: [] }; this._fwFolgen(j.job_id); }
     } catch (e) { fw.fehlerWs = e.message || String(e); fw.geladen = true; }
     this._render();
   },
@@ -5676,7 +5718,7 @@ const FirmwareTab = {
     const wege = this._fwWege(g);
     let weg = fw.weg[g.datei];
     if (weg == null || !wege.some((w) => w[0] === weg && !w[2])) weg = this._fwStandardWeg(g);
-    const beschaeftigt = (fw.job && !fw.job.fertig) || (fw.usb && !fw.usb.fertig);
+    const beschaeftigt = fw.usb && !fw.usb.fertig;   // Firmware-Auftraege reihen sich ein (2026-10-30), nur USB sperrt
     const knopf = weg === "" ? ["download", "Bauen + herunterladen"] : weg === "usb" ? ["usb-port", "Per USB flashen"] : ["upload", "Installieren"];
     const meins = (fw.job && fw.job.dateien?.includes(g.datei) && (fw.job.dateien.length === 1 || !fw.job.fertig)) || (fw.usb && fw.usb.datei === g.datei);
     const wlan = g.art === "remote" && g.name ? `<span class="wlanp" data-d="${esc(g.name)}">${this._wlanKnopf(g.name)}</span>` : "";
@@ -5724,6 +5766,9 @@ const FirmwareTab = {
       teile.push(`<div class="${u.fehler ? "msg err" : ""}" style="margin-top:6px"><b>USB:</b> ${esc(u.text || "")}${u.fehler ? " – " + esc(u.fehler) : ""}
         ${u.pct != null && !u.fertig ? `<div class="balken"><i style="width:${u.pct}%"></i></div>` : ""}</div>`);
     }
+    const wartend = (this.s.fw.schlange || []).filter((x) => x.status === "wartet" && x.job_id !== j?.job_id);
+    if (wartend.length) teile.push(`<div class="fwschlange"><b>Warteschlange</b>${wartend.map((x, n) => `<div class="fwsz"><span>${n + 1}. ${esc(x.titel || x.dateien.join(", "))} <small>${x.port === "" ? "bauen" : x.port === "OTA" ? "bauen + aufspielen" : "USB"}</small></span>
+      <button class="icon sm" data-a="fw_raus" data-job="${esc(x.job_id)}" title="Aus der Warteschlange nehmen"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")}</div>`);
     const log = [...(j?.log || []), ...(u?.log || [])];
     if (log.length) teile.push(`<div class="joblog">${esc(log.slice(-80).join("\n"))}</div>`);
     return `<div class="fwjob">${teile.join("")}</div>`;
@@ -5757,9 +5802,13 @@ const FirmwareTab = {
         try {
           const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_job", job_id });
           fw.job = r;
+          await this._fwSchlange();
           if (r.fertig) {
             clearInterval(this._fwT);
             fertig(r);
+            // naechster Auftrag der Warteschlange: gleich anzeigen
+            const naechst = (fw.schlange || []).find((x) => x.job_id !== job_id);
+            if (naechst) setTimeout(() => { if (!fw.job || fw.job.fertig) { fw.job = { ...naechst, fertig: false, log: [] }; this._fwFolgen(naechst.job_id); } }, 1500);
             if (!fw.usb) {
               this.s.msg = r.status === "fertig" ? { text: r.port === "" ? "Firmware gebaut." : `${r.titel}: installiert.` } : { err: true, text: `${r.titel}: ${r.fehler || "Fehler"} – siehe Protokoll.` };
               setTimeout(() => this._fwLaden(), 2000);
@@ -5773,10 +5822,30 @@ const FirmwareTab = {
       tick();
     });
   },
+  // Warteschlange (2026-10-30): jeder Auftrag reiht sich ein; angezeigt wird der laufende, die anderen in der Schlange
   async _fwStarten(dateien, port) {
-    const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_installieren", dateien, port, wlan_nachher: Number(this.s.fw.wlanNachher || 0) });
-    this.s.fw.job = { job_id: r.job_id, dateien, port, titel: "", status: "laeuft", fertig: false, log: [] };
+    const fw = this.s.fw;
+    const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_installieren", dateien, port, wlan_nachher: Number(fw.wlanNachher || 0) });
+    const laeuft = fw.job && !fw.job.fertig && fw.job.job_id !== r.job_id;
+    if (laeuft) {
+      this.s.msg = { text: `${r.schon ? "Steht schon in der Warteschlange" : "In die Warteschlange gestellt"}${r.platz ? ` (${r.platz} davor)` : ""}.` };
+      this._fwSchlange();
+      return this._fwWarten(r.job_id);
+    }
+    fw.job = { job_id: r.job_id, dateien, port, titel: "", status: "laeuft", fertig: false, log: [] };
     return this._fwFolgen(r.job_id);
+  },
+  // auf einen Auftrag warten, ohne ihn anzuzeigen (z. B. "Bauen + herunterladen" in der Schlange)
+  _fwWarten(job_id) {
+    return new Promise((fertig) => {
+      const t = setInterval(async () => {
+        try { const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_job", job_id }); if (r.fertig) { clearInterval(t); fertig(r); } }
+        catch (e) { clearInterval(t); fertig({ fertig: true, status: "fehler" }); }
+      }, 3000);
+    });
+  },
+  async _fwSchlange() {
+    try { this.s.fw.schlange = (await this._hass.callWS({ type: "esphomeremote_konfig/fw_schlange" })).jobs; } catch (e) { /* egal */ }
   },
   async _fwHolen(datei) {
     const r = await this._hass.fetchWithAuth(`/api/esphomeremote_konfig/firmware/${encodeURIComponent(datei)}`);
@@ -5899,13 +5968,14 @@ const FirmwareTab = {
     // ausgeschaltete Docks nicht mitnehmen (Remotes schlafen dagegen oft - die weckt das Wartungsfenster)
     const updates = fw.geraete.filter((g) => (g.update || g.veraltet) && !g.gesperrt && g.art !== "test" && !(g.art === "dock" && !g.online));
     const alt = fw.geraete.filter((g) => g.veraltet);
-    const beschaeftigt = (fw.job && !fw.job.fertig) || (fw.usb && !fw.usb.fertig);
+    const beschaeftigt = fw.usb && !fw.usb.fertig;   // Firmware-Auftraege reihen sich ein (2026-10-30), nur USB sperrt
     const sammel = fw.job && fw.job.dateien?.length > 1 ? `<div class="karte hw">${this._fwJobHtml()}</div>` : "";
     return `<div class="fw">
       <div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware &amp; Geräte</h2><span class="grow"></span>
         <label class="inl2" title="Remotes mit „Nur Bluetooth“: wie lange ihr WLAN nach einem Update noch an bleibt">WLAN beim Update
           <select data-fwwlan>${[[0, "nur fürs Update"], [10, "danach noch 10 min"], [30, "danach noch 30 min"]].map(([v, n]) => `<option value="${v}" ${Number(fw.wlanNachher || 0) === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
         <button class="btn small" data-a="fw_reload" title="Neu laden"><ha-icon icon="mdi:refresh"></ha-icon></button>
+        <button class="btn small" data-a="fw_allevormerken" title="Alle veralteten Remotes vormerken: jetzt bauen, aufspielen beim nächsten Benutzen" ${updates.some((x) => x.art === "remote" && !x.vorgemerkt) ? "" : "disabled"}><ha-icon icon="mdi:calendar-clock"></ha-icon>Alle vormerken</button>
         <button class="btn primary" data-a="fw_alle" ${updates.length && !beschaeftigt ? "" : "disabled"}><ha-icon icon="mdi:update"></ha-icon>Alle aktualisieren${updates.length ? ` (${updates.length})` : ""}</button></div>
       <p class="hint">${fw.lokal ? `Eine Quelle für alle: Remotes entstehen aus <code>esphome/templates/remote.yaml</code> und <code>remote-halink.yaml</code> (vor jedem Bauen neu erzeugt), Docks aus <code>esphome/templates/dock-basis.yaml</code>.`
           : `Remotes und Docks holen ihre Firmware beim Bauen von GitHub (Zweig <code>stabil</code> = letzter Release) – im ESPHome-Ordner liegt je Gerät nur eine kleine Datei mit Name und Passwörtern aus <code>secrets.yaml</code>.`}
@@ -5942,14 +6012,17 @@ const FirmwareTab = {
     const fw = this.s.fw;
     if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return `<h3>Docks</h3><div class="karte">Lade …</div>`; }
     if (fw.fehlerWs) return `<h3>Docks</h3><div class="msg err">${esc(fw.fehlerWs)}</div>`;
-    const karten = fw.geraete.filter((g) => g.art === "dock").map((g) => this._fwKarte(g,
-      `${g.sender ? `<div class="ents">IR-Sender <code>${esc(g.sender)}</code>${g.bt_mac ? ` · Bluetooth-Proxy <code>${esc(g.bt_mac)}</code>` : ""}</div>` : ""}
-       ${!g.geflasht ? `<ol class="schritte"><li>Dock per USB anstecken und „Per USB flashen“ (oder am Home-Assistant-Rechner einstecken).</li>
-         <li>Danach verbindet es sich mit dem WLAN – dann „In Home Assistant einbinden“.</li>
-         <li>Soll eine Remote über das Dock mit Home Assistant reden: Fernbedienung › Bluetooth › „Home Assistant über Bluetooth (Proxys)“ – dort das Dock anhaken.</li></ol>` : ""}`)).join("");
+    const karten = fw.geraete.filter((g) => g.art === "dock").map((g) => this._fwDockKarte(g)).join("");
     return `<div class="dkopf"><h3>Docks</h3><span class="grow"></span>
         <button class="btn small" data-a="fw_neudock"><ha-icon icon="mdi:plus"></ha-icon>Neues Dock</button></div>
       ${karten || `<div class="karte">Noch kein Dock. „+ Neues Dock“ legt die Konfiguration an.</div>`}`;
+  },
+  _fwDockKarte(g) {
+    return this._fwKarte(g,
+      `${g.sender ? `<div class="ents">IR-Sender <code>${esc(g.sender)}</code>${g.bt_mac ? ` · Bluetooth-Proxy <code>${esc(g.bt_mac)}</code>` : ""}</div>` : ""}
+       ${!g.geflasht ? `<ol class="schritte"><li>Dock per USB anstecken und „Per USB flashen“ (oder am Home-Assistant-Rechner einstecken).</li>
+         <li>Danach verbindet es sich mit dem WLAN – dann „In Home Assistant einbinden“.</li>
+         <li>Soll eine Remote über das Dock mit Home Assistant reden: Fernbedienung › Bluetooth › „Home Assistant über Bluetooth (Proxys)“ – dort das Dock anhaken.</li></ol>` : ""}`);
   },
   // Hardware-Test (2026-10-22, hardware-test.yaml; vorher nur Mikrofon): Platine Bauteil fuer Bauteil pruefen.
   // Zustaende live aus hass.states (Entitaeten des Testgeraets), Knoepfe fuer Sichtpruefungen (OK/Fehler).
@@ -6063,6 +6136,16 @@ const FirmwareTab = {
         catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
         await this._fwLaden(); return true;
       }
+      case "fw_raus":
+        try { this.s.fw.schlange = (await this._hass.callWS({ type: "esphomeremote_konfig/fw_abbrechen", job_id: t.dataset.job })).jobs; }
+        catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
+      case "fw_allevormerken": {   // alle veralteten Remotes vormerken - jede wird gleich gebaut (Warteschlange)
+        const liste = fw.geraete.filter((x) => x.art === "remote" && (x.update || x.veraltet) && !x.gesperrt && !x.vorgemerkt);
+        for (const x of liste) { try { await this._hass.callWS({ type: "esphomeremote_konfig/fw_vormerken", datei: x.datei, an: true }); } catch (e) { /* weiter */ } }
+        this.s.msg = { text: `${liste.length} Remote(s) vorgemerkt – werden jetzt nacheinander gebaut und aufgespielt, sobald sie benutzt werden.` };
+        await this._fwLaden(); return true;
+      }
       case "fw_nurbauen": {
         fw.usb = null;
         try { await this._fwStarten([t.dataset.datei], ""); this.s.msg = { text: "Wird gebaut – danach geht „Installieren“ schnell." }; }
@@ -6072,9 +6155,8 @@ const FirmwareTab = {
       case "fw_vormerken":
         try {
           const r = await this._hass.callWS({ type: "esphomeremote_konfig/fw_vormerken", datei, an: !g.vorgemerkt });
-          if (r.job_id) {   // wird gleich gebaut, aufgespielt wird, sobald die Remote benutzt wird
-            fw.job = { job_id: r.job_id, dateien: [datei], port: "", titel: "", status: "laeuft", fertig: false, log: [] };
-            this._fwFolgen(r.job_id);
+          if (r.job_id) {   // wird gleich gebaut (Warteschlange), aufgespielt wird, sobald die Remote benutzt wird
+            if (!fw.job || fw.job.fertig) { fw.job = { job_id: r.job_id, dateien: [datei], port: "", titel: "", status: "laeuft", fertig: false, log: [] }; this._fwFolgen(r.job_id); }
             this.s.msg = { text: `${g.friendly || datei}: wird jetzt gebaut und aufgespielt, sobald die Remote das nächste Mal benutzt wird.` };
           }
         } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
@@ -7039,12 +7121,12 @@ const LichtTab = {
     </div>`;
   },
   // Bereich Dockingstation: LED je Dock
-  _lichtDockHtml() {
+  _lichtDockHtml(nur = "") {
     const L = this.s.licht;
     if (!L) { this._lichtLaden(); return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div><p class="hint">Lade …</p>`; }
     if (L.fehler || !L.docks?.length) return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div><p class="hint">${L.fehler ? esc(L.fehler) : "Noch kein Dock mit LED gefunden."}</p>`;
     const c = L.cfg, stdName = (L.sensoren.find((x) => x.id === c.sensor)?.name) || c.sensor;
-    const zeilen = L.docks.map((d) => {
+    const zeilen = L.docks.filter((d) => !nur || d.id === nur).map((d) => {
       const autoAn = c.ziele.dock.an && this._lichtLux(d.id) != null, auto = autoAn && d.auto, lx = this._lichtLux(d.id);
       return `<tr><td class="n"><b>${esc(d.name)}</b><small>${d.online ? `LED jetzt ${d.led_ist ?? "–"} %` : "offline"}</small></td>
         <td><label class="sw small" title="Helligkeit nach Lichtsensor (Kurve unter Fernbedienung › Einstellungen)"><input type="checkbox" data-li="dock_auto" data-dock="${esc(d.id)}" ${d.auto ? "checked" : ""} ${autoAn ? "" : "disabled"}><span>Automatisch</span></label></td>
@@ -7444,10 +7526,10 @@ kbd { font-family:inherit; font-size:10.5px; line-height:1.4; padding:1px 6px; b
 .rgruppe { border-radius:16px; margin:1px 0; transition:background-color .2s; } .rgruppe.auf { background:color-mix(in srgb, var(--primary-text-color) 4.5%, transparent); padding-bottom:6px; }
 .rk { display:flex; align-items:center; gap:11px; width:100%; border:0; background:none; color:inherit; padding:8px; border-radius:14px; cursor:pointer; text-align:left; }
 .rk:hover { background:color-mix(in srgb, var(--primary-text-color) 6%, transparent); } .rgruppe.auf .rk:hover { background:none; }
-.ava { position:relative; width:40px; height:40px; flex:0 0 40px; display:inline-flex; align-items:center; justify-content:center; }
+.ava { position:relative; width:40px; height:40px; flex:0 0 40px; display:grid; place-items:center; }
 .ava svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
-.ava b { font-size:14px; } .ava svg.mini { position:relative; z-index:1; transform:none; inset:auto; flex:none; } .rkopf h2 svg.mini { vertical-align:-5px; margin-right:8px; } .ava::after { content:""; position:absolute; right:-1px; bottom:-1px; width:12px; height:12px; border-radius:50%; border:2.5px solid var(--side-bg); background:#6b7280; }
-.ava.wlan::after { background:var(--ok); } .ava.ble::after { background:var(--blau); } .ava.dock::after { background:#a855f7; }
+.ava b { font-size:14px; } .ava svg.mini { position:relative; z-index:1; transform:none; inset:auto; width:12px !important; height:22px !important; grid-area:1 / 1; } .rkopf h2 svg.mini { vertical-align:-5px; margin-right:8px; } .ava::after { content:""; position:absolute; right:-1px; bottom:-1px; width:12px; height:12px; border-radius:50%; border:2.5px solid var(--side-bg); background:#6b7280; }
+.ava.z-wlan::after { background:var(--ok); } .ava.z-ble::after { background:var(--blau); } .ava.z-dock::after { background:#a855f7; }   /* z-: "dock" allein traf .dock der Dock-Seite (Innenabstand) */
 svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, transparent); } svg .rv { fill:none; stroke-linecap:round; transition:stroke-dasharray .6s ease; }
 .rkt { display:flex; flex-direction:column; min-width:0; flex:1; line-height:1.3; } .rkt b { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .rkt small { font-size:11.5px; color:var(--sec); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -7480,6 +7562,7 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .hseinst { display:flex; flex-direction:column; gap:10px; } .hseinst h3 { display:flex; align-items:center; gap:6px; margin:0; font-size:15px; }
 .rshome .pgrid { margin-top:-4px; }
 .klblock { border:1px solid var(--div); border-radius:10px; padding:8px; margin:8px 0; } .klfeld { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.fwschlange { margin-top:8px; display:flex; flex-direction:column; gap:4px; } .fwsz { display:flex; align-items:center; gap:8px; padding:4px 8px; border-radius:8px; background:var(--flaeche); } .fwsz span { flex:1; } .fwsz small { opacity:.6; }
 .mw { position:absolute; inset:2px; display:flex; gap:8px; overflow:hidden; text-align:left; border-radius:8px; }
 .pi .mw b, .mw b { font-size:15px; font-weight:400; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; } .pi .mw small, .mw small { font-size:11px; opacity:.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; min-height:13px; }
 .mw .mk { font-style:normal; width:26px; height:26px; border-radius:50%; background:#232a35; display:inline-flex; align-items:center; justify-content:center; flex:none; } .mw .mk.h { background:#3b82f6; width:30px; height:30px; } .mw .mk ha-icon { --mdc-icon-size:16px; }
@@ -7503,7 +7586,7 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .wlicht .lpal { display:flex; justify-content:space-evenly; align-items:center; height:28px; flex:none; } .wlicht .lpal i { width:16px; height:16px; border-radius:50%; border:2px solid #111; }
 .wlicht .lsz { display:flex; flex-wrap:wrap; gap:4px; } .wlicht .lsz i { font-style:normal; font-size:10px; padding:5px 9px; border-radius:7px; background:#2e3643; }
 .linkbtn { background:none; border:0; padding:0; color:var(--acc,#03a9f4); cursor:pointer; font:inherit; text-decoration:underline; }
-[data-od].drag { opacity:.4; } [data-od].drop { outline:2px dashed var(--acc,#03a9f4); outline-offset:2px; border-radius:12px; }
+[data-od].drag, [data-odk].drag { opacity:.4; } [data-odk].drop, [data-od].drop { outline:2px dashed var(--acc,#03a9f4); outline-offset:2px; border-radius:12px; }
 .wlanw { position:relative; display:inline-flex; } .pill .pfeil { --mdc-icon-size:16px; color:var(--sec); margin-left:-4px; }
 .wlanmenu { position:absolute; top:calc(100% + 6px); right:0; z-index:20; min-width:190px; display:flex; flex-direction:column; padding:6px; border-radius:12px; background:var(--card); border:1px solid var(--rand); box-shadow:0 8px 24px rgba(0,0,0,.3); }
 .wlanmenu small { color:var(--sec); padding:4px 8px; } .wlanmenu hr { border:0; border-top:1px solid var(--rand); margin:4px 0; width:100%; }
@@ -7649,7 +7732,7 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
 .ht { flex:1 1 240px; min-width:0; display:flex; flex-direction:column; gap:1px; } .ht b { font-size:14px; font-weight:600; } .ht small { font-size:12.5px; color:var(--sec); }
 .rgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap:18px; }
 .rkarte { position:relative; overflow:hidden; background:var(--card); border:1px solid var(--rand); border-radius:24px; padding:22px; display:flex; flex-direction:column; gap:16px; box-shadow:var(--schatten); --glow:#6b7280; }
-.rkarte.wlan { --glow:var(--ok); } .rkarte.ble { --glow:var(--blau); } .rkarte.dock { --glow:#a855f7; }
+.rkarte.z-wlan { --glow:var(--ok); } .rkarte.z-ble { --glow:var(--blau); } .rkarte.z-dock { --glow:#a855f7; }
 .rkarte::before { content:""; position:absolute; right:-90px; top:-110px; width:300px; height:300px; border-radius:50%; background:radial-gradient(circle, var(--glow) 0%, transparent 68%); opacity:.13; pointer-events:none; }
 .rkarte > * { position:relative; }
 .rkarte header { display:flex; gap:18px; align-items:center; }
@@ -7660,7 +7743,7 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
 .rkopf { display:flex; flex-direction:column; gap:5px; min-width:0; } .rkopf h2 { margin:0; font-size:21px; font-weight:700; } .rkopf small { color:var(--sec); font-size:12.5px; line-height:1.4; }
 .zst { display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--sec); }
 .zst i { width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 0 4px color-mix(in srgb, currentColor 18%, transparent); }
-.zst.wlan { color:var(--ok); } .zst.ble { color:var(--blau); } .zst.dock { color:#a855f7; } .zst.wlan i, .zst.ble i, .zst.dock i { animation:atmen 2.4s ease-in-out infinite; }
+.zst.z-wlan { color:var(--ok); } .zst.z-ble { color:var(--blau); } .zst.z-dock { color:#a855f7; } .zst.z-wlan i, .zst.z-ble i, .zst.z-dock i { animation:atmen 2.4s ease-in-out infinite; }
 @keyframes atmen { 50% { box-shadow:0 0 0 7px color-mix(in srgb, currentColor 6%, transparent); } }
 .fakten { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }
 .fakt { display:flex; gap:10px; align-items:center; padding:10px 12px; border-radius:14px; background:var(--flaeche); min-width:0; }
@@ -7676,6 +7759,9 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
 .dk1 { display:flex; align-items:center; gap:11px; } .dk1 > span:nth-child(2) { display:flex; flex-direction:column; flex:1; min-width:0; } .dk1 b { font-size:14px; }
 .dk1 small { color:var(--sec); font-size:12px; display:flex; align-items:center; gap:6px; } .zp { width:7px; height:7px; border-radius:50%; background:#6b7280; display:inline-block; } .dkarte.on .zp { background:var(--ok); }
 .dkarte:not(.on) { opacity:.75; }
+.dkarte footer { display:flex; gap:6px; flex-wrap:wrap; } .ki.dkm { background:color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
+.ava svg.minidock { position:relative; z-index:1; transform:none; inset:auto; grid-area:1 / 1; } .rgruppe.aus .rk { opacity:.6; } .rgruppe.aus.auf .rk { opacity:1; }
+.dzgrid.eins { grid-template-columns:minmax(0, 640px); }
 .dk2 { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--sec); } .dk2 span { display:inline-flex; align-items:center; gap:4px; } .dk2 ha-icon { --mdc-icon-size:15px; }
 .ki { width:42px; height:42px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; background:var(--acc-s); color:var(--acc); flex:0 0 auto; }
 .kgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap:12px; }
@@ -7822,6 +7908,14 @@ const SEITEN_REMOTE = [
   ["akku", "Akku", "mdi:battery-heart-variant"],
   ["einst", "Einstellungen", "mdi:tune-variant"],
 ];
+// Unterseiten eines Docks in der Navigation (2026-10-30, wie bei den Remotes)
+const SEITEN_DOCK = [
+  ["ueber", "Übersicht", "mdi:heart-pulse"],
+  ["bt", "Bluetooth", "mdi:bluetooth-connect"],
+  ["led", "LED", "mdi:led-on"],
+  ["ir", "Infrarot", "mdi:remote-tv"],
+  ["fw", "Firmware", "mdi:chip"],
+];
 // Verknuepfungen je Remote (cfg.ents, spiegel.py): welche HA-Entitaeten die eingebauten Funktionen nutzen
 const VERKN = [
   ["jetzt", "Wiedergabe („Jetzt läuft“)", "mdi:play-box-multiple-outline", ["media_player"],
@@ -7861,7 +7955,7 @@ const fmtZeit = (iso) => { if (!iso) return ""; const d = new Date(iso); if (isN
   return min < 1 ? "gerade eben" : min < 60 ? `vor ${Math.round(min)} min` : min < 60 * 20 ? `vor ${Math.round(min / 60)} Std.`
     : d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
 const ring = (pct, farbe, dicke = 7) => { const r = 32 - dicke / 2 - 1, u = 2 * Math.PI * r, p = Math.max(0, Math.min(100, pct || 0));
-  return `<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="${r}" class="rg" style="stroke-width:${dicke}"/><circle cx="32" cy="32" r="${r}" class="rv" style="stroke:${farbe};stroke-width:${dicke};stroke-dasharray:${(u * p / 100).toFixed(1)} ${u.toFixed(1)}"/></svg>`; };
+  return `<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="${r}" class="rg" style="stroke-width:${dicke}"/>${p > 0 ? `<circle cx="32" cy="32" r="${r}" class="rv" style="stroke:${farbe};stroke-width:${dicke};stroke-dasharray:${(u * p / 100).toFixed(1)} ${u.toFixed(1)}"/>` : ""}</svg>`; };
 const akkuFarbe = (a) => a == null ? "var(--sec)" : a < 20 ? "var(--fehler)" : a < 40 ? "#f59e0b" : "var(--ok)";
 
 const OberflaecheTab = {
@@ -7870,12 +7964,16 @@ const OberflaecheTab = {
     const m = this.s.meta[d] || {}, slug = m.slug, S = this._hass?.states || {};
     const st = (id) => S[id];
     const num = (id) => { const v = parseFloat(st(id)?.state); return Number.isFinite(v) ? v : null; };
+    // Firmware-Liste nur, solange sie frisch ist (2026-10-30: sie wird nur auf der Firmware-Seite geladen - danach zeigte
+    // die Leiste noch Stunden spaeter "online", obwohl die Remote schlief, oder umgekehrt)
+    const fwFrisch = this.s.fw?.zeit && Date.now() - this.s.fw.zeit < 90000;
     const g = (this.s.fw?.geraete || []).find((x) => x.name === d);
+    const gz = fwFrisch ? g : null;
     const akku = num(`sensor.${slug}_akkustand`), rate = num(`sensor.${slug}_akku_rate`);
     const laden = st(`binary_sensor.${slug}_ladekabel`)?.state === "on";
     const haE = st(`binary_sensor.${slug}_ha_verbunden`), wlan = st(`binary_sensor.${slug}_wlan_aktiv`)?.state === "on";
     // Verbindung: die Firmware-Liste aus HA weiss es am besten (Sensoren behalten im Tiefschlaf ihren letzten Wert)
-    let zustand = g ? (g.online ? "wlan" : g.ha_da ? "ble" : "schlaf") : haE?.state === "on" ? (wlan ? "wlan" : "ble") : "schlaf";
+    let zustand = gz ? (gz.online ? "wlan" : gz.ha_da ? "ble" : "schlaf") : haE?.state === "on" ? (wlan ? "wlan" : "ble") : "schlaf";
     // Ohne eigene HA-Verbindung, aber Werte kamen uebers Dock (2026-10-23, dockstatus.py): "Ueber Dock", solange die
     // letzte Meldung juenger als 11 min ist (2026-10-25: Status kommt nur noch bei Aenderung, sonst alle 10 min) und die Remote nicht "Tiefschlaf" gemeldet hat
     const dA = st(`sensor.${slug}_akkustand`), dTs = st(`sensor.${slug}_tiefschlaf_status`)?.state;
@@ -7934,7 +8032,7 @@ const OberflaecheTab = {
     s.mitem = null;   // anderer Bereich/Editor: kein Eintrag mehr offen (Menue und Startseiten teilen s.mitem)
     s.nav = false; s.syncOffen = false;
     this._nachOben = true;
-    try { localStorage.setItem("erk_seite", JSON.stringify([s.bereich, s.mode])); } catch (e) { /* egal */ }
+    try { localStorage.setItem("erk_seite", JSON.stringify(b === "dockgeraet" ? [b, s.dockSel, s.dockMode] : [s.bereich, s.mode])); } catch (e) { /* egal */ }
   },
   _remWahl(d) {
     const s = this.s;
@@ -7953,6 +8051,7 @@ const OberflaecheTab = {
   _seitenTitel() {
     const s = this.s;
     if (s.bereich === "remote") { const x = SEITEN_REMOTE.find(([m]) => m === s.mode); return [x[1], x[2]]; }
+    if (s.bereich === "dockgeraet") { const x = SEITEN_DOCK.find(([m]) => m === s.dockMode) || SEITEN_DOCK[0]; return [x[1], x[2]]; }
     return SEITEN_TEXT[s.bereich] || SEITEN_TEXT.start;
   },
   _navHtml() {
@@ -7966,9 +8065,39 @@ const OberflaecheTab = {
       ${item(s.bereich === "start", "start", "", "mdi:view-dashboard-variant-outline", "Übersicht", nH ? `<i class="zahl" title="${nH} Hinweis(e)">${nH}</i>` : "")}
       <div class="nsec">Fernbedienungen</div>
       <div class="rliste">${(this._listeAlt = this._remListeHtml())}</div>
+      ${this._docks().length ? `<div class="nsec">Docks</div><div class="dliste">${(this._dlisteAlt = this._dockListeHtml())}</div>` : ""}
       <div class="nsec">Zuhause</div>
       ${SEITEN_SYSTEM.map(([k, t, i]) => item(s.bereich === k, k, "", i, t, k === "dock" && s.dock?.dirty ? '<i class="punkt warn"></i>' : "")).join("")}
       <div class="nfuss"><span>Panel ${esc(PANEL_STAND)}</span><span>Strg K = Suche · Strg S = Speichern</span></div>`;
+  },
+  // Docks in der festen Reihenfolge aus HA (docks_einst.ordnung), neue hinten nach Name
+  _docks() {
+    const fw = this.s.fw;
+    if (!fw?.geladen) return [];
+    const o = this.s.dockEinst?.ordnung || [];
+    const pos = (g) => { const i = o.indexOf(g.name); return i < 0 ? 1e6 : i; };
+    return (fw.geraete || []).filter((g) => g.art === "dock" && g.name)
+      .sort((a, b) => pos(a) - pos(b) || (a.friendly || a.name).localeCompare(b.friendly || b.name));
+  },
+  _df(n) { return { ...DF_STD, ...(this.s.dockEinst?.farben?.[n] || {}) }; },
+  _dockKurz(g) {
+    if (!g.geflasht) return "noch nicht geflasht";
+    if (!g.online) return g.gesperrt ? "offline · gesperrt" : "offline";
+    const b = this._dbtDocks().find((x) => x.slug === g.name.replace(/-/g, "_"));
+    const n = b ? b.p.filter((x) => x?.v).length : 0;
+    return `online${n ? ` · ${n} Gerät${n === 1 ? "" : "e"} verbunden` : ""}`;
+  },
+  // Docks in der Navigation (2026-10-30): wie die Remotes - aufklappen, Unterseiten, Reihenfolge ziehen
+  _dockListeHtml() {
+    const s = this.s;
+    return this._docks().map((g) => {
+      const n = g.name, auf = s.bereich === "dockgeraet" && s.dockSel === n && !s.dockZu, f = this._df(n), kurz = this._dockKurz(g);
+      const sub = auf ? `<div class="subnav">${SEITEN_DOCK.map(([m, t, i]) => `<button class="ni ${s.dockMode === m ? "on" : ""}" data-a="o_dockm" data-d="${esc(n)}" data-m="${m}" title="${esc(t)}">
+          <ha-icon icon="${i}"></ha-icon><span>${esc(t)}</span>${m === "fw" && g.update && !g.gesperrt ? '<i class="punkt warn" title="Update bereit"></i>' : ""}${m === "ir" && s.dock?.dirty ? '<i class="punkt warn" title="nicht gespeichert"></i>' : ""}</button>`).join("")}</div>` : "";
+      return `<div class="rgruppe ${auf ? "auf" : ""} ${g.online ? "" : "aus"}" data-odk="${esc(n)}" title="Ziehen = Reihenfolge ändern"><button class="rk ${auf ? "on" : ""}" data-a="o_dockg" data-d="${esc(n)}" title="${esc(g.friendly || n)} · ${esc(kurz)}">
+          <span class="ava dk ${g.online ? "z-wlan" : ""}">${ring(g.online ? 100 : 0, f.led, 5)}${miniDock(f, 13)}</span>
+          <span class="rkt"><b>${esc(g.friendly || n)}</b><small>${esc(kurz)}</small></span>${g.update && !g.gesperrt && !auf ? '<i class="punkt warn" title="Firmware-Update bereit"></i>' : ""}</button>${sub}</div>`;
+    }).join("");
   },
   _remListeHtml() {
     const s = this.s;
@@ -7978,7 +8107,7 @@ const OberflaecheTab = {
       const sub = auf ? `<div class="subnav">${SEITEN_REMOTE.map(([m, t, i]) => `<button class="ni ${s.bereich === "remote" && s.mode === m ? "on" : ""}" data-a="o_geh" data-b="remote" data-m="${m}" title="${esc(t)}">
           <ha-icon icon="${i}"></ha-icon><span>${esc(t)}</span>${m === "einst" && (s.meta[d]?.einst_offen || []).length ? '<i class="punkt" title="Änderungen unterwegs"></i>' : ""}</button>`).join("")}</div>` : "";
       return `<div class="rgruppe ${auf ? "auf" : ""}" data-od="${esc(d)}" title="Ziehen = Reihenfolge ändern"><button class="rk ${auf && s.bereich === "remote" ? "on" : ""}" data-a="o_rem" data-d="${esc(d)}" title="${esc(name)} · ${esc(L.kurz)}">
-          <span class="ava ${L.zustand}">${ring(L.akku ?? 0, akkuFarbe(L.akku), 5)}${miniRemote(this._rf(d), 22)}</span>
+          <span class="ava z-${L.zustand}">${ring(L.akku ?? 0, akkuFarbe(L.akku), 5)}${miniRemote(this._rf(d), 22)}</span>
           <span class="rkt"><b>${esc(name)}</b><small>${esc(L.kurz)}</small></span>${s.dirty[d] ? '<i class="punkt warn" title="nicht gespeichert"></i>' : ""}</button>${sub}</div>`;
     }).join("") || `<div class="none">Keine Remote</div>`;
   },
@@ -7987,7 +8116,8 @@ const OberflaecheTab = {
     return `<header class="seitenkopf">
       ${this._narrow ? `<button class="icon hamenu" data-a="menu" title="Home-Assistant-Menü"><ha-icon icon="mdi:menu"></ha-icon></button>` : ""}
       <button class="ktitel" data-a="o_navauf" title="Navigation"><span class="kico"><ha-icon icon="${icon}"></ha-icon></span>
-        <span class="kt"><b>${esc(titel)}</b>${rem ? `<small>${esc(devName(s.dev))}<ha-icon icon="mdi:chevron-down"></ha-icon></small>` : ""}</span></button>
+        <span class="kt"><b>${esc(titel)}</b>${rem ? `<small>${esc(devName(s.dev))}<ha-icon icon="mdi:chevron-down"></ha-icon></small>`
+          : s.bereich === "dockgeraet" ? `<small>${esc(this._docks().find((g) => g.name === s.dockSel)?.friendly || s.dockSel || "")}<ha-icon icon="mdi:chevron-down"></ha-icon></small>` : ""}</span></button>
       <span class="grow"></span>
       <button class="suche" data-a="o_pal" title="Suchen (Strg+K)"><ha-icon icon="mdi:magnify"></ha-icon><span>Suchen …</span><kbd>Strg K</kbd></button>
       ${rem ? `<span id="wlanp">${(this._wlanAlt = this._wlanKnopf())}</span>` : ""}
@@ -8094,7 +8224,7 @@ const OberflaecheTab = {
   },
   _speicherleiste() {
     const s = this.s;
-    if (s.bereich === "dock" && s.dock?.dirty) return this._saveBar("Ungespeicherte Änderungen an den IR-Geräten", "", "dk_verwerfen", "dk_save");
+    if (["dock", "dockgeraet"].includes(s.bereich) && s.dock?.dirty) return this._saveBar("Ungespeicherte Änderungen an den IR-Geräten", "", "dk_verwerfen", "dk_save");
     if (!s.dirty[s.dev]) { s.diffOffen = false; return ""; }
     const n = (s.hist[s.dev] || []).length;
     const L = (this._diffListe = this._aenderungen(s.dev));
@@ -8188,6 +8318,7 @@ const OberflaecheTab = {
     switch (s.bereich) {
       case "start": return (this._ueberAlt = this._uebersichtHtml());
       case "dock": return this._dockHtml();
+      case "dockgeraet": return this._dockGeraetHtml();
       case "ircodes": return this._ircHtml();
       case "jetzt": return this._jetztHtml();
       case "klingel": return this._klingelHtml();
@@ -8395,7 +8526,7 @@ const OberflaecheTab = {
         <button class="btn primary" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
       ${hinweise}
       <section><h2 class="abschn">Fernbedienungen</h2><div class="rgrid">${s.order.map((d) => this._remKarte(d)).join("")}</div></section>
-      ${docks.length ? `<section><h2 class="abschn">Docks</h2><div class="dgrid">${docks.map((g) => this._dockKarte(g)).join("")}</div></section>` : ""}
+      ${docks.length ? `<section><h2 class="abschn">Docks</h2><div class="dgrid">${this._docks().map((g) => this._dockKarte(g)).join("")}</div></section>` : ""}
       <section><h2 class="abschn">Schnellzugriff</h2><div class="kgrid">
         ${this._kachel("o_geh", 'data-b="fw"', "mdi:chip", "Firmware & Geräte", fw?.geraete ? `${fw.geraete.filter((g) => g.update && !g.gesperrt && g.art !== "test").length || "Keine"} Updates bereit` : "Updates, USB, neue Docks")}
         ${this._kachel("o_geh", 'data-b="dock"', "mdi:dock-window", "Dockingstation", "IR-Geräte, LED, Smart Display")}
@@ -8439,9 +8570,9 @@ const OberflaecheTab = {
     const fakt = (icon, label, wert, cls = "") => `<div class="fakt ${cls}"><ha-icon icon="${icon}"></ha-icon><span><small>${label}</small><b title="${esc(wert)}">${esc(wert)}</b></span></div>`;
     const syncT = { dirty: ["Nicht gespeichert", "warn"], ok: ["Aktiv", "ok"], laedt: [z.text, "busy"], verbinde: ["Verbindet …", "busy"], fehler: ["Fehler", "err"], wartet: ["Wartet auf die Remote", "warn"], unbekannt: ["Unbekannt", ""] }[z.art];
     const fwT = !g ? ["–", ""] : g.vorgemerkt ? ["Update vorgemerkt", "busy"] : g.update ? ["Update bereit", "warn"] : g.geflasht ? [`Aktuell${g.version ? " · " + g.version : ""}`, "ok"] : ["Nicht geflasht", ""];
-    return `<article class="rkarte ${L.zustand}" data-od="${esc(d)}">
+    return `<article class="rkarte z-${L.zustand}" data-od="${esc(d)}">
       <header><div class="ringw">${ring(L.akku ?? 0, akkuFarbe(L.akku))}<div class="rw"><b>${L.akku != null ? Math.round(L.akku) : "–"}<small>%</small></b>${L.laden ? '<ha-icon icon="mdi:lightning-bolt"></ha-icon>' : ""}</div></div>
-        <div class="rkopf"><h2>${miniRemote(this._rf(d), 26)}${esc(devName(d))}</h2><span class="zst ${L.zustand}"><i></i>${esc(L.ztext)}</span>
+        <div class="rkopf"><h2>${miniRemote(this._rf(d), 26)}${esc(devName(d))}</h2><span class="zst z-${L.zustand}"><i></i>${esc(L.ztext)}</span>
           <small>${L.laden ? "Lädt am Kabel" : L.restH ? `Akku reicht noch ≈ ${fmtStd(L.restH)}` : ""}${L.rate != null && Math.abs(L.rate) >= 0.1 ? ` · ${L.rate > 0 ? "+" : ""}${L.rate.toFixed(1).replace(".", ",")} %/h` : ""}${L.gemeldet ? ` · ${fmtZeit(L.gemeldet)}` : ""}</small></div></header>
       ${this._kurve(s.verlauf?.daten?.[d], akkuFarbe(L.akku), "kg_" + L.slug)}
       <div class="fakten">
@@ -8470,12 +8601,13 @@ const OberflaecheTab = {
     const v = (id) => S[id]?.state;
     const sig = parseFloat(v(`sensor.${slug}_wlan_signal`)), lauf = parseFloat(v(`sensor.${slug}_laufzeit`)), led = parseFloat(v(`number.${slug}_led_helligkeit`));
     const stufe = !Number.isFinite(sig) ? 0 : sig > -55 ? 4 : sig > -65 ? 3 : sig > -75 ? 2 : 1;
-    return `<div class="dkarte ${g.online ? "on" : ""}">
-      <div class="dk1"><span class="ki"><ha-icon icon="mdi:dock-window"></ha-icon></span><span><b>${esc(g.friendly || g.name)}</b><small><i class="zp"></i>${g.online ? "online" : g.geflasht ? "offline" : "noch nicht geflasht"}${g.ip && g.online ? " · " + esc(g.ip) : ""}</small></span>
+    return `<div class="dkarte ${g.online ? "on" : ""}" data-odk="${esc(g.name)}" title="Ziehen = Reihenfolge ändern">
+      <div class="dk1"><span class="ki dkm">${miniDock(this._df(g.name), 20)}</span><span><b>${esc(g.friendly || g.name)}</b><small><i class="zp"></i>${g.online ? "online" : g.geflasht ? "offline" : "noch nicht geflasht"}${g.ip && g.online ? " · " + esc(g.ip) : ""}</small></span>
         ${g.update && !g.gesperrt ? '<span class="badge warn">Update</span>' : ""}</div>
       ${g.online ? `<div class="dk2"><span title="WLAN ${Number.isFinite(sig) ? sig + " dBm" : ""}"><ha-icon icon="mdi:wifi-strength-${stufe || "off-outline"}"></ha-icon>${Number.isFinite(sig) ? `${sig} dBm` : "–"}</span>
         <span title="Laufzeit"><ha-icon icon="mdi:timer-outline"></ha-icon>${Number.isFinite(lauf) ? fmtStd(lauf / 3600) : "–"}</span>
         <span title="LED-Helligkeit"><ha-icon icon="mdi:led-on"></ha-icon>${Number.isFinite(led) ? Math.round(led) + " %" : "–"}</span></div>` : ""}
+      <footer>${SEITEN_DOCK.map(([m, t, i]) => `<button class="btn small" data-a="o_dockm" data-d="${esc(g.name)}" data-m="${m}" title="${esc(t)}"><ha-icon icon="${i}"></ha-icon>${m === "ueber" ? "Zustand" : esc(t)}</button>`).join("")}</footer>
     </div>`;
   },
 
@@ -8644,6 +8776,11 @@ const OberflaecheTab = {
       case "o_rem":   // nochmal auf die offene Remote: Unterpunkte ein-/ausklappen (2026-10-29)
         if (t.dataset.d === s.dev && s.bereich === "remote") { s.remZu = !s.remZu; return true; }
         s.remZu = false; this._remWahl(t.dataset.d); this._geh("remote", t.dataset.m); return true;
+      case "o_dockg":   // Dock in der Navigation: oeffnen, nochmal = ein-/ausklappen (2026-10-30)
+        if (s.bereich === "dockgeraet" && s.dockSel === t.dataset.d) { s.dockZu = !s.dockZu; return true; }
+        s.dockZu = false; s.dockSel = t.dataset.d; s.dockMode = t.dataset.m || s.dockMode || "ueber"; this._geh("dockgeraet"); return true;
+      case "o_dockm": s.dockZu = false; s.dockSel = t.dataset.d; s.dockMode = t.dataset.m; this._geh("dockgeraet"); return true;
+      case "dfarbe_weg": await this._dockFarbe(t.dataset.d, null); return "stop";
       case "o_navauf": s.nav = true; return true;
       case "o_navzu": s.nav = false; return true;
       case "o_pal": s.pal = { q: "", i: 0 }; s.nav = false; return true;
@@ -9200,7 +9337,7 @@ const PruefTab = {
     } catch (e) { /* ohne Verlauf */ }
     s.dockVerlauf = { zeit: Date.now(), daten };
     this._dvHolt = false;
-    if (s.bereich === "dock") this._render();
+    if (["dock", "dockgeraet"].includes(s.bereich)) this._render();
   },
   _dockZustand(g) {
     const S = this._hass.states, sl = g.name.replace(/-/g, "_"), V = this.s.dockVerlauf?.daten || {};
@@ -9263,6 +9400,39 @@ const PruefTab = {
       ${kurve ? `<div class="dzkurve">${kurve}<div class="kl"><span>vor 24 h</span><span>größtes freies Speicherstück</span><span>jetzt</span></div>
         <small class="note">Das Dock hat wenig Arbeitsspeicher. Entscheidend ist das <b>größte zusammenhängende freie Stück</b>: WLAN-Pakete brauchen rund 1,7 kB am Stück. Liegt die Kurve über der gestrichelten Linie (6 kB), ist alles gut; kurze Täler bei Updates sind normal, bleibt sie darunter, kann das Dock die Verbindung verlieren.</small></div>` : ""}
     </div>`;
+  },
+  // Seite eines einzelnen Docks (2026-10-30): dieselben Teile wie auf „Dockingstation“, nur fuer dieses Dock
+  _dockGeraetHtml() {
+    const s = this.s;
+    if (!this._fwSicher()) return `<div class="lade"><span class="spin"></span> Lade …</div>`;
+    const g = this._docks().find((x) => x.name === s.dockSel);
+    if (!g) return `<div class="dock"><div class="karte">Dieses Dock gibt es nicht mehr. <button class="btn small" data-a="o_geh" data-b="dock">Zur Dockingstation</button></div></div>`;
+    const sl = g.name.replace(/-/g, "_"), f = this._df(g.name);
+    let h;
+    switch (s.dockMode) {
+      case "bt": h = this._dbtHtml(sl) || `<div class="karte">Für Bluetooth-Plätze braucht das Dock eine aktuelle Firmware und muss online sein.</div>`; break;
+      case "led": h = this._lichtDockHtml(sl); break;
+      case "ir": h = g.sender ? this._dockIrHtml(g.sender) : `<div class="karte">Dieses Dock hat (noch) keinen IR-Sender in Home Assistant – erst flashen und einbinden.</div>`; break;
+      case "fw": h = `<div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware</h2></div>${this._fwDockKarte(g)}`; break;
+      default:
+        if ((!s.dockVerlauf || Date.now() - s.dockVerlauf.zeit > 3e5) && !this._dvHolt) setTimeout(() => this._dockVerlaufLaden(), 0);
+        h = `<div class="dzgrid eins">${this._dockZustand(g)}</div>
+          <div class="dkopf"><h2><ha-icon icon="mdi:palette-outline"></ha-icon> Farben dieses Docks</h2></div>
+          <p class="hint">Nur für die Anzeige hier im Konfigurator – damit du die Docks in der Leiste auseinanderhältst.</p>
+          <div class="karte"><div class="inl">${miniDock(f, 34)}<div class="lsfarben">${DF_NAMEN.map(([k, n]) => `<label class="farbe"><input type="color" data-dfarbe="${k}" data-d="${esc(g.name)}" value="${f[k]}"><span>${n}</span></label>`).join("")}</div>
+            ${s.dockEinst?.farben?.[g.name] ? `<button class="btn small ghost" data-a="dfarbe_weg" data-d="${esc(g.name)}"><ha-icon icon="mdi:backup-restore"></ha-icon>Standard</button>` : ""}</div></div>
+          <div class="kgrid">${SEITEN_DOCK.slice(1).map(([m, t, i]) => this._kachel("o_dockm", `data-d="${esc(g.name)}" data-m="${m}"`, i, t,
+            { bt: "Bis zu 4 Geräte am Dock", led: "Helligkeit, Automatik, Blinken", ir: "Geräte, die über dieses Dock senden", fw: g.update && !g.gesperrt ? "Update bereit" : g.version ? `Version ${g.version}` : "Bauen, installieren, sperren" }[m])).join("")}
+            ${this._kachel("o_geh", 'data-b="dock"', "mdi:dock-window", "Für alle Docks", "Suchtempo, Smart Display, Aktivitäts-Schalter, Fehler")}</div>`;
+    }
+    return `<div class="dock">${h}</div>`;
+  },
+  async _dockFarbe(n, farben) {
+    const e = (this.s.dockEinst ||= { ordnung: [], farben: {} });
+    if (farben) e.farben[n] = farben; else delete e.farben[n];
+    this._render();
+    try { this.s.dockEinst = await this._hass.callWS({ type: "esphomeremote_konfig/docks_einst_save", dock: n, farben: farben || null }); }
+    catch (err) { this.s.msg = { err: true, text: "Farbe speichern ging nicht: " + (err.message || err.code) }; this._render(); }
   },
   _dockZustandHtml() {
     const s = this.s, fw = s.fw;

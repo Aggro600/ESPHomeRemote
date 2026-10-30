@@ -260,7 +260,7 @@ def _erwartete_mac(hass: HomeAssistant, name: str) -> str | None:
 # ---------------------------------------------------------------------------------------------- Jobs
 def _job(titel: str, dateien: list[str], port: str) -> dict:
     jid = uuid.uuid4().hex[:12]
-    j = {"job_id": jid, "titel": titel, "dateien": dateien, "port": port, "status": "laeuft", "schritt": "",
+    j = {"job_id": jid, "titel": titel, "dateien": dateien, "port": port, "status": "wartet", "schritt": "In der Warteschlange",
          "progress": None, "log": deque(maxlen=500), "fehler": "", "fertig": False, "t0": time.time(),
          "aktuell": None, "ergebnisse": {}}
     _jobs[jid] = j
@@ -465,7 +465,30 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
     return ok
 
 
+# Warteschlange (2026-10-30, Nutzer: nicht warten muessen, bis ein Auftrag fertig ist): Auftraege laufen nacheinander -
+# das ESPHome-Add-on baut ohnehin nur eins auf einmal, zwei Builds parallel stritten sich um Prozessor und Speicher.
+_schlange = asyncio.Lock()
+
+
+def _offen(datei: str) -> dict | None:
+    """Wartender oder laufender Auftrag fuer diese Datei (keinen zweiten einreihen)."""
+    return next((j for j in _jobs.values() if not j["fertig"] and datei in j["dateien"]), None)
+
+
+def _schlange_liste() -> list[dict]:
+    return [{k: v for k, v in j.items() if k in ("job_id", "titel", "dateien", "port", "status", "schritt", "t0")}
+            for j in sorted(_jobs.values(), key=lambda x: x["t0"]) if not j["fertig"]]
+
+
 async def _ablauf(hass: HomeAssistant, j: dict, geraete: list[dict], port: str) -> None:
+    async with _schlange:
+        if j.get("abgebrochen"):
+            return
+        j["status"], j["schritt"], j["t0"] = "laeuft", "Startet", time.time()
+        await _ablauf_jetzt(hass, j, geraete, port)
+
+
+async def _ablauf_jetzt(hass: HomeAssistant, j: dict, geraete: list[dict], port: str) -> None:
     try:
         infos = {}
         try:
@@ -566,8 +589,7 @@ async def liste(hass: HomeAssistant) -> dict:
             if wlan and wlan.state in ("on", "off"):
                 x["online"] = x["wlan"]
         out.append(x)
-    laufend = [{k: v for k, v in j.items() if k in ("job_id", "titel", "dateien", "port")}
-               for j in _jobs.values() if not j["fertig"]]
+    laufend = _schlange_liste()
     return {"geraete": out, "ports": ports, "fehler": fehler, "jobs": laufend, "version": soll,
             "lokal": await hass.async_add_executor_job(lambda: (ESPHOME_DIR / "templates" / "remote.yaml").exists()),
             "entwickler": await hass.async_add_executor_job(entwickler),
@@ -603,11 +625,18 @@ async def ws_installieren(hass: HomeAssistant, connection: websocket_api.ActiveC
     if port and any(g["datei"] in gesperrt for g in geraete):
         connection.send_error(msg["id"], "gesperrt", "Gesperrt (z. B. Platine defekt) - erst entsperren")
         return
-    if any(not j["fertig"] for j in _jobs.values()):
-        connection.send_error(msg["id"], "laeuft", "Es laeuft schon ein Firmware-Auftrag")
+    # Warteschlange: laeuft schon einer, reiht sich dieser ein; fuer dieselbe Datei nicht doppelt
+    if len(geraete) == 1 and (o := _offen(geraete[0]["datei"])) is not None and o["port"] == port:
+        connection.send_result(msg["id"], {"job_id": o["job_id"], "schon": True, "platz": _platz(o)})
         return
     j = _starten(hass, geraete, port, msg["wlan_nachher"])
-    connection.send_result(msg["id"], {"job_id": j["job_id"]})
+    connection.send_result(msg["id"], {"job_id": j["job_id"], "platz": _platz(j)})
+
+
+def _platz(j: dict) -> int:
+    """0 = laeuft, 1.. = so viele warten davor (bzw. laufen)."""
+    vor = [x for x in _jobs.values() if not x["fertig"] and x["t0"] < j["t0"] and x is not j]
+    return 0 if j["status"] == "laeuft" else len(vor)
 
 
 def _starten(hass: HomeAssistant, geraete: list[dict], port: str, wlan_nachher: int = 0) -> dict:
@@ -682,12 +711,10 @@ async def remote_update(hass: HomeAssistant, geraet: str, quelle: str) -> str | 
     if g["datei"] in sp["gesperrt"]:
         await _an_remote(hass, g, "Im Konfigurator gesperrt (Firmware > Sperren) - erst dort entsperren.", 3)
         return "gesperrt"
+    if (o := _offen(g["datei"])) is not None and o["port"] == "OTA":
+        return None   # wartet oder laeuft schon fuer diese Remote
     if any(not x["fertig"] for x in _jobs.values()):
-        laeuft = next(x for x in _jobs.values() if not x["fertig"])
-        if g["datei"] in laeuft["dateien"]:
-            return None   # laeuft schon fuer diese Remote
-        await _an_remote(hass, g, "Gerade läuft ein anderes Update. Bitte gleich nochmal versuchen.", 3)
-        return "laeuft"
+        await _an_remote(hass, g, "Update ist eingereiht – es laufen noch andere Aufträge davor.", 1)
     _LOGGER.info("Firmware-Update fuer %s (%s)", geraet, quelle)
     _starten(hass, [g], "OTA")
     return None
@@ -714,7 +741,7 @@ async def _ereignis_verbunden(hass: HomeAssistant, event) -> None:
     if g is None:
         return
     _, sp = await _speicher(hass)
-    if g["datei"] in sp["vorgemerkt"] and not any(not x["fertig"] for x in _jobs.values()):
+    if g["datei"] in sp["vorgemerkt"] and _offen(g["datei"]) is None:
         # Vormerkung bleibt bis zum Erfolg (entfernt in _melden); nach einem Fehlschlag fruehestens nach 30 min neu
         if time.monotonic() - _letzter_versuch.get(geraet, -1e9) > 1800:
             _letzter_versuch[geraet] = time.monotonic()
@@ -764,10 +791,28 @@ async def ws_vormerken(hass: HomeAssistant, connection: websocket_api.ActiveConn
     # Vormerken (2026-10-26): gleich bauen - das Aufspielen dauert dann nur noch das Hochladen, sobald die Remote
     # benutzt wird (Dock meldet sie wach) oder sich mit HA verbindet
     job = None
-    if msg["an"] and not any(not j["fertig"] for j in _jobs.values()):
+    if msg["an"] and _offen(msg["datei"]) is None:   # in die Warteschlange (2026-10-30), auch wenn gerade etwas laeuft
         g = next(x for x in await hass.async_add_executor_job(remote_dateien) if x["datei"] == msg["datei"])
         job = _starten(hass, [g], "")["job_id"]
     connection.send_result(msg["id"], {"vorgemerkt": sp["vorgemerkt"], "job_id": job})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/fw_abbrechen", vol.Required("job_id"): str})
+@callback
+def ws_abbrechen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Wartenden Auftrag aus der Warteschlange nehmen (laufende laufen zu Ende)."""
+    j = _jobs.get(msg["job_id"])
+    if j is None or j["fertig"] or j["status"] != "wartet":
+        connection.send_error(msg["id"], "job", "Nur wartende Aufträge lassen sich herausnehmen")
+        return
+    j.update(abgebrochen=True, fertig=True, status="fehler", fehler="Aus der Warteschlange genommen", schritt="Herausgenommen")
+    connection.send_result(msg["id"], {"jobs": _schlange_liste()})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/fw_schlange"})
+@callback
+def ws_schlange(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    connection.send_result(msg["id"], {"jobs": _schlange_liste()})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/fw_job", vol.Required("job_id"): str})
@@ -934,7 +979,7 @@ async def ws_aufraeumen(hass: HomeAssistant, connection: websocket_api.ActiveCon
 
 
 def registrieren(hass: HomeAssistant) -> None:
-    for fn in (ws_liste, ws_installieren, ws_job, ws_sperren, ws_vormerken, ws_test_wiederholen, ws_entwickler, ws_umstellen, ws_aufraeumen):
+    for fn in (ws_liste, ws_installieren, ws_job, ws_abbrechen, ws_schlange, ws_sperren, ws_vormerken, ws_test_wiederholen, ws_entwickler, ws_umstellen, ws_aufraeumen):
         websocket_api.async_register_command(hass, fn)
     hass.http.register_view(FirmwareView(hass))
 
@@ -953,14 +998,12 @@ def registrieren(hass: HomeAssistant) -> None:
     from homeassistant.helpers.event import async_track_time_interval
 
     async def wach_pruefen(_now) -> None:
-        if any(not j["fertig"] for j in _jobs.values()):
-            return
         _, sp = await _speicher(hass)
         if not sp["vorgemerkt"]:
             return
         ds = hass.data.get(DOMAIN + "_dockstatus")
         for g in await hass.async_add_executor_job(remote_dateien):
-            if g["datei"] not in sp["vorgemerkt"]:
+            if g["datei"] not in sp["vorgemerkt"] or (_offen(g["datei"]) or {}).get("port") == "OTA":
                 continue
             z = (ds.stand.get(g["name"]) or {}).get("zeit", 0) if ds else 0
             if time.time() - z > 45 or time.monotonic() - _letzter_versuch.get(g["name"], -1e9) < 600:
