@@ -226,7 +226,7 @@ async def remotes_erzeugen() -> str:
     return out.decode(errors="replace").strip()
 
 
-def _offen(host: str, port: int, timeout: float = 1.5) -> bool:
+def _port_offen(host: str, port: int, timeout: float = 1.5) -> bool:
     import socket
 
     try:
@@ -394,7 +394,7 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
         fest = (b.info().get(g.get("name") or "") or {}).get("ip") if b and g["art"] == "remote" else None
         ip = fest or ip
         ziel = ip or "OTA"
-        if g["art"] == "remote" and ip and not await hass.async_add_executor_job(_offen, ip, 3232):
+        if g["art"] == "remote" and ip and not await hass.async_add_executor_job(_port_offen, ip, 3232):
             from . import wlan_fenster   # noqa: PLC0415 - Kreisimport vermeiden
             ds = hass.data.get("esphomeremote_konfig_dockstand")
             dev = g.get("name") or ""
@@ -414,7 +414,7 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
                 return False
             ende = time.monotonic() + frist
             try:
-                while not await hass.async_add_executor_job(_offen, ip, 3232):
+                while not await hass.async_add_executor_job(_port_offen, ip, 3232):
                     if time.monotonic() > ende:
                         j["fehler"] = f"{name}: WLAN kam nicht ({frist // 60} min)"
                         return False
@@ -427,7 +427,7 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
         # IP - ohne Pruefung waere die Remote-Firmware an das Dock gegangen)
         soll = _erwartete_mac(hass, g.get("name") or "")
         if ip and soll:
-            await hass.async_add_executor_job(_offen, ip, 3232)
+            await hass.async_add_executor_job(_port_offen, ip, 3232)
             ist = await hass.async_add_executor_job(_mac_an, ip)
             if ist and ist != soll:
                 j["fehler"] = (f"{name}: unter {ip} antwortet ein anderes Geraet ({ist.upper()}, erwartet {soll.upper()}) - "

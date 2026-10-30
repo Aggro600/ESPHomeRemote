@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.10.30.3 (2026-10-30)
+
+Fix: installing over WLAN failed after the build ("_offen() takes 1 positional argument but 2 were given").
+
+<details><summary>Deutsch</summary>
+
+Fix: Installieren per WLAN brach nach dem Bauen ab („_offen() takes 1 positional argument but 2 were given“).
+
+</details>
+
 ## 2026.10.30.2 (2026-10-30)
 
 Docks in the configurator like the remotes: in the sidebar with status and short info, expandable with their own pages (overview, Bluetooth, LED, infrared, firmware), order by drag and drop (sidebar and overview), custom colours per dock. Firmware: build queue – build several devices one after another, 'scheduled' builds all, cancel jobs. Fix: remote icons in the sidebar off-centre/too small and state sometimes outdated.
