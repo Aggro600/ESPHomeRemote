@@ -141,6 +141,41 @@ inline int aktivitaet_von_platz(int platz) {
   return -1;
 }
 
+// Klingelbilder (2026-10-30): EIN Bildspeicher (db_haus_image) fuer beliebig viele Klingeln - geladen wird das Bild der
+// Klingel, deren Kachel gerade gezeigt wird (Bildquelle "klingel:<id>", alt "klingel_haus"/"klingel_wohnung").
+// stempel: neuestes Bild je Klingel (Dock "dbk" bzw. Dienst klingelbild) - ist es neuer als das geladene, neu laden.
+namespace klingel {
+inline std::string &geladen() { static std::string s; return s; }
+inline uint32_t &geladen_ts() { static uint32_t t = 0; return t; }
+inline bool &fertig() { static bool f = false; return f; }
+inline std::map<std::string, uint32_t> &stempel() { static std::map<std::string, uint32_t> m; return m; }
+inline std::string id_von(const std::string &q) {
+  if (q == "klingel_haus") return "haus";
+  if (q == "klingel_wohnung") return "wohnung";
+  if (q.rfind("klingel:", 0) == 0) return q.substr(8);
+  return "";
+}
+inline void laden(const std::string &id) {
+  geladen() = id;
+  geladen_ts() = stempel()[id];
+  fertig() = false;
+  ESP_LOGI("klingel", "Klingelbild '%s' laden", id.c_str());
+  db_haus_image->set_url("http://" + tk_cfg->host() + "/local/esphomeremote_doorbell_" + id + ".jpg?v=" + std::to_string(geladen_ts()));
+  db_haus_image->update();
+}
+inline const void *bild(const std::string &q) {
+  const std::string id = id_von(q);
+  if (id.empty()) return nullptr;
+  if (geladen() != id || geladen_ts() != stempel()[id]) { laden(id); return nullptr; }
+  return fertig() ? db_haus_image->get_lv_image_dsc() : nullptr;
+}
+// Neues Bild dieser Klingel: wird es gerade gezeigt, gleich neu laden (sonst beim naechsten Zeigen)
+inline void neu(const std::string &id, uint32_t ts) {
+  stempel()[id] = ts;
+  if (geladen() == id) laden(id);
+}
+}  // namespace klingel
+
 inline void startseite_anwenden();   // weiter unten
 inline void dock_anwenden(int a);   // weiter unten
 // Aktivitaet starten (2026-10-16, wie Harmony): laeuft eine andere, fuehrt sie erst "Beim Beenden" aus
@@ -178,7 +213,8 @@ struct Dock { std::vector<lv_obj_t *> knoepfe; std::vector<int> akt; std::string
 inline Dock &dock() { static Dock d; return d; }
 // Aussehen der Aktivitaetsleiste (2026-10-28, Konfigurator: Startseite > Aktivitäten-Leiste, Konfig home.leiste):
 // Farben als "#RRGGBB" (leer = Standard), Schrift k/n/m/g, Linie "aus". leiste_oben: eigene Startseite mit Leiste oben.
-struct LeisteStil { uint32_t grund, feld, text, akt, akt_text; bool linie; const lv_font_t *font; };
+struct LeisteStil { uint32_t grund, feld, text, akt, akt_text; bool linie; const lv_font_t *font;
+                    char ausr; int ecken, fuge; char sym; };   // 2026-10-30: Ausrichtung l/m/r, Ecken, Fugen, Symbole (0/l/o/n)
 inline bool &leiste_oben() { static bool o = false; return o; }
 inline uint32_t leiste_farbe_(const char *k, uint32_t std) {
   const char *v = tk_cfg->wurzel()["home"]["leiste"][k] | "";
@@ -188,9 +224,14 @@ inline uint32_t leiste_farbe_(const char *k, uint32_t std) {
 }
 inline LeisteStil leiste_stil() {
   const char *fs = tk_cfg->wurzel()["home"]["leiste"]["fs"] | "";
+  const int fs_px = tk_cfg->wurzel()["home"]["leiste"]["fs"] | 0;   // Zahl = px (2026-10-30), naechste vorhandene Schrift
   return {leiste_farbe_("grund", 0x000000), leiste_farbe_("feld", 0x1A1F27), leiste_farbe_("text", 0x8B94A3),
           leiste_farbe_("akt", 0x3B82F6), leiste_farbe_("akt_text", 0xF1F3F5), strcmp(tk_cfg->wurzel()["home"]["leiste"]["linie"] | "", "aus") != 0,
-          !strcmp(fs, "k") ? a11->get_lv_font() : !strcmp(fs, "m") ? a15->get_lv_font() : !strcmp(fs, "g") ? a18->get_lv_font() : a13->get_lv_font()};
+          fs_px > 0 && mn->schrift(fs_px) ? mn->schrift(fs_px)
+          : !strcmp(fs, "w") ? a9->get_lv_font() : !strcmp(fs, "k") ? a11->get_lv_font() : !strcmp(fs, "m") ? a15->get_lv_font() : !strcmp(fs, "g") ? a18->get_lv_font()
+          : !strcmp(fs, "x") ? a24->get_lv_font() : a13->get_lv_font(),
+          (tk_cfg->wurzel()["home"]["leiste"]["ausr"] | "m")[0], tk_cfg->wurzel()["home"]["leiste"]["ecken"] | 0,
+          tk_cfg->wurzel()["home"]["leiste"]["fuge"] | 2, (tk_cfg->wurzel()["home"]["leiste"]["sym"] | "-")[0]};
 }
 // Abgerundete Ecke (LCARS) am Nachbarfeld des aktiven Felds: blaues 10x10-Quadrat ueber der Fuge, darin ein
 // Kreis in Feldfarbe - ergibt die runde obere Ecke des Nachbarn. links=true: Ecke rechts oben am linken Nachbarn.
@@ -363,32 +404,56 @@ inline void dock_anwenden(int a) {
   for (int i : akt) sig += std::to_string(i) + ":" + tk_cfg->aktivitaet_name(i) + "|";
   const int W = lv_obj_get_width(home_dock);
   const LeisteStil st = leiste_stil();
-  sig += std::to_string(W) + "|" + std::to_string((uintptr_t) st.font);   // andere Schrift: Knoepfe neu
+  sig += std::to_string(W) + "|" + std::to_string((uintptr_t) st.font) + st.ausr + st.sym + "|" + std::to_string(st.ecken) + "|" +
+         std::to_string(st.fuge);   // andere Schrift/Form: Knoepfe neu
+  for (int i : akt) sig += tk_cfg->wurzel()["activities"][i]["icon"] | "";
   if (sig != D.sig) {
     dock_anim_aufraeumen();   // Fuellung haengt an einem Knopf, der gleich geloescht wird
     // Felder nebeneinander, 2 px Fuge (im YAML geht ein Flex-Layout ohne feste Kinder nicht)
     lv_obj_set_flex_flow(home_dock, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(home_dock, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(home_dock, 2, 0);
+    lv_obj_set_style_pad_column(home_dock, st.fuge, 0);
     for (auto *k : D.knoepfe) lv_obj_delete(k);
     D.knoepfe.clear();
     // Gleiche Breiten mit 2 px Fuge; der Rest geht an das mittlere Feld, damit die Leiste genau ausgefuellt
     // ist und die Ecken auf den Fugen sitzen.
-    const int summe = W - 2 * (std::max(n, 1) - 1), basis = n ? summe / n : 0, rest = n ? summe % n : 0;
+    const int summe = W - st.fuge * (std::max(n, 1) - 1), basis = n ? summe / n : 0, rest = n ? summe % n : 0;
     for (int i = 0; i < n; i++) {
       const int breite = basis + (i == n / 2 ? rest : 0);
       lv_obj_t *k = lv_button_create(home_dock);
       lv_obj_set_size(k, breite, LV_PCT(100));
-      lv_obj_set_style_radius(k, 0, 0);
+      lv_obj_set_style_radius(k, st.ecken, 0);
       lv_obj_set_style_border_width(k, 0, 0);
       lv_obj_set_style_shadow_width(k, 0, 0);
-      lv_obj_t *l = lv_label_create(k);
-      lv_label_set_text(l, tk_cfg->aktivitaet_name(akt[i]).c_str());
-      lv_obj_set_style_text_font(l, st.font, 0);
-      lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-      lv_obj_set_width(l, breite - 6);
-      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
-      lv_obj_center(l);
+      lv_obj_set_style_pad_all(k, 0, 0);
+      // Symbol der Aktivitaet (2026-10-30): links neben, ueber oder statt dem Namen - Schrift des Menues
+      const char *ic = st.sym != '-' ? mn->symbol(tk_cfg->wurzel()["activities"][akt[i]]["icon"] | "") : nullptr;
+      if (ic != nullptr) {
+        lv_obj_set_layout(k, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(k, st.sym == 'o' ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(k, st.ausr == 'l' ? LV_FLEX_ALIGN_START : st.ausr == 'r' ? LV_FLEX_ALIGN_END : LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(k, 4, 0);
+        lv_obj_set_style_pad_row(k, 0, 0);
+        lv_obj_set_style_pad_hor(k, 4, 0);
+        lv_obj_t *il = lv_label_create(k);
+        lv_label_set_text(il, ic);
+        lv_obj_set_style_text_font(il, mdi_menu->get_lv_font(), 0);
+      }
+      lv_obj_t *l = nullptr;
+      if (ic == nullptr || st.sym != 'n') {
+        l = lv_label_create(k);
+        lv_label_set_text(l, tk_cfg->aktivitaet_name(akt[i]).c_str());
+        lv_obj_set_style_text_font(l, st.font, 0);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+        if (ic == nullptr) {
+          lv_obj_set_width(l, breite - 8);
+          lv_obj_set_style_text_align(l, st.ausr == 'l' ? LV_TEXT_ALIGN_LEFT : st.ausr == 'r' ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_CENTER, 0);
+          lv_obj_center(l);
+        } else {
+          lv_obj_set_style_max_width(l, st.sym == 'o' ? breite - 6 : breite - 32, 0);
+        }
+      }
       lv_obj_add_event_cb(k, [](lv_event_t *e) { aktivitaet_setzen((int) (intptr_t) lv_event_get_user_data(e)); },
                           LV_EVENT_CLICKED, (void *) (intptr_t) akt[i]);
       D.knoepfe.push_back(k);
@@ -425,7 +490,8 @@ inline void dock_anwenden(int a) {
     lv_obj_set_style_bg_color(kreis, lv_color_hex(st.feld), 0);
     lv_obj_set_pos(kreis, i == 0 ? -10 : 0, leiste_oben() ? -10 : 0);
   }
-  if (st.linie && pos >= 0 && !lv_obj_has_flag(home_dock, LV_OBJ_FLAG_HIDDEN)) {
+  // runde Ausschnitte nur bei eckigen Feldern mit schmaler Fuge (sonst passen sie nicht an die Felder)
+  if (st.linie && st.ecken == 0 && st.fuge <= 2 && pos >= 0 && !lv_obj_has_flag(home_dock, LV_OBJ_FLAG_HIDDEN)) {
     lv_obj_update_layout(home_dock);
     lv_obj_t *seite = lv_obj_get_parent(home_dock);
     lv_area_t s, k;
@@ -588,6 +654,11 @@ inline void intern(const char *fn, int arg, const Ctx &c) {
   else if (!strcmp(fn, "musik_anzeige")) musik::zeigen(false);
   else if (!strcmp(fn, "keymode")) { if (cur_page->value() == 98) mn->tastenmodus(-1); }
   else if (!strcmp(fn, "popup_close")) { if (popup_seite->value() >= 0 && popup_seite->value() == cur_page->value()) popup_schliessen->execute(); }
+  // Menue schliessen (2026-10-30): offenes Popup zu, sonst zur Startseite
+  else if (!strcmp(fn, "menu_close")) {
+    if (popup_seite->value() >= 0 && popup_seite->value() == cur_page->value()) popup_schliessen->execute();
+    else if (cur_page->value() != 0) go_home->execute();
+  }
   else ESP_LOGW("tasten", "Unbekannte Funktion '%s'", fn);
 }
 
@@ -801,13 +872,15 @@ inline void startseite_anwenden() {
       const char *lage = pg["leiste"] | "";
       if (!strcmp(lage, "aus")) dock_an = false; else if (*lage) dock_an = true;
       // 2026-10-29: ohne Statusleiste ab 0 (vorher 8 -> 6 Zeilen + 28 px Rest); Karten haben 2 px Rand wie im Menue
-      int oben = st_an ? 36 : 0, unten = dock_an ? 280 - (st_an ? 4 : 0) : 320 - (st_an ? 4 : 0);
+      // 2026-10-29 (Nutzer: "dem Grid nicht treu"): ein Raster fuer Menue und Startseite - Zeilen auf 0, 40, 80 ... vom
+      // oberen Displayrand wie im Menue (konf_root ab 40). Mit Statusleiste ab 40 (vorher 36: alles 4 px versetzt).
+      int oben = st_an ? 40 : 0, unten = dock_an ? 280 : 320;
       if (dock_an && !strcmp(lage, "oben")) {   // Leiste unter der Statusleiste, darunter wieder 6 Zeilen
         leiste_oben() = true;
-        const int dy = st_an ? 36 : 0;
+        const int dy = st_an ? 40 : 0;
         lv_obj_set_align(home_dock, LV_ALIGN_TOP_LEFT);
         lv_obj_set_pos(home_dock, -pl, dy - pt);
-        oben = dy + 40; unten = oben + (st_an ? 240 : 280);   // ohne Statusleiste 40..320 = 7 Zeilen
+        oben = dy + 40; unten = 320;   // mit Statusleiste 80..320 = 6 Zeilen, ohne 40..320 = 7
       }
       for (lv_obj_t *o : {menu_home_btn, app_home_btn, home_player_btn}) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
       if (st_an) lv_obj_remove_flag(home_status_bar, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(home_status_bar, LV_OBJ_FLAG_HIDDEN);
@@ -878,9 +951,7 @@ inline void einrichten() {
   // Startseite je Aktivitaet (2026-10-27): eingebaute Seiten wie im Menue, Unterseiten-Kacheln oeffnen das Menue dort
   mn_home->spezial = [](const std::string &n) { return spezial_zeigen(n); };
   mn_home->bild = [](const std::string &q) -> const void * {
-    if (q == "klingel_haus") return db_haus_image->get_lv_image_dsc();
-    if (q == "klingel_wohnung") return db_wohn_image->get_lv_image_dsc();
-    return nullptr;
+    return klingel::bild(q);
   };
   mn_home->seite_oeffnen = [](const std::string &seite) {
     if (!mn->aktiv()) return;
@@ -894,11 +965,11 @@ inline void einrichten() {
   mn->einstellung = [](const std::string &k) { return einstellungen::finden(k); };
   mn->einst_auffrischen = [](uint32_t m) { einstellungen::auffrischen(m); };
   mn->bild = [](const std::string &q) -> const void * {
-    if (q == "klingel_haus") return db_haus_image->get_lv_image_dsc();
-    if (q == "klingel_wohnung") return db_wohn_image->get_lv_image_dsc();
-    return nullptr;
+    return klingel::bild(q);
   };
   mn->popup_auf = [](const std::string &s, bool wecken) { menue_popup(s, wecken); };
+  // Medien-Tasten der Widgets gehen als HA-Aufruf an ihren Player - der "Jetzt laeuft"-Player reicht sie seit
+  // 2026-10-30 selbst an die laufende Quelle weiter (Haken medien_taste bleibt frei)
   // Schon offen (z. B. Taste mit Wiederholen haelt): nicht alle 200 ms neu aufbauen
   t->popup_oeffnen = [](const char *s) {
     if (!*s) return;

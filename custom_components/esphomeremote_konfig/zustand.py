@@ -119,6 +119,9 @@ def _stand(hass: HomeAssistant, slug: str, ausl: list[tuple[str, str]] | None = 
         # Zeitstempel der Klingelbilder (Haus, Wohnung) - die Remote holt ein neues Bild dann ueber das Dock
         "pz": [_gehalten(hass, e, a, gehalten) for e, a in (ausl or [])],
         "db": [_bild_ts("esphomeremote_doorbell_haus.jpg"), _bild_ts("esphomeremote_doorbell_wohnung.jpg")],
+        # alle Klingeln (2026-10-30): Kennung -> Zeitstempel des Bilds (die Remote laedt das gerade gezeigte neu)
+        "dbk": {k["id"]: _bild_ts(f"esphomeremote_doorbell_{k['id']}.jpg") for k in (hass.data.get("esphomeremote_konfig_bilder").klingeln
+                if hass.data.get("esphomeremote_konfig_bilder") else []) if k.get("id")},
     }
 
 
@@ -336,9 +339,9 @@ async def ws_test_zeigen(hass: HomeAssistant, connection: websocket_api.ActiveCo
         page = next((p for p in (cfg.get("menu") or {}).get("pages") or [] if p.get("id") == seite), {})
         quellen = {it.get("src") for it in page.get("items") or [] if it.get("t") == "camera"}
         b = hass.data.get("esphomeremote_konfig_bilder")
-        for platz, src in enumerate(("klingel_haus", "klingel_wohnung")):
-            if src in quellen and b is not None and platz < len(b.klingeln):
-                await asyncio.wait_for(b.klingel(platz, warten=False), 8)
+        for src in quellen:
+            if b is not None and str(src or "").startswith("klingel"):
+                await asyncio.wait_for(b.klingel(src, warten=False), 8)
     except Exception as err:  # noqa: BLE001 - Bild ist Beiwerk, die Seite kommt trotzdem
         _LOGGER.debug("Testbild: %s", err)
     direkt = False

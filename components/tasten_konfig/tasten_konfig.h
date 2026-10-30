@@ -216,6 +216,11 @@ class TastenKonfig : public Component {
   void modus_verlaengern_(int taste = -1);   // taste: eigene Zeit der Modus-Taste ("s"), sonst die des Modus
   void schritt_(JsonObjectConst s, const Ctx &c, bool halten);
   void ble_(JsonObjectConst s, bool halten);
+ public:
+  // Medientaste (Consumer-Code) auf demselben Weg wie ein Tasten-Schritt "ble": ueber das Dock, wenn das Geraet dort
+  // haengt, sonst selbst (2026-10-29: Wiedergabe-Karte/Widgets schickten nur selbst - am Dock kam nichts an)
+  void medientaste(uint16_t code);
+ protected:
   void ble_selbst_(uint8_t art, uint16_t code, uint8_t mod, int dev, bool halten);
   // Ziel am Dock fuer einen Schritt bzw. Platz der Remote; false = keins eingetragen
   bool bt_ziel_(JsonObjectConst s, int slot, std::string &dock, uint8_t &platz) const;

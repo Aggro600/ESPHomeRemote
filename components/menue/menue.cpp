@@ -1244,7 +1244,10 @@ void Menue::gestalten_(Item &it) {
     }
   }
   if (it.name == nullptr) return;
-  if (*gr) {
+  const int px = it.j["px"] | 0;   // Groesse in px (2026-10-30) geht vor
+  if (px > 0) {
+    if (const lv_font_t *f = schrift(px)) lv_obj_set_style_text_font(it.name, f, 0);
+  } else if (*gr) {
     const lv_font_t *f = !strcmp(gr, "xs") && f_xs_ ? f_xs_ : !strcmp(gr, "xl") && f_xl_ ? f_xl_
                        : *gr == 's' ? f_klein_ : *gr == 'l' && f_gross_ ? f_gross_ : f_text_;
     if (f) lv_obj_set_style_text_font(it.name, f, 0);
@@ -2028,6 +2031,11 @@ void Menue::ausloesen_(Item &it, int richtung) {
         auto g = z.attr.find(PStr(a));
         return g == z.attr.end() ? std::string() : std::string(g->second.c_str());
       };
+      // "Jetzt laeuft"-Player: wie die Wiedergabe-Karte (Bluetooth/Multiroom), er selbst nimmt keine Befehle (2026-10-29)
+      if (medien_taste) {
+        const int was = it.teil == P_PLAY ? 0 : it.teil == P_NEXT ? 1 : it.teil == P_PREV ? 2 : it.teil == P_VOLUP ? 3 : it.teil == P_VOLDN ? 4 : -1;
+        if (was >= 0 && medien_taste(e, was)) return;
+      }
       switch (it.teil) {
         case P_MUTE: player_stumm_(e); return;
         case P_PREV: ha("media_player.media_previous_track"); return;

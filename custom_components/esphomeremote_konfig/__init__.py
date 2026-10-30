@@ -45,7 +45,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "146"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "153"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -106,6 +106,8 @@ def validate_config(cfg: dict) -> dict:
         # Eigene Startseite (2026-10-27): ID einer Menueseite, fehlt = eingebaute Startseite
         if re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", str(a.get("home") or "")):
             out_acts[-1]["home"] = str(a["home"])
+        if re.fullmatch(r"[a-z0-9\-]{1,40}", str(a.get("icon") or "")):   # Symbol in der Aktivitaeten-Leiste (2026-10-30)
+            out_acts[-1]["icon"] = str(a["icon"])
     if sum(1 for a in out_acts if a["dock"]) > 4:
         raise vol.Invalid("Hoechstens 4 Aktivitaeten passen in die Leiste")
     out = {"v": 1, "activities": out_acts}
@@ -403,10 +405,20 @@ def validate_home(h: dict) -> dict:
     # Aussehen der Aktivitaetsleiste (2026-10-28, gilt fuer alle Startseiten): Farben, Schrift, Linie
     l = h.get("leiste") if isinstance(h.get("leiste"), dict) else {}
     leiste = {k: l[k] for k in ("grund", "feld", "text", "akt", "akt_text") if isinstance(l.get(k), str) and FARBE.fullmatch(l[k])}
-    if l.get("fs") in ("k", "m", "g"):
+    if l.get("fs") in ("w", "k", "m", "g", "x"):
         leiste["fs"] = l["fs"]
+    elif isinstance(l.get("fs"), (int, float)) and not isinstance(l.get("fs"), bool) and 7 <= l["fs"] <= 30:
+        leiste["fs"] = int(l["fs"])   # px (2026-10-30)
     if l.get("linie") == "aus":
         leiste["linie"] = "aus"
+    # 2026-10-30: Ausrichtung, Ecken, Fugen, Symbole (wie im Menue)
+    if l.get("ausr") in ("l", "r"):
+        leiste["ausr"] = l["ausr"]
+    for k, lo, hi in (("ecken", 0, 14), ("fuge", 0, 8)):
+        if isinstance(l.get(k), (int, float)) and not isinstance(l.get(k), bool):
+            leiste[k] = max(lo, min(hi, int(l[k])))
+    if l.get("sym") in ("links", "oben", "nur"):
+        leiste["sym"] = l["sym"]
     if leiste:
         out["leiste"] = leiste
     return out
@@ -574,6 +586,10 @@ def widget_optionen(it: dict) -> dict:
             o[k] = it[k]
     if it.get("takt"):
         o["takt"] = max(3, min(600, int(it["takt"])))
+    if o["art"] == "medien" and it.get("stil") == "karte":   # Medien-Karte wie die eingebaute (2026-10-30)
+        o["stil"] = "karte"
+        if it.get("laut") is False:
+            o["laut"] = False
     return o
 
 
@@ -615,6 +631,8 @@ def validate_menu(m: dict) -> dict:
                 o["align"] = it["align"]
             if it.get("size") in ("xs", "s", "m", "l", "xl"):   # xs/xl seit 2026-10-18 (11 / 24 px)
                 o["size"] = it["size"]
+            if isinstance(it.get("px"), (int, float)) and not isinstance(it.get("px"), bool) and 7 <= it["px"] <= 30:
+                o["px"] = int(it["px"])   # Schriftgroesse in px (2026-10-30), Remote nimmt die naechste vorhandene
             if it.get("ia") in ("l", "c", "r"):   # Ausrichtung des Symbols (2026-10-18)
                 o["ia"] = it["ia"]
             if "x" in it:

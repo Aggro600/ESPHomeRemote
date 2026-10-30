@@ -397,6 +397,22 @@ class Menue : public Component {
   void licht_senden_(Item &it, const char *aktion, const std::string &wert);
   std::string licht_ziele_(const Item &it, bool fuer_aufruf) const;
   static void licht_cb_(lv_event_t *e);
+ public:
+  // Medien-Widget auf dem "Jetzt laeuft"-Player (2026-10-29): Tasten wie die Wiedergabe-Karte (Bluetooth/Multiroom).
+  // was: 0 Play/Pause, 1 vor, 2 zurueck, 3 lauter, 4 leiser. true = erledigt (sonst HA-Aufruf an die Entitaet)
+  std::function<bool(const std::string &, int)> medien_taste;
+  // Symbol (MDI-Name -> Zeichen der Menue-Symbolschrift) fuer andere, z. B. die Aktivitaeten-Leiste (2026-10-30)
+  const char *symbol(const char *name) { return name != nullptr && *name ? icon_(name) : nullptr; }
+  // Alle Schriftgroessen der Remote (2026-10-30): Groesse in px frei waehlbar ("px"), genommen wird die naechste vorhandene
+  void set_schriften(std::vector<std::pair<int, const lv_font_t *>> l) { schriften_ = std::move(l); }
+  const lv_font_t *schrift(int px) const {
+    const lv_font_t *f = nullptr;
+    int best = 1000;
+    for (auto &s : schriften_) if (std::abs(s.first - px) < best) { best = std::abs(s.first - px); f = s.second; }
+    return f;
+  }
+  std::vector<std::pair<int, const lv_font_t *>> schriften_;
+ protected:
   void widget_bild_(Item &it, bool sofort);
   bool widget_weg_(JsonObjectConst j) const;   // Medien-Widget ohne Wiedergabe ausblenden?
   bool medien_laeuft_(const char *e) const;

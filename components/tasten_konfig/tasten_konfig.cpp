@@ -685,6 +685,14 @@ bool TastenKonfig::modus_taste(int taste) const {
   return !modus_keys_()[k].isNull();
 }
 
+void TastenKonfig::medientaste(uint16_t code) {
+  JsonDocument d;
+  d["t"] = "ble";
+  d["kind"] = "consumer";
+  d["code"] = code;
+  ble_(d.as<JsonObjectConst>(), false);
+}
+
 void TastenKonfig::ble_(JsonObjectConst s, bool halten) {
   auto *kb = kb_;
   const char *kind = s["kind"] | "consumer";

@@ -93,6 +93,7 @@ const INT_FNS = [
   ["menu_open", "Menü öffnen (letzte Seite)"],
   ["menu_top", "Menü öffnen, ganz oben"],
   ["home", "Zur Startseite"],
+  ["menu_close", "Menü schließen (Popup zu, sonst zur Startseite)"],
   ["display_off", "Display aus (im Dunkeln: nur wecken)"],
   ["display_wake", "Display an"],
   ["voice_ptt", "Sprechen, solange gedrückt (nur für Lang)"],
@@ -687,6 +688,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (this._btUnsub && s.modal !== this._btM) this._btAus();   // Bluetooth-Seite verlassen
     const scroll = root.querySelector(".editor")?.scrollTop;
     const navScroll = root.querySelector(".side")?.scrollTop;
+    const baumScroll = root.querySelector(".mmain .mpages")?.scrollTop;
     const seite = window.scrollY, haupt = document.scrollingElement?.scrollTop;
     const logs = this._logsMerken();
     // Aufgeklappte Bereiche (<details>) bleiben beim Neuzeichnen offen/zu (2026-10-27: "Home Assistant ueber
@@ -723,6 +725,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     });
     const side = root.querySelector(".side");
     if (side && navScroll) side.scrollTop = navScroll;
+    const baum = root.querySelector(".mmain .mpages");
+    if (baum && baumScroll) baum.scrollTop = baumScroll;
     if (this._nachOben) { this._nachOben = false; window.scrollTo(0, 0); if (document.scrollingElement) document.scrollingElement.scrollTop = 0; }
     else {
       const ed = root.querySelector(".editor");
@@ -788,9 +792,9 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     }).join("");
     const akt = this.activity, seite = (this.menu?.pages || []).find((pg) => pg.id === akt?.home);
     // Aktivitaeten-Leiste unten im Display (wie tasten::dock_anwenden: die Aktivitaeten "in der Leiste", die aktuelle blau)
-    const leiste = (this.cfg?.activities || []).map((a, i) => [a, i]).filter(([a, i]) => a.dock ?? i < 4).slice(0, 4)
-      .map(([a, i]) => `<span class="${i === this.s.act ? "an" : ""}"><small>${esc(a.name)}</small></span>`).join("");
-    const fe = seite ? hFenster(seite) : { o: 36, u: 276, st: true, l: "unten" };
+    const leiste = this._leisteFelder(this.s.act);
+    const fe = seite ? hFenster(seite) : { o: 40, u: 280, st: true, l: "unten" };
+    const ew = this.s.meta[this.s.dev]?.einst || {};   // Symbole der Statusleiste (Einstellungen der Remote)
     const inhalt = seite ? `<div class="rshome" style="top:${fe.o}px;height:${fe.u - fe.o}px">${this._mPreview(seite)}</div>`
       : `<div class="rsstd"><b>${esc(akt?.name || "")}</b><small>Eingebaute Startseite</small></div>`;
     return `<div class="rmodell" style="--rs:.72">
@@ -798,8 +802,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         <path d="${RM.gehaeuse}" fill="${rf.rahmen}"/><path d="${RM.abdeckung}" fill="${rf.gehaeuse}" fill-rule="evenodd"/>
         <path d="${RM.glas}" fill="${rf.display}"/>${tasten}</svg>
       <button class="rscreen" data-a="mode" data-m="home" title="Startseite dieser Aktivität bearbeiten"><div class="rsinhalt">
-        <div class="rsbar" ${fe.st ? "" : "hidden"}><i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i><span class="grow"></span><span class="rsstift"><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite bearbeiten</span><span class="grow"></span><ha-icon icon="mdi:bluetooth"></ha-icon><ha-icon icon="mdi:battery-80"></ha-icon></div>
-        ${inhalt}${fe.l === "aus" ? "" : `<div class="rsleiste ${fe.l === "oben" ? "oben" : ""}" style="${this._leisteStil()};${fe.l === "oben" ? `top:${fe.st ? 36 : 0}px` : ""}">${leiste}</div>`}${fe.st ? "" : `<span class="rsstift rsstift2"><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite bearbeiten</span>`}</div></button>
+        <div class="rsbar" ${fe.st ? "" : "hidden"}>${ew.show_clock === false ? "" : `<i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i>`}<span class="grow"></span><span class="rsstift"><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite bearbeiten</span><span class="grow"></span>${ew.show_ha === false ? "" : '<ha-icon icon="mdi:home-assistant"></ha-icon>'}${ew.show_wifi === false ? "" : '<ha-icon icon="mdi:wifi"></ha-icon>'}${ew.show_ble === false ? "" : '<ha-icon icon="mdi:bluetooth"></ha-icon>'}${ew.show_batt === false ? "" : '<ha-icon icon="mdi:battery-80"></ha-icon>'}</div>
+        ${inhalt}${fe.l === "aus" ? "" : `<div class="rsleiste ${fe.l === "oben" ? "oben" : ""}" style="${this._leisteStil()};${fe.l === "oben" ? `top:${fe.st ? 40 : 0}px` : ""}">${leiste}</div>`}${fe.st ? "" : `<span class="rsstift rsstift2"><ha-icon icon="mdi:pencil-outline"></ha-icon>Startseite bearbeiten</span>`}</div></button>
       </div>
       <div class="aktev"><small>Keine Tasten – Schritte beim Wechsel der Aktivität „${esc(akt?.name || "")}“ (Leiste, Taste, HA-Schalter):</small>
         <div class="row r2">${AKT_EVENTS.map((k) => this._keyBtn(k)).join("")}</div></div>
@@ -1487,6 +1491,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     const s = this.s;
     if ("syvon" in t.dataset) { s.syncVon = t.value; this._render(); return; }
     if (t.dataset.vgl) { if (t.dataset.vgl === "a") s.vglA = t.value; else s.vglB = t.value; if (s.vglA === s.vglB) s[t.dataset.vgl === "a" ? "vglB" : "vglA"] = null; this._render(); return; }
+    if (t.dataset.mkl) { this._mKlingelZuordnen(t.value); this._render(); return; }
     if (t.dataset.kl) {
       const k = s.klingel.klingel[Number(t.dataset.ki)];
       k[t.dataset.kl] = t.dataset.kl === "warten" ? Math.max(0, Math.min(30, Number(t.value) || 0)) : t.value;
@@ -1683,7 +1688,10 @@ const M_MEDIEN = ["mtitel", "mtaste", "vpreset"];
 const M_EINST = [["disp_bri_sld", "s", "Display", "Bildschirm"], ["h_bri", "i", "Hinweis (h_bri)", "Bildschirm"], ["kbd_light_btn", "b", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdon", "i", "Hinweis (h_kbdon)", "Bildschirm"], ["kbd_bri_sld", "s", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdbri", "i", "Hinweis (h_kbdbri)", "Bildschirm"], ["to_sld", "s", "Display aus nach", "Bildschirm"], ["h_to", "i", "Hinweis (h_to)", "Bildschirm"], ["ps_dim_sld", "s", "Abdunkeln nach", "Bildschirm"], ["ps_h_dim", "i", "Hinweis (ps_h_dim)", "Bildschirm"], ["ps_dimp_sld", "s", "Abdunkeln auf", "Bildschirm"], ["ps_h_dimp", "i", "Hinweis (ps_h_dimp)", "Bildschirm"], ["show_ble_btn", "b", "Bluetooth-Symbol", "Anzeige"], ["h_sh_ble", "i", "Hinweis (h_sh_ble)", "Anzeige"], ["show_wifi_btn", "b", "WLAN-Symbol", "Anzeige"], ["h_sh_wifi", "i", "Hinweis (h_sh_wifi)", "Anzeige"], ["show_batt_btn", "b", "Akkustand", "Anzeige"], ["h_sh_batt", "i", "Hinweis (h_sh_batt)", "Anzeige"], ["show_clock_btn", "b", "Uhrzeit", "Anzeige"], ["h_sh_clock", "i", "Hinweis (h_sh_clock)", "Anzeige"], ["show_assi_btn", "b", "Assistenten-Symbol", "Anzeige"], ["h_sh_assi", "i", "Hinweis (h_sh_assi)", "Anzeige"], ["show_motion_btn", "b", "Bewegungs-Symbol", "Anzeige"], ["show_ha_btn", "b", "Home-Assistant-Symbol", "Anzeige"], ["h_sh_ha", "i", "Hinweis (h_sh_ha)", "Anzeige"], ["cover_player_btn", "b", "Cover Player", "Anzeige"], ["h_cov_p", "i", "Hinweis (h_cov_p)", "Anzeige"], ["cover_home_btn", "b", "Cover Startseite", "Anzeige"], ["h_cov_h", "i", "Hinweis (h_cov_h)", "Anzeige"], ["mem_sld", "s", "Menü merken für", "Anzeige"], ["ps_h_mem", "i", "Hinweis (ps_h_mem)", "Anzeige"], ["menu_close_sld", "s", "Menü schließen nach", "Anzeige"], ["h_menu_close", "i", "Hinweis (h_menu_close)", "Anzeige"], ["sd_logos_btn", "b", "Logos von SD-Karte", "Anzeige"], ["h_sd_logos", "i", "Hinweis (h_sd_logos)", "Anzeige"], ["ps_wifi_btn", "b", "WLAN-Sparmodus", "Energie & Wecken"], ["ps_h_wifi", "i", "Hinweis (ps_h_wifi)", "Energie & Wecken"], ["ps_wifimax_btn", "b", "Sparmodus stark (Ruhe)", "Energie & Wecken"], ["ps_h_wifimax", "i", "Hinweis (ps_h_wifimax)", "Energie & Wecken"], ["ps_wifi_off_btn", "b", "WLAN aus im Ruhezustand", "Energie & Wecken"], ["ps_h_off", "i", "Hinweis (ps_h_off)", "Energie & Wecken"], ["ps_wifis_sld", "s", "WLAN aus nach", "Energie & Wecken"], ["ps_h_offs", "i", "Hinweis (ps_h_offs)", "Energie & Wecken"], ["ps_wifitv_sld", "s", "WLAN aus bei TV an", "Energie & Wecken"], ["ps_h_wifitv", "i", "Hinweis (ps_h_wifitv)", "Energie & Wecken"], ["ps_cpu_sld", "s", "Prozessor drosseln", "Energie & Wecken"], ["ps_h_cpu", "i", "Hinweis (ps_h_cpu)", "Energie & Wecken"], ["ps_light_btn", "b", "Leichtschlaf", "Energie & Wecken"], ["ps_wfest_btn", "b", "WLAN-Schnellstart", "Energie & Wecken"], ["ps_wfrueh_btn", "b", "WLAN früh einschalten", "Energie & Wecken"], ["ps_nurble_btn", "b", "Nur Bluetooth", "Energie & Wecken"], ["ps_nurble_h", "i", "WLAN bleibt aus, Home Assistant, Bilder und Sprache laufen über Bluetooth. Für Updates schaltet das Wartungsfenster das WLAN kurz ein.", "Energie & Wecken"], ["ps_bleidle_btn", "b", "BLE-Verbindung langsam", "Energie & Wecken"], ["ps_h_ble", "i", "Hinweis (ps_h_ble)", "Energie & Wecken"], ["ps_bles_sld", "s", "BLE langsam nach", "Energie & Wecken"], ["ps_h_bles", "i", "Hinweis (ps_h_bles)", "Energie & Wecken"], ["motion_mode_lbl", "i", "Aufwecken bei", "Energie & Wecken"], ["mm_0", "b", "Aus", "Energie & Wecken"], ["mm_1", "b", "Bewegung", "Energie & Wecken"], ["mm_2", "b", "Hochheben", "Energie & Wecken"], ["h_motion", "i", "Hinweis (h_motion)", "Energie & Wecken"], ["ms_sld", "s", "Empfindlichkeit", "Energie & Wecken"], ["h_sens", "i", "Hinweis (h_sens)", "Energie & Wecken"], ["keys_wake_btn", "b", "Tasten wecken", "Energie & Wecken"], ["h_keys", "i", "Hinweis (h_keys)", "Energie & Wecken"], ["menue_weckt_btn", "b", "Menütaste bei dunklem Display", "Energie & Wecken"], ["h_menue_weckt", "i", "Hinweis (h_menue_weckt)", "Energie & Wecken"], ["dim_wake_btn", "b", "Aufhellen bei Bewegung", "Energie & Wecken"], ["h_dim_wake", "i", "Hinweis (h_dim_wake)", "Energie & Wecken"], ["dim_hold_btn", "b", "Nicht abdunkeln bei Bewegung", "Energie & Wecken"], ["h_dim_hold", "i", "Hinweis (h_dim_hold)", "Energie & Wecken"], ["ds_sld", "s", "Empfindlichkeit (beide oben)", "Energie & Wecken"], ["h_dim_sens", "i", "Hinweis (h_dim_sens)", "Energie & Wecken"], ["klopf_btn", "b", "Doppelt klopfen weckt", "Energie & Wecken"], ["kl_sld", "s", "Klopf-Empfindlichkeit", "Energie & Wecken"], ["h_klopf", "i", "Hinweis (h_klopf)", "Energie & Wecken"], ["ps_touch_btn", "b", "Touch weckt", "Energie & Wecken"], ["ps_h_touch", "i", "Hinweis (ps_h_touch)", "Energie & Wecken"], ["ps_touchms_sld", "s", "Touch-Abfrage", "Energie & Wecken"], ["ps_h_touchms", "i", "Hinweis (ps_h_touchms)", "Energie & Wecken"], ["ps_deep_btn", "b", "Tiefschlaf im Ruhezustand", "Energie & Wecken"], ["ps_h_deep", "i", "Hinweis (ps_h_deep)", "Energie & Wecken"], ["ps_deepble_btn", "b", "Nur ohne Bluetooth", "Energie & Wecken"], ["ps_deeps_sld", "s", "Tiefschlaf nach", "Energie & Wecken"], ["ps_h_deeps", "i", "Hinweis (ps_h_deeps)", "Energie & Wecken"], ["ps_deeptv_sld", "s", "Tiefschlaf bei TV an", "Energie & Wecken"], ["ps_h_deeptv", "i", "Hinweis (ps_h_deeptv)", "Energie & Wecken"], ["ps_low_sld", "s", "Sparmodus bei Akku unter", "Energie & Wecken"], ["ps_h_low", "i", "Hinweis (ps_h_low)", "Energie & Wecken"], ["tile_assi", "b", "Assistent", "Sprache"], ["h_assi", "i", "Hinweis (h_assi)", "Sprache"], ["tile_google_mode", "b", "Google-Modus", "Sprache"], ["h_google_mode", "i", "Hinweis (h_google_mode)", "Sprache"], ["tile_tts", "b", "Antwort hörbar", "Sprache"], ["h_tts", "i", "Hinweis (h_tts)", "Sprache"], ["tile_mic", "b", "Mikrofon", "Sprache"], ["tile_mic_warm", "b", "Mikrofon vorwärmen", "Sprache"], ["h_mic_warm", "i", "Hinweis (h_mic_warm)", "Sprache"], ["ble_state_lbl", "i", "Nicht verbunden", "Bluetooth"], ["ble_slot0", "b", "Platz 1", "Bluetooth"], ["ble_slot1", "b", "Platz 2", "Bluetooth"], ["ble_slot2", "b", "Platz 3", "Bluetooth"], ["ble_slot3", "b", "Platz 4", "Bluetooth"], ["ble_target_lbl", "i", "Platz 1", "Bluetooth"], ["ble_connect", "b", "Verbinden", "Bluetooth"], ["ble_pair", "b", "Koppeln", "Bluetooth"], ["ble_forget", "b", "Löschen", "Bluetooth"], ["ble_eing0_btn", "b", "Eingabe Platz 1", "Bluetooth"], ["ble_eing1_btn", "b", "Eingabe Platz 2", "Bluetooth"], ["ble_eing2_btn", "b", "Eingabe Platz 3", "Bluetooth"], ["ble_eing3_btn", "b", "Eingabe Platz 4", "Bluetooth"], ["h_plaetze", "i", "Hinweis (h_plaetze)", "Bluetooth"], ["ble_par_btn", "b", "Parallel verbunden", "Bluetooth"], ["bt_weg_btn", "b", "Über das Dock", "Bluetooth"], ["h_bt_weg", "i", "Hinweis (h_bt_weg)", "Bluetooth"], ["maus_tempo_sld", "s", "Zeigertempo", "Bluetooth"], ["maus_dpad_btn", "b", "Steuerkreuz als Maus", "Bluetooth"], ["maus_dpad_sld", "s", "Tempo Steuerkreuz", "Bluetooth"], ["maus_zurueck_btn", "b", "Zurück-Taste", "Bluetooth"], ["h_maus_dpad", "i", "Hinweis (h_maus_dpad)", "Bluetooth"], ["ak_status", "i", "Status", "Akku"], ["ak_pct", "i", "Akkustand", "Akku"], ["ak_volt", "i", "Spannung", "Akku"], ["ak_rate", "i", "Rate jetzt (Chip)", "Akku"], ["ak_r1", "i", "Letzte Stunde", "Akku"], ["ak_r24", "i", "Letzte 24 h", "Akku"], ["ak_rest", "i", "Restlaufzeit", "Akku"], ["ak_geladen", "i", "Zuletzt geladen", "Akku"], ["ak_geladen2", "i", "ak_geladen2", "Akku"], ["ak_schlaf", "i", "Tiefschlaf seit Ladung", "Akku"], ["dock_an_btn", "b", "Smart Display im Dock", "Smart Display"], ["h_dock_an", "i", "Hinweis (h_dock_an)", "Smart Display"], ["dock_disp_btn", "b", "Display im Dock", "Smart Display"], ["h_dock_disp", "i", "Hinweis (h_dock_disp)", "Smart Display"], ["dock_von_sld", "s", "an ab", "Smart Display"], ["dock_bis_sld", "s", "an bis", "Smart Display"], ["musik_dock_btn", "b", "Im Dock bei Musik", "Smart Display"], ["h_musik_dock", "i", "Hinweis (h_musik_dock)", "Smart Display"], ["musik_player_btn", "b", "Nur wenn Player spielt", "Smart Display"], ["h_musik_player", "i", "Hinweis (h_musik_player)", "Smart Display"], ["ha_dock_btn", "b", "HA-Befehle über das Dock", "Smart Display"], ["h_ha_dock", "i", "Hinweis (h_ha_dock)", "Smart Display"], ["ha_link_btn", "b", "HA-Verbindung in Ruhe", "Smart Display"], ["h_ha_link", "i", "Hinweis (h_ha_link)", "Smart Display"], ["ha_linkm_btn", "b", "HA in Ruhe: Art", "Smart Display"], ["h_ha_linkm", "i", "Hinweis (h_ha_linkm)", "Smart Display"], ["tile_touchtest", "b", "Touch-Test", "Wartung & Tests"], ["h_touch", "i", "Hinweis (h_touch)", "Wartung & Tests"], ["tile_button_test", "b", "Tasten-Test", "Wartung & Tests"], ["h_btn", "i", "Hinweis (h_btn)", "Wartung & Tests"], ["clean_dur_sld", "s", "Reinigungsdauer", "Wartung & Tests"], ["h_cleandur", "i", "Hinweis (h_cleandur)", "Wartung & Tests"], ["tile_clean", "b", "Reinigungsmodus", "Wartung & Tests"], ["h_clean", "i", "Hinweis (h_clean)", "Wartung & Tests"], ["tile_sd", "b", "SD-Karte", "Wartung & Tests"], ["h_sd_tile", "i", "Hinweis (h_sd_tile)", "Wartung & Tests"], ["ps_log_btn", "b", "Debug-Modus", "Wartung & Tests"], ["ps_h_log", "i", "Hinweis (ps_h_log)", "Wartung & Tests"], ["testmod_btn", "b", "Testmodus (immer online)", "Wartung & Tests"], ["ps_h_test", "i", "Hinweis (ps_h_test)", "Wartung & Tests"], ["tile_update", "b", "Firmware aktualisieren", "Wartung & Tests"], ["h_update", "i", "Hinweis (h_update)", "Wartung & Tests"], ["tile_shutdown", "b", "Gerät herunterfahren", "Wartung & Tests"], ["tile_restart", "b", "Gerät neu starten", "Wartung & Tests"], ["h_restart", "i", "Hinweis (h_restart)", "Wartung & Tests"], ["ak_graph", "g", "Verlauf 24 h", "Akku"]];
 const M_EINST_K = Object.fromEntries(M_EINST.map((e) => [e[0], e]));
 // Bildquellen fuer Menue-Eintraege "Kamerabild": die beiden Klingel-Plaetze; Namen aus der Seite "Klingel" (_klingelLaden)
-const M_KAMERAS = [["klingel_haus", "Klingel 1"], ["klingel_wohnung", "Klingel 2"]];
+// Klingelbilder (2026-10-30): "klingel:<id>" je Klingel, aus der Liste in HA (_klingelLaden); alte Namen klingel_haus/_wohnung
+const M_KAMERAS = [["klingel:haus", "Klingel 1"], ["klingel:wohnung", "Klingel 2"]];
+const kamSrc = (src) => src === "klingel_haus" ? "klingel:haus" : src === "klingel_wohnung" ? "klingel:wohnung" : src || "";
+const kamName = (src) => M_KAMERAS.find(([k]) => k === kamSrc(src))?.[1] || "Kamerabild";
 const M_TYPE = Object.fromEntries(M_TYPES.map(([k, l, i]) => [k, { l, i }]));
 // Nur Funktionsseiten der Remote - die Navigationsseiten des alten Menues gibt es seit 2026-10-06 nicht mehr.
 const M_SPECIAL = [
@@ -1717,7 +1725,8 @@ function mStil(it) {
   if (it.bg) s += `background:${it.bg};border-color:${it.bg};`;
   if (it.fg) s += `--fg:${it.fg};`;
   if (it.align) s += `--al:${{ l: "left", c: "center", r: "right" }[it.align]};--jc:${{ l: "flex-start", c: "center", r: "flex-end" }[it.align]};`;
-  if (it.size) s += `--fs:${{ xs: "9px", s: "11px", m: "13px", l: "16px", xl: "20px" }[it.size]};`;
+  if (it.px) s += `--fs:${Math.round(it.px * 0.85)}px;`;   // wie die Groessen oben (Audiowide wirkt breiter)
+  else if (it.size) s += `--fs:${{ xs: "9px", s: "11px", m: "13px", l: "16px", xl: "20px" }[it.size]};`;
   if (it.ic) s += `--ic:${it.ic};`;
   if (it.rad != null) s += `border-radius:${it.rad}px;`;
   if (it.rc) s += `border-color:${it.rc};`;
@@ -1813,7 +1822,7 @@ const MenuEditor = {
   _mItemText(it) {
     if (it.label) return it.label;
     if (it.t === "widget") return M_WIDGETS.find(([a]) => a === (it.art || "uhr"))?.[1] || "Widget";
-    if (it.t === "camera") return M_KAMERAS.find(([k]) => k === it.src)?.[1] || "Kamerabild";
+    if (it.t === "camera") return kamName(it.src);
     if (it.t === "mtaste") return M_MTASTE[it.fn || "play_pause"]?.l || it.fn;
     if (it.t === "vpreset") return `${it.wert ?? 0} %`;
     if (it.t === "setting") return M_EINST_K[it.src]?.[2] || it.src || "Einstellung";
@@ -1893,7 +1902,6 @@ const MenuEditor = {
         <button class="btn small ghost" data-a="werk_menu" title="Menü (alle Seiten und Popups) aus der Werkseinstellung übernehmen"><ha-icon icon="mdi:backup-restore"></ha-icon>Standardmenü laden</button>
         <label class="inl2" title="Rahmen der Markierung, Regler und Zurück-Knopf im ganzen Menü">Hervorhebung
           <select data-mf="hl">${M_FOKUSFARBEN.map(([v, n]) => `<option value="${v}" ${(m.hl || "") === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
-        <button class="btn small ghost" data-a="o_jetzt" title="„Jetzt läuft“-Player: was Medien-Einträge und -Widgets zeigen (gilt für alle Remotes)"><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon>Wiedergabe …</button>
       </div>
       <div class="mmain ${s.mitem != null ? "editing" : ""}">
         <div class="mpages"><h3>Seiten<span class="grow"></span>${this.s.clip?.type === "page" ? `<button class="btn small" data-a="mpastepage" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen</button>` : ""}<button class="btn small" data-a="maddpage"><ha-icon icon="mdi:plus"></ha-icon>Seite</button></h3>${pages}</div>
@@ -2045,8 +2053,8 @@ const MenuEditor = {
         <label>Lautstärke (Regler, Presets, Stumm, Tasten)${sel("laut", mps, "derselbe Player")}</label>
         <label>Presets in %<input data-vl="presets" value="${esc(m.presets ?? "15, 25, 40")}"></label>`;
     } else if (m.art === "klingel") {
-      m.src = m.src || "klingel_haus";
-      opt = `<label>Bild<select data-vl="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${m.src === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      m.src = m.src || M_KAMERAS[0]?.[0] || "klingel:haus";
+      opt = `<label>Bild<select data-vl="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${kamSrc(m.src) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <label>Öffnen, wenn eingeschaltet wird${sel("ausl", liste("input_boolean").concat(liste("binary_sensor")), "später festlegen")}</label>
         <label>Tür öffnen${sel("lock", liste("lock"), "später festlegen")}</label>`;
     } else if (m.art === "tastatur") {
@@ -2093,7 +2101,7 @@ const MenuEditor = {
       pre.forEach((v, n) => add({ t: "vpreset", wert: v, entity: laut }, (n % 3) * 2, 5 + Math.floor(n / 3), 2, 1));
     } else if (m.art === "klingel") {
       add({ t: "text", label: `${titel}: es hat geklingelt` }, 0, 0, 6, 1);
-      add({ t: "camera", src: m.src || "klingel_haus" }, 0, 1, 6, 3);
+      add({ t: "camera", src: m.src || M_KAMERAS[0]?.[0] || "klingel:haus" }, 0, 1, 6, 3);
       add(zu, 0, 4, 3, 1);
       add({ t: "action", label: "Tür öffnen", bg: "#16a34a", fg: "#ffffff", align: "c", steps: m.lock ? [{ t: "ha", svc: "lock.open", entity: m.lock, data: {} }] : [] }, 3, 4, 3, 1);
       pg.popup.excl = true;
@@ -2135,6 +2143,7 @@ const MenuEditor = {
       <div class="inl"><label class="inl2">Inhalt <select data-ppg="inhalt"><option value="">Einträge dieser Seite</option>
         ${M_INHALTE.map(([k, l]) => `<option value="${k}" ${p.inhalt === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
       ${p.inhalt ? `<small class="note">${M_INHALT_HINWEIS[p.inhalt] || ""}</small>` : ""}
+      ${p.inhalt ? "" : this._mKlingelBlock(p)}
       <div class="ph">Öffnen, wenn … <button class="btn small" data-a="mtrigadd" data-art="open"><ha-icon icon="mdi:plus"></ha-icon>Auslöser</button>
         <button class="btn small" data-a="mtrigakt" data-art="open"><ha-icon icon="mdi:plus"></ha-icon>Aktivität</button></div>
       ${this._mTrigRows(p, "open")}
@@ -2151,6 +2160,40 @@ const MenuEditor = {
       ${p.inhalt ? "" : `<label class="sw small"><input type="checkbox" data-ppg="excl" ${pp.excl ? "checked" : ""}><span>Vorrang – solange es offen ist, warten andere Popups und gehen erst danach auf</span></label>`}
       <small class="note">Ein Auslöser greift beim <b>Wechsel</b> auf den Wert (z. B. Skript → on, Schalter → on, App → com.netflix.ninja). Ein Knopf mit „Popup schließen“ schließt es nach einer Auswahl.</small>
     </div>`;
+  },
+  // Klingel im Popup (2026-10-30, statt eigener Seite "Klingel"): welche Klingel das Popup zeigt, und ihre Einstellungen
+  // (gelten fuer alle Remotes: Ausloeser, Kamera, Wartezeit). Zuordnung = Kamerabild-Eintrag "klingel:<id>" auf der Seite.
+  _mKlingelBlock(p) {
+    const d = this.s.klingel;
+    if (!d?.klingel) return "";
+    const kam = (p.items || []).find((it) => it.t === "camera" && kamSrc(it.src).startsWith("klingel:"));
+    const kid = kam ? kamSrc(kam.src).slice(8) : "", ki = d.klingel.findIndex((k) => k.id === kid), k = d.klingel[ki];
+    const st = this._hass.states, name = (e) => st[e]?.attributes.friendly_name || e;
+    const liste = (doms, wert) => { const l = Object.keys(st).filter((x) => doms.includes(x.split(".")[0])).sort((a, b) => name(a).localeCompare(name(b), "de"));
+      if (wert && !l.includes(wert)) l.unshift(wert); return l; };
+    const opts = (l, wert) => `<option value="">— keine —</option>` + l.map((x) => `<option value="${esc(x)}" ${x === wert ? "selected" : ""}>${esc(name(x))}</option>`).join("");
+    return `<div class="klblock"><div class="ph"><ha-icon icon="mdi:doorbell-video"></ha-icon> Klingel</div>
+      <div class="inl"><label class="inl2">Zeigt das Bild von <select data-mkl="wahl"><option value="">— keiner Klingel —</option>
+        ${d.klingel.map((x) => `<option value="${esc(x.id)}" ${x.id === kid ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
+        ${d.klingel.length < 8 ? `<button class="btn small" data-a="kl_add" data-zuordnen="1"><ha-icon icon="mdi:plus"></ha-icon>Neue Klingel</button>` : ""}</div>
+      ${k ? `<div class="klfeld">
+        <label class="inl2">Name <input data-kl="name" data-ki="${ki}" value="${esc(k.name)}" maxlength="24"></label>
+        <label class="inl2" title="Geht beim Klingeln auf „an“ (Taster, Schalter, Helfer) – oder Knopf/Ereignis">Auslöser <select data-kl="ausloeser" data-ki="${ki}">${opts(liste(["binary_sensor", "input_boolean", "switch", "button", "input_button", "event"], k.ausloeser), k.ausloeser)}</select></label>
+        <label class="inl2">Kamera <select data-kl="kamera" data-ki="${ki}">${opts(liste(["camera"], k.kamera), k.kamera)}</select></label>
+        <label class="inl2">Warten vor dem Foto <input type="number" data-kl="warten" data-ki="${ki}" min="0" max="30" value="${k.warten}" style="width:60px"> s</label>
+        <div class="inl">${k.ausloeser && !(p.popup.open || []).some((tr) => tr.entity === k.ausloeser) ? `<button class="btn small primary" data-a="mklausl"><ha-icon icon="mdi:flash"></ha-icon>Popup bei diesem Auslöser öffnen</button>` : ""}
+          <button class="btn small" data-a="kl_test" data-ki="${ki}" ${k.kamera ? "" : "disabled"}><ha-icon icon="mdi:bell-ring-outline"></ha-icon>Testbild</button>
+          <button class="btn small ghost" data-a="kl_del" data-ki="${ki}" title="Klingel löschen (bei allen Remotes)"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
+        <small class="note">Gilt für alle Remotes. Beim Klingeln holt Home Assistant das Kamerabild; die Remote lädt es, sobald dieses Popup aufgeht.</small></div>` : ""}</div>`;
+  },
+  _mKlingelZuordnen(kid) {
+    const p = this.mpage; if (!p) return;
+    const src = kid ? `klingel:${kid}` : "";
+    const kam = (p.items || []).find((it) => it.t === "camera" && kamSrc(it.src).startsWith("klingel:"));
+    if (kam && src) kam.src = src;
+    else if (kam && !src) p.items.splice(p.items.indexOf(kam), 1);
+    else if (src) (p.items ||= []).unshift({ t: "camera", src, w: 6, h: 3 });
+    this._touch();
   },
   _mZu() {
     if (!this._zu) { try { this._zu = new Set(JSON.parse(localStorage.getItem("erk_zu") || "[]")); } catch (e) { this._zu = new Set(); } }
@@ -2209,7 +2252,7 @@ const MenuEditor = {
     </div>`;
   },
 
-  _mPreview(p) {
+  _mPreview(p, nackt = false) {
     const L = mLayout(p);
     const rows = Math.max(7, ...L.map((l) => l.y + l.h));
     const cell = (M_W - 2 * M_PAD + M_GAP) / M_COLS;
@@ -2225,9 +2268,9 @@ const MenuEditor = {
       if (it.t === "text") inner = `<span class="tx ${it.h === 0 || l.h >= 2 ? "wrap" : ""}">${esc(txt)}</span>`;
       else if (it.t === "setting" && M_EINST_K[it.src]?.[1] === "i" && !it.label) inner = `<span class="tx wrap">Hinweis der Remote (Text je nach Einstellung, Höhe automatisch)</span>`;
       else if (it.t === "camera") {   // 2026-10-25: zuletzt aufgenommenes Klingelbild (wie auf der Remote)
-        const datei = { klingel_haus: "esphomeremote_doorbell_haus.jpg", klingel_wohnung: "esphomeremote_doorbell_wohnung.jpg" }[it.src];
-        inner = datei ? `<img class="kambild" src="/local/${datei}?v=${this._kamV ||= Date.now()}" alt="" onerror="this.remove()"><i class="kamname">${esc(M_KAMERAS.find(([k]) => k === it.src)?.[1] || "Kamerabild")}</i>`
-          : `<ha-icon icon="mdi:cctv"></ha-icon><i>${esc(M_KAMERAS.find(([k]) => k === it.src)?.[1] || "Kamerabild")}</i>`;
+        const q = kamSrc(it.src), datei = q.startsWith("klingel:") ? `esphomeremote_doorbell_${q.slice(8)}.jpg` : "";
+        inner = datei ? `<img class="kambild" src="/local/${datei}?v=${this._kamV ||= Date.now()}" alt="" onerror="this.remove()"><i class="kamname">${esc(kamName(it.src))}</i>`
+          : `<ha-icon icon="mdi:cctv"></ha-icon><i>${esc(kamName(it.src))}</i>`;
       }
       else if (M_MEDIEN.includes(it.t)) inner = this._mMedienVorschau(it, l);
       else if (it.t === "widget") inner = this._mWidgetVorschau(it, l);
@@ -2273,6 +2316,7 @@ const MenuEditor = {
         ${this._mTastaturVorschau(z)}
         ${p.inhalt === "tastatur" ? `<div class="pinfo"><div class="seg sm"><button class="${z ? "" : "on"}" data-a="mkbdz" data-v="">Buchstaben (Wert „text“)</button><button class="${z ? "on" : ""}" data-a="mkbdz" data-v="1">Ziffern (Wert „zahlen“)</button></div></div>` : ""}</div>`;
     }
+    if (nackt) return `<div class="pgrid ${p.flow === false ? "free" : ""}" style="height:${rows * M_ROW + M_PAD * 2}px"><div class="gl">${grid}</div>${items}${rand}</div>`;
     return `<div class="phone"><div class="phead"><span class="pback">${p.popup && p.pknopf === "min" ? "_" : isStart ? "X" : "&lt;"}</span><b>${esc(p.title || p.id)}</b></div>
       <div class="pgrid ${p.flow === false ? "free" : ""}" style="height:${rows * M_ROW + M_PAD * 2}px"><div class="gl">${grid}</div>${items}${rand}</div>
       <div class="pinfo">${inhalt <= sichtZ ? `<ha-icon icon="mdi:check"></ha-icon>Passt auf einen Bildschirm (${inhalt} von ${sichtZ} Zeilen)` : `<ha-icon icon="mdi:arrow-expand-vertical"></ha-icon>${inhalt} Zeilen – ${inhalt - sichtZ} werden gescrollt (${Math.ceil(inhalt / sicht)} Bildschirme)`}</div></div>`;
@@ -2306,6 +2350,7 @@ const MenuEditor = {
     };
     const art = it.art || "uhr";
     if (art === "licht") return this._mLichtVorschau(it, l);
+    if (art === "medien") return this._mMedienVorschau2(it, l);
     if (art !== "kombi") return `<span class="wbox">${teil(art)}</span>`;
     let tl = (it.teile || ["uhr", "wetter"]).slice(0, 3);
     const laeuft = ["playing", "paused"].includes(H[it.me]?.state);
@@ -2407,7 +2452,9 @@ const MenuEditor = {
     const it = this.mitem; if (!it) return;
     if (typ === "num") v = v === "" || v == null ? undefined : Number(v);
     if (typ === "list") { const l = String(v).split(/[^0-9]+/).filter(Boolean).map((x) => Math.max(0, Math.min(100, Number(x)))).slice(0, 6); v = l.length ? l : undefined; }
-    if (v === "" || v === false || v == null) v = undefined;
+    const nurFalse = typ === "nichtfalse";   // Haken an = Standard (Feld weg), aus = false speichern
+    if (nurFalse) v = v ? undefined : false;
+    else if (v === "" || v === false || v == null) v = undefined;
     const teile = pfad.split("."), last = teile.pop(), kette = [];
     let o = it;
     teile.forEach((k, n) => { kette.push([o, k]); if (o[k] == null) o[k] = /^\d+$/.test(teile[n + 1] ?? last) ? [] : {}; o = o[k]; });
@@ -2569,7 +2616,10 @@ const MenuEditor = {
       <small class="note">Höhe und Breite lassen sich auch frei ziehen – ab 2 Zeilen gilt die große Darstellung.</small>`}`;
     if (W[3]) h += ent("entity", W[3], { weather: "Wetter-Entität", media_player: "Media Player", timer: "Timer", camera: "Kamera" }[W[3]]);
     if (art === "uhr" || (art === "kombi" && (it.teile || ["uhr", "wetter"]).includes("uhr"))) h += sel("datum", [["nach", "Datum unter / rechts neben der Uhrzeit"], ["vor", "Datum über / links vor der Uhrzeit"], ["aus", "Ohne Datum"]], "nach", "Datum");
-    if (art === "medien") h += sel("leer", [["", "Immer zeigen („Nichts läuft“)"], ["weg", "Nur während der Wiedergabe – sonst rückt die Seite zusammen"]], "", "Wenn nichts läuft");
+    if (art === "medien") h += this._mJetztImWidget(it.entity);
+    if (art === "medien") h += sel("stil", [["", "Cover links, Titel und Tasten daneben"], ["karte", "Karte: Cover als Hintergrund (wie die eingebaute Startseite)"]], "", "Darstellung")
+      + (it.stil === "karte" ? `<label class="sw small"><input type="checkbox" data-mk="laut" data-typ="nichtfalse" ${it.laut !== false ? "checked" : ""}><span>Leiser/Lauter-Tasten (ab 5 Spalten)</span></label>` : "")
+      + sel("leer", [["", "Immer zeigen („Nichts läuft“)"], ["weg", "Nur während der Wiedergabe – sonst rückt die Seite zusammen"]], "", "Wenn nichts läuft");
     if (art === "kamera") h += `<label>Neu laden alle (Sekunden)<input type="number" min="3" max="600" data-mk="takt" data-typ="num" value="${esc(it.takt ?? 10)}"></label>
       ${sel("bild", [["", "Randlos (füllt die Kachel, Ränder abgeschnitten)"], ["ganz", "Ganzes Bild (mit schwarzen Balken)"]], "", "Bild")}
       <small class="note">Höchstens zwei Bild-Widgets (Kamera oder Cover) je Seite.</small>`;
@@ -2580,8 +2630,33 @@ const MenuEditor = {
       if (tl.includes("medien")) h += ent("me", "media_player", "Media Player") + sel("mz", [["immer", "Medien immer zeigen"], ["nur", "Medien nur während der Wiedergabe (die anderen teilen sich sonst den Platz)"], ["ueber", "Medien übernimmt das ganze Widget, solange etwas läuft"]], "immer", "Medien");
     }
     if (art === "licht") h += this._mLichtEditor(it);
-    if (art === "medien" || art === "timer" || (art === "kombi" && (it.teile || []).includes("medien"))) h += `<small class="note">${art === "timer" ? "OK / Antippen: Timer starten bzw. anhalten." : "OK / Antippen: Wiedergabe/Pause, ⏮ ⏭ auf dem Display."}${art === "timer" ? "" : ' <button class="linkbtn" data-a="o_jetzt">„Jetzt läuft“-Player einstellen …</button>'}</small>`;
+    if (art === "medien" || art === "timer" || (art === "kombi" && (it.teile || []).includes("medien"))) h += `<small class="note">${art === "timer" ? "OK / Antippen: Timer starten bzw. anhalten." : "OK / Antippen: Wiedergabe/Pause, ⏮ ⏭ auf dem Display."}</small>`;
     return h;
+  },
+  // Medien-Widget wie auf der Remote (widgets.cpp W_MEDIEN, 2026-10-30): Karte (Cover als Hintergrund), groß (Cover links)
+  // oder schmal - echte Groessen statt der allgemeinen Widget-Vorschau
+  _mMedienVorschau2(it, l) {
+    const st = this._hass.states[it.entity], a = st?.attributes || {};
+    const laeuft = ["playing", "paused", "buffering"].includes(st?.state);
+    const titel = laeuft ? a.media_title || a.app_name || "Wiedergabe" : "Nichts läuft";
+    const sub = laeuft ? a.media_artist || a.app_name || "" : "";
+    const bild = laeuft && a.entity_picture ? a.entity_picture : "";
+    const pos = a.media_position != null && a.media_duration ? Math.min(100, (a.media_position / a.media_duration) * 100) : null;
+    const kn = (ic, haupt) => `<i class="mk ${haupt ? "h" : ""}"><ha-icon icon="mdi:${ic}"></ha-icon></i>`;
+    const play = kn(st?.state === "playing" ? "pause" : "play", true);
+    if (l.h >= 2 && it.stil === "karte") {
+      const laut = it.laut !== false && l.w >= 5;
+      return `<span class="mw karte" style="${bild ? `background-image:url('${esc(bild)}')` : ""}">${bild ? "" : '<ha-icon class="mn" icon="mdi:music-note"></ha-icon>'}
+        <span class="mwu"><b>${esc(titel)}</b><small>${esc(sub)}</small>
+        <span class="mkr">${laut ? kn("volume-minus") : ""}${kn("skip-previous")}${play}${kn("skip-next")}${laut ? kn("volume-plus") : ""}</span></span>
+        ${pos != null ? `<span class="mbar"><span style="width:${pos}%"></span></span>` : ""}</span>`;
+    }
+    if (l.h >= 2) {
+      const cover = l.w >= 5 ? `<span class="mcov" style="${bild ? `background-image:url('${esc(bild)}')` : ""}">${bild ? "" : '<ha-icon icon="mdi:music-note"></ha-icon>'}</span>` : "";
+      return `<span class="mw gross">${cover}<span class="mwr"><b>${esc(titel)}</b><small>${esc(sub)}</small>
+        ${pos != null ? `<span class="mbar"><span style="width:${pos}%"></span></span>` : ""}<span class="mkr">${kn("skip-previous")}${play}${kn("skip-next")}</span></span></span>`;
+    }
+    return `<span class="mw schmal">${play}<span class="mwr"><b>${esc(titel)}</b><small>${esc(sub)}</small></span></span>`;
   },
   // Vorschau wie auf der Remote (licht_bauen_): Kopf 34, Lampen 30, je Regler 28, Palette 28, Szenen 30 px
   _mLichtVorschau(it, l) {
@@ -2661,7 +2736,7 @@ const MenuEditor = {
         <small class="note">Bedient direkt die Einstellung der Remote (gleiche Wirkung und Speicherung wie die eingebaute Seite). Regler: mit Schieber ab Höhe 2 oder ab 4 Spalten Breite (dann Name, Schieber und Wert in einer Zeile), sonst Links/Rechts bzw. Antippen zum Weiterschalten.</small>`;
     }
     if (it.t === "camera") {
-      body += `<label>Bildquelle<select data-mi="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${it.src === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      body += `<label>Bildquelle<select data-mi="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${kamSrc(it.src) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <small class="note">Zeigt das Foto, das HA beim Klingeln an die Remote schickt (216×112 px – passt in Breite 6, Höhe 3).</small>`;
     }
     if (["toggle", "light", "number", "select", "cover", "sensor", ...M_MEDIEN].includes(it.t)) {
@@ -2708,7 +2783,7 @@ const MenuEditor = {
     const sw = (k, liste) => `<div class="swatches">${liste.map(([v, n]) => `<button class="swatch ${(it[k] || "") === v ? "on" : ""}" data-a="mstil" data-k="${k}" data-v="${v}" title="${n}" style="${v ? `background:${v}` : ""}">${v ? "" : "–"}</button>`).join("")}
       <label class="swatch eigen" title="eigene Farbe"><input type="color" data-mi="${k}" value="${it[k] || "#1a1f27"}"><ha-icon icon="mdi:eyedropper"></ha-icon></label></div>`;
     const seg = (k, opts) => `<div class="seg sm">${opts.map(([v, n]) => `<button class="${(it[k] || "") === v ? "on" : ""}" data-a="mstil" data-k="${k}" data-v="${v}">${n}</button>`).join("")}</div>`;
-    const stilAnders = ["bg", "fg", "fc", "align", "size", "ic", "ia"].some((k) => it[k]);
+    const stilAnders = ["bg", "fg", "fc", "align", "size", "px", "ic", "ia"].some((k) => it[k]);
     const stilHtml = it.t !== "camera" ? this._mGrp("stil", "mdi:palette-outline", "Aussehen", stilAnders ? "angepasst" : "Standard", `<div class="grpbar"><span class="grow"></span>
         <button class="icon sm" data-a="mstilcopy" title="Aussehen kopieren (Farben, Größe, Anordnung, Rahmen)"><ha-icon icon="mdi:format-paint"></ha-icon></button>
         ${this.s.clip?.type === "stil" ? `<button class="icon sm" data-a="mstilpaste" title="Aussehen einfügen: ${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon></button>` : ""}</div>
@@ -2717,7 +2792,8 @@ const MenuEditor = {
         ${["text", "sensor"].includes(it.t) ? "" : `<label class="col">Markierung (Rahmen bei Auswahl per Steuerkreuz)${sw("fc", M_FOKUSFARBEN)}</label>
         <small class="note">Standard: blauer Rahmen – auch bei Knöpfen mit eigener Hintergrundfarbe.</small>`}
         <div class="inl"><label class="col">Ausrichtung${seg("align", [["", "Standard"], ["l", "Links"], ["c", "Mitte"], ["r", "Rechts"]])}</label>
-          <label class="col">Größe${seg("size", [["", "Standard"], ["xs", "Sehr klein"], ["s", "Klein"], ["m", "Normal"], ["l", "Groß"], ["xl", "Sehr groß"]])}</label></div>
+          <label class="col">Größe${seg("size", [["", "Standard"], ["xs", "Sehr klein"], ["s", "Klein"], ["m", "Normal"], ["l", "Groß"], ["xl", "Sehr groß"]])}</label>
+          <label class="col" title="Eigene Größe in Pixeln – die Remote nimmt die nächste vorhandene: 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 24, 28">Größe in px <input type="number" min="7" max="30" data-mk="px" data-typ="num" value="${esc(it.px ?? { xs: 11, s: 13, m: 15, l: 18, xl: 24 }[it.size] ?? 15)}" style="width:64px"></label></div>
         ${it.icon ? `<label class="col">Farbe des Symbols${sw("ic", M_TEXTFARBEN)}</label>
         <label class="col">Symbol${seg("ia", [["", "Standard"], ["l", "Links"], ["c", "Mitte"], ["r", "Rechts"]])}</label>
         <small class="note">Kacheln: Symbol oben links, mittig oder rechts. Zeilen: links vor dem Namen oder rechts am Ende.</small>` : ""}
@@ -2828,6 +2904,15 @@ const MenuEditor = {
       case "mvolgleich": p.vol = t.dataset.e; this._touch(); return true;
       case "mkweg": this._mkSetzen(t.dataset.k, undefined); this._touch(); return true;
       case "mkpick": s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", mk: t.dataset.k, ...(t.dataset.dom ? { domains: [t.dataset.dom] } : {}) }; return true;
+      case "mklausl": {   // Popup beim Klingeln oeffnen (Ausloeser der Klingel; Schalter/Helfer: bei "aus" wieder zu)
+        const kam = (p.items || []).find((it) => it.t === "camera" && kamSrc(it.src).startsWith("klingel:"));
+        const k = (s.klingel?.klingel || []).find((x) => x.id === kamSrc(kam?.src).slice(8));
+        if (!k?.ausloeser) return true;
+        const imp = ["button", "input_button", "event"].includes(k.ausloeser.split(".")[0]);
+        (p.popup.open ||= []).push(imp ? { entity: k.ausloeser, to: "" } : { entity: k.ausloeser, to: "on" });
+        if (!imp) (p.popup.close ||= []).push({ entity: k.ausloeser, to: "off" });
+        p.popup.excl = true; this._touch(); return true;
+      }
       case "mwgr": { const it = this.mitem; it.w = 6; it.h = t.dataset.v === "g" ? 3 : 1; this._touch(); return true; }
       case "mlgr": { const it = this.mitem; it.w = 6; it.h = Number(t.dataset.v); this._touch(); return true; }
       case "mlgruppe": {   // Lampen der Gruppe uebernehmen (vorhandene Namen bleiben)
@@ -2900,7 +2985,9 @@ const MenuEditor = {
         s.modal = null; this._touch();
         s.msg = { text: `${n}× ersetzt: ${md.von} → ${md.nach}.`, undo: true }; return true;
       }
-      case "mstil": { const it = this.mitem; if (!it) return false; if (t.dataset.v) it[t.dataset.k] = t.dataset.v; else delete it[t.dataset.k]; this._touch(); return true; }
+      case "mstil": { const it = this.mitem; if (!it) return false; if (t.dataset.v) it[t.dataset.k] = t.dataset.v; else delete it[t.dataset.k];
+        if (t.dataset.k === "size") delete it.px;   // Knopf gewaehlt: eigene px-Groesse weg
+        this._touch(); return true; }
       case "mclose": s.mitem = null; return true;
       case "maddpage": {   // (2026-10-27) neue Seite haengt immer im Menue: unter der offenen Seite, sonst unter der Startseite
         const imMenue = this._mReachable();
@@ -2997,7 +3084,12 @@ const MenuEditor = {
         return true;
       }
       case "micon": s.modal = { type: "icon", q: "" }; return true;
-      case "micon_set": if (t.dataset.n) this.mitem.icon = t.dataset.n; else delete this.mitem.icon; s.modal = null; this._touch(); return true;
+      case "micon_set": {
+        const ziel = s.modal?.akt != null ? (s.modal.akt === -1 ? this._ohne() : this.cfg.activities[s.modal.akt]) : this.mitem;   // auch Symbol einer Aktivitaet (2026-10-30)
+        if (t.dataset.n) ziel.icon = t.dataset.n; else delete ziel.icon;
+        s.modal = null; this._touch(); return true;
+      }
+      case "akticon": s.modal = { type: "icon", q: "", akt: s.act }; return true;
     }
     return false;
   },
@@ -3082,7 +3174,7 @@ const MenuEditor = {
         it.t = t.value;
         if (it.t === "page" && !it.target) it.target = m.pages.find((pg) => pg.id !== p.id)?.id || "";
         if (it.t === "special" && !it.page) it.page = "media";
-        if (it.t === "camera") { it.src = it.src || "klingel_haus"; it.w = 6; it.h = Math.max(it.h || 1, 3); }
+        if (it.t === "camera") { it.src = it.src || M_KAMERAS[0]?.[0] || "klingel:haus"; it.w = 6; it.h = Math.max(it.h || 1, 3); }
         if (it.t === "setting" && !M_EINST_K[it.src]) { it.src = M_EINST[0][0]; }
         if (it.t === "mtaste") { it.fn = it.fn || "play_pause"; delete it.steps; }
         if (it.t === "vpreset") { it.wert = it.wert ?? 25; delete it.steps; }
@@ -3182,9 +3274,12 @@ const MenuEditor = {
           const cx = Math.floor((px - M_PAD) / cell), cy = Math.floor((py - M_PAD) / M_ROW);
           const Ls = mLayout(p);
           const to = Ls.findIndex((l) => cx >= l.x && cx < l.x + l.w && cy >= l.y && cy < l.y + l.h);
-          if (to >= 0 && to !== this.s.mitem) { const [x] = p.items.splice(this.s.mitem, 1); p.items.splice(to, 0, x); this.s.mitem = to; }
+          if (to < 0 || to === this.s.mitem) return;   // nur neu zeichnen, wenn sich die Reihenfolge aendert (2026-10-30)
+          const [x] = p.items.splice(this.s.mitem, 1); p.items.splice(to, 0, x); this.s.mitem = to;
         }
-        this._touch(); this._render();
+        // hoechstens einmal je Bild neu zeichnen - vorher bei jeder Mausbewegung (Seite sprang)
+        this._touch();
+        if (!this._dragRaf) this._dragRaf = requestAnimationFrame(() => { this._dragRaf = 0; this._render(); });
       };
       this.s.mitem = i;
       if (mode !== "size") this._render();
@@ -3248,6 +3343,8 @@ details.btprox { margin-top:12px; } details.btprox summary { cursor:pointer; fon
 .mbar { display:flex; flex-wrap:wrap; gap:10px 20px; align-items:center; padding:12px 16px 0; }
 .inl2 { display:inline-flex; gap:8px; align-items:center; } .inl2 select { width:auto; }
 .mmain { display:grid; grid-template-columns:220px 340px 1fr; gap:16px; padding:16px; align-items:start; }
+/* Seitenbaum: eigene Scrollleiste und am Bildschirm kleben (2026-10-30) - beim Ziehen scrollte sonst das ganze Fenster */
+@media (min-width: 871px) { .mmain .mpages { position:sticky; top:8px; max-height:calc(100vh - 24px); overflow-y:auto; overscroll-behavior:contain; } }
 .mpages h3 { display:flex; align-items:center; font-size:15px; font-weight:500; margin:0 0 8px; }
 .pg { display:flex; align-items:center; gap:6px; width:100%; text-align:left; border:1px solid var(--div); background:var(--card); color:inherit; border-radius:10px; padding:8px 10px; margin-bottom:6px; cursor:pointer; font:inherit; }
 .pg.on { border-color:var(--acc); box-shadow:0 0 0 2px rgba(3,169,244,.25); }
@@ -3375,7 +3472,7 @@ code { font-size:12px; background:rgba(127,127,127,.15); padding:1px 4px; border
 .form label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--sec); }
 .form label.sw { flex-direction:row; }
 .iconpick { display:flex; align-items:center; gap:8px; border:1px solid var(--div); background:transparent; color:var(--primary-text-color); border-radius:8px; padding:8px; cursor:pointer; font:inherit; }
-.list.icons { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:4px; }
+.list.icons { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); grid-auto-rows:76px; align-content:start; gap:4px; }
 .ico { display:flex; flex-direction:column; align-items:center; gap:2px; border:1px solid var(--div); background:transparent; color:inherit; border-radius:8px; padding:6px 2px; cursor:pointer; }
 .ico small { font-size:10px; color:var(--sec); overflow:hidden; text-overflow:ellipsis; max-width:100%; white-space:nowrap; }
 @media (max-width: 1100px) { .mmain { grid-template-columns:200px 1fr; } .mmain .editor { grid-column:1 / -1; } }
@@ -3631,13 +3728,14 @@ ha-icon { --mdc-icon-size:20px; }
 .rshome { position:absolute; top:36px; left:0; width:240px; height:240px; overflow:hidden; }
 .rshome .phone { width:240px; padding:0; background:none; box-shadow:none; border-radius:0; }
 .rshome .pgrid { zoom:1; }   /* im Editor 1,25-fach vergroessert - im Display 1:1 (240 px) */
-.rsleiste { position:absolute; left:0; right:0; bottom:0; height:40px; display:flex; gap:2px; box-sizing:border-box; background:var(--lg); border-top:var(--ll) solid var(--la); }
+.rsleiste { position:absolute; left:0; right:0; bottom:0; height:40px; display:flex; gap:var(--lgap,2px); box-sizing:border-box; background:var(--lg); border-top:var(--ll) solid var(--la); }
 .rsleiste.oben { bottom:auto; border-top:0; border-bottom:var(--ll) solid var(--la); }
-.rsleiste span { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; background:var(--lf); color:var(--lt); }
+.rsleiste span, .lsvor span { flex:1; min-width:0; display:flex; flex-direction:var(--lsym,row); gap:3px; align-items:center; justify-content:var(--ljust,center); padding:0 4px; background:var(--lf); color:var(--lt); border-radius:var(--lr,0); }
+.rsleiste span ha-icon, .lsvor span ha-icon { --mdc-icon-size:16px; flex:none; }
 .rsleiste span.an { background:var(--la); color:var(--lat); }
 .rsstift2 { position:absolute; right:6px; top:4px; } .rsbar[hidden] { display:none; }
-.lsvor { display:flex; gap:2px; height:40px; width:240px; max-width:100%; background:var(--lg); border-top:var(--ll) solid var(--la); box-sizing:border-box; margin:4px 0 8px; }
-.lsvor span { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; background:var(--lf); color:var(--lt); font-size:var(--lfs); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.lsvor { display:flex; gap:var(--lgap,2px); height:40px; width:240px; max-width:100%; background:var(--lg); border-top:var(--ll) solid var(--la); box-sizing:border-box; margin:4px 0 8px; }
+.lsvor span { font-size:var(--lfs); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; } .lsvor small { font-size:var(--lfs); overflow:hidden; text-overflow:ellipsis; }
 .lsvor span.an { background:var(--la); color:var(--lat); }
 .lsfarben { display:flex; flex-wrap:wrap; gap:6px 12px; margin-bottom:8px; }
 .hleisten { flex-wrap:wrap; gap:6px 14px; align-items:center; } .hleisten small { color:var(--sec,#8b94a3); }
@@ -3754,21 +3852,22 @@ const H_AREAS = [
 // Aktivitaetsleiste (2026-10-28): Standardfarben wie tasten::leiste_stil, Schrift k/n/m/g = 11/13/15/18 px
 const L_STD = { grund: "#000000", feld: "#1a1f27", text: "#8b94a3", akt: "#3b82f6", akt_text: "#f1f3f5" };
 const L_FARBEN = [["akt", "Aktiv & Linie"], ["akt_text", "Text aktiv"], ["feld", "Felder"], ["text", "Text"], ["grund", "Fugen"]];
-const L_FS = { k: 11, n: 13, m: 15, g: 18 };
+const L_FS = { w: 9, k: 11, n: 13, m: 15, g: 18, x: 24 };
 // Platz der eigenen Startseite in Displaypixeln (wie tasten::startseite_anwenden): oben/unten, Leiste oben/unten/aus
 // Farben der Remote-Ansicht je Remote (2026-10-29, Konfig "rfarben", nur Anzeige im Konfigurator)
 const RF_STD = { rahmen: "#4a4f57", gehaeuse: "#9ea3a9", taste: "#161616", power: "#161616", symbol: "#ffffff", display: "#0b0c0e", rot: "#e53935", gruen: "#43a047", gelb: "#fdd835", blau: "#1e88e5" };
 const RF_NAMEN = [["gehaeuse", "Abdeckung"], ["rahmen", "Rahmen"], ["taste", "Tasten"], ["power", "Ein/Aus-Taste"], ["symbol", "Symbole"], ["display", "Displayglas"], ["rot", "Rot-Taste"], ["gruen", "Grün-Taste"], ["gelb", "Gelb-Taste"], ["blau", "Blau-Taste"]];
 // Kleine Remote (Navigation, Uebersicht) in den Farben der Remote
-const miniRemote = (f, h = 24) => `<svg class="mini" viewBox="0 0 14 26" style="height:${h}px;width:${h * 14 / 26}px"><rect x=".5" y=".5" width="13" height="25" rx="4" fill="${f.rahmen}"/><rect x="2" y="2" width="10" height="22" rx="3" fill="${f.gehaeuse}"/>
+const miniRemote = (f, h = 24) => `<svg class="mini" viewBox="0 0 14 26" style="height:${h}px;width:${h * 14 / 26}px"><rect x=".5" y=".5" width="13" height="25" rx="4" fill="${f.rahmen}" stroke="rgba(255,255,255,.45)" stroke-width=".7"/><rect x="2" y="2" width="10" height="22" rx="3" fill="${f.gehaeuse}"/>
   <rect x="3.2" y="3.2" width="7.6" height="7" rx=".8" fill="${f.display}"/><circle cx="7" cy="14.2" r="2.2" fill="${f.taste}"/><circle cx="7" cy="14.2" r=".7" fill="${f.symbol}"/>
   <circle cx="4" cy="18.6" r=".9" fill="${f.rot}"/><circle cx="6" cy="18.6" r=".9" fill="${f.gruen}"/><circle cx="8" cy="18.6" r=".9" fill="${f.gelb}"/><circle cx="10" cy="18.6" r=".9" fill="${f.blau}"/>
   <rect x="4" y="20.6" width="2.4" height="1.6" rx=".5" fill="${f.taste}"/><rect x="7.6" y="20.6" width="2.4" height="1.6" rx=".5" fill="${f.taste}"/></svg>`;
 const hFenster = (p) => {
   const st = p.status !== false, l = p.leiste || "unten";
   // ohne Statusleiste ab 0 (2026-10-29, vorher 8: 6 Zeilen + 28 px Rest) - jede Kombination in ganzen Zeilen
-  let o = st ? 36 : 0, u = (l === "aus" ? 320 : 280) - (st ? 4 : 0);
-  if (l === "oben") { o = (st ? 36 : 0) + 40; u = o + (st ? 240 : 280); }
+  // 2026-10-29: Raster wie im Menue - Zeilen auf 0, 40, 80 ... vom Displayrand; mit Statusleiste ab 40 (vorher 36)
+  let o = st ? 40 : 0, u = l === "aus" ? 320 : 280;
+  if (l === "oben") { o = (st ? 40 : 0) + 40; u = 320; }
   return { o, u, st, l };
 };
 const H_DEF = () => ({ custom: false, areas: Object.fromEntries(H_AREAS.map(([k, , , , d]) => [k, { ...d, on: true }])) });
@@ -3815,8 +3914,8 @@ const HomeEditor = {
     const links = this._hSeitenHtml(p);
     if (p) return `<div class="mmain ${s.mitem != null ? "editing" : ""}">
         <div class="mpages">${links}</div>
-        <div class="mprev">${this._hPageHead(p)}${this._mPreview(p)}${this._mList(p)}</div>
-        <div class="editor">${this.mitem ? this._mItemEditor() : '<div class="empty"><ha-icon icon="mdi:cursor-default-click-outline"></ha-icon><p>Eintrag in der Vorschau oder Liste antippen.</p></div>'}</div>
+        <div class="mprev">${this._hLive(p)}${this._mList(p)}</div>
+        <div class="editor">${this.mitem ? this._mItemEditor() : this._hSeitenEinst(p)}</div>
       </div>`;
     return `<div class="mmain hstdmain"><div class="mpages">${links}</div><div class="hstdw"><div class="mbar">
         <label class="sw"><input type="checkbox" data-hf="custom" ${hm.custom ? "checked" : ""}><span>Eigene Anordnung der Startseite benutzen</span></label>
@@ -3824,11 +3923,13 @@ const HomeEditor = {
         <span class="grow"></span><button class="btn small" data-a="hstd"><ha-icon icon="mdi:restore"></ha-icon>Standard</button>
       </div>
       <div class="hmain">
+        ${this._hLiveStd()}
         <div class="hprev ${hm.custom ? "" : "inaktiv"}"><div class="hgrid"><div class="gl">${cells}</div>${boxes}</div>
           <p class="hint">Bereich ziehen = verschieben, Ecke unten rechts = Größe. Bereiche dürfen sich nicht überlappen – mit „Andere ausweichen lassen“ rutschen sie zur Seite.${hm.custom ? "" : "<br><b>Aus:</b> Die Remote zeigt die eingebaute Anordnung."}</p></div>
         <div class="hlist"><h3>Bereiche</h3>${liste}
           <small class="note">Die Statusleiste bleibt oben (Zeile 1). Ist sie ausgeblendet, kann ein anderer Bereich dorthin.
-          Die Medien-Karte zeigt ab 4 Zeilen Höhe oben die Kameras (wenn eingeschaltet) und unten den Player, sonst nur den Player.</small></div>
+          Die Medien-Karte zeigt ab 4 Zeilen Höhe oben die Kameras (wenn eingeschaltet) und unten den Player, sonst nur den Player.</small>
+          ${this._hSeitenEinst(null)}</div>
       </div></div></div>`;
   },
   // Startseiten-Editor (2026-10-28): links welche Aktivitaet welche Startseite zeigt und die Seiten selbst - wie der
@@ -3855,27 +3956,83 @@ const HomeEditor = {
       ${zeile(!p, "hstdsel", "", "mdi:home-outline", "Standard (eingebaut)", std.length ? "für " + std.join(", ") : "von keiner Aktivität benutzt")}
       ${starts.map((pg) => { const f = fuer(pg.id); return zeile(p?.id === pg.id, "mpage", pg.id, "mdi:home-variant-outline", pg.title || pg.id, `${f.length ? "für " + f.join(", ") : "keiner Aktivität zugeordnet"} · ${(pg.items || []).length} Einträge`); }).join("")}
       <small class="note">Eigene Startseiten zeigt die Remote zwischen Statusleiste und Aktivitäten-Leiste – mit allen Einträgen und Widgets wie im Menü.</small>
-      <button class="btn small ghost" data-a="o_jetzt" title="„Jetzt läuft“-Player: was Wiedergabe-Karte und Medien-Widgets zeigen (gilt für alle Remotes)"><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon>Wiedergabe …</button>
-      ${this._hLeisteHtml()}`;
+`;
+  },
+  // Live-Display (2026-10-30, Nutzer: "ueberall so eine Live-Display-Ansicht"): 240x320 wie auf der Remote - Statusleiste,
+  // Inhaltsfenster (scrollt wie auf der Remote) und Aktivitaeten-Leiste; das Raster darin ist der Editor
+  _hStatusleiste(an = true) {
+    const ew = this.s.meta[this.s.dev]?.einst || {};
+    return `<div class="rsbar" ${an ? "" : "hidden"}>${ew.show_clock === false ? "" : `<i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i>`}<span class="grow"></span>${ew.show_ha === false ? "" : '<ha-icon icon="mdi:home-assistant"></ha-icon>'}${ew.show_wifi === false ? "" : '<ha-icon icon="mdi:wifi"></ha-icon>'}${ew.show_ble === false ? "" : '<ha-icon icon="mdi:bluetooth"></ha-icon>'}${ew.show_batt === false ? "" : '<ha-icon icon="mdi:battery-80"></ha-icon>'}</div>`;
+  },
+  _hLive(p) {
+    const fe = hFenster(p), z = Math.round((fe.u - fe.o) / 40);
+    const n = Math.max(0, ...mLayout(p).map((l) => l.y + l.h));
+    return `<div class="hlive"><div class="hdisp">${this._hStatusleiste(fe.st)}
+        <div class="hfen" style="top:${fe.o}px;height:${fe.u - fe.o}px">${this._mPreview(p, true)}</div>
+        ${fe.l === "aus" ? "" : `<div class="rsleiste ${fe.l === "oben" ? "oben" : ""}" style="${this._leisteStil()};${fe.l === "oben" ? `top:${fe.st ? 40 : 0}px` : ""}">${this._leisteFelder(this.s.act)}</div>`}
+      </div><div class="pinfo">${n <= z ? `<ha-icon icon="mdi:check"></ha-icon>Passt ohne Scrollen (${n} von ${z} Zeilen)` : `<ha-icon icon="mdi:arrow-expand-vertical"></ha-icon>${n} Zeilen – im Fenster scrollen (${z} sichtbar)`}</div></div>`;
+  },
+  // Eingebaute Startseite live: Bereiche an ihrer Stelle mit echtem Inhalt (Cover/Titel, Knoepfe, Leisten)
+  _hLiveStd() {
+    const hm = this.home, H = this._hass.states, je = this.cfg.ents?.jetzt, st = H[je], a = st?.attributes || {};
+    const laeuft = ["playing", "paused"].includes(st?.state);
+    const box = (k, inhalt, cls = "") => { const b = hm.custom ? hm.areas[k] : (H_AREAS.find(([x]) => x === k) || [])[4]; if (!b || (hm.custom && !b.on)) return "";
+      return `<div class="hlb ${cls}" style="left:${b.x * 40 + 2}px;top:${b.y * 40 + 2}px;width:${b.w * 40 - 4}px;height:${b.h * 40 - 4}px">${inhalt}</div>`; };
+    const bild = laeuft && a.entity_picture ? `background-image:url('${esc(a.entity_picture)}')` : "";
+    return `<div class="hlive"><div class="hdisp">${this._hStatusleiste(!hm.custom || hm.areas.status?.on !== false)}
+      ${box("medien", `<span class="mw karte" style="${bild}"><span class="mwu"><b>${esc(laeuft ? a.media_title || a.app_name || "Wiedergabe" : "Nichts läuft")}</b><small>${esc(laeuft ? a.media_artist || a.app_name || "" : "")}</small></span></span>`, "med")}
+      ${box("menu", `<b>${esc(hm.areas.menu?.label || "Menü")}</b>`, "kn")}${box("apps", `<b>${esc(hm.areas.apps?.label || "Apps")}</b>`, "kn")}
+      <div class="rsleiste" style="${this._leisteStil()}">${this._leisteFelder(this.s.act)}</div>
+    </div><div class="pinfo"><ha-icon icon="mdi:monitor"></ha-icon>So sieht die eingebaute Startseite auf der Remote aus</div></div>`;
+  },
+  // Einstellungen rechts im Hauptfenster (2026-10-30, vorher gequetscht links): Seite, Aktivitaeten-Leiste, Statusleiste
+  _hSeitenEinst(p) {
+    return `<div class="hseinst">${p ? `<h3><ha-icon icon="mdi:home-variant-outline"></ha-icon>Diese Startseite</h3>${this._hPageHead(p)}` : ""}
+      ${this._hLeisteHtml()}${this._hStatusHtml()}
+      ${p ? '<small class="note">Eintrag in der Vorschau oder Liste antippen, um ihn zu bearbeiten.</small>' : ""}</div>`;
+  },
+  // Statusleiste (2026-10-30): die Symbol-Schalter der Remote (Einstellungen > Anzeige) auch hier - gehen sofort an die Remote
+  _hStatusHtml() {
+    const w = this.s.meta[this.s.dev]?.einst || {};
+    const K = [["show_clock", "Uhrzeit", "mdi:clock-outline"], ["show_batt", "Akkustand", "mdi:battery-70"], ["show_ble", "Bluetooth", "mdi:bluetooth"],
+      ["show_wifi", "WLAN", "mdi:wifi"], ["show_ha", "Dock / Home Assistant", "mdi:home-assistant"], ["show_assi_icon", "Assistent", "mdi:microphone"],
+      ["show_motion", "Bewegung", "mdi:motion-sensor"]].filter(([k]) => k in w);
+    if (!K.length) return "";
+    const n = K.filter(([k]) => w[k]).length;
+    return this._mGrp("hstatus", "mdi:dock-top", "Statusleiste", `${n} von ${K.length} Symbolen`, `
+      <div class="lsfarben">${K.map(([k, t, ic]) => `<label class="sw small"><input type="checkbox" data-einst="${k}" ${w[k] ? "checked" : ""}><span><ha-icon icon="${ic}"></ha-icon> ${t}</span></label>`).join("")}</div>
+      <small class="note">Gilt für die ganze Remote (wie Einstellungen → Anzeige) und geht sofort an sie. Ein- oder ausblenden der ganzen Leiste je Startseite oben über der Vorschau.</small>`, false);
   },
   // Aussehen der Aktivitaetsleiste (2026-10-28) - gilt fuer alle Startseiten, auch die eingebaute
   _hLeisteHtml() {
     const l = this.home.leiste || {};
     const farben = L_FARBEN.map(([k, n]) => `<label class="farbe"><input type="color" data-hls="${k}" value="${l[k] || L_STD[k]}"><span>${n}</span>${l[k] ? `<button class="icon sm" data-a="hlsweg" data-k="${k}" title="Standard"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</label>`).join("");
-    const fs = [["k", "klein"], ["", "normal"], ["m", "groß"], ["g", "sehr groß"]].map(([v, n]) => `<button class="${(l.fs || "") === v ? "on" : ""}" data-a="hlsfs" data-v="${v}">${n}</button>`).join("");
-    const vor = (this.cfg.activities || []).map((a, i) => [a, i]).filter(([a, i]) => a.dock ?? i < 4).slice(0, 4)
-      .map(([a, i]) => `<span class="${i === this.s.act ? "an" : ""}">${esc(a.name)}</span>`).join("");
+    // alle Schriften der Remote, Namen wie im Menue (2026-10-30)
+    const fs = [["w", "Winzig", 9], ["k", "Sehr klein", 11], ["", "Klein", 13], ["m", "Normal", 15], ["g", "Groß", 18], ["x", "Sehr groß", 24]].map(([v, n, px]) => `<button class="${typeof l.fs !== "number" && (l.fs || "") === v ? "on" : ""}" data-a="hlsfs" data-v="${v}" title="${px} px">${n}<small> ${px}</small></button>`).join("");
+    const vor = this._leisteFelder(this.s.act);
     return this._mGrp("hleiste", "mdi:dock-bottom", "Aktivitäten-Leiste", Object.keys(l).length ? "angepasst" : "Standard", `
       <div class="lsvor" style="${this._leisteStil()}">${vor}</div>
       <div class="lsfarben">${farben}</div>
       <label class="inl2">Schrift <div class="seg sm">${fs}</div></label>
+      <label class="inl2" title="Eigene Größe in Pixeln – die Remote nimmt die nächste vorhandene: 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 24, 28">Größe in px <input type="number" min="7" max="30" data-hls="fspx" value="${typeof l.fs === "number" ? l.fs : L_FS[l.fs || "n"]}" style="width:64px"></label>
+      <label class="inl2">Ausrichtung <div class="seg sm">${[["l", "links"], ["", "Mitte"], ["r", "rechts"]].map(([v, n]) => `<button class="${(l.ausr || "") === v ? "on" : ""}" data-a="hlswert" data-k="ausr" data-v="${v}">${n}</button>`).join("")}</div></label>
+      <label class="inl2">Symbole <div class="seg sm">${[["", "aus"], ["links", "links"], ["oben", "oben"], ["nur", "nur Symbol"]].map(([v, n]) => `<button class="${(l.sym || "") === v ? "on" : ""}" data-a="hlswert" data-k="sym" data-v="${v}">${n}</button>`).join("")}</div></label>
+      <label class="inl2">Ecken <input type="range" min="0" max="14" data-hls="ecken" value="${l.ecken ?? 0}"> <small>${l.ecken ?? 0} px</small></label>
+      <label class="inl2">Fugen <input type="range" min="0" max="8" data-hls="fuge" value="${l.fuge ?? 2}"> <small>${l.fuge ?? 2} px</small></label>
       <label class="sw small"><input type="checkbox" data-hls="linie" ${l.linie === "aus" ? "" : "checked"}><span>Linie zur Seite (in der Farbe „Aktiv“)</span></label>
-      <small class="note">Gilt für alle Startseiten, auch die eingebaute. Lage (unten/oben/aus) und Statusleiste stellst du je Startseite oben über der Vorschau ein.</small>`, false);
+      <small class="note">Gilt für alle Startseiten, auch die eingebaute. Lage (unten/oben/aus) und Statusleiste stellst du je Startseite oben über der Vorschau ein. Symbole: je Aktivität unter Tasten → „Symbol“. Runde Ecken und breite Fugen schalten die LCARS-Ausschnitte an der Linie ab.</small>`, false);
   },
   // CSS-Variablen der Leiste fuer Vorschauen
   _leisteStil() {
     const l = this.home?.leiste || this.cfg.home?.leiste || {}, f = (k) => l[k] || L_STD[k];
-    return `--lg:${f("grund")};--lf:${f("feld")};--lt:${f("text")};--la:${f("akt")};--lat:${f("akt_text")};--lfs:${L_FS[l.fs || "n"]}px;--ll:${l.linie === "aus" ? 0 : 3}px`;
+    const just = l.ausr === "l" ? "flex-start" : l.ausr === "r" ? "flex-end" : "center";
+    return `--lg:${f("grund")};--lf:${f("feld")};--lt:${f("text")};--la:${f("akt")};--lat:${f("akt_text")};--lfs:${typeof l.fs === "number" ? l.fs : L_FS[l.fs || "n"]}px;--ll:${l.linie === "aus" ? 0 : 3}px;--lr:${l.ecken ?? 0}px;--lgap:${l.fuge ?? 2}px;--ljust:${just};--lsym:${l.sym === "oben" ? "column" : "row"}`;
+  },
+  // Felder der Aktivitaeten-Leiste fuer die Vorschauen (2026-10-30: mit Symbolen)
+  _leisteFelder(an) {
+    const l = this.home?.leiste || this.cfg.home?.leiste || {};
+    return (this.cfg?.activities || []).map((a, i) => [a, i]).filter(([a, i]) => a.dock ?? i < 4).slice(0, 4)
+      .map(([a, i]) => `<span class="${i === an ? "an" : ""}">${l.sym && a.icon ? `<ha-icon icon="mdi:${esc(a.icon)}"></ha-icon>` : ""}${l.sym === "nur" && a.icon ? "" : `<small>${esc(a.name)}</small>`}</span>`).join("");
   },
   _hPageHead(p) {
     return `<div class="phd">
@@ -3932,6 +4089,7 @@ const HomeEditor = {
     if (a === "hakt_edit") { Object.assign(this.s, { mode: "home", hstd: false, mpage: t.dataset.id, mitem: null }); this._nachOben = true; return true; }
     if (a === "hstd") { const c = this.home.custom, l = this.home.leiste; this.cfg.home = H_DEF(); this.cfg.home.custom = c; if (l) this.cfg.home.leiste = l; this.s.harea = null; this._touch(); return true; }
     if (a === "hlsweg") { const l = this.home.leiste || {}; delete l[t.dataset.k]; if (!Object.keys(l).length) delete this.home.leiste; this._touch(); return true; }
+    if (a === "hlswert") { const l = (this.home.leiste ||= {}); if (t.dataset.v) l[t.dataset.k] = t.dataset.v; else delete l[t.dataset.k]; if (!Object.keys(l).length) delete this.home.leiste; this._touch(); return true; }
     if (a === "hlsfs") { const l = (this.home.leiste ||= {}); if (t.dataset.v) l.fs = t.dataset.v; else delete l.fs; if (!Object.keys(l).length) delete this.home.leiste; this._touch(); return true; }
     return false;
   },
@@ -3944,7 +4102,11 @@ const HomeEditor = {
     }
     if (t.dataset.hls) {   // Aussehen der Aktivitaetsleiste (alle Startseiten)
       const l = (this.home.leiste ||= {}), k = t.dataset.hls;
-      if (k === "linie") { if (t.checked) delete l.linie; else l.linie = "aus"; } else l[k] = t.value;
+      if (k === "linie") { if (t.checked) delete l.linie; else l.linie = "aus"; }
+      else if (k === "fspx") { const v = Number(t.value); const st = Object.entries(L_FS).find(([, px]) => px === v);
+        if (st) { if (st[0] === "n") delete l.fs; else l.fs = st[0]; } else if (v >= 7 && v <= 30) l.fs = v; else delete l.fs; }
+      else if (k === "ecken" || k === "fuge") { const v = Number(t.value); if (v === (k === "fuge" ? 2 : 0)) delete l[k]; else l[k] = v; }
+      else l[k] = t.value;
       if (!Object.keys(l).length) delete this.home.leiste;
       this._touch(); return true;
     }
@@ -6335,6 +6497,23 @@ const EinstTab = {
       <p><button class="btn" data-a="jz_add"><ha-icon icon="mdi:plus"></ha-icon>„Jetzt läuft“-Player anlegen</button></p>
       ${mitStreamer ? this._strmHtml(name) : `<small class="note">Streamer (App, Titel, Cover) richtest du unter <button class="linkbtn" data-a="o_geh" data-b="fw">Firmware &amp; Geräte</button> ein.</small>`}</div>`;
   },
+  // "Jetzt laeuft"-Player direkt im Medien-Widget (2026-10-30, Nutzer: nicht ueberall ein eigener Knopf): ist der gewaehlte
+  // Player einer, seine Quellen hier einstellen (gilt fuer alle Remotes); sonst Hinweis + Anlegen
+  _mJetztImWidget(entity) {
+    const d = this.s.jetzt;
+    if (!d) { this._jetztLaden(); return ""; }
+    if (d.fehler) return "";
+    const ji = (d.jetzt || []).findIndex((j) => d.entitaeten?.[j.id] === entity);
+    if (ji < 0) return `<small class="note">Tipp: Ein <b>„Jetzt läuft“-Player</b> fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu einem zusammen – das Widget zeigt dann immer, was gerade läuft. <button class="linkbtn" data-a="jz_add">Jetzt-läuft-Player anlegen</button></small>`;
+    const j = d.jetzt[ji], st = this._hass.states, name = (e) => st[e]?.attributes.friendly_name || e;
+    const mps = Object.keys(st).filter((x) => x.startsWith("media_player.") && !Object.values(d.entitaeten || {}).includes(x)).sort((a, b) => name(a).localeCompare(name(b), "de"));
+    const wahl = (k, titel) => `<label>${titel}<select data-jz="${k}" data-ji="${ji}"><option value="">— keine —</option>${[...new Set([...(j[k] ? [j[k]] : []), ...mps])].map((x) => `<option value="${esc(x)}" ${x === j[k] ? "selected" : ""}>${esc(name(x))}</option>`).join("")}</select></label>`;
+    return this._mGrp("jetztq", "mdi:play-box-multiple-outline", `Quellen von „${esc(j.name)}“`, "gilt für alle Remotes", `
+      ${wahl("tv", "Fernseher")}${wahl("tv_app", "App-Erkennung am Fernseher")}${wahl("tv_cast", "Chromecast im Fernseher")}
+      ${wahl("multiroom", "Multiroom-Musik")}${wahl("cast", "Chromecast / Lautsprecher")}
+      <label>Streamer<select data-jz="streamer" data-ji="${ji}"><option value="">— keiner —</option>${(d.streamer || []).map((x) => `<option value="${esc(x.id)}" ${x.id === j.streamer ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
+      <small class="note">Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher. Play/Pause, Weiter und Lautstärke gehen an die gerade laufende Quelle. Streamer-App: Firmware &amp; Geräte.</small>`, false);
+  },
   _jetztModal() {
     return `<div class="modal" data-a="modalbg"><div class="dlg wide jzdlg">
       <div class="dh"><h2><ha-icon icon="mdi:play-box-multiple-outline"></ha-icon> Wiedergabe („Jetzt läuft“)</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
@@ -6424,23 +6603,36 @@ const EinstTab = {
   async _klingelLaden() {
     try { this.s.klingel = await this._hass.callWS({ type: "esphomeremote_konfig/klingel_get" }); }
     catch (e) { this.s.klingel = { fehler: e.message || String(e) }; }
-    (this.s.klingel.klingel || []).forEach((k, i) => { if (M_KAMERAS[i]) M_KAMERAS[i][1] = `Klingel: ${k.name}`; });
+    this._kamListe();
     this._render();
+  },
+  _kamListe() {   // Bildquellen = alle Klingeln (2026-10-30)
+    const l = (this.s.klingel?.klingel || []).filter((k) => k.id);
+    if (l.length) { M_KAMERAS.length = 0; for (const k of l) M_KAMERAS.push([`klingel:${k.id}`, `Klingel: ${k.name}`]); }
   },
   async _klingelSpeichern() {
     const s = this.s;
     try { s.klingel = await this._hass.callWS({ type: "esphomeremote_konfig/klingel_save", klingel: s.klingel.klingel }); s.msg = { text: "Klingel gespeichert." }; }
     catch (e) { s.msg = { err: true, text: "Klingel: " + (e.message || e) }; }
-    s.klingel.klingel?.forEach((k, i) => { if (M_KAMERAS[i]) M_KAMERAS[i][1] = `Klingel: ${k.name}`; });
+    this._kamListe();
     this._render();
   },
   async _klingelClick(a, t) {
     const s = this.s;
-    if (a === "kl_add") { s.klingel.klingel.push({ name: s.klingel.klingel.length ? "Wohnungstür" : "Haustür", ausloeser: "", kamera: "", warten: 2 }); await this._klingelSpeichern(); return true; }
+    if (a === "kl_add") {
+      const name = prompt("Name der Klingel (z. B. „Gartentor“):", s.klingel.klingel.length ? "Klingel " + (s.klingel.klingel.length + 1) : "Haustür");
+      if (!name) return true;
+      s.klingel.klingel.push({ name: name.slice(0, 24), ausloeser: "", kamera: "", warten: 2 });
+      await this._klingelSpeichern();
+      // im Popup-Editor: gleich dieser Seite zuordnen
+      const neu = s.klingel.klingel[s.klingel.klingel.length - 1];
+      if (t.dataset.zuordnen && neu?.id) this._mKlingelZuordnen(neu.id);
+      return true;
+    }
     if (a === "kl_del") { s.klingel.klingel.splice(Number(t.dataset.ki), 1); await this._klingelSpeichern(); return true; }
     if (a === "kl_test") {
       s.msg = { text: "Klingel-Bild wird geholt und an die Remotes geschickt …" }; this._render();
-      try { await this._hass.callWS({ type: "esphomeremote_konfig/klingel_test", platz: Number(t.dataset.ki) }); s.msg = { text: "Klingel-Bild verschickt – wache Remotes laden es jetzt." }; }
+      try { await this._hass.callWS({ type: "esphomeremote_konfig/klingel_test", kid: s.klingel.klingel[Number(t.dataset.ki)]?.id || "" }); s.msg = { text: "Klingel-Bild verschickt – wache Remotes laden es jetzt." }; }
       catch (e) { s.msg = { err: true, text: "Test: " + (e.message || e) }; }
       return true;
     }
@@ -6467,7 +6659,7 @@ const EinstTab = {
     return `<div class="einst verkn jz">
       <p class="hint">Beim Klingeln holt Home Assistant das Bild der Kamera, verkleinert es und schickt es an die Remotes – auch bei dunklem Display, solange ihre HA-Verbindung dabei nicht getrennt wird (Einstellungen › Verbindung zu Home Assistant). Im Menü zeigt ein Eintrag „Kamerabild“ mit der Bildquelle der Klingel es an; ein Popup dazu öffnest du über einen Auslöser im Menü-Editor (z. B. derselbe Auslöser auf „an“). Die Kameras für „Kamerabild“ und „Live-Bild“ stellst du je Remote im Menü-Editor ein.</p>
       <div class="egrid">${karten}</div>
-      ${d.klingel.length < 2 ? `<p><button class="btn" data-a="kl_add"><ha-icon icon="mdi:plus"></ha-icon>Klingel anlegen</button> <small>(bis zu zwei)</small></p>` : ""}</div>`;
+      ${d.klingel.length < 8 ? `<p><button class="btn" data-a="kl_add"><ha-icon icon="mdi:plus"></ha-icon>Klingel anlegen</button></p>` : ""}</div>`;
   },
   // Seite "Akku" (auswertung.py): Verbrauch je Zustand aus dem Recorder, Schlafquote, Gruende, Laufzeit
   async _akkuLaden(dev, tage) {
@@ -7278,6 +7470,26 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .pill { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--rand); background:var(--card); color:var(--primary-text-color); border-radius:999px; padding:5px 13px 5px 5px; font-size:13px; cursor:pointer; white-space:nowrap; }
 .pill:hover, .pill.auf { border-color:color-mix(in srgb, var(--primary-text-color) 28%, transparent); }
 .mlliste { display:flex; flex-direction:column; gap:4px; margin:4px 0; } .mlz { display:flex; align-items:center; gap:8px; } .mlz > span { flex:1; display:flex; flex-direction:column; min-width:0; } .mlz small { opacity:.6; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hlive { display:flex; flex-direction:column; align-items:center; gap:6px; margin:6px auto 12px; width:310px; flex:none; text-align:center; }
+.hdisp { zoom:1.25; position:relative; width:240px; height:320px; background:#000; color:#f1f3f5; border-radius:4px; overflow:hidden; box-shadow:0 0 0 5px #2b2f36, 0 6px 18px rgba(0,0,0,.35); }
+.hdisp .rsbar { position:absolute; top:0; left:0; right:0; } .hdisp .rsbar[hidden] { display:none; }
+.hfen { position:absolute; left:0; width:240px; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; } .hfen::-webkit-scrollbar { display:none; }
+.hfen .pgrid { zoom:1; margin-top:-4px; } .hfen .pscr, .hfen .pdunkel { display:none; }   /* Raster wie auf der Remote: Zeile 1 bei 2 px (Editor-Rand 6) */
+.hlb { position:absolute; border-radius:10px; overflow:hidden; } .hlb.kn { background:#1a1f27; display:flex; align-items:center; justify-content:center; font-size:15px; } .hlb.kn b { font-weight:400; }
+.hlb.med .mw { inset:0; }
+.hseinst { display:flex; flex-direction:column; gap:10px; } .hseinst h3 { display:flex; align-items:center; gap:6px; margin:0; font-size:15px; }
+.rshome .pgrid { margin-top:-4px; }
+.klblock { border:1px solid var(--div); border-radius:10px; padding:8px; margin:8px 0; } .klfeld { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.mw { position:absolute; inset:2px; display:flex; gap:8px; overflow:hidden; text-align:left; border-radius:8px; }
+.pi .mw b, .mw b { font-size:15px; font-weight:400; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; } .pi .mw small, .mw small { font-size:11px; opacity:.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; min-height:13px; }
+.mw .mk { font-style:normal; width:26px; height:26px; border-radius:50%; background:#232a35; display:inline-flex; align-items:center; justify-content:center; flex:none; } .mw .mk.h { background:#3b82f6; width:30px; height:30px; } .mw .mk ha-icon { --mdc-icon-size:16px; }
+.mw .mkr { display:flex; justify-content:space-evenly; align-items:center; margin-top:auto; padding-bottom:4px; }
+.mw .mbar { display:block; height:3px; background:#4b5563; border-radius:2px; margin:4px 0; } .mw .mbar span { display:block; height:100%; background:#ef4444; border-radius:2px; }
+.mw.gross .mcov { width:auto; height:100%; aspect-ratio:1; border-radius:8px; background:#0e1116 center/cover; display:flex; align-items:center; justify-content:center; flex:none; }
+.mw.gross .mwr, .mw.schmal .mwr { flex:1; min-width:0; display:flex; flex-direction:column; } .mw.schmal { align-items:center; }
+.mw.karte { inset:0; background:#0e1116 center/cover; flex-direction:column; justify-content:flex-end; } .mw.karte .mn { position:absolute; left:50%; top:35%; transform:translate(-50%,-50%); --mdc-icon-size:28px; opacity:.4; }
+.mw.karte .mwu { display:flex; flex-direction:column; padding:28px 8px 2px; background:linear-gradient(transparent, rgba(0,0,0,.8) 45%); color:#f1f3f5; } .mw.karte .mkr { margin-top:6px; }
+.mw.karte .mbar { margin:0; border-radius:0; height:3px; } .mw.karte .mbar span { border-radius:0; }
 .wlicht { position:absolute; inset:2px 4px; display:flex; flex-direction:column; gap:0; overflow:hidden; text-align:left; }
 .wlicht .lkopf { display:flex; align-items:center; gap:8px; height:34px; flex:none; }
 .wlicht .lpw { width:28px; height:28px; border-radius:50%; background:#2e3643; display:inline-flex; align-items:center; justify-content:center; flex:none; } .wlicht .lpw ha-icon { --mdc-icon-size:17px; }
@@ -7626,7 +7838,6 @@ const VERKN = [
     "Läuft dieser Timer, zeigt die Statusleiste den Countdown."],
 ];
 const SEITEN_SYSTEM = [
-  ["klingel", "Klingel", "mdi:doorbell-video"],
   ["dock", "Dockingstation", "mdi:dock-window"],
   ["ircodes", "IR-Codes", "mdi:remote-tv"],
   ["sync", "Synchronisieren", "mdi:sync"],
@@ -8058,6 +8269,7 @@ const OberflaecheTab = {
       <p class="hint modhint">Gilt, solange auf der Remote keine Aktivität läuft (z. B. nach „Aktivität beenden“). Belegte Tasten ersetzen die der zuletzt gelaufenen Aktivität, leere Tasten bleiben wie dort. Startseite: unter Startseite. Unter der Remote: Schritte beim Beenden einer Aktivität („Beim Starten“ von „Keine Aktivität“) und beim Start der nächsten („Beim Beenden“).</p>`
       : `<div class="aktset">
       <label class="inl2">Name <input data-akt="name" value="${esc(akt.name)}" maxlength="16"></label>
+      <label class="inl2" title="Symbol in der Aktivitäten-Leiste (Startseite → Aktivitäten-Leiste → Symbole)">Symbol <button class="iconpick" data-a="akticon">${akt.icon ? `<ha-icon icon="mdi:${esc(akt.icon)}"></ha-icon>` : "keins"}</button></label>
       <label class="inl2">Bluetooth-Gerät <select data-akt="slot">${[0, 1, 2, 3].map((d) => `<option value="${d}" ${akt.slot === d ? "selected" : ""}>${esc(this.slotName(d))}</option>`).join("")}</select></label>
       <label class="sw small"><input type="checkbox" data-akt="dock" ${imDock(akt, s.act) ? "checked" : ""} ${!imDock(akt, s.act) && nDock >= 4 ? "disabled" : ""}><span>In der Leiste (${nDock}/4)</span></label>
       <span class="grow"></span>

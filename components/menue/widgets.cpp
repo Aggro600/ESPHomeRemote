@@ -120,7 +120,8 @@ void Menue::widget_karte_(Item &it) {
   it.obj = k;
   it.bg = C_KARTE;
   // Bildplatz: Kamera immer, Medien nur gross und breit genug fuer das Cover
-  const bool bild = it.wart == W_KAMERA || (it.h >= 2 && it.w >= 5 && (it.wart == W_MEDIEN || it.wart == W_KOMBI));
+  const bool bild = it.wart == W_KAMERA || (it.h >= 2 && it.w >= 5 && (it.wart == W_MEDIEN || it.wart == W_KOMBI)) ||
+                    (it.h >= 2 && it.wart == W_MEDIEN && !strcmp(it.j["stil"] | "", "karte"));
   if (bild && wslots_frei_ < 2 && wbild_laden) {
     it.wslot = wslots_frei_++;
     g_wkey[it.wslot].clear();
@@ -264,10 +265,65 @@ void Menue::widget_teil_(Item &it, lv_obj_t *p, uint8_t art, int breite, int hoe
         const char *gl = icon_(icon);
         lv_obj_t *l = wtext_(b, gl ? gl : "", f_icon_ ? f_icon_ : f_text_, C_TEXT);
         lv_obj_center(l);
-        lv_obj_set_user_data(b, (void *) (intptr_t) (idx * 4 + fn));
+        lv_obj_set_user_data(b, (void *) (intptr_t) (idx * 8 + fn));
         lv_obj_add_event_cb(b, Menue::wknopf_cb_, LV_EVENT_CLICKED, this);
         return b;
       };
+      // Darstellung "karte" (2026-10-30, wie die eingebaute Startseite): Cover fuellt die Karte, unten abgedunkelt mit
+      // Titel/Interpret, Fortschritt und Zurueck/Play/Weiter (+ Leiser/Lauter, wenn breit genug)
+      if (gross && !strcmp(it.j["stil"] | "", "karte")) {
+        lv_obj_set_style_pad_all(p, 0, 0);
+        lv_obj_set_pos(p, -2, -2);
+        lv_obj_set_size(p, breite + 4, hoehe + 4);
+        const char *gl = icon_("music-note");
+        lv_obj_align(wtext_(p, gl ? gl : "", f_icon_ ? f_icon_ : f_text_, 0x4B5563), LV_ALIGN_CENTER, 0, -hoehe / 5);
+        if (it.wslot >= 0) {
+          it.wo[WR_M_BILD] = lv_image_create(p);
+          lv_obj_center(it.wo[WR_M_BILD]);
+          lv_obj_add_flag(it.wo[WR_M_BILD], LV_OBJ_FLAG_HIDDEN);
+        }
+        const int g = std::min(34, std::max(26, hoehe / 4));
+        const int unten = std::min(hoehe + 4, g + 52);   // abgedunkelter Bereich unten
+        lv_obj_t *sc = wbox_(p);
+        lv_obj_set_size(sc, breite + 4, unten + 24);
+        lv_obj_align(sc, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_color(sc, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_grad_color(sc, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_main_opa(sc, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_grad_opa(sc, LV_OPA_80, 0);
+        lv_obj_set_style_bg_main_stop(sc, 0, 0);
+        lv_obj_set_style_bg_grad_stop(sc, 110, 0);
+        lv_obj_set_style_bg_grad_dir(sc, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_opa(sc, LV_OPA_COVER, 0);
+        const int tb = breite - 12;
+        it.wo[WR_M_TITEL] = wtext_(p, "Nichts läuft", f_text_, C_TEXT);
+        punkte_(it.wo[WR_M_TITEL]);
+        lv_obj_set_width(it.wo[WR_M_TITEL], tb);
+        lv_obj_align(it.wo[WR_M_TITEL], LV_ALIGN_BOTTOM_LEFT, 8, -(g + 26));
+        it.wo[WR_M_SUB] = wtext_(p, "", f_klein_, 0xCBD5E1);
+        punkte_(it.wo[WR_M_SUB]);
+        lv_obj_set_width(it.wo[WR_M_SUB], tb);
+        lv_obj_align(it.wo[WR_M_SUB], LV_ALIGN_BOTTOM_LEFT, 8, -(g + 10));
+        lv_obj_t *r = wbox_(p);
+        lv_obj_set_size(r, breite - 4, g);
+        lv_obj_align(r, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_obj_set_layout(r, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(r, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        const bool laut = (it.j["laut"] | true) && breite >= 5 * (g + 6);
+        if (laut) knopf(r, "volume-minus", 4, g - 4);
+        knopf(r, "skip-previous", 0, g);
+        it.wo[WR_M_PLAY] = lv_obj_get_child(knopf(r, "play-pause", 1, g), 0);
+        knopf(r, "skip-next", 2, g);
+        if (laut) knopf(r, "volume-plus", 3, g - 4);
+        it.wo[WR_M_BAR] = wbalken_(p, breite + 4, 0xEF4444);
+        lv_obj_set_style_radius(it.wo[WR_M_BAR], 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(it.wo[WR_M_BAR], 0, LV_PART_INDICATOR);
+        lv_obj_set_height(it.wo[WR_M_BAR], 3);
+        lv_obj_align(it.wo[WR_M_BAR], LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_add_flag(it.wo[WR_M_BAR], LV_OBJ_FLAG_HIDDEN);
+        break;
+      }
       int x0 = 0;
       if (gross && it.wslot >= 0 && breite >= 180) {   // Cover links, quadratisch
         const int s = hoehe - 4;
@@ -566,8 +622,9 @@ void Menue::widget_bild_(Item &it, bool sofort) {
   const char *e = it.wart == W_KAMERA ? (it.j["entity"] | "") : it.wart == W_KOMBI ? (it.j["me"] | "") : (it.j["entity"] | "");
   if (!*e) return;
   int w, h;
-  if (it.wart == W_KAMERA) { w = (int) (it.w * zelle_) - LUECKE - 4; h = it.h * ZEILE - LUECKE - 4; }
-  else { w = h = it.h * ZEILE - LUECKE - 8; }   // Cover quadratisch
+  if (it.wart == W_KAMERA || (it.wart == W_MEDIEN && !strcmp(it.j["stil"] | "", "karte"))) {   // Karte: Cover fuellt alles
+    w = (int) (it.w * zelle_) - LUECKE; h = it.h * ZEILE - LUECKE;
+  } else { w = h = it.h * ZEILE - LUECKE - 8; }   // Cover quadratisch
   char q[48];
   snprintf(q, sizeof(q), "&w=%d&h=%d&m=%s", w, h, it.wart == W_KAMERA && !strcmp(it.j["bild"] | "", "ganz") ? "ganz" : "voll");
   const std::string url = "http://" + tk_->host() + "/api/esphomeremote_konfig/bild?k=" + tk_->schluessel() + "&e=" + e + q;
@@ -607,8 +664,9 @@ void Menue::widget_ausloesen_(Item &it, int richtung) {
     const bool laeuft = f != zustand_cache_.end() && f->second.state == "active";
     tk_->ha_aufruf(laeuft ? "timer.pause" : "timer.start", {{"entity_id", e}});
   } else if (it.wart == W_MEDIEN || (it.wart == W_KOMBI && (it.wbau & (1 << W_MEDIEN)))) {
+    if (medien_taste && medien_taste(e, richtung == -1 ? 2 : richtung == 1 ? 1 : richtung == 3 ? 3 : richtung == 4 ? 4 : 0)) { abf_ab_ = millis() + 700; return; }
     const char *svc = richtung == -1 ? "media_player.media_previous_track" : richtung == 1 ? "media_player.media_next_track"
-                                                                          : "media_player.media_play_pause";
+                      : richtung == 3 ? "media_player.volume_up" : richtung == 4 ? "media_player.volume_down" : "media_player.media_play_pause";
     tk_->ha_aufruf(svc, {{"entity_id", e}});
   }
   abf_ab_ = millis() + 700;
@@ -617,10 +675,11 @@ void Menue::widget_ausloesen_(Item &it, int richtung) {
 void Menue::wknopf_cb_(lv_event_t *e) {
   auto *self = (Menue *) lv_event_get_user_data(e);
   const int v = (int) (intptr_t) lv_obj_get_user_data((lv_obj_t *) lv_event_get_current_target(e));
-  const int i = v / 4, fn = v % 4;
+  const int i = v / 8, fn = v % 8;
   if (i < 0 || i >= (int) self->items_.size()) return;
   lv_event_stop_bubbling(e);
-  self->widget_ausloesen_(self->items_[i], fn - 1);
+  // fn 0 zurueck, 1 Play/Pause, 2 weiter, 3 lauter, 4 leiser -> richtung -1, 0, 1, 3, 4
+  self->widget_ausloesen_(self->items_[i], fn <= 2 ? fn - 1 : fn);
 }
 
 

@@ -69,7 +69,11 @@ class JetztPlayer(MediaPlayerEntity):
     """Fuehrt Streamer/Multiroom/Cast/TV zu einer Entitaet zusammen."""
 
     _attr_should_poll = False
-    _attr_supported_features = MediaPlayerEntityFeature(0)
+    # Befehle (2026-10-30): an die gerade laufende Quelle weitergereicht (_ziel) - vorher keine, die Widgets der
+    # Remote liefen ins Leere ("does not support action media_play_pause")
+    _attr_supported_features = (MediaPlayerEntityFeature.PLAY | MediaPlayerEntityFeature.PAUSE | MediaPlayerEntityFeature.STOP
+                                | MediaPlayerEntityFeature.NEXT_TRACK | MediaPlayerEntityFeature.PREVIOUS_TRACK
+                                | MediaPlayerEntityFeature.VOLUME_STEP | MediaPlayerEntityFeature.VOLUME_MUTE)
     _attr_icon = "mdi:cast-connected"
     _attr_media_image_remotely_accessible = True
 
@@ -116,6 +120,50 @@ class JetztPlayer(MediaPlayerEntity):
                 self.async_write_ha_state()
             self.async_on_remove(st.abonnieren(_streamer_neu))
         self._recompute()
+
+    def _ziel(self, lautstaerke: bool = False) -> str | None:
+        """Wohin ein Befehl geht: die laufende Quelle (Streamer ueber seine ADB-Entitaet, Multiroom, Chromecast, TV).
+        Lautstaerke: am Fernseher, wenn einer eingetragen ist (dort haengt der Ton), sonst wie die Wiedergabe."""
+        streamer_adb = self._streamer.cfg.get("adb") if self._streamer is not None else ""
+        q = self._quelle
+        ziel = {"streamer": streamer_adb, "multiroom": self._ma, "cast": self._cast or self._tv_cast,
+                "tv": self._tv_app or self._tv}.get(q) or ""
+        if lautstaerke and q != "multiroom" and self._tv:
+            return self._tv
+        return ziel or self._tv or None
+
+    async def _weiter(self, dienst: str, lautstaerke: bool = False, **daten) -> None:
+        ziel = self._ziel(lautstaerke)
+        if not ziel:
+            return
+        await self.hass.services.async_call("media_player", dienst, {"entity_id": ziel, **daten}, blocking=False)
+
+    async def async_media_play_pause(self) -> None:
+        await self._weiter("media_play_pause")
+
+    async def async_media_play(self) -> None:
+        await self._weiter("media_play")
+
+    async def async_media_pause(self) -> None:
+        await self._weiter("media_pause")
+
+    async def async_media_stop(self) -> None:
+        await self._weiter("media_stop")
+
+    async def async_media_next_track(self) -> None:
+        await self._weiter("media_next_track")
+
+    async def async_media_previous_track(self) -> None:
+        await self._weiter("media_previous_track")
+
+    async def async_volume_up(self) -> None:
+        await self._weiter("volume_up", True)
+
+    async def async_volume_down(self) -> None:
+        await self._weiter("volume_down", True)
+
+    async def async_mute_volume(self, mute: bool) -> None:
+        await self._weiter("volume_mute", True, is_volume_muted=mute)
 
     def _st(self, k: str) -> str | None:
         """Daten des Streamers (streamer.py) als Text wie frueher die Sensoren; None = kein Streamer/keine Daten."""

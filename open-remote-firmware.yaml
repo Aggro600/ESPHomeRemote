@@ -61,7 +61,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.10.29.3"
+    version: "2026.10.30.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
@@ -380,6 +380,10 @@ esphome:
               if (m != id(mn)) m->set_fonts(id(a15)->get_lv_font(), id(a13)->get_lv_font(), id(mdi_menu)->get_lv_font(), id(a18)->get_lv_font(),
                                             id(a11)->get_lv_font(), id(a24)->get_lv_font());
               m->set_widget_fonts(id(a48)->get_lv_font(), id(mdi_wetter)->get_lv_font());
+              m->set_schriften({{7, id(a7)->get_lv_font()}, {8, id(a8)->get_lv_font()}, {9, id(a9)->get_lv_font()}, {10, id(a10)->get_lv_font()}, {11, id(a11)->get_lv_font()},
+                                {12, id(a12)->get_lv_font()}, {13, id(a13)->get_lv_font()}, {14, id(a14)->get_lv_font()},
+                                {15, id(a15)->get_lv_font()}, {16, id(a16)->get_lv_font()}, {18, id(a18)->get_lv_font()},
+                                {20, id(a20)->get_lv_font()}, {24, id(a24)->get_lv_font()}, {28, id(a28)->get_lv_font()}});
               m->zeit = [](int &h, int &mi, int &wt, int &tg, int &mo) {
                 auto t = id(sntp_time).now();
                 if (!t.is_valid()) return false;
@@ -719,19 +723,11 @@ api:
       then:
         - lambda: 'id(cam_try) = 0;'
         - script.execute: cam_load
-    # Klingel-Bild nachladen (aufgerufen von der HA-Automation "ESPHomeRemote:
-    # Klingel-Bild ..." kurz nach dem Klingeln, sobald das Foto verkleinert ist).
-    # door: 1 = Haustuer, 2 = Wohnungstuer.
-    - service: doorbell_image
-      variables:
-        door: int
+    # Neues Klingelbild (2026-10-30, klingel.py nach dem Klingeln): gezeigt -> gleich neu laden, sonst beim naechsten Zeigen
+    - service: klingelbild
+      variables: {kennung: string}
       then:
-        - if:
-            condition: {lambda: "return door == 1;"}
-            then:
-              - online_image.set_url: {id: db_haus_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_doorbell_haus.jpg";'}
-            else:
-              - online_image.set_url: {id: db_wohn_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_doorbell_wohnung.jpg";'}
+        - lambda: 'tasten::klingel::neu(kennung, tasten::klingel::stempel()[kennung] + 1);' 
     # Menue-Seite als Popup zeigen / schliessen (z. B. Kamera-Popup, s. packages/esphomeremote_kamera_tv.yaml)
     - service: menue_popup
       variables: {seite: string}
@@ -908,6 +904,52 @@ font:
   - file: 'fonts/Audiowide-Regular.ttf'
     id: a13
     size: 13
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  # Weitere Groessen (2026-10-30, Nutzer: Schriftgroesse frei eintippen): die Remote nimmt die naechste vorhandene
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a7
+    size: 7
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a8
+    size: 8
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a9
+    size: 9
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a10
+    size: 10
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a12
+    size: 12
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a14
+    size: 14
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a16
+    size: 16
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a20
+    size: 20
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
+  - file: 'fonts/Audiowide-Regular.ttf'
+    id: a28
+    size: 28
     bpp: 4
     glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−‹›"  # „ − ›: fehlten, Texte mit deutschen Anfuehrungszeichen hatten Luecken (2026-10-18)
   # Menue-Schriftgroessen "sehr klein" / "sehr gross" (Konfigurator > Aussehen > Groesse, 2026-10-18)
@@ -1383,8 +1425,6 @@ globals:
   # zeigt "X" statt "<" (Nutzerwunsch 2026-09-28).
   - {id: popup_seite,    type: int,       restore_value: false, initial_value: "-1"}
   # Klingelbild-Stempel aus dem Dock-Stand (2026-10-24, dock_direkt on_zustand): zuletzt geladenes Bild je Tuer
-  - {id: db_ts_haus,     type: uint32_t,  restore_value: false, initial_value: "0"}
-  - {id: db_ts_wohn,     type: uint32_t,  restore_value: false, initial_value: "0"}
   # Popups (2026-10-03): popup_von = Seite, von der aus das Popup kam (Schliessen fuehrt dorthin
   # zurueck). popup_min = per Menuetaste/Timeout weggelegtes Popup, das die Menuetaste kurz
   # zurueckholt, solange sein Anlass besteht (max. 5 min). Popups werden nie als Menueseite gemerkt.
@@ -1499,20 +1539,11 @@ dock_direkt:
         // passend zur geladenen Konfiguration, sonst stimmt die Reihenfolge nicht. Klingelbild: Zeitstempel je Tuer,
         // neuer Stempel -> Bild holen (HTTP ueber das Dock). Nach dem Start nur, wenn es keine 5 min alt ist.
         if (!d["pz"].isNull() && id(tk_cfg).hash() == (d["kh"] | "")) id(mn)->zustaende_von_dock(d["pz"].as<JsonArrayConst>());
-        if (!d["db"].isNull()) {
-          const time_t uhr = ::time(nullptr);
-          for (int i = 0; i < 2; i++) {
-            const uint32_t ts = d["db"][i] | 0u;
-            uint32_t &alt = i == 0 ? id(db_ts_haus) : id(db_ts_wohn);
-            if (ts == 0 || ts == alt) continue;
-            const bool neu_bild = alt != 0 || (uhr > 1700000000 && uhr - (time_t) ts < 300);
-            alt = ts;
-            if (!neu_bild) continue;
-            ESP_LOGI("klingel", "Klingelbild %d ueber das Dock", i + 1);
-            auto *b = i == 0 ? id(db_haus_image) : id(db_wohn_image);
-            b->set_url(std::string("http://") + id(tk_cfg).host() + (i == 0 ? "/local/esphomeremote_doorbell_haus.jpg" : "/local/esphomeremote_doorbell_wohnung.jpg"));
-            b->update();
-          }
+        // Klingelbilder (2026-10-30): Kennung -> Zeitstempel; geladen wird erst, wenn das Klingel-Popup es zeigt
+        for (JsonPairConst kv : d["dbk"].as<JsonObjectConst>()) {
+          const uint32_t ts = kv.value() | 0u;
+          const std::string kid = kv.key().c_str();
+          if (ts != 0 && ts != tasten::klingel::stempel()[kid]) tasten::klingel::neu(kid, ts);
         }
         auto t = [&](text_sensor::TextSensor *s, const char *k) { if (!d[k].isNull()) s->publish_state(d[k].as<std::string>()); };
         auto z = [&](sensor::Sensor *s, const char *k) { if (!d[k].isNull()) s->publish_state(d[k].as<float>()); };
@@ -1613,28 +1644,17 @@ image:
     on_error:
       - lambda: 'ESP_LOGW("widget", "Widget-Bild 2 konnte nicht geladen werden");'
 
-  # Klingel-Bild (Haustuer): dasselbe Foto wie aufs Handy, in HA auf 216x112
-  # verkleinert (doorbell_image.py). Wird vom Dienst doorbell_image nachgeladen.
+  # Klingelbild (2026-10-30: EIN Speicher fuer alle Klingeln, tasten::klingel): das Foto der Klingel, deren Popup
+  # gerade gezeigt wird, in HA auf 216x104 zugeschnitten (klingel.py)
   - platform: online_image
     id: db_haus_image
     url: "http://${ha_host}/"
     format: JPEG
     type: RGB565
     on_download_finished:
-      - lambda: 'id(mn)->bild_neu();'   # Kamerabild-Kacheln im Menue/Popup auffrischen
+      - lambda: 'tasten::klingel::fertig() = true; id(mn)->bild_neu(); id(mn_home)->bild_neu();'
     on_error:
-      - lambda: 'ESP_LOGW("klingel", "Klingelbild (Haustuer) konnte nicht geladen werden");'
-  # Klingel-Bild (Wohnungstuer): dasselbe Foto wie aufs Handy, in HA auf 216x112
-  # verkleinert (doorbell_image.py). Wird vom Dienst doorbell_image nachgeladen.
-  - platform: online_image
-    id: db_wohn_image
-    url: "http://${ha_host}/"
-    format: JPEG
-    type: RGB565
-    on_download_finished:
-      - lambda: 'id(mn)->bild_neu();'   # Kamerabild-Kacheln im Menue/Popup auffrischen
-    on_error:
-      - lambda: 'ESP_LOGW("klingel", "Klingelbild (Wohnungstuer) konnte nicht geladen werden");'
+      - lambda: 'ESP_LOGW("klingel", "Klingelbild konnte nicht geladen werden");'
 
   # Schnelles Live-Bild: HA schreibt ~45 s lang laufend neue Bilder (live_image.py), die
   # Remote laedt sie fortlaufend nach (script live_loop), sobald das letzte fertig ist.
@@ -5609,21 +5629,17 @@ script:
   - id: mp_taste
     parameters: {was: int}
     then:
-      - if:
-          condition:
-            lambda: 'return id(mp_quelle).state == "multiroom" && !id(tk_cfg).ent("multiroom").empty();'
-          then:
-            - homeassistant.service:
-                service: !lambda |-
-                  static const char *const S[] = {"media_player.media_play_pause", "media_player.media_next_track",
-                    "media_player.media_previous_track", "media_player.volume_up", "media_player.volume_down"};
-                  return std::string(S[was < 0 || was > 4 ? 0 : was]);
-                data:
-                  entity_id: !lambda 'return id(tk_cfg).ent("multiroom");'
-          else:
-            - lambda: |-
-                static const char *const C[] = {"consumer:0x00CD", "consumer:0x00B5", "consumer:0x00B6", "consumer:0x00E9", "consumer:0x00EA"};
-                id(kb).execute_action(C[was < 0 || was > 4 ? 0 : was]);
+      - lambda: |-
+          // 2026-10-30: an den "Jetzt laeuft"-Player (HA reicht es an die laufende Quelle weiter: Streamer per ADB,
+          // Multiroom, Chromecast, TV) - ueber das Dock, wenn keine eigene Verbindung. Ohne ihn: Bluetooth-Medientaste.
+          static const char *const S[] = {"media_player.media_play_pause", "media_player.media_next_track",
+            "media_player.media_previous_track", "media_player.volume_up", "media_player.volume_down"};
+          static const uint16_t C[] = {0x00CD, 0x00B5, 0x00B6, 0x00E9, 0x00EA};
+          const int i = was < 0 || was > 4 ? 0 : was;
+          std::string e = id(tk_cfg).ent("jetzt");
+          if (id(mp_quelle).state == "multiroom" && !id(tk_cfg).ent("multiroom").empty()) e = id(tk_cfg).ent("multiroom");
+          if (!e.empty()) id(tk_cfg).ha_aufruf(S[i], {{"entity_id", e}});
+          else id(tk_cfg).medientaste(C[i]);
 
   # ---- Akku-Seite (43) ------------------------------------------------------------------
   - id: akku_anzeige

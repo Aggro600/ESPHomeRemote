@@ -1,8 +1,18 @@
 # What's new · Was ist neu
 
+## 2026.10.30.1 (2026-10-30)
+
+Doorbells: any number (up to 8), configured directly in the popup editor, one shared image buffer on the remote. Media widget: new 'card' style (cover as background, volume keys), sources of the 'now playing' player right in the widget; the player forwards play/pause/next/volume to the active source (widgets and card did nothing before). Start page: live display in the editor (custom and built-in), settings on the right, status bar icons in the configurator, one grid with the menu. Activity bar: alignment, corners, gaps, icons per activity, all font sizes. Font sizes 7-28 px freely selectable. Function 'close menu'. Configurator: page tree no longer scrolls away while dragging, icon picker, mini remote with outline.
+
+<details><summary>Deutsch</summary>
+
+Klingeln: beliebig viele (bis 8), eingestellt direkt im Popup-Editor, ein gemeinsamer Bildspeicher auf der Remote. Medien-Widget: neue Darstellung „Karte“ (Cover als Hintergrund, Lauter/Leiser), Quellen des „Jetzt läuft“-Players direkt im Widget; der Player reicht Play/Pause/Weiter/Lautstärke an die laufende Quelle weiter (Widgets und Karte gingen vorher nicht). Startseite: Live-Display im Editor (eigene und eingebaute), Einstellungen rechts, Statusleisten-Symbole im Konfigurator, ein Raster mit dem Menü. Aktivitäten-Leiste: Ausrichtung, Ecken, Fugen, Symbole je Aktivität, alle Schriftgrößen. Schriftgrößen 7–28 px frei wählbar. Funktion „Menü schließen“. Konfigurator: Seitenbaum scrollt beim Ziehen nicht mehr weg, Symbol-Auswahl, Mini-Remote mit Kontur.
+
+</details>
+
 ## 2026.10.29.3 (2026-10-29)
 
-New: light widget (single or all lamps, brightness, colour temperature, colour, palette, scenes, sub page) with action esphomeremote_konfig.light. WLAN: real state with reason and remaining time in quick settings, in the configurator (menu 3/10/30 min, until off, off now, also per remote under firmware) and as sensor; updates keep WLAN on only for the update (optionally 10/30 min longer). Remote order by drag and drop, remote collapsible in the sidebar, popup sub pages shown under their popup. Playback settings as a dialog in menu/start page, streamer app under firmware. Key dots removed, clipboard per session only. Fix: radio to the dock hung after switching WLAN off (no covers, HA calls dropped). Fix: state polling with many entities (buffer).
+New: light widget (single or all lamps, brightness, colour temperature, colour, palette, scenes, sub page) with action esphomeremote_konfig.licht. WLAN: real state with reason and remaining time in quick settings, in the configurator (menu 3/10/30 min, until off, off now, also per remote under firmware) and as sensor; updates keep WLAN on only for the update (optionally 10/30 min longer). Remote order by drag and drop, remote collapsible in the sidebar, popup sub pages shown under their popup. Playback settings as a dialog in menu/start page, streamer app under firmware. Key dots removed, clipboard per session only. Fix: radio to the dock hung after switching WLAN off (no covers, HA calls dropped). Fix: state polling with many entities (buffer).
 
 <details><summary>Deutsch</summary>
 
