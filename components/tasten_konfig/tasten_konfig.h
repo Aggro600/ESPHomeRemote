@@ -91,6 +91,11 @@ class TastenKonfig : public Component {
   // Aktivitaeten aus der Konfiguration (2026-10-04): Anzahl (0 = keine Konfig), Name, Bluetooth-Platz.
   int aktivitaeten() const;
   std::string aktivitaet_name(int i) const;
+  // Popup beim erneuten Tippen auf die laufende Aktivitaet (2026-10-31, Konfigurator "Nochmal tippen"), leer = keins
+  std::string aktivitaet_nochmal(int i) const {
+    if (doc_ == nullptr || i < 0) return "";
+    return (*doc_)["activities"][i]["nochmal"] | "";
+  }
   int aktivitaet_slot(int i) const;
   // "Keine Aktivitaet" (2026-10-29, Konfig "ohne": keys/home wie eine Aktivitaet): gilt, solange keine laeuft.
   // Tasten: Index OHNE_AB - a (a = zuletzt gelaufene Aktivitaet) - belegte Tasten aus "ohne", die uebrigen wie in a.
@@ -193,6 +198,14 @@ class TastenKonfig : public Component {
   void dock_pruefen();
   // Bluetooth-Tasten vor der Verbindung merken und nachsenden (sonst verwerfen), Einstellung weck_tasten
   void set_vor_verbindung_merken(bool m) { vor_verbindung_merken_ = m; }
+  // Funkweg-Anzeige der Schnelleinstellungen (2026-10-31): Dock/Platz eines Remote-Platzes ("Am Dock"-Zuordnung),
+  // Restzeit des Bluetooth-Notwegs, Name (Schluessel in dmac) des zuletzt bestaetigten Docks, Einstellung bt_weg
+  bool dock_ziel(int slot, std::string &dock, uint8_t &platz) const { return bt_ziel_(JsonObjectConst(), slot, dock, platz); }
+  uint32_t notweg_rest_s() const {
+    return notweg_bis_ != 0 && (int32_t) (millis() - notweg_bis_) < 0 ? (notweg_bis_ - millis()) / 1000 : 0;
+  }
+  std::string dock_ok_name() const;
+  int bt_weg() const { return bt_weg_modus ? bt_weg_modus() : 0; }
   std::vector<std::string> dock_macs() const;   // Docks: das zuletzt bestaetigte zuerst (HTTP ueber das Dock)   // Stand beim Dock abfragen (nichts ausfuehren) - fuer das Statusleisten-Symbol
 
   // ---- Geraete-Einstellungen (2026-10-16): gepflegt im Konfigurator (cfg.einst = {"name": [wert, rev]}) ----

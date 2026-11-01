@@ -64,7 +64,7 @@ inline const char *kurz(const std::string &g) {
   if (g.find("Sprache") != std::string::npos) return "Sprache";
   if (g.find("Konfiguration") != std::string::npos || g.find("Bild") != std::string::npos) return "Laden";
   if (g == "Konfigurator") return "Konfig.";
-  if (g == "Ladekabel") return "Laden";
+  if (g == "von Hand") return "an";
   return g.c_str();
 }
 inline void bedarf(uint32_t ms, const char *grund) {
@@ -79,6 +79,18 @@ inline void bedarf(uint32_t ms, const char *grund) {
 }
 inline bool bedarf_aktiv() { return g_bedarf_bis != 0 && (int32_t) (esphome::millis() - g_bedarf_bis) < 0; }
 }  // namespace wlan_zugriff
+
+// Funkweg-Anzeige der Schnelleinstellungen (2026-10-31): Bluetooth-Geraete der Docks aus dem Dock-Stand ("bt",
+// HA zustand.py): Dock -> Plaetze [Name, verbunden]. Index = Platz am Dock. Leer = (noch) nichts bekannt.
+#include <map>
+#include <utility>
+#include <vector>
+namespace funkweg {
+inline std::map<std::string, std::vector<std::pair<std::string, bool>>> g_bt;
+inline uint32_t g_bt_ms = 0;   // zuletzt bekommen
+inline bool g_liste = false;   // Geraeteliste aufgeklappt
+inline uint32_t g_dock_scharf = 0;   // Dock-Kachel: erster Tipp (Ausschalten braucht einen zweiten binnen 3 s)
+}  // namespace funkweg
 
 #include <string>
 #include "lvgl.h"

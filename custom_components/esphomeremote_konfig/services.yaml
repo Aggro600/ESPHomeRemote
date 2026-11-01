@@ -148,3 +148,35 @@ licht:
       description: "hell: Prozent, kelvin: z. B. 2700, farbe: Farbton,Sättigung (z. B. 30,100), szene: scene.xyz"
       selector:
         text:
+
+kamera_tv:
+  name: Kamera auf dem Fernseher
+  description: Zeigt eine Kamera als Bild im Bild auf dem Fernseher (Konfigurator > Funktionen), oder blendet sie aus.
+  fields:
+    kamera:
+      name: Kamera
+      description: camera.xyz, "letzte" (zuletzt gezeigte) oder "aus"
+      example: letzte
+      selector:
+        text:
+
+kamera_groesse:
+  name: Kamera-Größe auf dem Fernseher
+  description: Klein, Mittel, Groß oder "naechste" (durchschalten). Eine laufende Kamera übernimmt die neue Größe sofort.
+  fields:
+    groesse:
+      name: Größe
+      example: naechste
+      selector:
+        select:
+          options: [Klein, Mittel, Groß, naechste]
+
+neustart:
+  name: Gerät neu starten (ADB)
+  description: Startet ein Android-Gerät neu, das im Konfigurator unter Funktionen eingetragen ist.
+  fields:
+    geraet:
+      name: Gerät
+      description: Name wie im Konfigurator (z. B. Streamer)
+      selector:
+        text:

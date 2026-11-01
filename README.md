@@ -1,33 +1,179 @@
-<p align="center"><b>🇬🇧 <a href="README.md">English</a></b> · 🇩🇪 <a href="README.de.md">Deutsch</a></p>
+<p align="center"><b>🇬🇧 English</b> · 🇩🇪 <a href="README.de.md">Deutsch</a></p>
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/bilder/logo-dunkel.png">
-    <img src="docs/bilder/logo.png" alt="ESPHomeRemote" width="560">
+    <img src="docs/bilder/logo.png" alt="ESPHomeRemote" width="520">
   </picture>
 </p>
 
-# ESPHomeRemote
+<h3 align="center">The remote your smart home deserves.</h3>
 
-**One remote for your TV, streamer and your whole smart home** – with touch display, Bluetooth and voice
-assistant, built on the *OMOTE / Open Remote Rev6* board and written entirely in **ESPHome**. You set up keys,
-menu and home screen comfortably in your browser inside **Home Assistant**, without programming.
+<p align="center">
+  Touch display · Bluetooth · Infrared · Voice · a docking station that ties it all together.<br>
+  Set up entirely in your browser inside Home Assistant – <b>no code, no YAML editing</b>.
+</p>
 
-> No programming skills needed. If you already use Home Assistant, you'll be done in about 30 minutes.
->
-> **Language:** The configurator in Home Assistant and the texts on the remote's display are currently in
-> **German**. The names in this guide are given in German as they appear on screen, with the English meaning
-> next to them.
+<p align="center">
+  <a href="https://github.com/Aggro600/ESPHomeRemote/releases"><img src="https://img.shields.io/github/v/release/Aggro600/ESPHomeRemote?style=for-the-badge&color=03a9f4&label=release" alt="Latest release"></a>
+  <a href="https://hacs.xyz"><img src="https://img.shields.io/badge/HACS-custom%20repository-41BDF5?style=for-the-badge" alt="HACS"></a>
+  <img src="https://img.shields.io/badge/ESPHome-native-1a1a1a?style=for-the-badge&logo=esphome&logoColor=white" alt="ESPHome">
+  <img src="https://img.shields.io/badge/Home%20Assistant-integrated-41BDF5?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
+</p>
 
-<p align="center"><a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><img src="docs/bilder/showcase.png" alt="3D showcase: OpenRemote Rev6 in its dock with smart display" width="900"></a></p>
-<p align="center"><b><a href="https://aggro600.github.io/ESPHomeRemote/showcase/">▶ See the remote and docking station in 3D</a></b><br>
-<sub>Interactive in your browser: built from the original CAD data, with the real display UI, docking, charging and exploded view</sub></p>
+<p align="center"><img src="docs/bilder/hero.png" alt="ESPHomeRemote: remote with touch display and the configurator in Home Assistant" width="100%"></p>
+
+<p align="center">
+  <a href="#quick-start"><b>▶ Get started in 30 minutes</b></a> &nbsp;·&nbsp;
+  <a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><b>🧊 See it in 3D</b></a> &nbsp;·&nbsp;
+  <a href="CHANGELOG.md"><b>✨ What's new</b></a>
+</p>
+
+> **Language:** the configurator and the texts on the remote are currently in **German**. This guide gives the
+> German names as they appear on screen, with the English meaning next to them.
 
 ---
 
-## What it does
+<table>
+<tr>
+<td width="33%" valign="top">
 
-<p align="center"><img src="docs/bilder/uebersicht.png" alt="Configurator: overview" width="900"></p>
+### 🖱️ No code, ever
+Keys, menus, home screens, popups and widgets – all in a polished configurator in your Home Assistant sidebar,
+on PC and phone. Changes reach the remote in seconds.
+
+</td>
+<td width="33%" valign="top">
+
+### ⚡ Instant, even from sleep
+The docking station relays keys, commands and state by radio. Wake the remote with a key press – the key is
+already on its way before the display is on.
+
+</td>
+<td width="33%" valign="top">
+
+### 🔋 Weeks on one charge
+Deep sleep with smart wake-up: lift it, tap it or press any key. Wi-Fi only when it is really needed –
+the dock does the rest.
+
+</td>
+</tr>
+</table>
+
+---
+
+## One remote for everything
+
+<p align="center"><img src="docs/bilder/geraete-reihe.png" alt="Display of the remote: menu, lights, TV, quick settings, smart display" width="100%"></p>
+
+- **TVs, streamers, tablets and PCs via Bluetooth** – four devices, switched by *activities* like a Harmony,
+  as keys, **mouse (touchpad)** or **keyboard**.
+- **Infrared for everything else** – about 270,000 devices from the Flipper IRDB and the Logitech Harmony
+  archive, plus your own learned codes.
+- **Your smart home on the display** – lights with sliders and colours, covers, sensors, cameras, scenes,
+  doorbell popups.
+- **Voice assistant** – Google on the TV or Home Assistant Assist, with the built-in microphone.
+- **Motion gestures** – shake, tilt, or teach your own (circle, swipe …).
+
+## Configure everything in your browser
+
+<p align="center"><img src="docs/bilder/konfig-uebersicht.png" alt="Configurator: overview of all remotes and docks" width="100%"></p>
+
+The **Fernbedienung** (remote) page in your Home Assistant sidebar shows every remote and dock at a glance –
+battery with 24 h history, connection, firmware and hints with a button to fix them.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/bilder/konfig-tasten.png" alt="Keys"></td>
+<td width="50%"><img src="docs/bilder/konfig-startseite.png" alt="Home screen editor"></td>
+</tr>
+<tr>
+<td valign="top"><b>Every key, your way</b> – tap a key on the virtual remote and add actions for short, double and
+long press: Bluetooth, Home Assistant, infrared, 433 MHz or remote functions. Different per activity.</td>
+<td valign="top"><b>Home screens per activity</b> – clock, weather, media, timer, camera and light widgets on a
+grid, with a live preview that looks exactly like the display.</td>
+</tr>
+</table>
+
+## A smart display in the dock
+
+<p align="center"><img src="docs/bilder/konfig-smartdisplay.png" alt="Smart display settings" width="100%"></p>
+
+Put the remote in its dock and it becomes a bedside or coffee-table display: **time, weather, room climate,
+appointments and battery** – you pick the parts and their order. When music plays it switches to a
+**spectrum analyser**, optionally over the album cover. Tap the screen for a **control bar**: back to the
+remote, music ⇄ clock, ⏮ ⏯ ⏭ – or *Heute aus* (off until you take it out of the dock).
+
+## Opening apps, made easy
+
+<p align="center"><img src="docs/bilder/konfig-app.png" alt="App assistant" width="100%"></p>
+
+Want a key that opens Netflix? Open the app on your TV once – the assistant **recognises it**, suggests the
+name and creates the command. Test it with one click. Works right where you need it: in the key editor and in
+every menu or popup.
+
+## Always know how it connects
+
+<table>
+<tr>
+<td width="34%" align="center"><img src="docs/bilder/geraet-schnell.png" alt="Quick settings with radio path" width="300"></td>
+<td width="66%"><img src="docs/bilder/konfig-remote.png" alt="Remote overview"></td>
+</tr>
+<tr>
+<td valign="top"><b>Quick settings</b> show the live radio path: remote → dock → device, each link blue when
+it works, red when it doesn't. Separate switches for dock mode, Bluetooth and Wi-Fi.</td>
+<td valign="top"><b>Per-remote overview</b> – connection, battery, firmware and shortcuts to every page.</td>
+</tr>
+</table>
+
+## The docking station
+
+<table>
+<tr>
+<td width="50%"><img src="docs/bilder/konfig-dock.png" alt="Dock overview"></td>
+<td width="50%"><img src="docs/bilder/konfig-licht.png" alt="Dock LED following the room light"></td>
+</tr>
+<tr>
+<td valign="top"><b>The hub</b> (ESP32-C3) – keeps up to four Bluetooth devices connected, is an <b>IR blaster</b>
+and <b>433 MHz</b> transmitter for Home Assistant, and relays everything for the remote by radio.</td>
+<td valign="top"><b>Lights that follow the room</b> – display, key backlight and dock LED adjust to a light
+sensor. Drag the curve; it learns while you adjust.</td>
+</tr>
+</table>
+
+## More highlights
+
+<table>
+<tr>
+<td width="50%"><img src="docs/bilder/konfig-menue.png" alt="Menu editor"></td>
+<td width="50%"><img src="docs/bilder/konfig-tabelle.png" alt="Table of all keys"></td>
+</tr>
+<tr>
+<td valign="top"><b>Menu editor</b> – pages, sub-pages and popups that open by themselves (doorbell, sleep
+timer, picture mode …). Send a page to your other remotes with one click.</td>
+<td valign="top"><b>Table view</b> – all activities and follow-up modes side by side.</td>
+</tr>
+<tr>
+<td><img src="docs/bilder/konfig-gesten.png" alt="Gestures"></td>
+<td><img src="docs/bilder/konfig-suche.png" alt="Search"></td>
+</tr>
+<tr>
+<td valign="top"><b>Gestures</b> – built-in and your own, recognised however you hold the remote.</td>
+<td valign="top"><b>Search (Ctrl+K)</b> – finds every key, setting and menu page.</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/bilder/handy-uebersicht.png" alt="On the phone" width="45%"> <img src="docs/bilder/handy-tasten.png" alt="Keys on the phone" width="45%"></td>
+<td><img src="docs/bilder/kreisgeste.png" alt="Custom gesture: circle"></td>
+</tr>
+<tr>
+<td valign="top"><b>On your phone</b> – the full configurator, made for small screens.</td>
+<td valign="top"><b>Teach a gesture</b> – perform it three times, done.</td>
+</tr>
+</table>
+
+<details>
+<summary><b>Full feature list</b></summary>
 
 **Remote control**
 - **Controls TVs, streamers, tablets and PCs via Bluetooth** – 4 devices, switched by "activities" like a Harmony.
@@ -68,22 +214,7 @@ overview with battery history, **search with Ctrl+K**, table of all keys, change
 **firmware updates over Wi-Fi** (can be queued while the remote sleeps) and **USB flashing in the browser**.
 Settings sync both ways: what you change on the remote shows up in the configurator.
 
----
-
-## Pictures
-
-| | |
-|---|---|
-| <img src="docs/bilder/kreisgeste.png" alt="Custom gesture: circle"> | <img src="docs/bilder/lichtsensor.png" alt="Brightness from light sensor"> |
-| **Custom gesture "circle"** – performed three times on the remote, the samples (X/Y/Z) in the configurator. | **Brightness from the light sensor** – drag the points; the curve learns while you adjust. |
-| <img src="docs/bilder/tasten.png" alt="Assigning keys"> | <img src="docs/bilder/menue.png" alt="Menu editor"> |
-| **Keys** – tap the remote, add actions per press type. | **Menu editor** – with a live preview of the display. |
-| <img src="docs/bilder/gesten.png" alt="Gestures"> | <img src="docs/bilder/tabelle.png" alt="Table"> |
-| **Gestures** – built-in and custom, "acts like key" or own actions. | **Table** – all activities and follow-up modes side by side. |
-| <img src="docs/bilder/dock.png" alt="Docking station"> | <img src="docs/bilder/suche.png" alt="Search"> |
-| **Docking station** – dock LED, smart display with preview, IR devices. | **Search (Ctrl+K)** – finds every key, setting and menu page. |
-| <img src="docs/bilder/bluetooth.png" alt="Bluetooth"> | <img src="docs/bilder/handy.png" alt="On the phone" width="300"> <img src="docs/bilder/handy_tasten.png" alt="Keys on the phone" width="300"> |
-| **Bluetooth** – four slots, input mode per device, mouse settings. | **On the phone** – same features, bar at the bottom. |
+</details>
 
 ---
 
@@ -166,25 +297,31 @@ whether everything is running. Details: [streamer-app/README.md](streamer-app/RE
 
 ## The configurator
 
-In the sidebar, **"Fernbedienung"** (remote) – on phone and PC. On the left are your remotes with battery level,
-below each remote its pages:
+In the sidebar, **"Fernbedienung"** (remote) – on phone and PC. On the left are your remotes and docks; open one
+to see its pages:
+
+**Per remote**
 
 | Page | What you do there |
 |---|---|
-| **Übersicht** (overview) | All remotes and docks: battery with 24 h history, connection, firmware, hints with buttons to fix them. |
-| **Tasten** (keys) | Assign every key per activity: short / double / long. Bluetooth, Home Assistant action, infrared, 433 MHz, remote functions. Create activities and follow-up modes, table view. |
-| **Startseite** (home screen) | A home screen per activity with entries and widgets (clock, weather, media, timer, camera) – or adjust the built-in one. |
-| **Menü** (menu) | Design pages, sub-pages and popups on a grid, with preview. |
-| **Gesten** (gestures) | Assign shake, tilt and custom gestures; touchpad macros. |
+| **Übersicht** (overview) | Status, connection (dock, Wi-Fi, Bluetooth), firmware and shortcuts to every page. |
+| **Tasten** (keys) | Every key per activity: short / double / long. Bluetooth, Home Assistant, infrared, 433 MHz, remote functions, the **app assistant**. Activities, follow-up modes, table view, popup when you tap the running activity again. |
+| **Startseite** (home screen) | A home screen per activity with entries and widgets – or adjust the built-in one. What tapping the cover opens. Send it to other remotes. |
+| **Smart Display** | What the remote shows in the dock: parts and order, music view (spectrum, title, cover), control bar, on/off times. |
+| **Menü** (menu) | Pages, sub-pages and popups (doorbell, timer, picture mode …) on a grid with preview. Send pages to other remotes. |
+| **Gesten** (gestures) | Shake, tilt and custom gestures; touchpad macros. |
 | **Bluetooth / Infrarot** (infrared) | Pair slots, input mode per device, IR route (remote, dock, other IR blasters). |
-| **Verknüpfungen** (links) | Which Home Assistant devices the remote uses: playback player (home screen, media page, music display), TV, multiroom, speaker for the assistant, streamer for text input, timer next to the clock. |
-| **Einstellungen** (settings) | All remote settings, applied immediately; brightness from the light sensor. |
-| **Wiedergabe** (playback) | Create "now playing" players: combines TV, streamer, multiroom music and Chromecast into one media player. Streamer with the "ESPHomeRemote Streamer" app (title, cover, position of every app, keyboard popup). |
-| **Klingel** (doorbell) | Up to two doorbells: trigger and camera – when someone rings, the image appears on the remotes. |
-| **Dockingstation** (docking station) | IR devices, dock LED, smart display, known bugs. |
-| **IR-Codes** | IR databases (Flipper, Harmony) kept in sync with GitHub; learn, organise and export your own codes. |
-| **Firmware & Geräte** (firmware & devices) | Updates over Wi-Fi or USB, add and adopt new docks. |
-| **Werkstatt** (workshop) | New remote, copy everything, backup, board test, developer mode. |
+| **Verknüpfungen** (links) | Which Home Assistant devices the remote uses: "now playing" player, TV, multiroom, speaker for the assistant, streamer, timers. |
+| **Akku** (battery) | History, consumption per state, charges, why it didn't sleep. |
+| **Firmware** | Version, update over Wi-Fi or USB. |
+| **Einstellungen** (settings) | All remote settings, applied immediately; radio overview "Welcher Funk wofür?" (which radio for what). |
+
+**Per dock:** Übersicht · Bluetooth (devices at the dock) · Infrarot (IR devices) · Firmware · Einstellungen (LED,
+colours, scan speed).
+
+**For the whole home:** **IR-Codes** (IR databases and your own codes) · **Abgleich** (keep remotes in sync,
+compare two remotes) · **Prüfen & Finden** (check everything, find where an entity is used) · **Werkstatt**
+(workshop: updates for all devices, new remote or dock, backup, board test).
 
 **Speichern** (save, or Ctrl+S) sends everything to the remote – if it's asleep, it picks it up the next time it
 wakes up.
@@ -222,8 +359,8 @@ Some built-in pages (home screen player, doorbell, sleep timer) use the entities
 configurator anyway.
 
 **Camera on the TV in small / medium / large** (optional):
-example in `home-assistant/packages/beispiel_kamera_tv.yaml` and the blueprint in
-`home-assistant/blueprints/script/esphomeremote/`.
+in the configurator under **Funktionen → Kamera auf dem Fernseher** (app *HA TV Dashboard* on the TV).
+That is also where you set up the TV input (for popups like "only if TV input is not HDMI 3") and restarts via ADB.
 
 ---
 
@@ -247,7 +384,7 @@ everything the remotes are actually built with:
   (list in `tools/remotes.json`, IP secret `ip_remote_wz_<name>`). Build/flash: `tools/esphome_run.mjs`.
 - `components/ha_tunnel`, `components/network` (Bluetooth layer), `components/dock_direkt`, `dock_hid`,
   `bluetooth_connection` (dock), `custom_components/esphomeremote_konfig/ble_link.py` (HA counterpart of the
-  Bluetooth layer), `home-assistant/packages/` (packages, as in use), `docs/entwicklung/` (architecture, radio
+  Bluetooth layer), `home-assistant/packages/` (YAML alternative to the integration), `docs/entwicklung/` (architecture, radio
   concept, measurements).
 
 ## License

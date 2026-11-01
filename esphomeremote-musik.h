@@ -41,6 +41,7 @@ struct Zustand {
   bool gebaut{false};
   lv_obj_t *saeule[BAENDER]{}, *licht[BAENDER]{}, *kappe[BAENDER]{}, *spiegel[BAENDER]{};
   lv_obj_t *titel{nullptr}, *kuenstler{nullptr}, *hinweis{nullptr}, *uhr{nullptr};
+  lv_obj_t *cover{nullptr};        // Cover im Hintergrund (Ansicht "Cover", 2026-10-31)
   int hoehe[BAENDER]{}, kappe_y[BAENDER]{}, spiegel_h[BAENDER]{};
   lv_timer_t *timer{nullptr};
   uint32_t letzt_ms{0};
@@ -61,7 +62,8 @@ inline bool soll_hoeren(const char *&grund) {
   grund = nullptr;
   if (!mic_allowed->value()) { grund = "Mikrofon ist aus (Einstellungen › Sprache)"; return false; }
   if (voice->mic_blocked()) { grund = "Mikrofon gesperrt (SD-Karte)"; return false; }
-  if (musik_player->value() && !player_spielt()) { grund = "Wartet auf Musik"; return false; }
+  // Ueber die Steuerleiste bewusst gewaehlt (2026-10-31): auch ohne laufenden Player zuhoeren
+  if (musik_player->value() && !player_spielt() && dockanz::z().wahl != 2) { grund = "Wartet auf Musik"; return false; }
   if (disp_off->value()) return false;
   return true;
 }
@@ -282,6 +284,13 @@ inline void aufbauen() {
   lv_obj_clean(r);
   lv_obj_set_style_bg_color(r, lv_color_hex(0x05070A), 0);
   lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+  // Cover ganz hinten, abgedunkelt - Spektrum und Titel bleiben lesbar (2026-10-31)
+  s.cover = lv_image_create(r);
+  lv_obj_set_pos(s.cover, 0, 0);
+  lv_obj_set_size(s.cover, 240, 320);
+  lv_obj_set_style_image_opa(s.cover, 110, 0);
+  lv_obj_add_flag(s.cover, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(s.cover, LV_OBJ_FLAG_EVENT_BUBBLE);
 
   s.uhr = text(r, a13->get_lv_font(), 0x5B6472);
   lv_obj_align(s.uhr, LV_ALIGN_TOP_MID, 0, 6);
@@ -446,9 +455,29 @@ inline void bild(lv_timer_t *) {
 }
 
 // Seite geladen (on_load)
+// Cover der Media-Seite (240x320, mp_cover_image) als Hintergrund - neu geladen oder Ansicht gewechselt
+inline void cover_neu() {
+  auto &s = z();
+  if (!s.gebaut || s.cover == nullptr) return;
+  if (dockanz::z().musik_stil != 2) { lv_obj_add_flag(s.cover, LV_OBJ_FLAG_HIDDEN); return; }
+  lv_image_set_src(s.cover, mp_cover_image->get_lv_image_dsc());
+  lv_obj_remove_flag(s.cover, LV_OBJ_FLAG_HIDDEN);
+}
+
+inline void titel_anwenden() {
+  auto &s = z();
+  if (!s.gebaut) return;
+  cover_neu();
+  const bool t = dockanz::z().musik_titel;   // Konfigurator: Musik-Ansicht mit oder ohne Titel (2026-10-31)
+  for (lv_obj_t *o : {s.titel, s.kuenstler}) if (o) { if (t) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); }
+}
+inline void ausgewaehlt_verlassen() { z().vom_dock = false; }
+
 inline void geladen() {
   auto &s = z();
   aufbauen();
+  titel_anwenden();
+  dockanz::geste_anmelden(musik_root, 1);
   s.titel_alt = s.kuenstler_alt = "\x01";
   s.uhr_min = -1;
   s.letzt_ms = millis();
@@ -463,15 +492,16 @@ inline void zeigen(bool vom_dock) {
   tasten::seite_zeigen(page_musik, LV_SCR_LOAD_ANIM_FADE_IN);
 }
 
-// Tipp auf die Anzeige: zur Fernbedienung (wie beim Smart Display)
-inline void beruehrt() {
-  last_input_ms->value() = millis();
-  go_home->execute();
-}
+// Tipp auf die Anzeige: Steuerleiste wie beim Smart Display (2026-10-31)
+inline void beruehrt() { dockanz::beruehrt(); }
 
 // Fuer die Dock-Anzeige: soll statt des Smart Displays die Musik-Anzeige laufen?
+// Wahl ueber die Steuerleiste (dockanz wahl: 1 Uhr, 2 Musik) und "Heute aus" gehen vor (2026-10-31)
 inline bool im_dock_zeigen() {
-  if (!musik_dock->value() || !mic_allowed->value()) return false;
+  const auto &d = dockanz::z();
+  if (d.pausiert || !mic_allowed->value() || d.wahl == 1) return false;
+  if (d.wahl == 2) return true;
+  if (!musik_dock->value()) return false;
   return player_spielt();
 }
 
@@ -490,8 +520,8 @@ inline void dock_takt(bool im_dock) {
     if (im_dock_zeigen()) s.still_seit = 0;
     else if (s.still_seit == 0) s.still_seit = millis();
     else if (millis() - s.still_seit > 8000) { s.still_seit = 0; s.vom_dock = false; dockanz::zeigen(); }
-    // Taste im Dock: Fernbedienung
-    if (millis() - last_input_ms->value() < 400) { s.vom_dock = false; go_home->execute(); }
+    // Taste im Dock: Fernbedienung (nur Tasten - ein Tipp holt die Steuerleiste, 2026-10-31)
+    if (millis() - last_key_ms->value() < 400) { s.vom_dock = false; dockanz::leiste_weg(); go_home->execute(); }
   }
 }
 

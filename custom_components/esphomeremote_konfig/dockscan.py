@@ -160,6 +160,10 @@ class DockScan:
                 continue
             if not self.hass.services.has_service("esphome", f"{dock}_scan_stufe"):
                 continue
+            # Nur an Docks, die online sind (2026-10-31): sonst jede Minute Fehlerzeilen im HA-Log; kommt das Dock
+            # wieder, geht die Stufe mit der naechsten Minute raus
+            if (on := self.hass.states.get(f"binary_sensor.{dock}_status")) is None or on.state != "on":
+                continue
             if self.gesendet.get(dock, (None,)) != sig:
                 _LOGGER.info("Suchtempo %s: %s (%s von %s ms)", dock, daten["grund"], st["f"], st["i"])
             self.gesendet[dock] = sig

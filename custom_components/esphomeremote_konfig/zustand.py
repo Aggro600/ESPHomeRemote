@@ -157,6 +157,8 @@ class DockStand:
         self._ausl = {d: self.ausloeser(d) for d in self.devs}
         self._werte = {d: self._popup_werte(d) for d in self.devs}
         ids += sorted({e for l in self._ausl.values() for e, _ in l} - set(ids))
+        # Bluetooth-Geraete der Docks (2026-10-31, Funkweg-Anzeige der Schnelleinstellungen)
+        ids += [f"sensor.{d}_bluetooth_geraete" for d in self.kd.dock_macs()]
         self._abo = async_track_state_change_event(self.hass, ids, self._geaendert)
         # Dock (wieder) online (Neustart, Strom): gleich alle Staende schicken - es hat sie im RAM verloren
         if getattr(self, "_dock_abo", None):
@@ -188,6 +190,10 @@ class DockStand:
     @callback
     def _geaendert(self, ev: Event) -> None:
         eid = ev.data["entity_id"]
+        if eid.endswith("_bluetooth_geraete"):
+            for d in self.kd.devices:
+                self._planen(d, 1)
+            return
         for d in self.kd.devices:
             if eid.startswith(f"sensor.esphomeremote_spiegel_{d.replace('-', '_')}_"):
                 self._planen(d, 1)
@@ -304,13 +310,25 @@ class DockStand:
         # Docks, die gerade online sind (2026-10-25): die Remote probiert sie zuerst
         st["do"] = [d for d in self.kd.dock_macs()
                     if (s := self.hass.states.get(f"binary_sensor.{d}_status")) is not None and s.state == "on"]
+        # Geraete am Dock (2026-10-31): {"<dock>": [[name, verbunden], ...]} - Index = Platz am Dock
+        bt = {}
+        for d in st["do"]:
+            try:
+                p = json.loads(self.hass.states.get(f"sensor.{d}_bluetooth_geraete").state).get("p") or []
+                bt[d] = [[str(x.get("n") or "")[:16], 1 if x.get("v") else 0] if x.get("b") else ["", 0] for x in p][:4]
+            except (AttributeError, ValueError, TypeError):
+                pass
+        if bt:
+            st["bt"] = bt
         vergleich = json.dumps({k: v for k, v in st.items() if k != "mp_pos"}, sort_keys=True)
         if not immer and self._zuletzt.get(dev) == vergleich:
             return
         self._zuletzt[dev] = vergleich
         st["ts"] = int(dt_util.utcnow().timestamp())
         text = json.dumps(st, separators=(",", ":"), ensure_ascii=False)
-        for dock in self.kd.dock_macs():
+        # Nur an Docks, die online sind (2026-10-31): offline gab es je Aenderung Fehlerzeilen im HA-Log. Kommt ein Dock
+        # wieder, schickt _dock_da den Stand nach.
+        for dock in st["do"]:
             if self.hass.services.has_service("esphome", f"{dock}_zustand"):
                 try:
                     await self.hass.services.async_call("esphome", f"{dock}_zustand", {"remote": dev, "inhalt": text}, blocking=False)

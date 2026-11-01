@@ -106,7 +106,8 @@ mdns:
 # die erste Remote Notaus-Schalter (Neustart in turn_off_action) hing deshalb in einer Boot-Schleife (2026-10-05).
 switch:
   - platform: template
-    name: "Nur Bluetooth (WLAN aus)"
+    # 2026-10-31 umbenannt (war "Nur Bluetooth (WLAN aus)"): HA laeuft nicht ueber Bluetooth, sondern ueber das Dock
+    name: "Dock-Betrieb (WLAN aus)"
     id: nur_ble
     icon: mdi:wifi-off
     # Beim Start nichts ausfuehren (2026-10-26): sonst lief turn_off_action -> set_ble_only(false) und schaltete das WLAN ein
@@ -151,7 +152,15 @@ esphome:
               if (ab == 0 || millis() - ab > 120000) { ab = millis() | 1; wlan_zugriff::bedarf(60000, "Konfiguration laden"); }
               return millis() - ab < 12000;
             };
-            id(tunnel).ohne_weg = []() { wlan_zugriff::bedarf(60000, "Bild/Konfiguration ohne Weg"); };
+            // Bilder (Cover, Klingel, Widgets) schalten kein WLAN ein (2026-10-31): sie kommen beim naechsten Mal, das
+            // WLAN-Verbinden sperrte dagegen sekundenlang den Funk zum Dock (Tasten kamen verspaetet)
+            id(tunnel).ohne_weg = [](const std::string &zeile) {
+              if (zeile.find(".jpg") != std::string::npos || zeile.find(".png") != std::string::npos || zeile.find("/bild") != std::string::npos) {
+                ESP_LOGI("wlan", "Bild ohne Weg - kein WLAN dafuer, spaeter noch einmal");
+                return;
+              }
+              wlan_zugriff::bedarf(60000, "Konfiguration ohne Weg");
+            };
             lv_obj_remove_flag(id(ps_nurble_btn), LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(id(ps_nurble_h), LV_OBJ_FLAG_HIDDEN);
 
@@ -177,7 +186,8 @@ interval:
           }
           // Wartungsfenster (Knopf "Wartungsfenster jetzt", Ladekabel, Dock "w") und WLAN-Bedarf (kein Dock erreicht,
           // Sprache an HA - Funkkonzept 2026-10-25) duerfen das WLAN auch bei "Nur Bluetooth" einschalten
-          id(tunnel).set_wifi_erlaubt((int32_t) (millis() - id(wartung_bis)) < 0 || wlan_zugriff::bedarf_aktiv());
+          // Testmodus/Entwicklermodus (2026-11-01): WLAN bleibt auch im Dock-Betrieb an
+          id(tunnel).set_wifi_erlaubt((int32_t) (millis() - id(wartung_bis)) < 0 || wlan_zugriff::bedarf_aktiv() || id(testmodus));
 
 # Mehr gleichzeitige Bluetooth-Verbindungen (2026-10-06): HA-Link + aktiver Host + 2 geparkte + 1 Platz fuer den
 # Aufbau beim Wechsel. Standard in die erste Remote Vorlage: 4.

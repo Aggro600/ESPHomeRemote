@@ -673,6 +673,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   }
   _updateStatus() {
     const r = this.shadowRoot;
+    if (this.s.modal?.type === "appwiz") { const l = r.querySelector("#appwiz_live"); if (l) { const h = this._appWizLive(); if (h !== l.innerHTML) { l.innerHTML = h; this._appWizKnoepfe(); } } }
     const p = r.querySelector("#sync");
     if (p) { const alt = this._syncAlt, h = this._syncPillKnopf(); if (h !== alt) p.outerHTML = h; }
     const x = r.querySelector("#syncx");
@@ -694,7 +695,12 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     const navScroll = root.querySelector(".side")?.scrollTop;
     const baumScroll = root.querySelector(".mmain .mpages")?.scrollTop;
     const seite = window.scrollY, haupt = document.scrollingElement?.scrollTop;
+    // Rollende Eltern ausserhalb des Panels (HA-Oberflaeche, ueber Shadow-Grenzen hinweg) merken (2026-11-01)
+    const eltern = [];
+    for (let el = this.parentNode || this.getRootNode().host; el && eltern.length < 30; el = el.parentNode || el.host)
+      if (el.nodeType === 1 && el.scrollHeight > el.clientHeight && el.scrollTop > 0) eltern.push([el, el.scrollTop]);
     const logs = this._logsMerken();
+    const leisteDa = !!root.querySelector(".sbw .savebar");   // Speicherleiste nur beim Erscheinen einblenden (2026-11-01)
     // Aufgeklappte Bereiche (<details>) bleiben beim Neuzeichnen offen/zu (2026-10-27: "Home Assistant ueber
     // Bluetooth (Proxys)" klappte bei jedem Haken wieder zu) - Schluessel = Text der Ueberschrift
     const klapp = new Map([...root.querySelectorAll("details")].map((d) => [d.querySelector("summary")?.textContent.trim() || "", d.open]));
@@ -704,6 +710,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         : `<span class="logo"><ha-icon icon="mdi:remote-tv"></ha-icon></span><span class="spin"></span>`}</div>`;
       return;
     }
+    this._weiterleiten();
     if (!["start", "remote", "dockgeraet", ...SEITEN_SYSTEM.map(([k]) => k)].includes(s.bereich)) s.bereich = "start";
     if (!SEITEN_REMOTE.some(([m]) => m === s.mode)) s.mode = "keys";
     const alsSeite = this._modalAlsSeite();
@@ -718,6 +725,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       ${this._toastHtml()}
       ${s.modal && !alsSeite ? this._modalHtml() : ""}
       ${s.pal ? this._palHtml() : ""}`;
+    if (leisteDa) root.querySelector(".sbw .savebar")?.classList.add("ruhig");
     this._bind();
     this._palBind();
     root.querySelectorAll("[data-teil]").forEach((x) => { x.indeterminate = true; });   // Synchronisieren: Gruppe teilweise
@@ -737,6 +745,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       if (ed && scroll) ed.scrollTop = scroll;
       if (seite) window.scrollTo(0, seite);
       if (haupt && document.scrollingElement) document.scrollingElement.scrollTop = haupt;
+      eltern.forEach(([el, y]) => { if (el.scrollTop !== y) el.scrollTop = y; });
     }
     this._blinken();
     this._rmSkala();
@@ -891,6 +900,149 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         <button class="chip" data-a="swap" data-x="short" data-y="long">Kurz ⇄ Lang</button></div>`}${sections}${ohneHa}`;
   }
 
+  // ---- App-Assistent (2026-10-31): App am Geraet oeffnen, der Konfigurator erkennt sie (app_id), Namen vergeben, fertig.
+  // Geraete: media_player mit app_id (Android-TV per ADB, Google TV / Android TV Remote). Befehl: ADB -> select_source,
+  // Android TV Remote -> remote.turn_on activity. Aufgerufen aus "Was soll passieren?" (Taste) und dem Menue-Editor (Popup).
+  _appGeraete() {
+    const H = this._hass.states, E = this._hass.entities || {}, adb = this.cfg.ents?.adb;
+    const l = Object.keys(H).filter((e) => e.startsWith("media_player.") && "app_id" in (H[e].attributes || {}) && ["androidtv", "androidtv_remote"].includes(E[e]?.platform));
+    return l.sort((a, b) => (b === adb) - (a === adb));
+  }
+  _appWizStart() {
+    const m = this.s.modal, g = this._appGeraete();
+    m.geraet = m.geraet || g[0] || "";
+    m.name = ""; m.nameHand = false;
+  }
+  _appJetzt() {
+    const st = this._hass.states[this.s.modal?.geraet || ""], a = st?.attributes || {};
+    const pkg = String(a.app_id || ""), launcher = !pkg || /launcher|systemui|com\.sony\.dtv\.tvx/.test(pkg);
+    return { pkg: launcher ? "" : pkg, name: launcher ? "" : String(a.app_name || APP_NAMEN[pkg] || ""), aus: !st || ["off", "unavailable", "standby"].includes(st.state) };
+  }
+  _appWizLive() {
+    const j = this._appJetzt();
+    if (j.aus) return `<div class="aw_live aus"><ha-icon icon="mdi:television-off"></ha-icon><span><b>Das Gerät ist aus oder nicht erreichbar</b><small>Einschalten, dann die App öffnen.</small></span></div>`;
+    if (!j.pkg) return `<div class="aw_live warte"><span class="spin"></span><span><b>Öffne jetzt die App am Gerät</b><small>mit der Remote oder der Original-Fernbedienung – hier erscheint sie sofort</small></span></div>`;
+    return `<div class="aw_live ok"><ha-icon icon="mdi:check-circle"></ha-icon><span><b>Erkannt: ${esc(j.name || j.pkg)}</b><small><code>${esc(j.pkg)}</code></small></span></div>`;
+  }
+  // Knoepfe und Namensvorschlag mitziehen, wenn die App wechselt (ohne alles neu zu zeichnen - das Namensfeld behaelt den Fokus)
+  _appWizKnoepfe() {
+    const r = this.shadowRoot, m = this.s.modal, j = this._appJetzt();
+    r.querySelectorAll(".appwiz [data-a='aw_test'], .appwiz [data-a='aw_ok']").forEach((b) => { b.disabled = !j.pkg; });
+    const n = r.querySelector(".appwiz input[data-aw='name']");
+    if (n && !m.nameHand && j.name) n.value = j.name;
+  }
+  _appSchritt(e, pkg) {
+    const E = this._hass.entities || {};
+    if (E[e]?.platform === "androidtv_remote") {
+      const dev = E[e].device_id, r = Object.values(E).find((x) => x.device_id === dev && x.entity_id.startsWith("remote."))?.entity_id;
+      if (r) return { t: "ha", svc: "remote.turn_on", entity: r, data: { activity: pkg } };
+    }
+    return { t: "ha", svc: "media_player.select_source", entity: e, data: { source: pkg } };
+  }
+  _appWizHtml() {
+    const m = this.s.modal, G = this._appGeraete(), H = this._hass.states, j = this._appJetzt();
+    const name = m.nameHand ? m.name : (j.name || m.name || "");
+    const nm = (e) => H[e]?.attributes?.friendly_name || e;
+    const ziel = m.ziel === "popup" ? `als Eintrag auf die Seite „${esc(this.menu.pages.find((p) => p.id === m.seite)?.title || m.seite)}“`
+      : `auf ${esc(KEYNAME[this.s.key] || "die Taste")} (${esc(GNAME[m.g] || m.g)}) in „${esc(this.activity?.name || "")}“`;
+    return `<div class="modal" data-a="modalbg"><div class="dlg appwiz">
+      <div class="dh"><h2><ha-icon icon="mdi:apps"></ha-icon> App öffnen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      ${!G.length ? `<p class="hint">Kein passendes Gerät gefunden. Nötig ist ein Fernseher oder Streamer mit der Integration <b>Android Debug Bridge</b> oder <b>Android TV Remote</b> in Home Assistant – die melden, welche App gerade läuft.</p>`
+      : `<ol class="aw_schritte">
+        <li><b>Gerät</b> ${G.length > 1 ? `<select data-aw="geraet">${G.map((e) => `<option value="${esc(e)}" ${e === m.geraet ? "selected" : ""}>${esc(nm(e))}</option>`).join("")}</select>` : esc(nm(G[0]))}</li>
+        <li><b>App am Gerät öffnen</b><div id="appwiz_live">${this._appWizLive()}</div></li>
+        <li><b>Name</b> <input data-aw="name" value="${esc(name)}" maxlength="20" placeholder="z. B. Netflix"></li></ol>
+      <small class="note">Wird ${ziel} gelegt. „Testen“ schickt das Gerät erst zum Startbildschirm und öffnet die App dann über den neuen Befehl.</small>`}
+      <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><span class="grow"></span>
+        <button class="btn" data-a="aw_test" ${j.pkg ? "" : "disabled"}><ha-icon icon="mdi:play"></ha-icon>Testen</button>
+        <button class="btn primary" data-a="aw_ok" ${j.pkg ? "" : "disabled"}><ha-icon icon="mdi:check"></ha-icon>Übernehmen</button></div>
+    </div></div>`;
+  }
+  async _appWizClick(a) {
+    const s = this.s, m = s.modal;
+    if (a === "aw_test") {
+      const j = this._appJetzt(), st = this._appSchritt(m.geraet, j.pkg), [dom, svc] = st.svc.split(".");
+      try {
+        await this._hass.callService("media_player", "media_stop", { entity_id: m.geraet }).catch(() => {});
+        if (dom === "media_player") await this._hass.callService("androidtv", "adb_command", { entity_id: m.geraet, command: "HOME" }).catch(() => {});
+        else await this._hass.callService("remote", "send_command", { entity_id: st.entity, command: "HOME" }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 1500));
+        await this._hass.callService(dom, svc, { entity_id: st.entity, ...st.data });
+        s.msg = { text: `Befehl geschickt – öffnet sich ${j.name || j.pkg}?` };
+      } catch (e) { s.msg = { err: true, text: "Testen ging nicht: " + (e.message || e.code) }; }
+      return true;
+    }
+    if (a === "aw_ok") {
+      const j = this._appJetzt(), name = ((m.nameHand ? m.name : j.name || m.name) || j.pkg).slice(0, 20), step = this._appSchritt(m.geraet, j.pkg);
+      if (m.ziel === "popup") {
+        const pg = this.menu.pages.find((p) => p.id === m.seite);
+        if (pg) {
+          const y = pg.items.length ? Math.max(...pg.items.map((it) => (it.y || 0) + (it.h || 1))) : 0;
+          pg.items.push({ t: "action", label: name, steps: [step], x: 0, y, w: 6, h: 1 });
+          this._touch();
+        }
+      } else {
+        const kc = this._steps(m.g);
+        kc[m.g].push(step);
+        this._commit(kc);
+      }
+      s.msg = { text: `„${name}“ angelegt – wirkt nach dem Speichern.` };
+      s.modal = null;
+      return true;
+    }
+    return false;
+  }
+  // ---- An andere Remotes uebertragen (2026-11-01, Nutzer: Tasten gehen, Menue und Startseite nicht): die gerade
+  // bearbeitete Seite samt Unterseiten bzw. den Aufbau der eingebauten Startseite in andere Remotes schreiben und dort
+  // gleich speichern. art "seite" (id, optional akt = Aktivitaeten, deren Startseite das ist) oder "home".
+  _uebSeiten(id) {
+    const P = Object.fromEntries((this.menu?.pages || []).map((p) => [p.id, p])), out = [], offen = [id];
+    while (offen.length) {
+      const x = offen.shift(); if (!P[x] || out.includes(x)) continue; out.push(x);
+      for (const it of P[x].items || []) if (it.t === "page" && it.target) offen.push(it.target);
+    }
+    return out;
+  }
+  _uebertragenModal() {
+    const m = this.s.modal, d = this.s.dev, andere = this.s.order.filter((x) => x !== d);
+    const P = Object.fromEntries((this.menu?.pages || []).map((p) => [p.id, p]));
+    const ids = m.art === "seite" ? this._uebSeiten(m.id) : [];
+    const was = m.art === "home" ? "den Aufbau der eingebauten Startseite (Bereiche, Medien-Karte, Knöpfe)"
+      : `„${P[m.id]?.title || m.id}“${ids.length > 1 ? ` mit ${ids.length - 1} Unterseite(n)` : ""}${(m.akt || []).length ? ` – als Startseite von ${m.akt.join(", ")}` : ""}`;
+    const n = andere.filter((x) => m.ziele[x]).length;
+    return `<div class="modal" data-a="modalbg"><div class="dlg">
+      <div class="dh"><h2>An andere Remotes übertragen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <p>Überträgt ${esc(was)} von ${esc(devName(d))}.</p>
+      <div class="opts">${andere.map((x) => `<label class="opt"><input type="checkbox" data-ut="${esc(x)}" ${m.ziele[x] ? "checked" : ""}><span><b>${esc(devName(x))}</b><small>${this.s.dirty[x] ? "hat ungespeicherte Änderungen – die werden mitgespeichert" : "wird gleich gespeichert"}</small></span></label>`).join("") || '<div class="none">Keine andere Remote.</div>'}</div>
+      <small class="note">Gleiche Seite (gleiche Kennung) wird ersetzt, sonst kommt sie dazu. Alles andere bleibt, wie es ist. Die Remotes holen es beim nächsten Aufwachen.</small>
+      <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><span class="grow"></span>
+        <button class="btn primary" data-a="ut_do" ${n ? "" : "disabled"}><ha-icon icon="mdi:upload-multiple"></ha-icon>An ${n} Remote${n === 1 ? "" : "s"} übertragen</button></div></div></div>`;
+  }
+  async _uebertragen() {
+    const s = this.s, m = s.modal, quelle = this.cfg, ziele = s.order.filter((x) => x !== s.dev && m.ziele[x]);
+    const P = Object.fromEntries((quelle.menu?.pages || []).map((p) => [p.id, p]));
+    const ok = [];
+    for (const t of ziele) {
+      const z = s.cfg[t];
+      if (!z) continue;
+      if (m.art === "home") z.home = clone(quelle.home || {});
+      else {
+        z.menu = z.menu || { start: quelle.menu.start, pages: [] };
+        for (const id of this._uebSeiten(m.id)) {
+          const pg = clone(P[id]), i = z.menu.pages.findIndex((x) => x.id === id);
+          if (i >= 0) z.menu.pages[i] = pg; else z.menu.pages.push(pg);
+        }
+        for (const name of m.akt || []) { const a = (z.activities || []).find((x) => x.name === name); if (a) a.home = m.id; }
+      }
+      try {
+        await this._hass.callWS({ type: "esphomeremote_konfig/save", device: t, config: z, enabled: s.enabled[t] });
+        s.dirty[t] = false; s.saved[t] = JSON.stringify(z);
+        ok.push(devName(t));
+      } catch (e) { s.msg = { err: true, text: `${devName(t)}: ${e.message || e.code}` }; }
+    }
+    s.modal = null;
+    if (ok.length) s.msg = { text: `Übertragen und gespeichert: ${ok.join(", ")}.` };
+  }
   // Neue Aktion einer Art (Tastenbelegung)
   _neuerSchritt(v, g) {
     if (v === "regeln") return { t: "ha", svc: REGELN_SVC, entity: "", data: { art: "helligkeit", schritt: "10" } };
@@ -904,6 +1056,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       ["regeln", "mdi:brightness-6", "Schrittweise regeln", "Licht heller/dunkler, Ventilator schneller"],
       ["ir", "mdi:remote", "Infrarot", "Code senden (gelernt oder aus der Datenbank)"],
       ["rf", "mdi:radio-tower", "433 MHz (Dock)", "Funksteckdose, Tor …"],
+      ["app", "mdi:apps", "App öffnen", "Assistent: App am Fernseher/Streamer öffnen – sie wird erkannt"],
       ["int", "mdi:cog", "Funktion der Remote", "Menü, Popup, Aktivität wechseln …"],
       ["wait", "mdi:timer-sand", "Warten", "Pause zwischen zwei Aktionen"],
       ...(this.cfg.modi?.length ? [["modus", "mdi:swap-horizontal", "Folgemodus starten", "Tasten vorübergehend umbelegen"]] : [])];
@@ -1006,6 +1159,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (m.type === "lernen") return this._lernModal();
     if (m.type === "jetzt") return this._jetztModal();
     if (m.type === "addart") return this._addArtModal();
+    if (m.type === "appwiz") return this._appWizHtml();
+    if (m.type === "uebertragen") return this._uebertragenModal();
     if (m.type === "btset") return this._btModal();
     if (m.type === "pick") {
       const q = (m.q || "").toLowerCase();
@@ -1133,6 +1288,15 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       const inp = t.parentElement?.querySelector("input");
       if (inp) { inp.dispatchEvent(new Event("change", { bubbles: true })); s.msg = { text: "Übernommen." }; this._render(); }
       return;
+    }
+    if (a === "aw_test" || a === "aw_ok") { await this._appWizClick(a); this._render(); return; }   // App-Assistent
+    if (a === "ut_do") { await this._uebertragen(); this._render(); return; }   // An andere Remotes
+    if (a.startsWith("fk_")) { await this._fkClick(a, t); this._render(); return; }   // Funktionen
+    if (a === "hueber") {   // Startseiten-Editor: diese Startseite bzw. die eingebaute an andere Remotes
+      const id = t.dataset.p;
+      this.s.modal = id ? { type: "uebertragen", art: "seite", id, ziele: {}, akt: (this.cfg.activities || []).filter((x) => x.home === id).map((x) => x.name) }
+        : { type: "uebertragen", art: "home", ziele: {} };
+      this._render(); return;
     }
     const o = await this._oClick(a, t, ev);
     if (o === "stop") return;
@@ -1274,6 +1438,25 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         s.msg = { text: `Aktivität „${name}“ angelegt – in der Leiste der Remote erscheint sie nach dem Speichern.` };
         break;
       }
+      // Popup fuer "Nochmal tippen" (2026-10-31): anlegen mit Apps / Aktivitaet beenden / Schliessen, im Menue-Editor oeffnen
+      case "akt_popup_neu": {
+        const a = this.activity, m = this.menu;
+        const id = this._mNewId("popup_akt_" + (norm(a.name).replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "x"));
+        const pg = { id, title: a.name, remember: false, flow: false, popup: { open: [], close: [], timeout: 30, wake: true }, items: [] };
+        const add = (it, x, y, w, h) => pg.items.push({ ...it, x, y, w, h });
+        add({ t: "text", label: a.name, align: "c" }, 0, 0, 6, 1);
+        let y = 1;
+        if (m.pages.some((p) => p.id === "apps")) { add({ t: "action", label: "Apps", icon: "dots-horizontal", steps: [{ t: "int", fn: "popup_open", page: "apps" }] }, 0, y, 6, 1); y++; }
+        add({ t: "action", label: "Aktivität beenden", icon: "power", steps: [{ t: "int", fn: "activity_off" }] }, 0, y, 6, 1); y++;
+        add({ t: "action", label: "Schließen", align: "c", steps: [{ t: "int", fn: "popup_close" }] }, 0, y, 6, 1);
+        m.pages.push(pg);
+        a.nochmal = id;
+        this._touch();
+        this._geh("remote", "menu"); s.mpage = id; s.mitem = null;
+        s.msg = { text: `Popup „${a.name}“ angelegt – hier frei gestalten. Es öffnet sich, wenn „${a.name}“ schon läuft und du sie in der Leiste nochmal antippst (nach dem Speichern).` };
+        break;
+      }
+      case "akt_popup_bearb": this._geh("remote", "menu"); s.mpage = this.activity.nochmal; s.mitem = null; break;
       case "actdel": {
         const acts = this.cfg.activities;
         if (acts.length <= 1 || !confirm(`Aktivität „${this.activity.name}“ mit ihrer ganzen Tastenbelegung löschen?`)) return;
@@ -1404,6 +1587,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       case "addart_w": {
         const g2 = s.modal?.g;
         if (g2 == null) break;
+        if (t.dataset.v === "app") { s.modal = { type: "appwiz", g: g2, ziel: "taste" }; this._appWizStart(); break; }
         const kc = this._steps(g2);
         kc[g2].push(this._neuerSchritt(t.dataset.v, g2));
         this._commit(kc);
@@ -1520,7 +1704,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (t.dataset.entm) {   // Mehrfachauswahl (Timer)
       const ents = (this.cfg.ents ||= {}), k = t.dataset.entm;
       const l = new Set(Array.isArray(ents[k]) ? ents[k] : ents[k] ? [ents[k]] : []);
-      if (t.checked) l.add(t.value); else l.delete(t.value);
+      if (t.tagName === "SELECT") { if (t.value) l.add(t.value); }   // "+ Timer hinzufuegen" (2026-10-31)
+      else if (t.checked) l.add(t.value); else l.delete(t.value);
       if (l.size) ents[k] = [...l]; else delete ents[k];
       this._touch(); return this._render();
     }
@@ -1558,6 +1743,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         this.cfg.activities.forEach((a, i) => { if (a.dock == null) a.dock = i < 4; });
         this.activity.dock = t.checked;
       } else if (t.dataset.akt === "name") this.activity.name = t.value.slice(0, 16) || "Aktivität";
+      else if (t.dataset.akt === "nochmal") { if (t.value) this.activity.nochmal = t.value; else delete this.activity.nochmal; }
       else this.activity.slot = Number(t.value);
       this._touch(); return this._render();
     }
@@ -1578,6 +1764,12 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (t.dataset.einst) return this._einstChange(t);
     if (t.dataset.li) return this._lichtChange(t);
     if (t.dataset.anz) return this._anzChange(t);
+    if (t.dataset.fk) return this._fkChange(t);
+    if (t.dataset.ut && this.s.modal?.type === "uebertragen") { this.s.modal.ziele[t.dataset.ut] = t.checked; return this._render(); }
+    if (t.dataset.aw && this.s.modal?.type === "appwiz") {   // App-Assistent
+      if (t.dataset.aw === "geraet") { this.s.modal.geraet = t.value; return this._render(); }
+      this.s.modal.name = t.value; this.s.modal.nameHand = true; return;
+    }
     if (t.dataset.btm != null) return this._btModus(t);
     if (this._gestenChange(t)) return this._render();
     if (this._dockChange(t)) return this._render();
@@ -1693,7 +1885,7 @@ const M_MTASTE = Object.fromEntries(M_MTASTEN.map(([k, l, i]) => [k, { l, i }]))
 const M_MEDIEN = ["mtitel", "mtaste", "vpreset"];
 // Einstellungen der Remote (generiert aus den eingebauten Seiten: esphome/tools/einst_gen.py)
 // [Widget-ID, Art (b Schalter/Knopf, s Regler, i Anzeige), Name, Seite]
-const M_EINST = [["disp_bri_sld", "s", "Display", "Bildschirm"], ["h_bri", "i", "Hinweis (h_bri)", "Bildschirm"], ["kbd_light_btn", "b", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdon", "i", "Hinweis (h_kbdon)", "Bildschirm"], ["kbd_bri_sld", "s", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdbri", "i", "Hinweis (h_kbdbri)", "Bildschirm"], ["to_sld", "s", "Display aus nach", "Bildschirm"], ["h_to", "i", "Hinweis (h_to)", "Bildschirm"], ["ps_dim_sld", "s", "Abdunkeln nach", "Bildschirm"], ["ps_h_dim", "i", "Hinweis (ps_h_dim)", "Bildschirm"], ["ps_dimp_sld", "s", "Abdunkeln auf", "Bildschirm"], ["ps_h_dimp", "i", "Hinweis (ps_h_dimp)", "Bildschirm"], ["show_ble_btn", "b", "Bluetooth-Symbol", "Anzeige"], ["h_sh_ble", "i", "Hinweis (h_sh_ble)", "Anzeige"], ["show_wifi_btn", "b", "WLAN-Symbol", "Anzeige"], ["h_sh_wifi", "i", "Hinweis (h_sh_wifi)", "Anzeige"], ["show_batt_btn", "b", "Akkustand", "Anzeige"], ["h_sh_batt", "i", "Hinweis (h_sh_batt)", "Anzeige"], ["show_clock_btn", "b", "Uhrzeit", "Anzeige"], ["h_sh_clock", "i", "Hinweis (h_sh_clock)", "Anzeige"], ["show_assi_btn", "b", "Assistenten-Symbol", "Anzeige"], ["h_sh_assi", "i", "Hinweis (h_sh_assi)", "Anzeige"], ["show_motion_btn", "b", "Bewegungs-Symbol", "Anzeige"], ["show_ha_btn", "b", "Home-Assistant-Symbol", "Anzeige"], ["h_sh_ha", "i", "Hinweis (h_sh_ha)", "Anzeige"], ["cover_player_btn", "b", "Cover Player", "Anzeige"], ["h_cov_p", "i", "Hinweis (h_cov_p)", "Anzeige"], ["cover_home_btn", "b", "Cover Startseite", "Anzeige"], ["h_cov_h", "i", "Hinweis (h_cov_h)", "Anzeige"], ["mem_sld", "s", "Menü merken für", "Anzeige"], ["ps_h_mem", "i", "Hinweis (ps_h_mem)", "Anzeige"], ["menu_close_sld", "s", "Menü schließen nach", "Anzeige"], ["h_menu_close", "i", "Hinweis (h_menu_close)", "Anzeige"], ["sd_logos_btn", "b", "Logos von SD-Karte", "Anzeige"], ["h_sd_logos", "i", "Hinweis (h_sd_logos)", "Anzeige"], ["ps_wifi_btn", "b", "WLAN-Sparmodus", "Energie & Wecken"], ["ps_h_wifi", "i", "Hinweis (ps_h_wifi)", "Energie & Wecken"], ["ps_wifimax_btn", "b", "Sparmodus stark (Ruhe)", "Energie & Wecken"], ["ps_h_wifimax", "i", "Hinweis (ps_h_wifimax)", "Energie & Wecken"], ["ps_wifi_off_btn", "b", "WLAN aus im Ruhezustand", "Energie & Wecken"], ["ps_h_off", "i", "Hinweis (ps_h_off)", "Energie & Wecken"], ["ps_wifis_sld", "s", "WLAN aus nach", "Energie & Wecken"], ["ps_h_offs", "i", "Hinweis (ps_h_offs)", "Energie & Wecken"], ["ps_wifitv_sld", "s", "WLAN aus bei TV an", "Energie & Wecken"], ["ps_h_wifitv", "i", "Hinweis (ps_h_wifitv)", "Energie & Wecken"], ["ps_cpu_sld", "s", "Prozessor drosseln", "Energie & Wecken"], ["ps_h_cpu", "i", "Hinweis (ps_h_cpu)", "Energie & Wecken"], ["ps_light_btn", "b", "Leichtschlaf", "Energie & Wecken"], ["ps_wfest_btn", "b", "WLAN-Schnellstart", "Energie & Wecken"], ["ps_wfrueh_btn", "b", "WLAN früh einschalten", "Energie & Wecken"], ["ps_nurble_btn", "b", "Nur Bluetooth", "Energie & Wecken"], ["ps_nurble_h", "i", "WLAN bleibt aus, Home Assistant, Bilder und Sprache laufen über Bluetooth. Für Updates schaltet das Wartungsfenster das WLAN kurz ein.", "Energie & Wecken"], ["ps_bleidle_btn", "b", "BLE-Verbindung langsam", "Energie & Wecken"], ["ps_h_ble", "i", "Hinweis (ps_h_ble)", "Energie & Wecken"], ["ps_bles_sld", "s", "BLE langsam nach", "Energie & Wecken"], ["ps_h_bles", "i", "Hinweis (ps_h_bles)", "Energie & Wecken"], ["motion_mode_lbl", "i", "Aufwecken bei", "Energie & Wecken"], ["mm_0", "b", "Aus", "Energie & Wecken"], ["mm_1", "b", "Bewegung", "Energie & Wecken"], ["mm_2", "b", "Hochheben", "Energie & Wecken"], ["h_motion", "i", "Hinweis (h_motion)", "Energie & Wecken"], ["ms_sld", "s", "Empfindlichkeit", "Energie & Wecken"], ["h_sens", "i", "Hinweis (h_sens)", "Energie & Wecken"], ["keys_wake_btn", "b", "Tasten wecken", "Energie & Wecken"], ["h_keys", "i", "Hinweis (h_keys)", "Energie & Wecken"], ["menue_weckt_btn", "b", "Menütaste bei dunklem Display", "Energie & Wecken"], ["h_menue_weckt", "i", "Hinweis (h_menue_weckt)", "Energie & Wecken"], ["dim_wake_btn", "b", "Aufhellen bei Bewegung", "Energie & Wecken"], ["h_dim_wake", "i", "Hinweis (h_dim_wake)", "Energie & Wecken"], ["dim_hold_btn", "b", "Nicht abdunkeln bei Bewegung", "Energie & Wecken"], ["h_dim_hold", "i", "Hinweis (h_dim_hold)", "Energie & Wecken"], ["ds_sld", "s", "Empfindlichkeit (beide oben)", "Energie & Wecken"], ["h_dim_sens", "i", "Hinweis (h_dim_sens)", "Energie & Wecken"], ["klopf_btn", "b", "Doppelt klopfen weckt", "Energie & Wecken"], ["kl_sld", "s", "Klopf-Empfindlichkeit", "Energie & Wecken"], ["h_klopf", "i", "Hinweis (h_klopf)", "Energie & Wecken"], ["ps_touch_btn", "b", "Touch weckt", "Energie & Wecken"], ["ps_h_touch", "i", "Hinweis (ps_h_touch)", "Energie & Wecken"], ["ps_touchms_sld", "s", "Touch-Abfrage", "Energie & Wecken"], ["ps_h_touchms", "i", "Hinweis (ps_h_touchms)", "Energie & Wecken"], ["ps_deep_btn", "b", "Tiefschlaf im Ruhezustand", "Energie & Wecken"], ["ps_h_deep", "i", "Hinweis (ps_h_deep)", "Energie & Wecken"], ["ps_deepble_btn", "b", "Nur ohne Bluetooth", "Energie & Wecken"], ["ps_deeps_sld", "s", "Tiefschlaf nach", "Energie & Wecken"], ["ps_h_deeps", "i", "Hinweis (ps_h_deeps)", "Energie & Wecken"], ["ps_deeptv_sld", "s", "Tiefschlaf bei TV an", "Energie & Wecken"], ["ps_h_deeptv", "i", "Hinweis (ps_h_deeptv)", "Energie & Wecken"], ["ps_low_sld", "s", "Sparmodus bei Akku unter", "Energie & Wecken"], ["ps_h_low", "i", "Hinweis (ps_h_low)", "Energie & Wecken"], ["tile_assi", "b", "Assistent", "Sprache"], ["h_assi", "i", "Hinweis (h_assi)", "Sprache"], ["tile_google_mode", "b", "Google-Modus", "Sprache"], ["h_google_mode", "i", "Hinweis (h_google_mode)", "Sprache"], ["tile_tts", "b", "Antwort hörbar", "Sprache"], ["h_tts", "i", "Hinweis (h_tts)", "Sprache"], ["tile_mic", "b", "Mikrofon", "Sprache"], ["tile_mic_warm", "b", "Mikrofon vorwärmen", "Sprache"], ["h_mic_warm", "i", "Hinweis (h_mic_warm)", "Sprache"], ["ble_state_lbl", "i", "Nicht verbunden", "Bluetooth"], ["ble_slot0", "b", "Platz 1", "Bluetooth"], ["ble_slot1", "b", "Platz 2", "Bluetooth"], ["ble_slot2", "b", "Platz 3", "Bluetooth"], ["ble_slot3", "b", "Platz 4", "Bluetooth"], ["ble_target_lbl", "i", "Platz 1", "Bluetooth"], ["ble_connect", "b", "Verbinden", "Bluetooth"], ["ble_pair", "b", "Koppeln", "Bluetooth"], ["ble_forget", "b", "Löschen", "Bluetooth"], ["ble_eing0_btn", "b", "Eingabe Platz 1", "Bluetooth"], ["ble_eing1_btn", "b", "Eingabe Platz 2", "Bluetooth"], ["ble_eing2_btn", "b", "Eingabe Platz 3", "Bluetooth"], ["ble_eing3_btn", "b", "Eingabe Platz 4", "Bluetooth"], ["h_plaetze", "i", "Hinweis (h_plaetze)", "Bluetooth"], ["ble_par_btn", "b", "Parallel verbunden", "Bluetooth"], ["bt_weg_btn", "b", "Über das Dock", "Bluetooth"], ["h_bt_weg", "i", "Hinweis (h_bt_weg)", "Bluetooth"], ["maus_tempo_sld", "s", "Zeigertempo", "Bluetooth"], ["maus_dpad_btn", "b", "Steuerkreuz als Maus", "Bluetooth"], ["maus_dpad_sld", "s", "Tempo Steuerkreuz", "Bluetooth"], ["maus_zurueck_btn", "b", "Zurück-Taste", "Bluetooth"], ["h_maus_dpad", "i", "Hinweis (h_maus_dpad)", "Bluetooth"], ["ak_status", "i", "Status", "Akku"], ["ak_pct", "i", "Akkustand", "Akku"], ["ak_volt", "i", "Spannung", "Akku"], ["ak_rate", "i", "Rate jetzt (Chip)", "Akku"], ["ak_r1", "i", "Letzte Stunde", "Akku"], ["ak_r24", "i", "Letzte 24 h", "Akku"], ["ak_rest", "i", "Restlaufzeit", "Akku"], ["ak_geladen", "i", "Zuletzt geladen", "Akku"], ["ak_geladen2", "i", "ak_geladen2", "Akku"], ["ak_schlaf", "i", "Tiefschlaf seit Ladung", "Akku"], ["dock_an_btn", "b", "Smart Display im Dock", "Smart Display"], ["h_dock_an", "i", "Hinweis (h_dock_an)", "Smart Display"], ["dock_disp_btn", "b", "Display im Dock", "Smart Display"], ["h_dock_disp", "i", "Hinweis (h_dock_disp)", "Smart Display"], ["dock_von_sld", "s", "an ab", "Smart Display"], ["dock_bis_sld", "s", "an bis", "Smart Display"], ["musik_dock_btn", "b", "Im Dock bei Musik", "Smart Display"], ["h_musik_dock", "i", "Hinweis (h_musik_dock)", "Smart Display"], ["musik_player_btn", "b", "Nur wenn Player spielt", "Smart Display"], ["h_musik_player", "i", "Hinweis (h_musik_player)", "Smart Display"], ["ha_dock_btn", "b", "HA-Befehle über das Dock", "Smart Display"], ["h_ha_dock", "i", "Hinweis (h_ha_dock)", "Smart Display"], ["ha_link_btn", "b", "HA-Verbindung in Ruhe", "Smart Display"], ["h_ha_link", "i", "Hinweis (h_ha_link)", "Smart Display"], ["ha_linkm_btn", "b", "HA in Ruhe: Art", "Smart Display"], ["h_ha_linkm", "i", "Hinweis (h_ha_linkm)", "Smart Display"], ["tile_touchtest", "b", "Touch-Test", "Wartung & Tests"], ["h_touch", "i", "Hinweis (h_touch)", "Wartung & Tests"], ["tile_button_test", "b", "Tasten-Test", "Wartung & Tests"], ["h_btn", "i", "Hinweis (h_btn)", "Wartung & Tests"], ["clean_dur_sld", "s", "Reinigungsdauer", "Wartung & Tests"], ["h_cleandur", "i", "Hinweis (h_cleandur)", "Wartung & Tests"], ["tile_clean", "b", "Reinigungsmodus", "Wartung & Tests"], ["h_clean", "i", "Hinweis (h_clean)", "Wartung & Tests"], ["tile_sd", "b", "SD-Karte", "Wartung & Tests"], ["h_sd_tile", "i", "Hinweis (h_sd_tile)", "Wartung & Tests"], ["ps_log_btn", "b", "Debug-Modus", "Wartung & Tests"], ["ps_h_log", "i", "Hinweis (ps_h_log)", "Wartung & Tests"], ["testmod_btn", "b", "Testmodus (immer online)", "Wartung & Tests"], ["ps_h_test", "i", "Hinweis (ps_h_test)", "Wartung & Tests"], ["tile_update", "b", "Firmware aktualisieren", "Wartung & Tests"], ["h_update", "i", "Hinweis (h_update)", "Wartung & Tests"], ["tile_shutdown", "b", "Gerät herunterfahren", "Wartung & Tests"], ["tile_restart", "b", "Gerät neu starten", "Wartung & Tests"], ["h_restart", "i", "Hinweis (h_restart)", "Wartung & Tests"], ["ak_graph", "g", "Verlauf 24 h", "Akku"]];
+const M_EINST = [["disp_bri_sld", "s", "Display", "Bildschirm"], ["h_bri", "i", "Hinweis (h_bri)", "Bildschirm"], ["kbd_light_btn", "b", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdon", "i", "Hinweis (h_kbdon)", "Bildschirm"], ["kbd_bri_sld", "s", "Tastenbeleuchtung", "Bildschirm"], ["h_kbdbri", "i", "Hinweis (h_kbdbri)", "Bildschirm"], ["to_sld", "s", "Display aus nach", "Bildschirm"], ["h_to", "i", "Hinweis (h_to)", "Bildschirm"], ["ps_dim_sld", "s", "Abdunkeln nach", "Bildschirm"], ["ps_h_dim", "i", "Hinweis (ps_h_dim)", "Bildschirm"], ["ps_dimp_sld", "s", "Abdunkeln auf", "Bildschirm"], ["ps_h_dimp", "i", "Hinweis (ps_h_dimp)", "Bildschirm"], ["show_ble_btn", "b", "Bluetooth-Symbol", "Anzeige"], ["h_sh_ble", "i", "Hinweis (h_sh_ble)", "Anzeige"], ["show_wifi_btn", "b", "WLAN-Symbol", "Anzeige"], ["h_sh_wifi", "i", "Hinweis (h_sh_wifi)", "Anzeige"], ["show_batt_btn", "b", "Akkustand", "Anzeige"], ["h_sh_batt", "i", "Hinweis (h_sh_batt)", "Anzeige"], ["show_clock_btn", "b", "Uhrzeit", "Anzeige"], ["h_sh_clock", "i", "Hinweis (h_sh_clock)", "Anzeige"], ["show_assi_btn", "b", "Assistenten-Symbol", "Anzeige"], ["h_sh_assi", "i", "Hinweis (h_sh_assi)", "Anzeige"], ["show_motion_btn", "b", "Bewegungs-Symbol", "Anzeige"], ["show_ha_btn", "b", "Home-Assistant-Symbol", "Anzeige"], ["h_sh_ha", "i", "Hinweis (h_sh_ha)", "Anzeige"], ["cover_player_btn", "b", "Cover Player", "Anzeige"], ["h_cov_p", "i", "Hinweis (h_cov_p)", "Anzeige"], ["cover_home_btn", "b", "Cover Startseite", "Anzeige"], ["h_cov_h", "i", "Hinweis (h_cov_h)", "Anzeige"], ["mem_sld", "s", "Menü merken für", "Anzeige"], ["ps_h_mem", "i", "Hinweis (ps_h_mem)", "Anzeige"], ["menu_close_sld", "s", "Menü schließen nach", "Anzeige"], ["h_menu_close", "i", "Hinweis (h_menu_close)", "Anzeige"], ["sd_logos_btn", "b", "Logos von SD-Karte", "Anzeige"], ["h_sd_logos", "i", "Hinweis (h_sd_logos)", "Anzeige"], ["ps_wifi_btn", "b", "WLAN-Sparmodus", "Energie & Wecken"], ["ps_h_wifi", "i", "Hinweis (ps_h_wifi)", "Energie & Wecken"], ["ps_wifimax_btn", "b", "Sparmodus stark (Ruhe)", "Energie & Wecken"], ["ps_h_wifimax", "i", "Hinweis (ps_h_wifimax)", "Energie & Wecken"], ["ps_wifi_off_btn", "b", "WLAN aus im Ruhezustand", "Energie & Wecken"], ["ps_h_off", "i", "Hinweis (ps_h_off)", "Energie & Wecken"], ["ps_wifis_sld", "s", "WLAN aus nach", "Energie & Wecken"], ["ps_h_offs", "i", "Hinweis (ps_h_offs)", "Energie & Wecken"], ["ps_wifitv_sld", "s", "WLAN aus bei TV an", "Energie & Wecken"], ["ps_h_wifitv", "i", "Hinweis (ps_h_wifitv)", "Energie & Wecken"], ["ps_cpu_sld", "s", "Prozessor drosseln", "Energie & Wecken"], ["ps_h_cpu", "i", "Hinweis (ps_h_cpu)", "Energie & Wecken"], ["ps_light_btn", "b", "Leichtschlaf", "Energie & Wecken"], ["ps_wfest_btn", "b", "WLAN-Schnellstart", "Energie & Wecken"], ["ps_wfrueh_btn", "b", "WLAN früh einschalten", "Energie & Wecken"], ["ps_nurble_btn", "b", "Dock-Betrieb", "Energie & Wecken"], ["ps_nurble_h", "i", "Hinweis Dock-Betrieb", "Energie & Wecken"], ["ps_bleidle_btn", "b", "BLE-Verbindung langsam", "Energie & Wecken"], ["ps_h_ble", "i", "Hinweis (ps_h_ble)", "Energie & Wecken"], ["ps_bles_sld", "s", "BLE langsam nach", "Energie & Wecken"], ["ps_h_bles", "i", "Hinweis (ps_h_bles)", "Energie & Wecken"], ["motion_mode_lbl", "i", "Aufwecken bei", "Energie & Wecken"], ["mm_0", "b", "Aus", "Energie & Wecken"], ["mm_1", "b", "Bewegung", "Energie & Wecken"], ["mm_2", "b", "Hochheben", "Energie & Wecken"], ["h_motion", "i", "Hinweis (h_motion)", "Energie & Wecken"], ["ms_sld", "s", "Empfindlichkeit", "Energie & Wecken"], ["h_sens", "i", "Hinweis (h_sens)", "Energie & Wecken"], ["keys_wake_btn", "b", "Tasten wecken", "Energie & Wecken"], ["h_keys", "i", "Hinweis (h_keys)", "Energie & Wecken"], ["menue_weckt_btn", "b", "Menütaste bei dunklem Display", "Energie & Wecken"], ["h_menue_weckt", "i", "Hinweis (h_menue_weckt)", "Energie & Wecken"], ["dim_wake_btn", "b", "Aufhellen bei Bewegung", "Energie & Wecken"], ["h_dim_wake", "i", "Hinweis (h_dim_wake)", "Energie & Wecken"], ["dim_hold_btn", "b", "Nicht abdunkeln bei Bewegung", "Energie & Wecken"], ["h_dim_hold", "i", "Hinweis (h_dim_hold)", "Energie & Wecken"], ["ds_sld", "s", "Empfindlichkeit (beide oben)", "Energie & Wecken"], ["h_dim_sens", "i", "Hinweis (h_dim_sens)", "Energie & Wecken"], ["klopf_btn", "b", "Doppelt klopfen weckt", "Energie & Wecken"], ["kl_sld", "s", "Klopf-Empfindlichkeit", "Energie & Wecken"], ["h_klopf", "i", "Hinweis (h_klopf)", "Energie & Wecken"], ["ps_touch_btn", "b", "Touch weckt", "Energie & Wecken"], ["ps_h_touch", "i", "Hinweis (ps_h_touch)", "Energie & Wecken"], ["ps_touchms_sld", "s", "Touch-Abfrage", "Energie & Wecken"], ["ps_h_touchms", "i", "Hinweis (ps_h_touchms)", "Energie & Wecken"], ["ps_deep_btn", "b", "Tiefschlaf im Ruhezustand", "Energie & Wecken"], ["ps_h_deep", "i", "Hinweis (ps_h_deep)", "Energie & Wecken"], ["ps_deepble_btn", "b", "Nur ohne Bluetooth", "Energie & Wecken"], ["ps_deeps_sld", "s", "Tiefschlaf nach", "Energie & Wecken"], ["ps_h_deeps", "i", "Hinweis (ps_h_deeps)", "Energie & Wecken"], ["ps_deeptv_sld", "s", "Tiefschlaf bei TV an", "Energie & Wecken"], ["ps_h_deeptv", "i", "Hinweis (ps_h_deeptv)", "Energie & Wecken"], ["ps_low_sld", "s", "Sparmodus bei Akku unter", "Energie & Wecken"], ["ps_h_low", "i", "Hinweis (ps_h_low)", "Energie & Wecken"], ["tile_assi", "b", "Assistent", "Sprache"], ["h_assi", "i", "Hinweis (h_assi)", "Sprache"], ["tile_google_mode", "b", "Google-Modus", "Sprache"], ["h_google_mode", "i", "Hinweis (h_google_mode)", "Sprache"], ["tile_tts", "b", "Antwort hörbar", "Sprache"], ["h_tts", "i", "Hinweis (h_tts)", "Sprache"], ["tile_mic", "b", "Mikrofon", "Sprache"], ["tile_mic_warm", "b", "Mikrofon vorwärmen", "Sprache"], ["h_mic_warm", "i", "Hinweis (h_mic_warm)", "Sprache"], ["ble_state_lbl", "i", "Nicht verbunden", "Bluetooth"], ["ble_slot0", "b", "Platz 1", "Bluetooth"], ["ble_slot1", "b", "Platz 2", "Bluetooth"], ["ble_slot2", "b", "Platz 3", "Bluetooth"], ["ble_slot3", "b", "Platz 4", "Bluetooth"], ["ble_target_lbl", "i", "Platz 1", "Bluetooth"], ["ble_connect", "b", "Verbinden", "Bluetooth"], ["ble_pair", "b", "Koppeln", "Bluetooth"], ["ble_forget", "b", "Löschen", "Bluetooth"], ["ble_eing0_btn", "b", "Eingabe Platz 1", "Bluetooth"], ["ble_eing1_btn", "b", "Eingabe Platz 2", "Bluetooth"], ["ble_eing2_btn", "b", "Eingabe Platz 3", "Bluetooth"], ["ble_eing3_btn", "b", "Eingabe Platz 4", "Bluetooth"], ["h_plaetze", "i", "Hinweis (h_plaetze)", "Bluetooth"], ["ble_par_btn", "b", "Parallel verbunden", "Bluetooth"], ["bt_weg_btn", "b", "Über das Dock", "Bluetooth"], ["h_bt_weg", "i", "Hinweis (h_bt_weg)", "Bluetooth"], ["maus_tempo_sld", "s", "Zeigertempo", "Bluetooth"], ["maus_dpad_btn", "b", "Steuerkreuz als Maus", "Bluetooth"], ["maus_dpad_sld", "s", "Tempo Steuerkreuz", "Bluetooth"], ["maus_zurueck_btn", "b", "Zurück-Taste", "Bluetooth"], ["h_maus_dpad", "i", "Hinweis (h_maus_dpad)", "Bluetooth"], ["ak_status", "i", "Status", "Akku"], ["ak_pct", "i", "Akkustand", "Akku"], ["ak_volt", "i", "Spannung", "Akku"], ["ak_rate", "i", "Rate jetzt (Chip)", "Akku"], ["ak_r1", "i", "Letzte Stunde", "Akku"], ["ak_r24", "i", "Letzte 24 h", "Akku"], ["ak_rest", "i", "Restlaufzeit", "Akku"], ["ak_geladen", "i", "Zuletzt geladen", "Akku"], ["ak_geladen2", "i", "ak_geladen2", "Akku"], ["ak_schlaf", "i", "Tiefschlaf seit Ladung", "Akku"], ["dock_an_btn", "b", "Smart Display im Dock", "Smart Display"], ["h_dock_an", "i", "Hinweis (h_dock_an)", "Smart Display"], ["dock_disp_btn", "b", "Display im Dock", "Smart Display"], ["h_dock_disp", "i", "Hinweis (h_dock_disp)", "Smart Display"], ["dock_von_sld", "s", "an ab", "Smart Display"], ["dock_bis_sld", "s", "an bis", "Smart Display"], ["musik_dock_btn", "b", "Im Dock bei Musik", "Smart Display"], ["h_musik_dock", "i", "Hinweis (h_musik_dock)", "Smart Display"], ["musik_player_btn", "b", "Nur wenn Player spielt", "Smart Display"], ["h_musik_player", "i", "Hinweis (h_musik_player)", "Smart Display"], ["ha_dock_btn", "b", "HA-Befehle über das Dock", "Smart Display"], ["h_ha_dock", "i", "Hinweis (h_ha_dock)", "Smart Display"], ["ha_link_btn", "b", "HA-Verbindung in Ruhe", "Smart Display"], ["h_ha_link", "i", "Hinweis (h_ha_link)", "Smart Display"], ["ha_linkm_btn", "b", "HA in Ruhe: Art", "Smart Display"], ["h_ha_linkm", "i", "Hinweis (h_ha_linkm)", "Smart Display"], ["tile_touchtest", "b", "Touch-Test", "Wartung & Tests"], ["h_touch", "i", "Hinweis (h_touch)", "Wartung & Tests"], ["tile_button_test", "b", "Tasten-Test", "Wartung & Tests"], ["h_btn", "i", "Hinweis (h_btn)", "Wartung & Tests"], ["clean_dur_sld", "s", "Reinigungsdauer", "Wartung & Tests"], ["h_cleandur", "i", "Hinweis (h_cleandur)", "Wartung & Tests"], ["tile_clean", "b", "Reinigungsmodus", "Wartung & Tests"], ["h_clean", "i", "Hinweis (h_clean)", "Wartung & Tests"], ["tile_sd", "b", "SD-Karte", "Wartung & Tests"], ["h_sd_tile", "i", "Hinweis (h_sd_tile)", "Wartung & Tests"], ["ps_log_btn", "b", "Debug-Modus", "Wartung & Tests"], ["ps_h_log", "i", "Hinweis (ps_h_log)", "Wartung & Tests"], ["testmod_btn", "b", "Testmodus (immer online)", "Wartung & Tests"], ["ps_h_test", "i", "Hinweis (ps_h_test)", "Wartung & Tests"], ["tile_update", "b", "Firmware aktualisieren", "Wartung & Tests"], ["h_update", "i", "Hinweis (h_update)", "Wartung & Tests"], ["tile_shutdown", "b", "Gerät herunterfahren", "Wartung & Tests"], ["tile_restart", "b", "Gerät neu starten", "Wartung & Tests"], ["h_restart", "i", "Hinweis (h_restart)", "Wartung & Tests"], ["ak_graph", "g", "Verlauf 24 h", "Akku"]];
 const M_EINST_K = Object.fromEntries(M_EINST.map((e) => [e[0], e]));
 // Bildquellen fuer Menue-Eintraege "Kamerabild": die beiden Klingel-Plaetze; Namen aus der Seite "Klingel" (_klingelLaden)
 // Klingelbilder (2026-10-30): "klingel:<id>" je Klingel, aus der Liste in HA (_klingelLaden); alte Namen klingel_haus/_wohnung
@@ -1714,8 +1906,8 @@ const M_SPECIAL_L = Object.fromEntries(M_SPECIAL);
 const M_INHALTE = [["tastatur", "Eingebaute Tastatur"], ["ziffern", "Eingebauter Ziffernblock"], ["touchpad", "Eingebautes Touchpad (Maus)"]];
 const M_INHALT_HINWEIS = {
   tastatur: "Zeigt die eingebaute Tastatur statt der Einträge. Ist der Wert des Auslösers „zahlen“, kommt der Ziffernblock.",
-  ziffern: "Zeigt den eingebauten Ziffernblock statt der Einträge. Öffnen per Auslöser oder per Taste („Menüseite als Popup öffnen …“).",
-  touchpad: "Zeigt das eingebaute Touchpad (Maus für PC/Tablet) statt der Einträge. Öffnen per Auslöser oder per Taste („Menüseite als Popup öffnen …“).",
+  ziffern: "Zeigt den eingebauten Ziffernblock statt der Einträge. Es öffnet sich über einen Auslöser (unten).",
+  touchpad: "Zeigt das eingebaute Touchpad (Maus für PC/Tablet) statt der Einträge. Es öffnet sich über einen Auslöser (unten).",
 };
 const M_DOMAINS = { toggle: ["switch", "input_boolean", "light", "fan", "automation", "script", "media_player", "climate", "siren", "lock"],
   light: ["light"], mtitel: ["media_player"], mtaste: ["media_player"], vpreset: ["media_player"], number: ["number", "input_number", "media_player"], select: ["select", "input_select"], cover: ["cover"], sensor: ["sensor", "binary_sensor", "input_select", "input_number", "input_text", "climate", "media_player", "weather", "person", "device_tracker", "lock", "cover", "light", "switch", "input_boolean"] };
@@ -2035,27 +2227,25 @@ const MenuEditor = {
           <select data-mt="to" data-art="${art}" data-i="${i}">${[...new Set([...namen, tr.to])].filter(Boolean).map((n) => `<option ${n === tr.to ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
           <button class="icon sm" data-a="mtrigdel" data-art="${art}" data-i="${i}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>`;
       }
+      // Lesbarer Auslöser (2026-11-01, Nutzer: "kann nicht lesen, was ausgewählt ist"): oben die Entität mit ihrem
+      // jetzigen Wert, darunter "Zustand/Attribut · ist / ist nicht · Wert" und der ganze Satz im Klartext
       const st = this._hass.states[tr.entity];
-      const opts = st ? [...new Set([st.state, ...(st.attributes.options || []), "on", "off"].filter(Boolean))] : ["on", "off"];
-      return `<div class="trig">
-        <button class="entity sm" data-a="mtrigpick" data-art="${art}" data-i="${i}">${st ? `<span><b>${esc(st.attributes.friendly_name || tr.entity)}</b><small>${esc(tr.entity)}</small></span>` : tr.entity ? `<span><b>${esc(tr.entity)}</b><small>nicht gefunden</small></span>` : "<span><b>Entität wählen …</b></span>"}</button>
-        <input class="attr" data-mt="attr" data-art="${art}" data-i="${i}" value="${esc(tr.attr || "")}" placeholder="Zustand" title="leer = Zustand, sonst Attribut (z. B. app_id)">
-        ${art === "if" ? `<select data-mt="neg" data-art="${art}" data-i="${i}" style="width:auto"><option value="">=</option><option value="1" ${tr.neg ? "selected" : ""}>≠</option></select>` : '<span class="eq">=</span>'}
-        <input data-mt="to" data-art="${art}" data-i="${i}" value="${esc(tr.to || "")}" list="dl-${art}-${i}" placeholder="z. B. on">
-        <datalist id="dl-${art}-${i}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
-        <button class="icon sm" data-a="mtrigdel" data-art="${art}" data-i="${i}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>`;
+      const attrs = st ? Object.keys(st.attributes).filter((k) => !["friendly_name", "icon", "entity_picture", "supported_features", "device_class", "unit_of_measurement", "options"].includes(k)) : [];
+      const jetzt = st ? String(tr.attr ? st.attributes[tr.attr] ?? "–" : st.state) : "";
+      const opts = st ? [...new Set([tr.attr ? st.attributes[tr.attr] : st.state, ...(tr.attr ? [] : st.attributes.options || []), ...(tr.attr ? [] : ["on", "off"])].filter((x) => x != null && x !== "").map(String))] : ["on", "off"];
+      const name = st?.attributes.friendly_name || tr.entity || "Entität wählen";
+      const verb = art === "if" ? (tr.neg ? "ist nicht" : "ist") : art === "open" ? "wird" : "wird";
+      const satz = tr.entity ? `${art === "if" ? "Nur wenn" : art === "open" ? "Öffnen, wenn" : "Schließen, wenn"} „${name}“${tr.attr ? ` (${tr.attr})` : ""} ${verb} „${tr.to || "…"}“` : "";
+      return `<div class="trig2">
+        <div class="tz"><button class="entity sm" data-a="mtrigpick" data-art="${art}" data-i="${i}">${tr.entity ? `<span><b>${esc(name)}</b><small>${esc(tr.entity)}${st ? ` · jetzt: <i>${esc(jetzt)}</i>` : " · nicht gefunden"}</small></span>` : "<span><b>Entität wählen …</b></span>"}</button>
+          <button class="icon sm" data-a="mtrigdel" data-art="${art}" data-i="${i}" title="entfernen"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <div class="tz">
+          <select data-mt="attr" data-art="${art}" data-i="${i}" title="Was verglichen wird">${[["", "Zustand"], ...[...new Set([...attrs, tr.attr].filter(Boolean))].map((k) => [k, "Attribut " + k])].map(([v, l]) => `<option value="${esc(v)}" ${(tr.attr || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+          ${art === "if" ? `<select data-mt="neg" data-art="${art}" data-i="${i}"><option value="">ist</option><option value="1" ${tr.neg ? "selected" : ""}>ist nicht</option></select>` : '<span class="eq">wird</span>'}
+          <input data-mt="to" data-art="${art}" data-i="${i}" value="${esc(tr.to || "")}" list="dl-${art}-${i}" placeholder="Wert, z. B. on">
+          <datalist id="dl-${art}-${i}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist></div>
+        ${satz ? `<small class="tsatz">${esc(satz)}</small>` : ""}</div>`;
     }).join("") || '<div class="none">keine</div>';
-  },
-  // Lauter/Leiser/Stumm der Remote auf dieser Seite (Seiten-Option "vol", 2026-10-26) und welche Tasten das Popup oeffnen
-  _mLautHtml(p) {
-    const lp = p.popup ? this._mLautPopups(p) : [];
-    // "Lauter / Leiser / Stumm steuern hier" (Seiten-Option vol) seit 2026-10-28 nicht mehr im Editor (Nutzer: braucht
-    // es nicht - die Tasten folgen der Belegung); die Firmware wertet ein altes vol weiter aus.
-    if (!p.popup) return "";
-    return `<div class="popedit">
-      ${p.popup ? `<div class="inl"><span>${lp.length ? `<b>Öffnet mit:</b> ${lp.map(esc).join(", ")}` : "Keine Taste öffnet dieses Popup."}</span>
-        <button class="btn small" data-a="mlautlang" title="In allen Aktivitäten: Lauter und Leiser lang drücken öffnet dieses Popup"><ha-icon icon="mdi:volume-plus"></ha-icon>Lauter/Leiser lang → dieses Popup</button></div>
-        <small class="note">Jede andere Taste: unter „Tasten“ den Schritt „Menüseite als Popup öffnen …“ wählen.</small>` : ""}</div>`;
   },
 
   // Popup-Vorlagen (2026-10-26): legen nur normale Eintraege mit fester Position an - alles bleibt verschieb-,
@@ -2161,7 +2351,7 @@ const MenuEditor = {
     }
     menu.pages.push(pg);
     s.mpage = id; s.mitem = null; s.modal = null; this._touch();
-    s.msg = { text: `Popup „${titel}“ angelegt.${m.art === "medien" ? " Mit „Lauter/Leiser lang → dieses Popup“ öffnest du es per Taste." : m.art === "frage" ? " Text und die Aktion von „Ja“ anpassen." : " Lege fest, wann es aufgeht (Auslöser)."} Speichern nicht vergessen.` };
+    s.msg = { text: `Popup „${titel}“ angelegt.${m.art === "frage" ? " Text und die Aktion von „Ja“ anpassen." : " Lege fest, wann es aufgeht (Auslöser)."} Speichern nicht vergessen.` };
   },
 
   _mPopupEditor(p) {
@@ -2265,13 +2455,14 @@ const MenuEditor = {
         <select data-mp="bc">${[["", "Blau (Standard)"], ...M_FOKUSFARBEN.filter(([v]) => v && v !== "#3b82f6")].map(([v, n]) => `<option value="${v}" ${(p.bc || "") === v ? "selected" : ""}>${n}</option>`).join("")}</select></label></div></details>
       <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
         <button class="btn small" data-a="maddsub" title="Neue Seite anlegen und hier verlinken"><ha-icon icon="mdi:file-tree"></ha-icon>Unterseite</button>
+        <button class="btn small" data-a="mappadd" title="App am Fernseher/Streamer öffnen – der Konfigurator erkennt sie und legt einen Eintrag an, der sie öffnet"><ha-icon icon="mdi:apps"></ha-icon>App …</button>
+        ${this.s.order.length > 1 ? `<button class="btn small ghost" data-a="mueber" title="Diese Seite samt Unterseiten an andere Remotes übertragen und dort speichern"><ha-icon icon="mdi:upload-multiple"></ha-icon>An andere Remotes …</button>` : ""}
         ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
         <button class="btn small ghost" data-a="mclippage" title="Seite samt Unterseiten kopieren – einfügen bei jeder Remote unter „Seiten“"><ha-icon icon="mdi:content-copy"></ha-icon>Seite in Zwischenablage</button>
         <button class="btn small ghost" data-a="mers" title="Eine Entität überall durch eine andere ersetzen (z. B. anderer Media Player)"><ha-icon icon="mdi:find-replace"></ha-icon>Entität ersetzen</button>
         <button class="btn small" data-a="mtest" title="Diese Seite jetzt auf ${esc(devName(this.s.dev))} anzeigen (als Popup) – ohne die Auslöser abzuwarten"><ha-icon icon="mdi:cellphone-play"></ha-icon>Auf der Remote zeigen</button>
         <button class="btn small ghost" data-a="mcopypage"><ha-icon icon="mdi:content-duplicate"></ha-icon>Seite kopieren</button>
         <button class="btn small ghost" data-a="mdelpage"><ha-icon icon="mdi:delete-outline"></ha-icon>Seite löschen</button></div>
-      ${this._mLautHtml(p)}
       ${this._mPopupEditor(p)}
       ${erreichbar.has(p.id) || p.popup ? "" : `<div class="lose"><ha-icon icon="mdi:link-variant-off"></ha-icon><span><b>Nicht im Menü verlinkt</b> – auf der Remote nur als Popup aus HA erreichbar.</span>
         <div class="inl">Einhängen auf <select id="linkto">${this.menu.pages.filter((pg) => pg.id !== p.id && erreichbar.has(pg.id)).map((pg) => `<option value="${esc(pg.id)}" ${pg.id === this.menu.start ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}</select>
@@ -2334,15 +2525,13 @@ const MenuEditor = {
     const rand = Array.from({ length: screens - 1 }, (_, k) => { const y = M_PAD + (k + 1) * sicht * M_ROW - M_GAP / 2;
       return `<div class="pscr" style="top:${y}px"><span>${k === 0 ? "Displayende – ab hier scrollen" : `Ende Bildschirm ${k + 1}`}</span></div>`; }).join("")
       + (rows > sicht ? `<div class="pdunkel" style="top:${M_PAD + sicht * M_ROW - M_GAP / 2}px;height:${(rows - sicht) * M_ROW + M_PAD}px"></div>` : "");
-    if (p.inhalt === "touchpad") {
-      return `<div class="phone"><div class="phead"><span class="pback">${p.pknopf === "min" ? "_" : "X"}</span><b>Touchpad</b></div>
-        <div class="pinfo" style="text-align:center;padding:40px 8px"><ha-icon icon="mdi:gesture-tap" style="--mdc-icon-size:64px"></ha-icon><br>Eingebautes Touchpad der Remote</div></div>`;
-    }
-    if (p.inhalt === "tastatur" || p.inhalt === "ziffern") {
-      const z = p.inhalt === "ziffern" || this.s.kbdZahlen;
-      return `<div class="phone"><div class="phead"><span class="pback" title="${p.pknopf === "min" ? "Minimieren" : "Schließen"}">${p.pknopf === "min" ? "_" : "X"}</span><b>${z ? "Ziffern" : "Tastatur"}</b></div>
-        ${this._mTastaturVorschau(z)}
-        ${p.inhalt === "tastatur" ? `<div class="pinfo"><div class="seg sm"><button class="${z ? "" : "on"}" data-a="mkbdz" data-v="">Buchstaben (Wert „text“)</button><button class="${z ? "on" : ""}" data-a="mkbdz" data-v="1">Ziffern (Wert „zahlen“)</button></div></div>` : ""}</div>`;
+    // Eingebauter Inhalt (2026-11-01): wie das echte Display, 240 x 320 (Kopfzeile mit X, Titel und Umschalter
+    // Maus / Tastatur / 123, darunter Touchpad, Ziffernblock oder Tastatur - nach Bildschirmfotos der Remote)
+    if (p.inhalt === "touchpad" || p.inhalt === "tastatur" || p.inhalt === "ziffern") {
+      const z = p.inhalt === "ziffern" || (p.inhalt === "tastatur" && this.s.kbdZahlen);
+      return `<div class="phone dspl">${this._mDisplayInhalt(p, z)}
+        ${p.inhalt === "tastatur" ? `<div class="pinfo"><div class="seg sm"><button class="${z ? "" : "on"}" data-a="mkbdz" data-v="">Buchstaben (Wert „text“)</button><button class="${z ? "on" : ""}" data-a="mkbdz" data-v="1">Ziffern (Wert „zahlen“)</button></div></div>` : ""}
+        <div class="pinfo">So sieht es auf dem Display aus (240 × 320).</div></div>`;
     }
     if (nackt) return `<div class="pgrid ${p.flow === false ? "free" : ""}" style="height:${rows * M_ROW + M_PAD * 2}px"><div class="gl">${grid}</div>${items}${rand}</div>`;
     return `<div class="phone"><div class="phead"><span class="pback">${p.popup && p.pknopf === "min" ? "_" : isStart ? "X" : "&lt;"}</span><b>${esc(p.title || p.id)}</b></div>
@@ -2387,13 +2576,6 @@ const MenuEditor = {
     return `<span class="wbox kombi">${tl.map(teil).join("")}</span>`;
   },
   // Tasten, die diese Seite als Popup oeffnen ("Aktivitaet · Taste lang")
-  _mLautPopups(p) {
-    const out = [];
-    (this.cfg.activities || []).forEach((a) => Object.entries(a.keys || {}).forEach(([k, kc]) => GESTURES.forEach(([g, gl]) => {
-      if ((kc[g] || []).some((st) => st.t === "int" && st.fn === "popup_open" && st.page === p.id)) out.push(`${a.name} · ${KEYNAME[k] || k} ${gl}`);
-    })));
-    return out;
-  },
 
   // Kachel-Optionen in der Vorschau (wie menue.cpp quelle_/extras_zustand_)
   _mQuelle(q, it) {
@@ -2462,12 +2644,23 @@ const MenuEditor = {
   },
 
   // Eingebaute Tastatur in der Vorschau (esphomeremote-eingabe.h: QWERTZ bzw. Ziffernblock)
-  _mTastaturVorschau(zahlen) {
-    const R = zahlen ? [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["<–", "0", "OK"]]
-      : [["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], ["q", "w", "e", "r", "t", "z", "u", "i", "o", "p"],
-        ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ö"], ["^", "y", "x", "c", "v", "b", "n", "m", ["<–", 2]], ["ä", "ü", ["Leer", 4], ".", ",", ["Ent", 2]]];
-    return `<div class="kbd ${zahlen ? "zahlen" : ""}">${R.map((r) => `<div>${r.map((k) => Array.isArray(k)
-      ? `<span style="flex:${k[1]}">${esc(k[0])}</span>` : `<span>${esc(k)}</span>`).join("")}</div>`).join("")}</div>`;
+  _mDisplayInhalt(p, zahlen) {
+    const tp = p.inhalt === "touchpad", modus = tp ? "maus" : zahlen ? "zahlen" : "tastatur";
+    const titel = p.title || (tp ? "Touchpad" : zahlen ? "Ziffern" : "Tastatur");
+    const knopf = (m, inh) => `<span class="dm ${modus === m ? "an" : ""}">${inh}</span>`;
+    const kopf = `<div class="dkopf"><span class="dx" title="${p.pknopf === "min" ? "Minimieren" : "Schließen"}">${p.pknopf === "min" ? "_" : "X"}</span><b>${esc(titel)}</b>
+      ${knopf("maus", '<ha-icon icon="mdi:mouse"></ha-icon>')}${knopf("tastatur", '<ha-icon icon="mdi:keyboard"></ha-icon>')}${knopf("zahlen", "123")}</div>`;
+    let koerper;
+    if (tp) koerper = `<div class="dtp"><div><span class="dfeld"><ha-icon icon="mdi:cursor-move"></ha-icon></span><span class="dleiste"><ha-icon icon="mdi:arrow-up-down"></ha-icon></span></div>
+      <div><span class="dk"><ha-icon icon="mdi:mouse-left-click-outline"></ha-icon></span><span class="dk"><ha-icon icon="mdi:mouse-right-click-outline"></ha-icon></span><span class="dk"><ha-icon icon="mdi:format-list-bulleted"></ha-icon></span></div></div>`;
+    else {
+      const R = zahlen ? [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["<-", "0", "OK"]]
+        : [["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], ["q", "w", "e", "r", "t", "z", "u", "i", "o", "p"],
+          ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ö"], ["^", "y", "x", "c", "v", "b", "n", "m", ["<-", 2]], ["ä", "ü", ["Leer", 2], ".", ",", "<", ">", ["Ent", 2]]];
+      koerper = `<div class="dkbd ${zahlen ? "zahlen" : ""}">${R.map((r) => `<div>${r.map((k) => Array.isArray(k)
+        ? `<span style="flex:${k[1]}">${esc(k[0])}</span>` : `<span>${esc(k)}</span>`).join("")}</div>`).join("")}</div>`;
+    }
+    return `<div class="dscr">${kopf}${koerper}</div>`;
   },
 
   _mKopierKnoepfe(g, n) {
@@ -2647,6 +2840,8 @@ const MenuEditor = {
     if (art === "medien") h += this._mJetztImWidget(it.entity);
     if (art === "medien") h += sel("stil", [["", "Cover links, Titel und Tasten daneben"], ["karte", "Karte: Cover als Hintergrund (wie die eingebaute Startseite)"]], "", "Darstellung")
       + (it.stil === "karte" ? `<label class="sw small"><input type="checkbox" data-mk="laut" data-typ="nichtfalse" ${it.laut !== false ? "checked" : ""}><span>Leiser/Lauter-Tasten (ab 5 Spalten)</span></label>` : "")
+      + sel("bild", [["", "Voll (füllt die Fläche, Ränder abgeschnitten)"], ["ganz", "Ganz (ganzes Bild, ggf. mit Rand)"]], "", "Cover")
+      + sel("tipp", [["", "Play/Pause"], ...(this.menu?.pages || []).filter((pg) => pg.popup).map((pg) => [pg.id, "Popup: " + (pg.title || pg.id)])], "", "Antippen (OK) öffnet")
       + sel("leer", [["", "Immer zeigen („Nichts läuft“)"], ["weg", "Nur während der Wiedergabe – sonst rückt die Seite zusammen"]], "", "Wenn nichts läuft");
     if (art === "kamera") h += `<label>Neu laden alle (Sekunden)<input type="number" min="3" max="600" data-mk="takt" data-typ="num" value="${esc(it.takt ?? 10)}"></label>
       ${sel("bild", [["", "Randlos (füllt die Kachel, Ränder abgeschnitten)"], ["ganz", "Ganzes Bild (mit schwarzen Balken)"]], "", "Bild")}
@@ -2865,27 +3060,15 @@ const MenuEditor = {
     if (!this.s.loaded || !a.startsWith("m") || ["menu", "msgx", "modalbg", "modalx"].includes(a)) return false;
     const s = this.s, p = this.mpage, m = this.menu, i = Number(t.dataset.i);
     switch (a) {
-      case "mode": this._seiteMerken(t.dataset.m); s.mode = t.dataset.m; s.mitem = null; return true;
+      case "mode": this._seiteMerken(t.dataset.m); s.mode = t.dataset.m; s.mitem = null; this._weiterleiten(); return true;
+      case "mappadd": s.modal = { type: "appwiz", ziel: "popup", seite: p.id }; this._appWizStart(); return true;   // App-Assistent
+      case "mueber": s.modal = { type: "uebertragen", art: "seite", id: p.id, ziele: {} }; return true;
       case "mkamadd": {
         const e = Object.keys(this._hass.states).find((x) => x.startsWith("camera."));
         (this.cfg.kameras = this.cfg.kameras || []).push({ n: (this._hass.states[e]?.attributes.friendly_name || e).slice(0, 24), e });
         this._touch(); return true;
       }
       case "mkamdel": this.cfg.kameras.splice(i, 1); this._touch(); return true;
-      case "mlautlang": {   // 2026-10-26: Lauter/Leiser lang oeffnen die Medien-Steuerung - in allen Aktivitaeten
-        let wdh = 0;
-        for (const a of this.cfg.activities || []) {
-          a.keys = a.keys || {};
-          for (const k of ["33", "43"]) {
-            const kc = a.keys[k] = a.keys[k] || {};
-            if (kc.hold || kc.repeat) wdh++;
-            delete kc.hold; delete kc.repeat; delete kc.lrepeat;   // "Lang" braucht den Haltemodus "Lang auslösen"
-            kc.long = [{ t: "int", fn: "popup_open", page: p.id }];
-          }
-        }
-        s.msg = { text: `Lauter und Leiser lang öffnen jetzt „${p.title || p.id}“.${wdh ? " Gehaltenes Wiederholen der Lautstärke ist dabei entfallen – im Popup wiederholen Lauter/Leiser beim Halten." : ""} Speichern nicht vergessen.` };
-        this._touch(); return true;
-      }
       case "mpage": s.mpage = t.dataset.id; s.mitem = null; s.msel = []; s.hstd = false; return true;
       case "mtest": {   // 2026-10-25: Seite als Popup auf der Remote zeigen (direkt oder ueber das Dock)
         const d = s.dev, gespeichert = (JSON.parse(s.saved[d] || "{}").menu?.pages || []).some((pg) => pg.id === p.id);
@@ -3406,6 +3589,11 @@ details.btprox { margin-top:12px; } details.btprox summary { cursor:pointer; fon
 .pg.aus { opacity:.55; } .pg .pic { --mdc-icon-size:18px; color:var(--sec); }
 .popedit { display:flex; flex-direction:column; gap:6px; border:1px solid var(--acc); border-radius:10px; padding:10px; }
 .popedit .ph { display:flex; align-items:center; justify-content:space-between; font-size:13px; color:var(--sec); margin-top:4px; }
+.trig2 { display:flex; flex-direction:column; gap:6px; padding:8px; border:1px solid var(--div); border-radius:10px; margin-bottom:6px; }
+.trig2 .tz { display:flex; align-items:center; gap:6px; flex-wrap:wrap; } .trig2 .entity.sm { flex:1; padding:6px 10px; min-width:0; text-align:left; }
+.trig2 .entity small { font-size:11px; display:block; white-space:normal; } .trig2 .entity small i { color:var(--acc); font-style:normal; }
+.trig2 select { width:auto; max-width:160px; } .trig2 input { flex:1 1 120px; min-width:100px; } .trig2 .eq { color:var(--sec); }
+.trig2 .tsatz { color:var(--sec); font-size:12px; }
 .trig { display:flex; align-items:center; gap:4px; } .trig .entity.sm { flex:1; padding:4px 8px; min-width:0; } .trig .entity small { font-size:11px; }
 .trig input { width:96px; flex:0 0 auto; padding:6px; font-size:13px; } .trig .attr { width:70px; } .trig .eq { color:var(--sec); }
 .lose { display:flex; flex-direction:column; gap:6px; border:1px dashed var(--warning-color,#f57c00); border-radius:8px; padding:8px 10px; font-size:13px; }
@@ -3469,9 +3657,22 @@ code { font-size:12px; background:rgba(127,127,127,.15); padding:1px 4px; border
 .dlg.wide { max-width:860px; width:calc(100vw - 32px); }
 .farbe { display:inline-flex; align-items:center; gap:4px; font-size:12px; } .farbe input[type=color] { width:28px; height:24px; padding:0; border:none; background:none; }
 .zst { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:4px 0; } .zst > input:first-child { width:110px; }
-.kbd { display:flex; flex-direction:column; gap:5px; padding:8px; } .kbd > div { display:flex; gap:4px; }
-.kbd span { flex:1; background:#232a35; border-radius:6px; color:#f1f3f5; text-align:center; font-size:11px; padding:9px 0; }
-.kbd.zahlen span { font-size:18px; padding:14px 0; }
+.phone.dspl { width:auto; display:inline-flex; flex-direction:column; align-items:center; padding:12px; }
+.dscr { position:relative; width:240px; height:320px; zoom:1.25; background:#0b0f14; overflow:hidden; color:#f1f3f5; display:flex; flex-direction:column; }
+.dkopf { flex:0 0 40px; display:flex; align-items:center; gap:4px; padding-right:5px; border-bottom:3px solid #3b82f6; }
+.dkopf .dx { align-self:stretch; width:54px; background:#3b82f6; display:flex; align-items:center; justify-content:center; font-size:17px; }
+.dkopf b { flex:1; min-width:0; font-size:17px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-left:4px; }
+.dkopf .dm { flex:0 0 30px; height:30px; border-radius:8px; background:#1f2933; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; --mdc-icon-size:18px; }
+.dkopf .dm.an { background:#3b82f6; }
+.dkbd { flex:1; display:flex; flex-direction:column; gap:6px; padding:5px 4px 3px; }
+.dkbd > div { flex:1; display:flex; gap:4px; }
+.dkbd span { flex:1; min-width:0; background:#1f2933; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:12px; }
+.dkbd.zahlen { gap:5px; } .dkbd.zahlen > div { gap:5px; } .dkbd.zahlen span { font-size:18px; border-radius:9px; }
+.dtp { flex:1; display:flex; flex-direction:column; gap:6px; padding:4px 6px 6px; }
+.dtp > div { display:flex; gap:4px; } .dtp > div:first-child { flex:1; } .dtp > div:last-child { flex:0 0 46px; gap:7px; }
+.dtp .dfeld { flex:1; border:1px solid #2a3038; } .dtp .dleiste { flex:0 0 28px; } .dtp .dk { flex:1; }
+.dtp span { background:#181c20; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#525962; --mdc-icon-size:18px; }
+.dtp .dk { background:#1f2933; color:#d0d4da; }
 .haweg { display:flex; gap:12px; align-items:flex-start; padding:12px 14px; margin:0 0 12px; border-radius:14px; background:color-mix(in srgb, #f59e0b 14%, transparent); border:1px solid color-mix(in srgb, #f59e0b 40%, transparent); }
 .haweg > ha-icon { color:#f59e0b; flex:0 0 auto; --mdc-icon-size:26px; } .haweg > div { display:flex; flex-direction:column; gap:4px; } .haweg ol { margin:4px 0; padding-left:20px; }
 .haweg.klein { margin:8px 0 0; padding:8px 10px; } .haweg.klein > ha-icon { --mdc-icon-size:20px; }
@@ -3940,8 +4141,14 @@ const HomeEditor = {
           <option value="">${k === "apps" ? "Popup „apps“ (Standard)" : "das Menü (Standard)"}</option>
           ${seiten.map((pg) => `<option value="${esc(pg.id)}" ${b.ziel === pg.id ? "selected" : ""}>${esc(pg.title || pg.id)}${pg.popup ? " (Popup)" : ""}</option>`).join("")}</select></label>
         <label class="inl2">Text <input data-hl="${k}" value="${esc(b.label || "")}" maxlength="12" placeholder="${k === "apps" ? "Apps" : "Menü"}" style="width:90px"></label></div>` : "";
+      // Cover der Medien-Karte (2026-10-31, vorher unter Einstellungen): Einstellung der Remote cover_ganz_home
+      const cg = (this.s.meta[this.s.dev]?.einst || {}).cover_ganz_home;
+      const cover = k === "medien" ? `<div class="inl hziel">${cg !== undefined ? `<label class="inl2">Cover <select data-einst="cover_ganz_home">
+          <option value="true" ${cg ? "selected" : ""}>Ganz (mit Rand)</option><option value="false" ${cg ? "" : "selected"}>Voll (randlos, Ränder abgeschnitten)</option></select></label>` : ""}
+        <label class="inl2" title="Was beim Antippen der Medien-Karte aufgeht (2026-11-01)">Antippen öffnet <select data-hz="medien">
+          <option value="">die Media-Seite (Standard)</option>${seiten.filter((pg) => pg.popup).map((pg) => `<option value="${esc(pg.id)}" ${b.ziel === pg.id ? "selected" : ""}>Popup: ${esc(pg.title || pg.id)}</option>`).join("")}</select></label></div>` : "";
       return `<div class="hl ${sel === k ? "sel" : ""}"><label class="sw small"><input type="checkbox" data-hon="${k}" ${b.on ? "checked" : ""}><span><b>${esc(l)}</b></span></label>
-        <small>${esc(txt)}${b.on && !o.fix ? ` · Spalte ${b.x + 1}, Zeile ${b.y + 1}, ${b.w}×${b.h}` : ""}</small>${knopf}</div>`;
+        <small>${esc(txt)}${b.on && !o.fix ? ` · Spalte ${b.x + 1}, Zeile ${b.y + 1}, ${b.w}×${b.h}` : ""}</small>${knopf}${cover}</div>`;
     }).join("");
     const s = this.s, p = s.hstd ? null : this.mpage;
     const links = this._hSeitenHtml(p);
@@ -4022,7 +4229,8 @@ const HomeEditor = {
   _hSeitenEinst(p) {
     return `<div class="hseinst">${p ? `<h3><ha-icon icon="mdi:home-variant-outline"></ha-icon>Diese Startseite</h3>${this._hPageHead(p)}` : ""}
       ${this._hLeisteHtml()}${this._hStatusHtml()}
-      ${p ? '<small class="note">Eintrag in der Vorschau oder Liste antippen, um ihn zu bearbeiten.</small>' : ""}</div>`;
+      ${p ? '<small class="note">Eintrag in der Vorschau oder Liste antippen, um ihn zu bearbeiten.</small>' : ""}
+      ${this.s.order.length > 1 ? `<button class="btn small ghost" data-a="hueber" ${p ? `data-p="${esc(p.id)}"` : ""} title="${p ? "Diese Startseite an andere Remotes übertragen (gleiche Aktivität bekommt sie als Startseite)" : "Aufbau der eingebauten Startseite an andere Remotes übertragen"}"><ha-icon icon="mdi:upload-multiple"></ha-icon>An andere Remotes …</button>` : ""}</div>`;
   },
   // Statusleiste (2026-10-30): die Symbol-Schalter der Remote (Einstellungen > Anzeige) auch hier - gehen sofort an die Remote
   _hStatusHtml() {
@@ -4345,7 +4553,7 @@ const NeuEditor = {
     } else if (m.schritt === 1) {
       const neuStart = !j || (!j.running && j.exit == null);   // z. B. nach einem Neustart von Home Assistant
       body = `<p>Die Firmware für <b>${esc(devName(m.dev))}</b> wird im ESPHome-Add-on gebaut (beim ersten Mal etwa 10 Minuten).
-        Du kannst das Fenster auch schließen – weiter geht es dann unter Firmware &amp; Geräte › „Einrichten fortsetzen“.</p>${neuStart ? "" : this._neuLog(j)}`;
+        Du kannst das Fenster auch schließen – weiter geht es dann in der Werkstatt › „Einrichten fortsetzen“.</p>${neuStart ? "" : this._neuLog(j)}`;
       fuss = j && j.running ? ""
         : j && j.exit === 0 ? `<button class="btn primary" data-a="neu_zumflashen"><ha-icon icon="mdi:arrow-right"></ha-icon>Weiter zum Flashen</button>`
         : `<button class="btn primary" data-a="neu_bauen"><ha-icon icon="mdi:${neuStart ? "hammer-wrench" : "refresh"}"></ha-icon>${neuStart ? "Firmware bauen" : "Nochmal bauen"}</button>`;
@@ -4476,7 +4684,7 @@ const IrEditor = {
     const q = this._irQuelle(st);
     const gw = geraete.find((x) => x.id === (q?.g ?? st._g));
     const schnell = geraete.length ? `<div class="inl irgeraet"><ha-icon icon="mdi:remote-tv"></ha-icon>
-        <select data-f="ir_g" ${id} title="Eigene Geräte (Dockingstation)"><option value="">${st.db != null ? "Gerät aus der IR-Datenbank" : "Eigener Code"}</option>
+        <select data-f="ir_g" ${id} title="Eigene IR-Geräte (Dock › Infrarot)"><option value="">${st.db != null ? "Gerät aus der IR-Datenbank" : "Eigener Code"}</option>
           <optgroup label="Meine Geräte">${geraete.map((x) => `<option value="${esc(x.id)}" ${gw?.id === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</optgroup></select>
         ${gw ? `<select data-f="ir_b" ${id} title="Befehl">${q ? "" : `<option value="" selected>Befehl wählen …</option>`}${this._dockBefehle(gw).map((b) => `<option value="${esc(b.n)}" ${q?.b === b.n ? "selected" : ""}>${esc(this._dockName(b.n))}</option>`).join("")}</select>` : ""}</div>` : "";
     const erk = raw ? irErkennen(st.raw) : null;
@@ -4831,7 +5039,7 @@ const BtEditor = {
         <h3>Verbindung</h3>
         <label class="sw"><input type="checkbox" data-einst="ble_parallel" ${ew.ble_parallel ? "checked" : ""}><span>Parallel verbunden <small>– beim Aktivitätswechsel bleibt die Verbindung geparkt, kein Neuladen von Videos</small></span></label>
         ${"bt_weg" in ew ? `<label class="lbl">Über das Dock ${sel("bt_weg", [[0, "Automatisch – Dock, wenn die Remote selbst nicht verbunden ist"], [1, "Nur Remote (wie früher)"], [2, "Dock zuerst"]])}</label>
-        <small class="note">Das Dock bleibt dauerhaft mit Fernseher, Tablet & Co. verbunden (Dockingstation › Bluetooth-Geräte am Dock). Tasten aus dem Tiefschlaf und für Geräte anderer Aktivitäten kommen so sofort an – auch das Touchpad.</small>` : ""}
+        <small class="note">Das Dock bleibt dauerhaft mit Fernseher, Tablet & Co. verbunden (Docks › Dock › Bluetooth). Tasten aus dem Tiefschlaf und für Geräte anderer Aktivitäten kommen so sofort an – auch das Touchpad.</small>` : ""}
         ${"bt_notweg" in ew ? `<label class="lbl">Wenn das Dock nicht antwortet ${sel("bt_notweg", [[1, "Remote verbindet sich selbst, bis das Dock wieder antwortet"], [0, "Nichts tun – die Remote verbindet sich nie von selbst"]])}</label>
         <small class="note">Notweg für Geräte am Dock. Geräte, die nur mit der Remote gekoppelt sind, verbindet sie immer selbst. „Nichts tun“ spart Akku, wenn die Remote selbst gar nicht gekoppelt ist.</small>` : ""}
         <h3>Maus (Touchpad)</h3>
@@ -5686,7 +5894,7 @@ const FirmwareTab = {
   _fwWege(g) {
     const w = [];
     const usb = usbGeht();
-    const ota = g.art === "remote" ? (g.online ? "per WLAN" : g.ha_da ? "per WLAN (öffnet erst das Wartungsfenster)" : "per WLAN (Remote gerade nicht erreichbar)")
+    const ota = g.art === "remote" ? (g.online ? "per WLAN" : g.ha_da ? "per WLAN (HA schaltet es vorher über das Dock ein)" : "per WLAN (Remote gerade nicht erreichbar)")
       : "per WLAN" + (g.online ? "" : " (gerade offline)");
     if (g.geflasht) w.push(["OTA", ota]);
     w.push(["usb", usb ? "USB an diesem Computer (Browser)" : "USB an diesem Computer – nur Chrome/Edge über https", !usb]);
@@ -5959,27 +6167,28 @@ const FirmwareTab = {
       this._render();
     }
   },
-  _fwHtml() {
+  // inWerk: Teil der Werkstatt - Entwicklung und Hardware-Test zeigt die Werkstatt selbst
+  _fwHtml(inWerk = false) {
     const fw = this.s.fw;
     if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return `<div class="fw">Lade …</div>`; }
     if (fw.wlanNachher == null) { try { fw.wlanNachher = Number(localStorage.getItem("esphomeremote_fwwlan") || 0); } catch (e) { fw.wlanNachher = 0; } }
     if (fw.fehlerWs) return `<div class="fw"><div class="msg err">${esc(fw.fehlerWs)}</div></div>`;
     const rem = fw.geraete.filter((g) => g.art === "remote");
-    // ausgeschaltete Docks nicht mitnehmen (Remotes schlafen dagegen oft - die weckt das Wartungsfenster)
+    // ausgeschaltete Docks nicht mitnehmen (Remotes schlafen dagegen oft - ihr WLAN schaltet HA ueber das Dock ein)
     const updates = fw.geraete.filter((g) => (g.update || g.veraltet) && !g.gesperrt && g.art !== "test" && !(g.art === "dock" && !g.online));
     const alt = fw.geraete.filter((g) => g.veraltet);
     const beschaeftigt = fw.usb && !fw.usb.fertig;   // Firmware-Auftraege reihen sich ein (2026-10-30), nur USB sperrt
     const sammel = fw.job && fw.job.dateien?.length > 1 ? `<div class="karte hw">${this._fwJobHtml()}</div>` : "";
     return `<div class="fw">
       <div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware &amp; Geräte</h2><span class="grow"></span>
-        <label class="inl2" title="Remotes mit „Nur Bluetooth“: wie lange ihr WLAN nach einem Update noch an bleibt">WLAN beim Update
+        <label class="inl2" title="Remotes im Dock-Betrieb: wie lange ihr WLAN nach einem Update noch an bleibt">WLAN beim Update
           <select data-fwwlan>${[[0, "nur fürs Update"], [10, "danach noch 10 min"], [30, "danach noch 30 min"]].map(([v, n]) => `<option value="${v}" ${Number(fw.wlanNachher || 0) === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
         <button class="btn small" data-a="fw_reload" title="Neu laden"><ha-icon icon="mdi:refresh"></ha-icon></button>
         <button class="btn small" data-a="fw_allevormerken" title="Alle veralteten Remotes vormerken: jetzt bauen, aufspielen beim nächsten Benutzen" ${updates.some((x) => x.art === "remote" && !x.vorgemerkt) ? "" : "disabled"}><ha-icon icon="mdi:calendar-clock"></ha-icon>Alle vormerken</button>
         <button class="btn primary" data-a="fw_alle" ${updates.length && !beschaeftigt ? "" : "disabled"}><ha-icon icon="mdi:update"></ha-icon>Alle aktualisieren${updates.length ? ` (${updates.length})` : ""}</button></div>
       <p class="hint">${fw.lokal ? `Eine Quelle für alle: Remotes entstehen aus <code>esphome/templates/remote.yaml</code> und <code>remote-halink.yaml</code> (vor jedem Bauen neu erzeugt), Docks aus <code>esphome/templates/dock-basis.yaml</code>.`
           : `Remotes und Docks holen ihre Firmware beim Bauen von GitHub (Zweig <code>stabil</code> = letzter Release) – im ESPHome-Ordner liegt je Gerät nur eine kleine Datei mit Name und Passwörtern aus <code>secrets.yaml</code>.`}
-        „Update bereit“ = die Datei ergibt eine andere Firmware als die auf dem Gerät. Schläft eine Remote mit WLAN aus, wird vorher über Bluetooth das Wartungsfenster geöffnet.
+        „Update bereit“ = die Datei ergibt eine andere Firmware als die auf dem Gerät. Ist das WLAN einer Remote aus (Dock-Betrieb), schaltet HA es vorher über das Dock ein.
         ${usbGeht() ? "" : `<br><b>USB im Browser</b> geht nur in Chrome/Edge am PC und über ${this._hass.config?.external_url ? `<a href="${esc(this._hass.config.external_url)}/fernbedienung" target="_blank" rel="noopener">https</a>` : "https"}.`}</p>
       ${fw.fehler ? `<div class="msg err">${esc(fw.fehler)}</div>` : ""}
       ${alt.length ? `<div class="neuversion"><ha-icon icon="mdi:gift-outline"></ha-icon><span><b>Neue Version ${esc(fw.version)}</b> – ${alt.length} Gerät${alt.length === 1 ? "" : "e"} haben noch eine ältere Firmware: ${alt.map((g) => `${esc(g.friendly || g.name)} (${esc(g.fw || "ohne Versionsangabe")})`).join(", ")}.
@@ -5987,14 +6196,14 @@ const FirmwareTab = {
       ${fw.altlasten?.length ? `<div class="msg err"><b>Alte Dateien im ESPHome-Ordner gefunden</b> – ESPHome nimmt sie beim Bauen statt der aktuellen aus GitHub, ein Update kann daran scheitern:
         ${fw.altlasten.map((f) => `<code>${esc(f)}</code>`).join(", ")}.
         <div class="row" style="margin-top:6px"><button class="btn primary small" data-a="fw_aufraeumen" ${beschaeftigt ? "disabled" : ""}><ha-icon icon="mdi:broom"></ha-icon>Aufräumen (ins Archiv verschieben)</button></div></div>` : ""}
-      ${this._fwEntwicklerHtml()}
+      ${inWerk ? "" : this._fwEntwicklerHtml()}
       ${sammel}
       <div class="dkopf"><h3>Fernbedienungen</h3><span class="grow"></span>
         <button class="btn small" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
       ${rem.map((g) => this._fwKarte(g, g.bruecke ? `<div class="ents">Feste IP <code>${esc(g.bruecke.ip || "per Router")}</code> · Bluetooth-Brücke in HA <code>127.0.0.1:${g.bruecke.port}</code>${g.bruecke.ota ? " · Updates auch über Bluetooth" : ""}${g.bruecke.aktiv ? "" : ` <span class="badge warn">Brücke läuft nicht</span>`}</div>` : "")).join("") || `<div class="karte">Keine.</div>`}
       ${this._fwDockHtml()}
       ${this._fwStreamerHtml()}
-      ${this._fwTestHtml()}
+      ${inWerk ? "" : this._fwTestHtml()}
     </div>`;
   },
   // Bereich Dockingstation oben: Kurzstatus der Docks; Anlegen/Flashen/Einbinden gibt es nur im Bereich Firmware
@@ -6217,6 +6426,8 @@ Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnProper
 const SEK = (v) => v < 60 ? `${v} s` : v % 3600 === 0 ? `${v / 3600} h` : v % 60 === 0 ? `${v / 60} min` : `${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")} min`;
 const STUFEN = (werte, text = SEK, extra = {}) => werte.map((v) => [v, extra[v] ?? text(v)]);
 const HML = [[0, "Hoch"], [1, "Mittel"], [2, "Niedrig"]];
+// Gruppen mit eigenem Platz (2026-10-31): stehen nicht mehr unter Einstellungen; Wert = [Seite, Reiter-Feld, Reiter]
+const EINST_WOANDERS = { "Bluetooth & Maus": ["bt"], "Gesten": ["gesten"], "Dock-Anzeige": ["dockanz"] };
 const EINST_GRUPPEN = [
   ["Bildschirm", "mdi:brightness-6", [
     ["disp_bri", "Helligkeit Display", { min: 5, max: 100, einheit: "%" },
@@ -6244,8 +6455,6 @@ const EINST_GRUPPEN = [
       "Rechts in der Statusleiste: das <b>Dock-Symbol</b> (blau = Dock antwortet, alles läuft darüber; rot = kein Dock erreicht, die Remote nimmt ihr WLAN) bzw. das <b>HA-Symbol</b> (grün = eigene Verbindung über WLAN, grau = keine)."],
     ["cover_ganz_player", "Cover im Player", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]],
       "Ganz: das Bild vollständig, ggf. mit Rand. Voll: füllt die Fläche, Ränder werden abgeschnitten. Gilt für die Medien-Seite."],
-    ["cover_ganz_home", "Cover auf der Startseite", [[true, "Ganz (mit Rand)"], [false, "Voll (randlos)"]],
-      "Wie oben, für die Karte auf der Startseite."],
     ["mem_s", "Menü-Position merken für", STUFEN([5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, -1], SEK, { "-1": "immer" }),
       "So lange nach dem Verlassen des Menüs (bzw. ab Display-Aus) merkt sich die Remote Seite und Markierung – Wiederöffnen springt dorthin zurück. Danach beginnt das Menü oben. Gilt auch für die Medien-Seite."],
     ["media_merken", "Medienseite von der Startseite", [[0, "Nicht merken – Menütaste öffnet danach das Menü"], [1, "Merken – Menütaste holt sie zurück"]],
@@ -6344,7 +6553,7 @@ const EINST_GRUPPEN = [
       "Zeigertempo mit dem Steuerkreuz."],
     ["maus_zurueck", "Zurück-Taste im Touchpad", [[0, "Schließt das Touchpad"], [1, "Zurück am Gerät"], [2, "Rechtsklick"]],
       "Was die Zurück-Taste im Touchpad macht."],
-  ], "Verbindung zu Fernseher und Streamern (die „Plätze“) und das Touchpad. Die Verbindung zu Home Assistant steht in der Karte „Verbindung zu Home Assistant“."],
+  ], "Bluetooth-Verbindung zu Fernseher und Streamern (die „Plätze“) und das Touchpad. Im Dock-Betrieb hält das Dock diese Verbindungen; die Remote verbindet sich nur selbst, wenn ein Gerät nicht am Dock hängt oder das Dock nicht antwortet. Zu Home Assistant gibt es kein Bluetooth (Karte „Verbindung zu Home Assistant“)."],
   ["Dock-Anzeige", "mdi:tablet-dashboard", [
     ["dock_an", "Smart Display im Dock", null,
       "Im Dock als Smart Display: Uhrzeit, Wetter, Raumklima, Termine, Ladestand."],
@@ -6364,9 +6573,9 @@ const EINST_GRUPPEN = [
     ["ha_dock", "HA-Befehle über das Dock", [[0, "Aus – nur eigene Verbindung"], [1, "Nur ohne HA-Verbindung (z. B. nach dem Aufwachen)"], [2, "Immer zuerst übers Dock (am schnellsten)"]],
       "Tastenbefehle an HA (Licht, Szenen, Skripte …) gehen per Funk ans Dock, das sie in HA ausführt – ohne dass die Remote erst eine Verbindung aufbauen muss. Antwortet kein Dock, nimmt die Remote ihre eigene Verbindung. Solange die Remote selbst noch nicht mit HA verbunden ist, zeigt die Statusleiste das Dock-Symbol.", "fein"],
     ["dock_netz", "Weg zum Dock bei WLAN an", [[0, "Automatisch – Funk, sonst übers Heimnetz"], [1, "Nur Funk (ESP-NOW, wie früher)"], [2, "Immer übers Heimnetz"]],
-      "Die Remote erreicht das Dock per Funk (ESP-NOW) – das klappt aber nur, wenn beide auf demselben WLAN-Kanal sind. Hängt die Remote an der FRITZ!Box und das Dock am Repeater (anderer Kanal), kommt per Funk nichts an. <b>Automatisch:</b> Bestätigt das Dock nicht, schickt die Remote dasselbe Paket übers Heimnetz an die IP des Docks (wenige ms) und bleibt 5 min dabei. Bei ausgeschaltetem WLAN (Tiefschlaf, Nur-Bluetooth) gibt es nur Funk – dann sucht die Remote alle Kanäle ab.", "fein"],
+      "Die Remote erreicht das Dock per Funk (ESP-NOW) – das klappt aber nur, wenn beide auf demselben WLAN-Kanal sind. Hängt die Remote an der FRITZ!Box und das Dock am Repeater (anderer Kanal), kommt per Funk nichts an. <b>Automatisch:</b> Bestätigt das Dock nicht, schickt die Remote dasselbe Paket übers Heimnetz an die IP des Docks (wenige ms) und bleibt 5 min dabei. Bei ausgeschaltetem WLAN (Dock-Betrieb, Tiefschlaf) gibt es nur Funk – auf dem zuletzt bestätigten Kanal des Docks, erst danach sucht die Remote die anderen Kanäle ab.", "fein"],
     ["http_dock", "Bilder & Stand über das Dock", [[0, "Nur als Ausweg (ohne eigene Verbindung)"], [1, "Zuerst übers Dock (am schnellsten)"]],
-      "Cover, Logos und die Tasten-Konfiguration holt das Dock bei HA und funkt sie verschlüsselt an die Remote. Ist das Display an und hat die Remote keine eigene HA-Verbindung, fragt sie außerdem alle 2 s den Stand (Player, Fernseher, Timer, Popups) beim Dock ab.", "fein"],
+      "Cover, Logos und die Tasten-Konfiguration holt das Dock bei HA und funkt sie verschlüsselt an die Remote. Ist das Display an und hat die Remote keine eigene HA-Verbindung, fragt sie außerdem jede Sekunde den Stand (Player, Fernseher, Timer, Popups) beim Dock ab.", "fein"],
     ["ha_link_modus", "Bluetooth zu HA / Popups bei dunklem Display", [[3, "Nie – kein Bluetooth zu HA (Dock, sonst WLAN)"], [1, "Ja – Verbindung langsam halten"], [2, "Nein – Verbindung trennen"], [0, "Ja, sofort – Verbindung normal halten (mehr Strom)"]],
       "<b>Nie</b> (empfohlen, 2026-10-25): Die Remote baut gar keine Bluetooth-Verbindung zu HA auf. Befehle, Stand, Popups und Bilder laufen übers Dock (ESP-NOW); ist kein Dock eingerichtet oder antwortet keins, schaltet die Remote während der Benutzung ihr eigenes WLAN ein. Popups gibt es nur, solange du die Remote benutzt.<br><b>Ja:</b> Die HA-Verbindung bleibt bei dunklem Display im langsamen Takt bestehen. Klingelt es (oder geht ein anderes Popup von selbst auf), schaltet sich die Remote ein – etwa 1–2 s später als bei normaler Verbindung. Kostet etwas Strom und belegt dauerhaft einen Platz am Bluetooth-Proxy. Große Daten wie Cover lädt die Remote in dieser Zeit nicht, erst beim Einschalten.<br><b>Nein:</b> Bei dunklem Display wird die HA-Verbindung getrennt. Es gehen keine Popups von selbst auf, dafür hält der Akku am längsten und der Proxy-Platz wird frei. Beim Einschalten verbindet sich die Remote neu; bis dahin laufen Tastenbefehle, Stand und Cover übers Dock.<br>Gilt nur, solange die Remote nicht im Tiefschlaf ist – im Tiefschlaf gibt es nie Popups.", "alt"],
     ["ha_link_ruhe", "… ab dunklem Display seit", [[0, "Nie (Verbindung bleibt normal)"], [1, "1 min"], [2, "2 min"], [5, "5 min"], [10, "10 min"], [30, "30 min"]],
@@ -6426,7 +6635,56 @@ const VERBINDUNG_MODI = [
   ["wlan", "Nur WLAN (ohne Dock)", "mdi:wifi", "Alles über das eigene WLAN – für Remotes ohne Dock. Braucht mehr Strom; nach dem Aufwachen dauert der erste Befehl, bis das WLAN steht. Ist doch ein Dock da, springt es ein, solange das WLAN noch nicht verbunden ist.",
     { nur_ble: false, ha_dock: 1, http_dock: 0, ha_link_ruhe: 0, ha_link_modus: 3 }],
 ];
+// Welcher Funk wofuer (2026-10-31, Nutzer: "klar machen, was WLAN und BLE bedeutet und wofuer es genutzt wird")
+const FUNKWEGE_HTML = `<details class="funkwege"><summary><ha-icon icon="mdi:information-outline"></ha-icon>Welcher Funk wofür? Dock-Funk, Bluetooth und WLAN</summary>
+  <div class="wtabw"><table class="wtab"><tr><th></th><th>Dock, WLAN als Ausweg</th><th>Nur WLAN</th></tr>
+  <tr><td><b>Funk zum Dock</b><br><small>ESP-NOW, Remote ↔ Dock</small></td><td>Der Hauptweg: Tasten, HA-Befehle, Stand der Startseite, Popups, Cover und Konfiguration. Der Funk ist nur für jedes Paket kurz an – kein Router nötig. Kommt ein Paket nicht an, legt die Remote zweimal nach, dann probiert sie die anderen Docks.</td><td>Springt nur ein, solange das WLAN noch nicht verbunden ist (z. B. direkt nach dem Aufwachen).</td></tr>
+  <tr><td><b>Bluetooth</b><br><small>BLE, Tastatur/Maus</small></td><td>Nur zu Fernseher, Streamer, Tablet (die „Plätze“), nie zu Home Assistant. Diese Verbindung hält normalerweise das <b>Dock</b>. Die Remote verbindet sich nur selbst, wenn ein Gerät nicht am Dock gekoppelt ist oder das Dock nicht antwortet (Notweg, endet, sobald es wieder antwortet).</td><td>Die Remote verbindet sich selbst mit den Geräten (Plätze).</td></tr>
+  <tr><td><b>WLAN</b><br><small>eigene Verbindung zu HA</small></td><td>Aus. Nur als Ausweg, mit Grund und Restzeit in den Schnelleinstellungen: kein Dock eingerichtet oder erreicht, Sprache an HA, Firmware-Update, „WLAN an“ aus dem Konfigurator, Notanker (3 min weder HA noch Dock → 3 min WLAN).</td><td>Immer an, im Ruhezustand nach den Zeiten unter „Energie“ aus.</td></tr></table></div>
+  <small class="note">In Home Assistant heißt der Schalter dafür „Dock-Betrieb (WLAN aus)“, im Menü der Remote „Dock-Betrieb“.</small></details>`;
+// Bekannte Apps (Name, falls das Geraet keinen meldet)
+const APP_NAMEN = { "com.netflix.ninja": "Netflix", "com.disney.disneyplus": "Disney+", "com.amazon.amazonvideo.livingroom": "Prime Video",
+  "com.google.android.youtube.tv": "YouTube", "com.liskovsoft.smarttubetv.beta": "SmartTube", "com.teamsmart.videomanager.tv": "SmartTube",
+  "de.zdf.mediathek": "ZDF", "de.swr.avp.ard.tv": "ARD", "com.spotify.tv.android": "Spotify", "com.plexapp.android": "Plex",
+  "org.jellyfin.androidtv": "Jellyfin", "com.wbd.stream": "HBO Max", "de.joyn.android.tv": "Joyn", "com.apple.atve.androidtv.appletv": "Apple TV",
+  "com.google.android.apps.youtube.music": "YouTube Music", "tv.twitch.android.app": "Twitch" };
+const ANZ_TEILE = [["datum", "Datum"], ["uhr", "Uhrzeit"], ["wetter", "Wetter"], ["raum", "Raumklima"], ["termine", "Termine"], ["laden", "Ladestand"]];
 const EINST_CSS = `
+.appwiz { max-width:520px; } .appwiz .aw_schritte { display:flex; flex-direction:column; gap:12px; padding-left:20px; margin:8px 0; }
+.appwiz .aw_schritte li > b { display:inline-block; min-width:60px; } .appwiz .aw_schritte select, .appwiz .aw_schritte input { width:auto; min-width:220px; }
+.appwiz .aw_live { display:flex; gap:10px; align-items:center; margin-top:8px; padding:12px; border-radius:12px; border:1px solid var(--rand); background:var(--flaeche); }
+.appwiz .aw_live span { display:flex; flex-direction:column; } .appwiz .aw_live small { color:var(--sec); }
+.appwiz .aw_live.ok { border-color:#22c55e; } .appwiz .aw_live.ok ha-icon { color:#22c55e; } .appwiz .aw_live.aus ha-icon { color:var(--sec); }
+.fkt .fkams { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.fkt .fkam { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:6px 8px; border:1px solid var(--rand); border-radius:10px; }
+.fkt .fkam label span { display:flex; flex-direction:column; } .fkt .fkam small { color:var(--sec); font-size:11px; }
+.fkt .fkam input { flex:1 1 140px; min-width:120px; } .fkt .fkam.an { border-color:var(--acc-m); } .fkt .fkam input[type=checkbox] { flex:none; min-width:0; }
+.fkt .fneu { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px; } .fkt .fneu input, .fkt .fneu select { flex:1 1 130px; min-width:110px; width:auto; }
+.fkt .ez .zt { display:flex; flex-direction:column; } .fkt .ez .zt small { color:var(--sec); font-size:12px; }
+.fkt .ez { flex-wrap:wrap; } .fkt .ez .zt { flex:1 1 220px; min-width:0; } .fkt .ez > select, .fkt .ez > input { flex:1 1 180px; min-width:150px; }
+.anz .aansicht { display:grid; grid-template-columns:minmax(220px, 340px) 1fr; gap:16px 24px; align-items:start; }
+@media (max-width: 700px) { .anz .aansicht { grid-template-columns:1fr; } }
+.anz .ateil { display:flex; align-items:center; gap:6px; padding:4px 0; border-bottom:1px solid var(--rand); } .anz .ateil.aus { opacity:.6; }
+.anz .aopt { display:flex; flex-direction:column; gap:10px; align-items:flex-start; } .anz .aopt select { width:auto; }
+.rueber { padding:16px 16px 40px; display:flex; flex-direction:column; gap:16px; } .rueber .einst { padding:0; }
+.rueber .ogrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)); gap:16px; align-items:start; }
+.rueber .ogrid > .einst { display:flex; flex-direction:column; gap:16px; } .rueber .ez ha-icon { --mdc-icon-size:18px; color:var(--sec); }
+.rueber .ez .zi { display:flex; align-items:center; gap:10px; min-width:0; } .rueber .ez .zt { display:flex; flex-direction:column; } .rueber .ez .zt small { font-size:12px; color:var(--sec); }
+.rfw { padding:16px 16px 40px; }
+.reiter { padding:12px 16px 0; } .reiter .seg button { display:inline-flex; align-items:center; gap:6px; }
+.reiter .seg ha-icon { --mdc-icon-size:16px; }
+.imdock { padding:0 16px 40px; } .imdock .einst { padding:0; }
+.einst details.funkwege { margin:-4px 0 14px; border:1px solid var(--div); border-radius:12px; padding:8px 12px; background:var(--card); }
+.einst details.funkwege summary { cursor:pointer; display:flex; align-items:center; gap:6px; font-weight:600; }
+.einst details.funkwege td { vertical-align:top; font-size:13px; line-height:1.4; } .einst details.funkwege td small { color:var(--sec); }
+.verkn .tchips { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 8px; }
+.verkn .tchip { display:inline-flex; align-items:center; gap:6px; padding:4px 6px 4px 12px; border-radius:999px; border:1px solid var(--acc); background:var(--acc-s); cursor:pointer; }
+.verkn .tchip span { display:flex; flex-direction:column; line-height:1.2; } .verkn .tchip small { color:var(--sec); font-size:11px; }
+.verkn .tchip ha-icon { --mdc-icon-size:16px; color:var(--sec); } .verkn .tchip:hover ha-icon { color:var(--error-color,#e5484d); }
+.einst details.funkwege .wtabw { overflow-x:auto; margin:8px 0 4px; }
+.einst details.funkwege .wtab { width:100%; min-width:560px; border-collapse:collapse; table-layout:fixed; }
+.einst details.funkwege .wtab th, .einst details.funkwege .wtab td { border:1px solid var(--div); padding:6px 8px; text-align:left; }
+.einst details.funkwege .wtab tr > *:first-child { width:130px; } .einst details.funkwege .wtab tr > *:last-child { width:24%; }
 .einst .emodi { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px; margin:4px 0 12px; }
 .einst .emodus { all:unset; cursor:pointer; border:2px solid var(--div); background:var(--card); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; gap:4px; }
 .einst .emodus b { display:flex; align-items:center; gap:6px; font-size:15px; } .einst .emodus small { color:var(--sec); line-height:1.35; }
@@ -6468,6 +6726,8 @@ const EINST_CSS = `
 .einst input[type=number] { width:5.5em; }
 .einst .estat { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 10px; }
 .einst .ehilfe { margin:-2px 0 6px; font-size:12px; line-height:1.4; color:var(--sec); }
+.einst .ehilfe.tvwahl { color:var(--primary-text-color); }
+.einst .ehilfe.tvwahl ha-icon { --mdc-icon-size:16px; color:var(--sec); margin-right:4px; vertical-align:-3px; }
 .einst .eintro { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--sec); }
 .einst .eintro .wtabw { overflow-x:auto; margin:6px 0; }
 .einst .eintro .wtab { width:100%; border-collapse:collapse; font-size:11.5px; table-layout:fixed; }
@@ -6577,7 +6837,7 @@ const EinstTab = {
       <p class="hint">Ein <b>„Jetzt läuft“-Player</b> fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu <b>einem</b> Media Player zusammen – er zeigt immer, was gerade läuft (Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher). Welche Remote welchen nutzt, stellst du unter <i>Verknüpfungen</i> ein. Jede Quelle ist optional; Änderungen gelten sofort.</p>
       <div class="egrid">${karten}</div>
       <p><button class="btn" data-a="jz_add"><ha-icon icon="mdi:plus"></ha-icon>„Jetzt läuft“-Player anlegen</button></p>
-      ${mitStreamer ? this._strmHtml(name) : `<small class="note">Streamer (App, Titel, Cover) richtest du unter <button class="linkbtn" data-a="o_geh" data-b="fw">Firmware &amp; Geräte</button> ein.</small>`}</div>`;
+      ${mitStreamer ? this._strmHtml(name) : `<small class="note">Streamer (App, Titel, Cover) richtest du unter <button class="linkbtn" data-a="o_geh" data-b="werk">Werkstatt</button> ein.</small>`}</div>`;
   },
   // "Jetzt laeuft"-Player direkt im Medien-Widget (2026-10-30, Nutzer: nicht ueberall ein eigener Knopf): ist der gewaehlte
   // Player einer, seine Quellen hier einstellen (gilt fuer alle Remotes); sonst Hinweis + Anlegen
@@ -6594,7 +6854,7 @@ const EinstTab = {
       ${wahl("tv", "Fernseher")}${wahl("tv_app", "App-Erkennung am Fernseher")}${wahl("tv_cast", "Chromecast im Fernseher")}
       ${wahl("multiroom", "Multiroom-Musik")}${wahl("cast", "Chromecast / Lautsprecher")}
       <label>Streamer<select data-jz="streamer" data-ji="${ji}"><option value="">— keiner —</option>${(d.streamer || []).map((x) => `<option value="${esc(x.id)}" ${x.id === j.streamer ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
-      <small class="note">Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher. Play/Pause, Weiter und Lautstärke gehen an die gerade laufende Quelle. Streamer-App: Firmware &amp; Geräte.</small>`, false);
+      <small class="note">Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher. Play/Pause, Weiter und Lautstärke gehen an die gerade laufende Quelle. Streamer-App: Werkstatt.</small>`, false);
   },
   _jetztModal() {
     return `<div class="modal" data-a="modalbg"><div class="dlg wide jzdlg">
@@ -6851,8 +7111,19 @@ const EinstTab = {
     const popup = (this.cfg.menu?.pages || []).some((p) => p.id === "popup_timer");
     return `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>
       <p class="vtext">Welche Timer die Remote zeigt. Neben der Uhr steht der, der als Nächstes abläuft. Läuft einer ab, kommt das Popup „Timer abgelaufen“ (mit +5 min, Nochmal, OK).</p>
-      <div class="opts">${alle.map((e) => `<label class="opt"><input type="checkbox" data-entm="timer" value="${esc(e)}" ${gew.includes(e) ? "checked" : ""}><span><b>${esc(name(e))}</b><small>${esc(e)} · ${esc(zst(e))}</small></span></label>`).join("") || '<div class="none">Keine Timer in Home Assistant (Helfer → Timer anlegen).</div>'}</div>
+      ${alle.length ? `<div class="tchips">${gew.map((e) => `<label class="tchip" title="Entfernen"><input type="checkbox" data-entm="timer" value="${esc(e)}" checked hidden><span><b>${esc(name(e))}</b><small>${esc(zst(e))}</small></span><ha-icon icon="mdi:close"></ha-icon></label>`).join("") || '<small class="none">Noch kein Timer gewählt.</small>'}</div>
+        ${alle.length > gew.length ? `<select data-entm="timer"><option value="">+ Timer hinzufügen …</option>${alle.filter((e) => !gew.includes(e)).map((e) => `<option value="${esc(e)}">${esc(name(e))} · ${esc(zst(e))}</option>`).join("")}</select>` : ""}`
+        : '<div class="none">Keine Timer in Home Assistant (Helfer → Timer anlegen).</div>'}
       ${gew.length ? (popup ? `<small class="note">Popup: Menü → Popups → „Timer“ (frei gestaltbar).</small>` : `<small class="note warnz">Das Popup „Timer“ fehlt im Menü (gelöscht?) – im Menü über „+ Popup“ neu anlegen.</small>`) : ""}</div>`;
+  },
+  // Welcher Fernseher fuer "... bei TV an" zaehlt (Verknuepfungen › Fernseher), mit Knopf dorthin
+  // rolle "jetzt" (2026-10-31): Player der Musik-Anzeige (Verknuepfungen › Wiedergabe)
+  _tvWahlHtml(rolle = "tv") {
+    const tv = rolle === "tv", e = (this.cfg.ents || {})[rolle] || "", z = e ? this._hass.states[e] : null;
+    const was = !e ? (tv ? `<b>keiner gewählt</b> – diese Zeit greift dann nie` : `<b>keiner gewählt</b> – die Musik-Anzeige hört dann nur aufs Mikrofon`)
+      : !z ? `<b>${esc(e)}</b> – gibt es nicht (mehr)`
+      : `<b>${esc(z.attributes.friendly_name || e)}</b> · jetzt ${tv ? (["off", "standby", "unavailable", "unknown"].includes(z.state) ? "aus" : "an") : z.state === "playing" ? "spielt" : "spielt nicht"}`;
+    return `<p class="ehilfe tvwahl"><ha-icon icon="${tv ? "mdi:television" : "mdi:play-box-multiple-outline"}"></ha-icon>${tv ? "Fernseher" : "Player"}: ${was} <button class="linkbtn" data-a="mode" data-m="verkn">ändern</button></p>`;
   },
   _verknHtml() {
     const ents = this.cfg.ents || {}, st = this._hass.states;
@@ -6873,6 +7144,7 @@ const EinstTab = {
       <div class="egrid">${karten}</div></div>`;
   },
   _einstHtml() {
+    this._einstZeile = null;
     const s = this.s, m = s.meta[s.dev] || {};
     const w = m.einst || {}, offen = new Set(m.einst_offen || []), std = s.einstStandard || {};
     if (!Object.keys(w).length) return `<div class="einst"><div class="empty"><ha-icon icon="mdi:tune-variant"></ha-icon>
@@ -6880,7 +7152,7 @@ const EinstTab = {
     // Markierung (2026-10-25): "wlan" = nur bei "Nur WLAN" sinnvoll (im Dock-Betrieb ist das WLAN aus), "alt" = aus der
     // Zeit des Bluetooth-Tunnels, nur sichtbar, solange die Remote noch einen alten Wert hat, "fein" = eingeklappt
     const sichtbar = ([k, , , , tag]) => k in w && !(tag === "wlan" && w.nur_ble !== false) && !(tag === "alt" && (k === "ha_link_modus" ? w[k] === 3 : w[k] === 0));
-    const zeile = ([k, name, art, hilfe, tag]) => {
+    const zeile = this._einstZeile = ([k, name, art, hilfe, tag]) => {
       if (!sichtbar([k, name, art, hilfe, tag])) return "";
       const v = w[k];
       let ctl;
@@ -6892,9 +7164,10 @@ const EinstTab = {
       } else ctl = `<label class="sw"><input type="checkbox" data-einst="${k}" ${v ? "checked" : ""}></label>`;
       const anders = k in std && std[k] !== v;
       return `<div class="ez ${offen.has(k) ? "offen" : ""} ${anders ? "anders" : ""}" data-k="${k}" title="${offen.has(k) ? "wartet auf die Remote" : anders ? "weicht vom Standard ab" : ""}"><span>${esc(name)}${this._lichtHinweis(k)}</span>${ctl}</div>`
-        + (hilfe ? `<p class="ehilfe">${hilfe}</p>` : "");
+        + (hilfe ? `<p class="ehilfe">${hilfe}</p>` : "") + (k === "ps_wifi_off_tv_s" || k === "ps_deep_tv_s" ? this._tvWahlHtml()
+          : k === "musik_player" ? this._tvWahlHtml("jetzt") : "");
     };
-    const karten = EINST_GRUPPEN.map(([titel, icon, felder, intro]) => {
+    const karten = EINST_GRUPPEN.filter(([titel]) => !EINST_WOANDERS[titel]).map(([titel, icon, felder, intro]) => {
       const z = felder.filter((f) => f[4] !== "fein").map(zeile).join("");
       const fein = felder.filter((f) => f[4] === "fein").map(zeile).join("");
       const feinHtml = fein ? `<details class="efein"><summary><ha-icon icon="mdi:tune"></ha-icon>Feineinstellungen</summary>${fein}</details>` : "";
@@ -6918,6 +7191,7 @@ const EinstTab = {
         const on = Object.entries(werte).every(([k, v]) => !(k in w) || w[k] === v);
         return `<button class="emodus ${on ? "on" : ""}" data-a="einst_vmodus" data-m="${id}"><b><ha-icon icon="${ic}"></ha-icon>${n}</b><small>${esc(text)}</small></button>`;
       }).join("")}</div>
+      ${FUNKWEGE_HTML}
       <h3><ha-icon icon="mdi:battery-charging-wireless-outline"></ha-icon>Energiesparmodus</h3>
       <div class="emodi">${ENERGIE_MODI.map(([id, n, ic, text, werte]) => {
         const on = Object.entries(werte).every(([k, v]) => !(k in w) || w[k] === v);
@@ -6925,6 +7199,52 @@ const EinstTab = {
       }).join("")}</div>
       ${this._lichtHtml()}
       <div class="egrid">${karten}</div></div>`;
+  },
+  // Einstellungs-Karten auf anderen Seiten (2026-10-31, z. B. "Dock-Anzeige" bei Startseite › Im Dock): gleiche Zeilen
+  // wie unter Einstellungen - _einstHtml baut den Zeilen-Bauer, hier nur dafuer aufgerufen (Ergebnis verworfen)
+  _einstKarten(titel) {
+    this._einstHtml();
+    const zeile = this._einstZeile;
+    if (!zeile) return "";
+    return EINST_GRUPPEN.filter(([t]) => titel.includes(t)).map(([t, icon, felder, intro]) => {
+      const z = felder.map(zeile).join("");
+      return z ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${t}</h3>${intro ? `<div class="eintro">${intro}</div>` : ""}${z}</div>` : "";
+    }).join("");
+  },
+  // Uebersicht einer Remote (2026-10-31, wie bei den Docks): Karte, Funkwege, Firmware, Akku (vorher eigene Seite)
+  _remUeberHtml() {
+    const s = this.s, d = s.dev, L = this._live(d), w = s.meta[d]?.einst || {}, S = this._hass.states;
+    const wz = String(S[`sensor.${L.slug}_wlan_zustand`]?.state || "").split("|");
+    const wlanT = !wz[0] || ["unknown", "unavailable"].includes(wz[0]) ? "–" : wz[0] === "aus" ? "aus" : wz[0] === "immer" ? "immer an (Nur WLAN)"
+      : `an – ${wz[0]}${wz[1] ? ` (noch ${Math.max(0, Math.round(Number(wz[1]) / 60))} min, Stand ${fmtZeit(S[`sensor.${L.slug}_wlan_zustand`].last_updated)})` : ""}`;
+    const zeile = (icon, name, wert, hilfe = "") => `<div class="ez"><span class="zi"><ha-icon icon="${icon}"></ha-icon><span class="zt">${name}${hilfe ? `<small class="vtext">${hilfe}</small>` : ""}</span></span><b>${esc(wert)}</b></div>`;
+    const g = this._fwSicher() ? (s.fw.geraete || []).find((x) => x.name === d) : null;
+    return `<div class="rueber">
+      <div class="ogrid">${this._remKarte(d)}<div class="einst">
+        <div class="karte"><h3><ha-icon icon="mdi:transit-connection-variant"></ha-icon>Verbindung</h3>
+          ${zeile("mdi:router-wireless", "Verbindungsart", w.nur_ble === false ? "Nur WLAN" : w.nur_ble ? "Dock, WLAN als Ausweg" : "–", "Tasten, Befehle, Stand und Bilder gehen per Funk übers Dock")}
+          ${zeile("mdi:home-assistant", "Zu Home Assistant", L.ztext)}
+          ${zeile("mdi:wifi", "WLAN", wlanT, "Im Dock-Betrieb nur als Ausweg (kein Dock, Sprache, Update)")}
+          ${zeile("mdi:bluetooth", "Bluetooth der Remote", L.verbunden ? `verbunden mit ${L.verbunden}` : "nicht selbst verbunden", "Normalerweise hält das Dock die Verbindung zum Gerät")}
+          <div class="inl" style="margin-top:8px"><button class="btn small" data-a="mode" data-m="einst"><ha-icon icon="mdi:tune-variant"></ha-icon>Verbindungsart ändern</button></div></div>
+      </div></div>
+      <div class="kgrid">${SEITEN_REMOTE.filter(([m]) => !["ueber", "keys", "menu", "einst"].includes(m)).map(([m, t, i]) => this._kachel("mode", `data-m="${m}"`, i, t,
+        { home: "Startseiten je Aktivität", dockanz: "Was die Remote im Dock zeigt", gesten: "Bewegungen der Remote", bt: "Plätze, Koppeln, Maus", ir: "Senden und Anlernen",
+          verkn: "Player, Fernseher, Timer aus HA", akku: L.akku != null ? `${Math.round(L.akku)} %${L.restH ? ` · reicht ≈ ${fmtStd(L.restH)}` : ""}` : "Verlauf und Verbrauch",
+          fw: g ? (g.update && !g.gesperrt ? "Update bereit" : g.version ? `Version ${g.version}` : "Firmware") : "Firmware" }[m] || "")).join("")}</div>
+    </div>`;
+  },
+  // Aktivitaets-Schalter einer Remote in HA (2026-10-31 von der Seite Dockingstation zu den Verknuepfungen)
+  _schalterHtml(dev) {
+    const d = this.s.dock;
+    if (!d) { this._dockLaden(); return ""; }
+    const ids = (d.schalter || {})[dev];
+    if (!ids) return "";
+    const acts = this.s.cfg[dev]?.activities || [];
+    return `<div class="einst verkn"><div class="karte"><h3><ha-icon icon="mdi:toggle-switch-outline"></ha-icon>Aktivitäts-Schalter in Home Assistant</h3>
+      <p class="vtext">Je Aktivität ein Schalter (<code>switch.…_aktivitat_…</code>): an = läuft auf der Remote, einschalten startet sie, ausschalten beendet sie. Was dabei passiert, steht unter Tasten bei <b>Beim Starten</b> / <b>Beim Beenden</b>. Schläft die Remote, wirkt es beim nächsten Verbinden.</p>
+      <div class="opts">${acts.map((a, i) => { const id = ids[i], st = id ? this._hass.states[id] : null;
+        return `<span class="badge ${st?.state === "on" ? "eigen" : ""}" title="${esc(id || "nach dem Speichern")}">${esc(a.name)}${st ? ` · ${st.state === "on" ? "läuft" : st.state === "off" ? "aus" : "?"}` : ""}</span>`; }).join(" ")}</div></div></div>`;
   },
   // Begruessung (2026-10-20): an/aus = Einstellung "begruessung" (sofort), Text = cfg.begruessung (mit "Speichern")
   _begruessungHtml(zeile) {
@@ -7041,6 +7361,7 @@ const LICHT_CSS = `
 .licht .lz .pk button { border:0; background:none; color:var(--sec); cursor:pointer; padding:0 2px; font-size:14px; line-height:1; }
 .licht .lfuss { display:flex; gap:10px 16px; align-items:center; flex-wrap:wrap; margin-top:10px; }
 .ledtab { width:100%; border-collapse:collapse; font-size:14px; }
+.ledkarte .ez > span:first-child { display:flex; flex-direction:column; } .ledkarte .ez .vtext { color:var(--sec); font-size:12px; }
 .ledtab td { padding:8px 6px; border-top:1px solid var(--rand); vertical-align:middle; }
 .ledtab tr:first-child td { border-top:0; }
 .ledtab td.n b { display:block; } .ledtab td.n small { color:var(--sec); }
@@ -7083,53 +7404,71 @@ const LichtTab = {
     if (wert && !sensoren.some((x) => x.id === wert)) sensoren.push({ id: wert, name: wert + " (nicht gefunden)" });
     return `<select ${attrs}><option value="">${esc(std || "– keiner (Automatik aus) –")}</option>${sensoren.map((x) => `<option value="${esc(x.id)}" ${x.id === wert ? "selected" : ""}>${esc(x.name)}${x.wert != null ? ` · ${esc(x.wert)} lx` : ""}</option>`).join("")}</select>`;
   },
-  _lichtHtml() {
+  // Remote: Kurven Display + Tastenbeleuchtung; dock = Slug eines Docks: nur die Kurve Dock-LED fuer dieses Dock
+  _lichtHtml(dock = "") {
     const L = this.s.licht;
     if (!L) { this._lichtLaden(); return `<div class="karte licht"><h3><ha-icon icon="mdi:brightness-auto"></ha-icon>Helligkeit nach Lichtsensor</h3><div class="none">Lade …</div></div>`; }
     if (L.fehler) return `<div class="msg err">Lichtsensor: ${esc(L.fehler)}</div>`;
-    const c = L.cfg, lux = this._lichtLux(), sel = this.s.lichtZiel || "disp", dev = this.s.dev;
+    const dev = dock || this.s.dev, gName = dock ? (L.docks || []).find((d) => d.id === dock)?.name || dock : devName(dev);
+    const zListe = LICHT_ZIELE.filter(([z]) => dock ? z === "dock" : z !== "dock");
+    const c = L.cfg, lux = this._lichtLux(dev), sel = dock ? "dock" : zListe.some(([z]) => z === this.s.lichtZiel) ? this.s.lichtZiel : "disp";
     const stdName = (L.sensoren.find((x) => x.id === c.sensor)?.name) || c.sensor;
     const gitterX = [1, 10, 100, 1000].map((l) => `<line class="gitter" x1="${lxX(l)}" x2="${lxX(l)}" y1="${LK.t}" y2="${LK.h - LK.b}"/><text x="${lxX(l)}" y="${LK.h - 8}" text-anchor="middle">${l} lx</text>`).join("");
     const gitterY = [0, 25, 50, 75, 100].map((v) => `<line class="gitter" x1="${LK.l}" x2="${LK.w - LK.r}" y1="${pctY(v)}" y2="${pctY(v)}"/><text x="${LK.l - 6}" y="${pctY(v) + 4}" text-anchor="end">${v}%</text>`).join("");
-    const reihen = [...LICHT_ZIELE.filter(([z]) => z !== sel), ...LICHT_ZIELE.filter(([z]) => z === sel)];   // ausgewaehlte Kurve oben
+    const reihen = [...zListe.filter(([z]) => z !== sel), ...zListe.filter(([z]) => z === sel)];   // ausgewaehlte Kurve oben
     const kurven = reihen.map(([z, , f]) => {
       const zz = c.ziele[z];
       return `<path data-kz="${z}" d="${lichtPfad(zz.punkte)}" stroke="${f}" class="${zz.an ? "" : "aus"} ${z === sel ? "" : "neben"}"/>`
         + (z === sel ? zz.punkte.map(([l, v], j) => `<circle class="kp" data-z="${z}" data-j="${j}" cx="${lxX(l)}" cy="${pctY(v)}" r="7" fill="${f}"><title>${lxText(l)} lx → ${v} %</title></circle>`).join("") : "");
     }).join("");
     const jetzt = lux != null ? `<line class="jetzt" x1="${lxX(lux)}" x2="${lxX(lux)}" y1="${LK.t}" y2="${LK.h - LK.b}"/><text x="${Math.min(lxX(lux) + 4, LK.w - 60)}" y="${LK.t + 10}">jetzt ${lxText(lux)} lx</text>` : "";
-    const ziele = LICHT_ZIELE.map(([z, name, f]) => {
+    const ziele = zListe.map(([z, name, f]) => {
       const zz = c.ziele[z];
       const w = zz.an && lux != null ? lichtKurve(zz.punkte, lux) : null;
       return `<div class="lz ${z === sel ? "sel" : ""}">
         <label class="sw" title="Automatik für ${name}"><input type="checkbox" data-li="an" data-z="${z}" ${zz.an ? "checked" : ""}></label>
         <span class="farbe" style="background:${f}" data-a="li_ziel" data-z="${z}"></span><b data-a="li_ziel" data-z="${z}" title="Kurve bearbeiten">${name}</b><span class="jetztw">${w != null ? `jetzt ${w} %` : zz.an ? "–" : "aus"}</span>
         <span class="pkte">${z === sel ? [...zz.punkte].sort((a, b) => a[0] - b[0]).map(([l, v]) => `<span class="pk">${lxText(l)} lx → ${v} %<button data-a="li_del" data-z="${z}" data-l="${l}" title="Punkt löschen" ${zz.punkte.length < 2 ? "disabled" : ""}>×</button></span>`).join("") : ""}</span>
-        ${z === sel ? `<button class="btn small ghost" data-a="li_add" data-z="${z}" ${lux == null ? "disabled" : ""} title="Punkt bei der jetzigen Helligkeit im Raum"><ha-icon icon="mdi:plus"></ha-icon>Punkt</button>
+        ${z === sel ? `<button class="btn small ghost" data-a="li_add" data-z="${z}" data-g="${esc(dev)}" ${lux == null ? "disabled" : ""} title="Punkt bei der jetzigen Helligkeit im Raum"><ha-icon icon="mdi:plus"></ha-icon>Punkt</button>
           <button class="btn small ghost" data-a="li_reset" data-z="${z}" title="Kurve auf den Ausgangszustand"><ha-icon icon="mdi:backup-restore"></ha-icon></button>` : ""}</div>`;
     }).join("");
     return `<div class="karte licht">
       <div class="lkopf"><h3><ha-icon icon="mdi:brightness-auto"></ha-icon>Helligkeit nach Lichtsensor</h3>
-        <label class="sw small" title="Gilt für ${esc(devName(dev))}"><input type="checkbox" data-li="dev" ${c.aus.includes(dev) ? "" : "checked"}><span>Für ${esc(devName(dev))}</span></label></div>
-      <div class="lsensor">Sensor für ${esc(devName(dev))} ${this._lichtSensorSel(`data-li="je" data-g="${esc(dev)}"`, (c.je || {})[dev] || "", c.sensor ? `Standard (${stdName})` : "Standard (keiner)")}
+        <label class="sw small" title="Gilt für ${esc(gName)}"><input type="checkbox" ${dock ? `data-li="dock_auto" data-dock="${esc(dock)}"` : `data-li="dev"`} ${c.aus.includes(dev) ? "" : "checked"}><span>Für ${esc(gName)}</span></label></div>
+      <div class="lsensor">Sensor für ${esc(gName)} ${this._lichtSensorSel(`data-li="je" data-g="${esc(dev)}"`, (c.je || {})[dev] || "", c.sensor ? `Standard (${stdName})` : "Standard (keiner)")}
         <span class="lux">${lux != null ? `${lxText(lux)} lx` : "–"}</span></div>
       <div class="lsensor">Standard-Sensor (alle Remotes und Docks ohne eigenen) ${this._lichtSensorSel(`data-li="sensor"`, c.sensor, "")}</div>
       <svg viewBox="0 0 ${LK.w} ${LK.h}" class="lchart">${gitterY}${gitterX}${kurven}${jetzt}</svg>
       <div class="lziele">${ziele}</div>
       <div class="lfuss"><label class="sw"><input type="checkbox" data-li="lernen" ${c.lernen ? "checked" : ""}><span>Kurve lernt mit</span></label>
-        <small class="note" style="margin:0;flex:1 1 300px">Verstellst du die Helligkeit von Hand (Regler auf der Remote, hier unter Bildschirm oder die LED-Helligkeit eines Docks), merkt sich die Kurve den Wert für die jetzige Helligkeit im Raum. Punkte im Diagramm lassen sich auch ziehen. Die Kurven gelten für alle Remotes und Docks, gerechnet wird mit dem Sensor im jeweiligen Raum (eigener Sensor je Remote hier oben, je Dock unter Dockingstation). Die Remote übernimmt neue Werte beim nächsten Verbinden.</small></div>
+        <small class="note" style="margin:0;flex:1 1 300px">${dock
+          ? "Stellst du die LED-Helligkeit von Hand ein, merkt sich die Kurve den Wert für die jetzige Helligkeit im Raum. Punkte im Diagramm lassen sich auch ziehen. Die Kurve gilt für alle Docks, gerechnet wird mit dem Sensor im Raum des jeweiligen Docks."
+          : "Verstellst du die Helligkeit von Hand (Regler auf der Remote oder hier unter Bildschirm), merkt sich die Kurve den Wert für die jetzige Helligkeit im Raum. Punkte im Diagramm lassen sich auch ziehen. Die Kurven gelten für alle Remotes, gerechnet wird mit dem Sensor im jeweiligen Raum. Die Remote übernimmt neue Werte beim nächsten Verbinden. Die Kurve der Dock-LED steht beim Dock unter LED."}</small></div>
     </div>`;
   },
   // Bereich Dockingstation: LED je Dock
   _lichtDockHtml(nur = "") {
     const L = this.s.licht;
+    if (nur && L && !L.fehler) {
+      const d = (L.docks || []).find((x) => x.id === nur);
+      if (!d) return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED</h2></div><p class="hint">Dieses Dock meldet (noch) keine LED – erst mit aktueller Firmware flashen.</p>`;
+      const auto = L.cfg.ziele.dock.an && d.auto && this._lichtLux(d.id) != null;
+      return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED</h2></div>
+        ${this._lichtHtml(nur)}
+        <div class="karte einst ledkarte"><h3><ha-icon icon="mdi:led-on"></ha-icon>LED von ${esc(d.name)}</h3>
+          <div class="ez"><span>Jetzt</span><b>${d.online ? `${d.led_ist ?? "–"} %` : "offline"}</b></div>
+          <div class="ez"><span>Helligkeit von Hand${auto ? `<small class="vtext">Folgt gerade dem Lichtsensor – oben „Für ${esc(d.name)}“ ausschalten, um sie fest einzustellen.</small>` : ""}</span>
+            ${auto ? `<small>nach Lichtsensor</small>` : `<span><input type="range" min="5" max="100" step="5" value="${d.led}" data-li="dock_led" data-dock="${esc(d.id)}"> <span class="wert">${d.led} %</span></span>`}</div>
+          <div class="ez"><span>Blinkt beim Senden<small class="vtext">Kurzes Aufblitzen, wenn das Dock einen Befehl sendet</small></span><label class="sw"><input type="checkbox" data-li="dock_blinkt" data-dock="${esc(d.id)}" ${d.blinkt ? "checked" : ""}></label></div>
+        </div>`;
+    }
     if (!L) { this._lichtLaden(); return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div><p class="hint">Lade …</p>`; }
     if (L.fehler || !L.docks?.length) return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div><p class="hint">${L.fehler ? esc(L.fehler) : "Noch kein Dock mit LED gefunden."}</p>`;
     const c = L.cfg, stdName = (L.sensoren.find((x) => x.id === c.sensor)?.name) || c.sensor;
     const zeilen = L.docks.filter((d) => !nur || d.id === nur).map((d) => {
       const autoAn = c.ziele.dock.an && this._lichtLux(d.id) != null, auto = autoAn && d.auto, lx = this._lichtLux(d.id);
       return `<tr><td class="n"><b>${esc(d.name)}</b><small>${d.online ? `LED jetzt ${d.led_ist ?? "–"} %` : "offline"}</small></td>
-        <td><label class="sw small" title="Helligkeit nach Lichtsensor (Kurve unter Fernbedienung › Einstellungen)"><input type="checkbox" data-li="dock_auto" data-dock="${esc(d.id)}" ${d.auto ? "checked" : ""} ${autoAn ? "" : "disabled"}><span>Automatisch</span></label></td>
+        <td><label class="sw small" title="Helligkeit nach Lichtsensor (Kurve auf der LED-Seite des Docks)"><input type="checkbox" data-li="dock_auto" data-dock="${esc(d.id)}" ${d.auto ? "checked" : ""} ${autoAn ? "" : "disabled"}><span>Automatisch</span></label></td>
         <td class="ls">${this._lichtSensorSel(`data-li="je" data-g="${esc(d.id)}" title="Lichtsensor im Raum dieses Docks"`, (c.je || {})[d.id] || "", c.sensor ? `Standard (${stdName})` : "Standard (keiner)")}<small>${lx != null ? `${lxText(lx)} lx` : "kein Wert"}</small></td>
         <td>${auto ? `<small class="note" style="margin:0">nach Lichtsensor</small>` : `<input type="range" min="5" max="100" step="5" value="${d.led}" data-li="dock_led" data-dock="${esc(d.id)}"> <span class="wert">${d.led} %</span>`}</td>
         <td><label class="sw small"><input type="checkbox" data-li="dock_blinkt" data-dock="${esc(d.id)}" ${d.blinkt ? "checked" : ""}><span>Blinkt beim Senden</span></label></td></tr>`;
@@ -7137,7 +7476,7 @@ const LichtTab = {
     return `<div class="dkopf"><h2><ha-icon icon="mdi:led-on"></ha-icon> LED-Helligkeit</h2></div>
       <p class="hint">Wie hell die LED am Dock leuchtet – von Hand per Regler oder automatisch nach dem Lichtsensor im Raum (wie Display und Tastenbeleuchtung der Remote).</p>
       <div class="karte"><table class="ledtab">${zeilen}</table>
-      ${c.ziele.dock.an ? "" : `<small class="note">Automatik aus: Kurve „Dock-LED“ ist aus (Fernbedienung › Einstellungen).</small>`}</div>`;
+      ${c.ziele.dock.an ? "" : `<small class="note">Automatik aus: Kurve „Dock-LED“ ist aus (LED-Seite des Docks).</small>`}</div>`;
   },
   async _lichtChange(t) {
     const f = t.dataset.li;
@@ -7162,7 +7501,7 @@ const LichtTab = {
     if (a === "li_ziel") { this.s.lichtZiel = z; return true; }
     const pk = L.cfg.ziele[z].punkte;
     if (a === "li_del") await this._lichtSetzen({ ziele: { [z]: { punkte: pk.filter(([l]) => String(l) !== t.dataset.l) } } });
-    if (a === "li_add") { const lux = this._lichtLux(); await this._lichtSetzen({ ziele: { [z]: { punkte: [...pk.filter(([l]) => Math.abs(Math.log10(l) - Math.log10(Math.max(lux, 0.5))) > 0.05), [Math.max(lux, 0.5), lichtKurve(pk, lux)]] } } }); }
+    if (a === "li_add") { const lux = this._lichtLux(t.dataset.g || undefined); await this._lichtSetzen({ ziele: { [z]: { punkte: [...pk.filter(([l]) => Math.abs(Math.log10(l) - Math.log10(Math.max(lux, 0.5))) > 0.05), [Math.max(lux, 0.5), lichtKurve(pk, lux)]] } } }); }
     if (a === "li_reset" && confirm("Kurve auf den Ausgangszustand zurücksetzen? Gelernte Punkte gehen verloren.")) await this._lichtSetzen({ ziele: { [z]: { zuruecksetzen: true } } });
     return true;
   },
@@ -7197,6 +7536,108 @@ const LichtTab = {
   },
 };
 Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(LichtTab));
+// ---------------------------------------------------------------- Funktionen (2026-11-01)
+// Was vorher persoenliche HA-Pakete waren, einstellbar fuer alle (custom_components/.../funktionen.py):
+// TV-Eingang, Kamera auf dem Fernseher, Neustart per ADB, Lampe blinkt bei neuer Firmware, Dock-Wache.
+const FKT_POS = [["top-right", "oben rechts"], ["top-left", "oben links"], ["bottom-right", "unten rechts"], ["bottom-left", "unten links"], ["center", "Mitte"]];
+const FunktionenTab = {
+  _fktLaden(neu) {
+    if ((this.s.fkt && !neu) || this._fktLaedt) return;
+    this._fktLaedt = true;
+    this._hass.callWS({ type: "esphomeremote_konfig/funktionen_get" })
+      .then((r) => { this.s.fkt = r; }, (e) => { this.s.fkt = { fehler: e.message || String(e) }; })
+      .finally(() => { this._fktLaedt = false; this._render(); });
+  },
+  async _fktSetzen(werte) {
+    try { this.s.fkt = await this._hass.callWS({ type: "esphomeremote_konfig/funktionen_set", werte }); }
+    catch (e) { this.s.msg = { err: true, text: "Funktionen: " + (e.message || e.code || e) }; }
+    this._render();
+  },
+  _funktionenHtml() {
+    const F = this.s.fkt;
+    if (!F) { this._fktLaden(); return `<div class="lade"><span class="spin"></span> Lade …</div>`; }
+    if (F.fehler) return `<div class="einst"><div class="msg err">${esc(F.fehler)}</div></div>`;
+    const c = F.cfg, H = this._hass.states;
+    const wahl = (attr, liste, wert, leer) => `<select ${attr}><option value="">${esc(leer)}</option>${[...liste, ...(wert && !liste.some((x) => x.id === wert) ? [{ id: wert, name: wert + " (nicht gefunden)" }] : [])]
+      .map((x) => `<option value="${esc(x.id)}" ${x.id === wert ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>`;
+    const ez = (name, ctl, hilfe = "") => `<div class="ez"><span class="zt">${name}${hilfe ? `<small class="vtext">${hilfe}</small>` : ""}</span>${ctl}</div>`;
+    const t = c.tv_eingang, k = c.kamera_tv;
+    const quellen = (this._hass.states[t.tv]?.attributes.source_list || []).map(String);
+    const eingang = F.eingang === "aus" ? "aus" : F.eingang ? `${F.eingang}${t.streamer && F.eingang === t.streamer ? " (Streamer)" : ""}` : "–";
+    const kam = F.kameras.map((x) => { const v = k.kameras[x.id]; return `<div class="fkam ${v ? "an" : ""}">
+        <label class="sw small"><input type="checkbox" data-fk="kam_an" data-e="${esc(x.id)}" ${v ? "checked" : ""}><span><b>${esc(x.name)}</b><small>${esc(x.id)}</small></span></label>
+        ${v ? `<input data-fk="kam_name" data-e="${esc(x.id)}" value="${esc(v.name)}" placeholder="Name auf dem TV">
+          ${k.go2rtc ? `<input data-fk="kam_src" data-e="${esc(x.id)}" value="${esc(v.src)}" placeholder="go2rtc-Name (${esc(x.id.split(".")[1])})">` : ""}
+          <button class="btn small" data-a="fk_kam" data-e="${esc(x.id)}" title="Jetzt auf dem Fernseher zeigen"><ha-icon icon="mdi:television-play"></ha-icon>Zeigen</button>` : ""}</div>`; }).join("");
+    const neu = c.neustart.map((g, i) => `<div class="fneu">
+        <input data-fk="ns_name" data-i="${i}" value="${esc(g.name)}" placeholder="Name, z. B. Streamer">
+        ${wahl(`data-fk="ns_entity" data-i="${i}" title="Android-TV-Entität (ADB-Integration)"`, F.media, g.entity, "– per IP –")}
+        ${g.entity ? "" : `<input data-fk="ns_ip" data-i="${i}" value="${esc(g.ip)}" placeholder="IP-Adresse">`}
+        <button class="btn small" data-a="fk_neustart" data-i="${i}" title="Jetzt neu starten"><ha-icon icon="mdi:restart"></ha-icon>Neu starten</button>
+        <button class="icon sm" data-a="fk_ns_weg" data-i="${i}" title="Entfernen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`).join("");
+    return `<div class="einst fkt">
+      <p class="hint">Funktionen für das ganze Zuhause, die die Remotes nutzen. Nichts davon braucht eigene Skripte oder Pakete in Home Assistant – in Tasten, Menüs und Popups wählst du sie als Home-Assistant-Aktion (<code>esphomeremote_konfig.…</code>) bzw. als Entität.</p>
+      <div class="egrid">
+      <div class="karte"><h3><ha-icon icon="mdi:video-input-hdmi"></ha-icon>TV-Eingang</h3>
+        <div class="eintro">Ein Sensor mit dem Eingang, den der Fernseher gerade zeigt – so wie er ihn nennt, z. B. <b>HDMI 3</b>, oder <b>aus</b>. Damit gehen Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“. Entität: <code>sensor.esphomeremote_tv_eingang</code>.</div>
+        ${ez("Fernseher", wahl(`data-fk="tv"`, F.media, t.tv, "– keiner (Sensor aus) –"))}
+        ${t.tv ? ez("Streamer hängt an", `<select data-fk="streamer"><option value="">– kein Streamer –</option>${[...new Set([...quellen, t.streamer].filter(Boolean))].map((q) => `<option value="${esc(q)}" ${q === t.streamer ? "selected" : ""}>${esc(q)}</option>`).join("")}</select>`, "Eingang des Streamers – nur nötig für den CEC-Sensor darunter.") : ""}
+        ${t.tv && t.streamer ? ez("CEC-Sensor (optional)", wahl(`data-fk="cec"`, F.sensoren, t.cec, "– keiner –"), "Steht er auf true/an, meldet der Sensor den Eingang des Streamers – hilft, wenn der Fernseher die Quelle nicht verlässlich meldet.") : ""}
+        ${t.tv ? `<div class="ez"><span class="zt">Jetzt</span><b>${esc(eingang)}</b></div>` : ""}</div>
+      <div class="karte"><h3><ha-icon icon="mdi:cctv"></ha-icon>Kamera auf dem Fernseher</h3>
+        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – über die App <b>HA TV Dashboard</b> auf dem Fernseher/Streamer. Aktionen: <code>esphomeremote_konfig.kamera_tv</code> (Kamera, „letzte“ oder „aus“) und <code>kamera_groesse</code> (Klein/Mittel/Groß/„naechste“). Für Popups: <code>binary_sensor.esphomeremote_kamera_tv</code>.</div>
+        ${ez("Fernseher (App)", wahl(`data-fk="notify"`, F.notify.map((x) => ({ id: x, name: x.replace("notify.mobile_app_", "") })), k.notify, "– keiner (Funktion aus) –"), "Benachrichtigungsdienst der App HA TV Dashboard")}
+        ${ez("go2rtc-Adresse (optional)", `<input data-fk="go2rtc" value="${esc(k.go2rtc)}" placeholder="http://…:1984">`, "Mit go2rtc als WebRTC (schnell), leer = HLS von Home Assistant")}
+        ${ez("Position", `<select data-fk="position">${FKT_POS.map(([v, l]) => `<option value="${v}" ${k.position === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
+        ${ez("Größe", `<select data-fk="groesse">${["Klein", "Mittel", "Groß"].map((v) => `<option ${k.groesse === v ? "selected" : ""}>${v}</option>`).join("")}</select>`)}
+        <div class="fkams">${kam || '<div class="none">Keine Kameras in Home Assistant.</div>'}</div>
+        ${k.notify ? `<div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_kam" data-e="aus"><ha-icon icon="mdi:television-off"></ha-icon>Kamera ausblenden</button></div>` : ""}</div>
+      <div class="karte"><h3><ha-icon icon="mdi:restart"></ha-icon>Neustart per ADB</h3>
+        <div class="eintro">Hängt ein Android-Gerät (Streamer, Fernseher), startet es die Remote neu – Aktion <code>esphomeremote_konfig.neustart</code> mit dem Namen. Mit Android-TV-Entität über deren ADB-Verbindung, sonst direkt per IP${F.adb_schluessel ? "" : ` <b>(dafür die Integration „Android Debug Bridge“ einmal einrichten – sie legt den Schlüssel an)</b>`}.</div>
+        ${neu || '<div class="none">Noch kein Gerät.</div>'}
+        <div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_ns_neu"><ha-icon icon="mdi:plus"></ha-icon>Gerät</button></div></div>
+      <div class="karte"><h3><ha-icon icon="mdi:bell-ring-outline"></ha-icon>Hinweise</h3>
+        ${ez("Lampe blinkt bei neuer Firmware", wahl(`data-fk="version_licht"`, F.lichter, c.version_licht, "– keine –"), "Meldet eine Remote nach dem Update ihre neue Version, blinkt diese Lampe dreimal und stellt sich dann zurück.")}
+        ${ez("Dock-Wache", `<label class="sw"><input type="checkbox" data-fk="dock_wache" ${c.dock_wache ? "checked" : ""}></label>`, "Meldung in Home Assistant, wenn ein Dock 30 s nicht erreichbar ist oder sein Speicher knapp wird.")}
+        ${c.dock_wache ? ez("Speicher knapp unter", `<input type="number" min="1" max="40" data-fk="dock_block_kb" value="${c.dock_block_kb}" style="width:5em"> kB`, "Größter freier Block im Dock") : ""}</div>
+      </div></div>`;
+  },
+  async _fkChange(t) {
+    const f = t.dataset.fk, c = this.s.fkt?.cfg;
+    if (!f || !c) return false;
+    if (["tv", "streamer", "cec"].includes(f)) await this._fktSetzen({ tv_eingang: { [f]: t.value } });
+    else if (["notify", "go2rtc", "position", "groesse"].includes(f)) await this._fktSetzen({ kamera_tv: { [f]: t.value } });
+    else if (f === "kam_an") await this._fktSetzen({ kamera_tv: { kameras: { [t.dataset.e]: t.checked ? { name: "", src: "" } : null } } });
+    else if (f === "kam_name" || f === "kam_src") {
+      const v = { ...(c.kamera_tv.kameras[t.dataset.e] || {}) }; v[f === "kam_name" ? "name" : "src"] = t.value;
+      await this._fktSetzen({ kamera_tv: { kameras: { [t.dataset.e]: v } } });
+    } else if (f.startsWith("ns_")) {
+      const l = c.neustart.map((x) => ({ ...x })), i = Number(t.dataset.i);
+      l[i][f.slice(3)] = t.value;
+      await this._fktSetzen({ neustart: l });
+    } else if (f === "version_licht") await this._fktSetzen({ version_licht: t.value });
+    else if (f === "dock_wache") await this._fktSetzen({ dock_wache: t.checked });
+    else if (f === "dock_block_kb") await this._fktSetzen({ dock_block_kb: Number(t.value) });
+    return true;
+  },
+  async _fkClick(a, t) {
+    const c = this.s.fkt?.cfg;
+    if (!c) return false;
+    if (a === "fk_ns_neu") await this._fktSetzen({ neustart: [...c.neustart, { name: c.neustart.length ? "Gerät " + (c.neustart.length + 1) : "Streamer", entity: "", ip: "" }] });
+    else if (a === "fk_ns_weg") await this._fktSetzen({ neustart: c.neustart.filter((_, i) => i !== Number(t.dataset.i)) });
+    else if (a === "fk_neustart") {
+      const g = c.neustart[Number(t.dataset.i)];
+      if (!g || !confirm(`„${g.name}“ jetzt neu starten?`)) return true;
+      await this._hass.callService("esphomeremote_konfig", "neustart", { geraet: g.name }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
+      this.s.msg = { text: `Neustart an „${g.name}“ geschickt.` };
+    } else if (a === "fk_kam") {
+      await this._hass.callService("esphomeremote_konfig", "kamera_tv", { kamera: t.dataset.e }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
+    }
+    return true;
+  },
+};
+Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnPropertyDescriptors(FunktionenTab));
+
 // ---------------------------------------------------------------- Gesten, Makros, Smart Display (2026-10-17)
 const GESTEN_FEST = [
   ["schuetteln", "Zweimal schütteln", "mdi:vibrate", "Kurz zweimal hin und her – z. B. Pause/Wiedergabe."],
@@ -7348,7 +7789,7 @@ const GestenTab = {
           ${"gesten_an" in w ? `<label class="sw"><input type="checkbox" data-einst="gesten_an" ${w.gesten_an ? "checked" : ""}><span><b>Gesten an</b></span></label>
           <label class="sw small"><input type="checkbox" data-einst="gesten_dunkel" ${w.gesten_dunkel ? "checked" : ""}><span>Auch bei dunklem Display</span></label>
           <div class="inl" style="margin-top:8px;font-size:13px;color:var(--sec)">Empfindlichkeit <select data-einst="gesten_sens">${[[0, "Streng"], [1, "Normal"], [2, "Empfindlich"]].map(([v, l]) => `<option value='${v}' ${w.gesten_sens === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>`
-          : `<small class="note">Die Remote braucht dafür die neue Firmware (Bereich Firmware).</small>`}
+          : `<small class="note">Die Remote braucht dafür die neue Firmware (Werkstatt).</small>`}
         </div>
         ${liste}
         ${this.s.gestLernen && !(g.eigen || []).some((x) => x.id === this.s.gestLernen.id) ? this._lernBox()
@@ -7458,7 +7899,7 @@ const GestenTab = {
     const jetzt = new Date();
     return `<div class="dkopf"><h2><ha-icon icon="mdi:tablet-dashboard"></ha-icon> Smart Display im Dock</h2></div>
       <div class="karte anz"><div class="vorschau"><div style="flex:1 1 300px">
-        <small class="note" style="margin:0 0 6px">Steht eine Remote im Dock, zeigt sie Uhrzeit, Wetter, Raumklima, Termine und den Ladestand. Herausnehmen = sofort wieder Fernbedienung. Ein/aus und wie lange das Display an bleibt: Fernbedienung › Einstellungen › Dock-Anzeige.</small>
+        <small class="note" style="margin:0 0 6px">Steht eine Remote im Dock, zeigt sie Uhrzeit, Wetter, Raumklima, Termine und den Ladestand. Herausnehmen = sofort wieder Fernbedienung. Ein/aus, wie lange das Display an bleibt und die Musik-Anzeige stellst du unten bei „Dock-Anzeige“ ein (je Remote).</small>
         <div class="azeile"><label>Wetter${sel("wetter", A.wetter, c.wetter, "– kein Wetter –")}</label></div>
         <div class="azeile"><label>Raumtemperatur${sel("raum_t", A.temp, c.raum_t, "– keine –")}</label><label>Luftfeuchte${sel("raum_f", A.feuchte, c.raum_f, "– keine –")}</label></div>
         <div style="font-size:12px;color:var(--sec);margin-top:8px">Kalender (die nächsten <select data-anz="anzahl" style="width:auto">${[0, 1, 2, 3].map((n) => `<option ${c.anzahl === n ? "selected" : ""}>${n}</option>`).join("")}</select> Termine aus <select data-anz="tage" style="width:auto">${[1, 2, 3, 7, 14, 31].map((n) => `<option value="${n}" ${c.tage === n ? "selected" : ""}>${n === 1 ? "heute" : n + " Tagen"}</option>`).join("")}</select>)</div>
@@ -7470,13 +7911,37 @@ const GestenTab = {
         ${v.r ? `<div style="margin-top:6px"><ha-icon icon="mdi:thermometer" style="--mdc-icon-size:14px;color:#3b82f6"></ha-icon> ${v.r.t != null ? String(v.r.t).replace(".", ",") + " °C" : ""} ${v.r.f != null ? "&nbsp; " + v.r.f + " %" : ""}</div>` : ""}
         <div class="k">${(v.k || []).map(([tag, zeit, titel]) => `<div><b>${esc(tag)} ${esc(zeit)}</b><br>${esc(titel)}</div>`).join("") || "<div>Keine Termine</div>"}</div>
         ${(() => { const L = this._live(this.s.dev); return L.akku != null ? `<div style="margin-top:8px;color:#22c55e"><ha-icon icon="mdi:battery-charging-high" style="--mdc-icon-size:14px"></ha-icon> Lädt · ${Math.round(L.akku)} %</div>` : ""; })()}</div>
-      </div></div>`;
+      </div></div>
+      ${this._anzAnsichtHtml()}`;
+  },
+  // Ansicht (2026-10-31): Teile und Reihenfolge der Uhr-Ansicht, Musik-Ansicht, was Antippen tut, Vorschau
+  _anzAnsichtHtml() {
+    const c = this.s.anz.cfg, an = c.teile || ANZ_TEILE.map(([k]) => k);
+    const reihe = [...an, ...ANZ_TEILE.map(([k]) => k).filter((k) => !an.includes(k))];
+    const zeilen = reihe.map((k) => { const i = an.indexOf(k), sichtbar = i >= 0;
+      return `<div class="ateil ${sichtbar ? "" : "aus"}"><label class="sw small"><input type="checkbox" data-anz="teil" value="${k}" ${sichtbar ? "checked" : ""}><span>${esc(ANZ_TEILE.find(([x]) => x === k)[1])}</span></label>
+        <span class="grow"></span>${sichtbar ? `<button class="icon sm" data-a="anz_teil" data-k="${k}" data-r="-1" ${i === 0 ? "disabled" : ""} title="Nach oben"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+        <button class="icon sm" data-a="anz_teil" data-k="${k}" data-r="1" ${i === an.length - 1 ? "disabled" : ""} title="Nach unten"><ha-icon icon="mdi:arrow-down"></ha-icon></button>` : ""}</div>`; }).join("");
+    return `<div class="karte anz"><h3><ha-icon icon="mdi:view-dashboard-edit-outline"></ha-icon>Ansicht (gilt für alle Remotes)</h3>
+      <div class="aansicht"><div><small class="note" style="margin:0 0 6px">Uhr-Ansicht: was sie zeigt, von oben nach unten. Ausgeblendetes fällt weg, der Rest rückt mittig zusammen.</small>${zeilen}</div>
+      <div class="aopt">
+        <label class="lbl">Musik-Ansicht <select data-anz="musik">${(() => { const m = c.musik || (c.titel === false ? "nur" : "titel");
+          return [["cover", "Cover im Hintergrund, Spektrum und Titel"], ["titel", "Spektrum mit Titel"], ["nur", "Nur Spektrum"]].map(([v, l]) => `<option value="${v}" ${m === v ? "selected" : ""}>${l}</option>`).join(""); })()}</select></label>
+        <label class="lbl">Antippen <select data-anz="tipp"><option value="leiste" ${c.tipp !== "remote" ? "selected" : ""}>Steuerleiste einblenden</option><option value="remote" ${c.tipp === "remote" ? "selected" : ""}>Gleich zur Fernbedienung (wie früher)</option></select></label>
+        <small class="note">Die Steuerleiste zeigt je nach Ansicht <b>Remote</b>, <b>Musik</b>/<b>Uhr</b> zum Umschalten, <b>Heute aus</b> (Smart Display aus bis zum nächsten Herausnehmen) und bei Musik ⏮ ⏯ ⏭. Wischen links/rechts wechselt Uhr und Musik, nach unten geht es zur Fernbedienung. Tasten wirken wie immer.</small>
+        <button class="btn small" data-a="anz_test"><ha-icon icon="mdi:monitor-eye"></ha-icon>Auf ${esc(devName(this.s.dev))} zeigen</button>
+      </div></div></div>`;
   },
   async _anzChange(t) {
     const f = t.dataset.anz;
     if (!f) return false;
     const c = this.s.anz.cfg;
     if (f === "kal") await this._anzSetzen({ kalender: t.checked ? [...c.kalender, t.value] : c.kalender.filter((x) => x !== t.value) });
+    else if (f === "teil") {   // an: an der Standard-Stelle einsortieren
+      const an = (c.teile || ANZ_TEILE.map(([k]) => k)).filter((x) => x !== t.value);
+      if (t.checked) { const pos = ANZ_TEILE.findIndex(([k]) => k === t.value); let i = an.findIndex((x) => ANZ_TEILE.findIndex(([k]) => k === x) > pos); if (i < 0) i = an.length; an.splice(i, 0, t.value); }
+      await this._anzSetzen({ teile: an });
+    } else if (f === "titel") await this._anzSetzen({ titel: t.value === "1" });
     else await this._anzSetzen({ [f]: ["anzahl", "tage"].includes(f) ? Number(t.value) : t.value });
     return true;
   },
@@ -7496,6 +7961,7 @@ const PANEL_STAND = (() => { try { return new URL(import.meta.url).searchParams.
 // schmaler als das Fenster, solange die HA-Seitenleiste offen ist): ab 1100 px volle Leiste, darunter nur Symbole,
 // unter 760 px Schublade + Leiste unten.
 const SHELL_CSS = `
+:host { overflow-anchor:none; }   /* 2026-11-01: Neuzeichnen beim Ziehen liess HA die Seite Stueck fuer Stueck nach unten rollen */
 :host { --side:256px; --kopf:64px; --side-bg:color-mix(in srgb, var(--card) 55%, var(--primary-background-color)); --blau:#3b82f6; --gelb:#f59e0b; }
 button, input, select, textarea { font-family:inherit; }
 .laden { min-height:60vh; display:flex; align-items:center; justify-content:center; gap:16px; padding:24px; }
@@ -7623,7 +8089,7 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .aktivl .al.err { border-color:color-mix(in srgb, var(--fehler) 45%, transparent); } .aktivl .al.err > ha-icon { color:var(--fehler); }
 @media (max-width:700px) { .aktivl { padding:10px 12px 0; } .aktivl .alb { flex-basis:70px; } .aktivl .alt small { white-space:normal; } }
 .sbw { position:sticky; bottom:18px; z-index:15; display:flex; justify-content:center; pointer-events:none; padding:0 12px; }
-.sbw .savebar { position:relative; left:auto; bottom:auto; transform:none; pointer-events:auto; animation:hoch .2s ease-out; }
+.sbw .savebar { position:relative; left:auto; bottom:auto; transform:none; pointer-events:auto; animation:hoch .2s ease-out; } .sbw .savebar.ruhig { animation:none; }
 .savebar-platz { display:none; }
 .lade { display:flex; align-items:center; gap:10px; color:var(--sec); padding:40px; justify-content:center; }
 .blink { animation:blink 2.2s ease-out; border-radius:10px; }
@@ -7897,24 +8363,30 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
 // Belegungstabelle, Werkstatt, Schnellsuche (Strg+K), Meldungen als Toast. Die Bereiche selbst (Tasten, Menue,
 // Einstellungen ...) rendern weiter ihre eigenen Mixins - hier nur Rahmen und Navigation.
 // ===========================================================================
+// Struktur 2026-10-31: Uebersicht, Smart Display (vorher halb Dockingstation, halb Einstellungen) und Firmware neu -
+// jede Seite steht im Menue (Nutzer: nichts nur ueber die Schnellsuche), gleicher Aufbau wie bei den Docks
 const SEITEN_REMOTE = [
+  ["ueber", "Übersicht", "mdi:heart-pulse"],
   ["keys", "Tasten", "mdi:gesture-tap-button"],
   ["home", "Startseite", "mdi:view-dashboard-outline"],
+  ["dockanz", "Smart Display", "mdi:tablet-dashboard"],
   ["menu", "Menü", "mdi:menu-open"],
   ["gesten", "Gesten", "mdi:gesture"],
   ["bt", "Bluetooth", "mdi:bluetooth-settings"],
   ["ir", "Infrarot", "mdi:remote-tv"],
   ["verkn", "Verknüpfungen", "mdi:link-variant"],
   ["akku", "Akku", "mdi:battery-heart-variant"],
+  ["fw", "Firmware", "mdi:chip"],
   ["einst", "Einstellungen", "mdi:tune-variant"],
 ];
 // Unterseiten eines Docks in der Navigation (2026-10-30, wie bei den Remotes)
+// 2026-10-31: LED, Farben und Suchtempo unter "Einstellungen" (wie bei den Remotes), "led" leitet weiter
 const SEITEN_DOCK = [
   ["ueber", "Übersicht", "mdi:heart-pulse"],
   ["bt", "Bluetooth", "mdi:bluetooth-connect"],
-  ["led", "LED", "mdi:led-on"],
   ["ir", "Infrarot", "mdi:remote-tv"],
   ["fw", "Firmware", "mdi:chip"],
+  ["einst", "Einstellungen", "mdi:tune-variant"],
 ];
 // Verknuepfungen je Remote (cfg.ents, spiegel.py): welche HA-Entitaeten die eingebauten Funktionen nutzen
 const VERKN = [
@@ -7931,13 +8403,14 @@ const VERKN = [
   ["timer", "Timer neben der Uhr", "mdi:timer-outline", ["timer"],
     "Läuft dieser Timer, zeigt die Statusleiste den Countdown."],
 ];
+// Struktur 2026-10-31: "Dockingstation" aufgeloest (alles je Dock, Smart Display bei der Startseite der Remote),
+// Synchronisieren + Vergleichen = "Abgleich" mit zwei Reitern. Alte Bereiche leiten weiter (_weiterleiten).
 const SEITEN_SYSTEM = [
-  ["dock", "Dockingstation", "mdi:dock-window"],
   ["ircodes", "IR-Codes", "mdi:remote-tv"],
-  ["sync", "Synchronisieren", "mdi:sync"],
-  ["vergleich", "Vergleichen", "mdi:compare-horizontal"],
+  ["sync", "Abgleich", "mdi:sync"],
+  ["funktionen", "Funktionen", "mdi:home-lightning-bolt-outline"],
   ["pruef", "Prüfen & Finden", "mdi:clipboard-check-outline"],
-  ["fw", "Firmware & Geräte", "mdi:chip"],
+  // "Firmware & Geraete" steckt seit 2026-10-31 in der Werkstatt (Bereich "fw" fuehrt dorthin)
   ["werk", "Werkstatt", "mdi:toolbox-outline"],
 ];
 const SEITEN_TEXT = {
@@ -8029,10 +8502,27 @@ const OberflaecheTab = {
     if (b === "remote" && !m) m = s.bereich === "remote" ? s.mode : s.letzterModus || "keys";
     s.bereich = b;
     if (m) { this._seiteMerken(m); s.mode = m; s.letzterModus = m; }
+    this._weiterleiten();
     s.mitem = null;   // anderer Bereich/Editor: kein Eintrag mehr offen (Menue und Startseiten teilen s.mitem)
     s.nav = false; s.syncOffen = false;
     this._nachOben = true;
-    try { localStorage.setItem("erk_seite", JSON.stringify(b === "dockgeraet" ? [b, s.dockSel, s.dockMode] : [s.bereich, s.mode])); } catch (e) { /* egal */ }
+    try { localStorage.setItem("erk_seite", JSON.stringify(s.bereich === "dockgeraet" ? [s.bereich, s.dockSel, s.dockMode] : [s.bereich, s.mode])); } catch (e) { /* egal */ }
+  },
+  // Alte Seiten auf ihren neuen Platz (Struktur 2026-10-31): Links, Lesezeichen, gemerkte Seite, Schnellsuche
+  _weiterleiten() {
+    const s = this.s;
+    if (s.bereich === "fw") s.bereich = "werk";
+    if (s.bereich === "vergleich") { s.bereich = "sync"; s.syncTab = "vgl"; }
+    if (s.bereich === "dock") {   // Dockingstation: erstes Dock (Uebersicht), ohne Docks die Uebersicht
+      const d = this._docks?.()[0];
+      if (d) { s.bereich = "dockgeraet"; s.dockSel = d.name; s.dockMode = "ueber"; } else s.bereich = "start";
+    }
+    if (s.dockMode === "led") s.dockMode = "einst";
+  },
+  // Reiter oben auf einer Seite: k = Feld in this.s, opts = [[wert, Text, Icon]]
+  _reiter(k, opts) {
+    const v = this.s[k] || opts[0][0];
+    return `<div class="reiter"><div class="seg">${opts.map(([x, l, ic]) => `<button class="${v === x ? "on" : ""}" data-a="reiter" data-k="${k}" data-v="${x}">${ic ? `<ha-icon icon="${ic}"></ha-icon>` : ""}${l}</button>`).join("")}</div></div>`;
   },
   _remWahl(d) {
     const s = this.s;
@@ -8067,7 +8557,7 @@ const OberflaecheTab = {
       <div class="rliste">${(this._listeAlt = this._remListeHtml())}</div>
       ${this._docks().length ? `<div class="nsec">Docks</div><div class="dliste">${(this._dlisteAlt = this._dockListeHtml())}</div>` : ""}
       <div class="nsec">Zuhause</div>
-      ${SEITEN_SYSTEM.map(([k, t, i]) => item(s.bereich === k, k, "", i, t, k === "dock" && s.dock?.dirty ? '<i class="punkt warn"></i>' : "")).join("")}
+      ${SEITEN_SYSTEM.map(([k, t, i]) => item(s.bereich === k, k, "", i, t, k === "dock" && s.dock?.dirty ? '<i class="punkt warn"></i>' : k === "werk" && this._fwUpdZahl() ? `<i class="punkt warn" title="${this._fwUpdZahl()} Update(s) bereit"></i>` : "")).join("")}
       <div class="nfuss"><span>Panel ${esc(PANEL_STAND)}</span><span>Strg K = Suche · Strg S = Speichern</span></div>`;
   },
   // Docks in der festen Reihenfolge aus HA (docks_einst.ordnung), neue hinten nach Name
@@ -8105,7 +8595,7 @@ const OberflaecheTab = {
       const L = this._live(d), auf = d === s.dev && !s.remZu;
       const name = devName(d);
       const sub = auf ? `<div class="subnav">${SEITEN_REMOTE.map(([m, t, i]) => `<button class="ni ${s.bereich === "remote" && s.mode === m ? "on" : ""}" data-a="o_geh" data-b="remote" data-m="${m}" title="${esc(t)}">
-          <ha-icon icon="${i}"></ha-icon><span>${esc(t)}</span>${m === "einst" && (s.meta[d]?.einst_offen || []).length ? '<i class="punkt" title="Änderungen unterwegs"></i>' : ""}</button>`).join("")}</div>` : "";
+          <ha-icon icon="${i}"></ha-icon><span>${esc(t)}</span>${m === "einst" && (s.meta[d]?.einst_offen || []).length ? '<i class="punkt" title="Änderungen unterwegs"></i>' : ""}${m === "fw" && L.g?.update && !L.g.gesperrt ? '<i class="punkt warn" title="Update bereit"></i>' : ""}</button>`).join("")}</div>` : "";
       return `<div class="rgruppe ${auf ? "auf" : ""}" data-od="${esc(d)}" title="Ziehen = Reihenfolge ändern"><button class="rk ${auf && s.bereich === "remote" ? "on" : ""}" data-a="o_rem" data-d="${esc(d)}" title="${esc(name)} · ${esc(L.kurz)}">
           <span class="ava z-${L.zustand}">${ring(L.akku ?? 0, akkuFarbe(L.akku), 5)}${miniRemote(this._rf(d), 22)}</span>
           <span class="rkt"><b>${esc(name)}</b><small>${esc(L.kurz)}</small></span>${s.dirty[d] ? '<i class="punkt warn" title="nicht gespeichert"></i>' : ""}</button>${sub}</div>`;
@@ -8145,7 +8635,7 @@ const OberflaecheTab = {
     const zeit = w.rest ? ` ${Math.floor(w.rest / 60)}:${String(w.rest % 60).padStart(2, "0")}` : "";
     const warte = !w.an && s.wlanAn?.[d] && Date.now() - s.wlanAn[d] < 180000;
     const [cls, icon, text, tip] = w.an
-      ? (g === "immer" ? ["ok", "mdi:wifi", "WLAN immer an", "„Nur Bluetooth“ ist auf der Remote aus – das WLAN bleibt an."]
+      ? (g === "immer" ? ["ok", "mdi:wifi", "WLAN immer an", "Die Remote ist auf „Nur WLAN“ (Dock-Betrieb aus) – das WLAN bleibt an."]
         : ["ok", "mdi:wifi", `WLAN an${kurz && !["aus", "geht aus"].includes(g) ? " · " + kurz : ""}${zeit}`, g ? `Grund: ${g}${zeit ? " – geht in" + zeit + " min aus" : ""}` : "Das WLAN der Remote ist gerade an"])
       : warte ? ["wait", "mdi:wifi-sync", "WLAN angefordert", "Die Remote schaltet es ein, sobald sie das Dock fragt (Taste drücken / Display an)"]
         : ["", "mdi:wifi-off", "WLAN aus", "WLAN der Remote einschalten"];
@@ -8324,9 +8814,10 @@ const OberflaecheTab = {
       case "klingel": return this._klingelHtml();
       case "fw": return this._fwHtml();
       case "werk": return this._werkHtml();
-      case "sync": return this._syncHtml();
-      case "vergleich": return this._vglHtml();
+      case "sync": return this._reiter("syncTab", [["", "Synchronisieren", "mdi:sync"], ["vgl", "Vergleichen", "mdi:compare-horizontal"]])
+        + (this.s.syncTab === "vgl" ? this._vglHtml() : this._syncHtml());
       case "pruef": return this._pruefHtml();
+      case "funktionen": return this._funktionenHtml();
     }
     return this._haHinweis() + this._remoteSeiteHtml();
   },
@@ -8337,7 +8828,7 @@ const OberflaecheTab = {
     if (!g || g.in_ha) return "";
     return `<div class="haweg"><ha-icon icon="mdi:link-variant-off"></ha-icon><div><b>${esc(devName(d))} ist nicht in Home Assistant eingebunden</b>
       <span>Ohne diese Verbindung bekommt die Remote keine Belegung und kein Layout – Speichern und Importieren wirken nicht.</span>
-      <ol><li>Firmware aufspielen (Seite <i>Firmware &amp; Geräte</i>), Remote ins WLAN.</li>
+      <ol><li>Firmware aufspielen (Seite <i>Werkstatt</i>), Remote ins WLAN.</li>
         <li><i>Einstellungen → Geräte &amp; Dienste</i>: bei „Neues Gerät gefunden“ <b>Hinzufügen</b> – oder <i>Gerät hinzufügen → ESPHome</i> mit der IP der Remote.</li>
         <li>Beim Gerät <i>Konfigurieren</i> → <b>„Gerät darf Home-Assistant-Aktionen ausführen“</b> einschalten.</li></ol>
       <a href="/config/integrations/integration/esphome" target="_top">ESPHome-Geräte öffnen</a></div></div>`;
@@ -8345,10 +8836,19 @@ const OberflaecheTab = {
   _remoteSeiteHtml() {
     const s = this.s;
     switch (s.mode) {
+      case "ueber": return this._remUeberHtml();
       case "gesten": return this._gestenHtml();
       case "einst": return this._einstHtml();
-      case "verkn": return this._verknHtml();
+      case "verkn": return this._verknHtml() + this._schalterHtml(s.dev);
       case "akku": return this._akkuHtml();
+      case "dockanz": return `<div class="imdock">${this._anzHtml()}<div class="einst"><div class="egrid">${this._einstKarten(["Dock-Anzeige"])}</div></div></div>`;
+      case "fw": {   // Firmware dieser Remote (2026-10-31, wie bei den Docks)
+        if (!this._fwSicher()) return `<div class="lade"><span class="spin"></span> Lade …</div>`;
+        const g = (s.fw.geraete || []).find((x) => x.name === s.dev);
+        return `<div class="fw eingebettet rfw"><div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware</h2></div>
+          ${g ? this._fwKarte(g) : `<div class="karte">Für diese Remote gibt es (noch) keine Firmware-Datei. Neue Remotes legst du in der Werkstatt an.</div>`}
+          <small class="note">Alle Geräte auf einmal aktualisieren: <button class="linkbtn" data-a="o_geh" data-b="werk">Werkstatt</button>.</small></div>`;
+      }
       case "home": return this._homeHtml();
       case "menu": return this._menuHtml();
       case "bt": case "ir": {
@@ -8403,6 +8903,11 @@ const OberflaecheTab = {
       <label class="inl2" title="Symbol in der Aktivitäten-Leiste (Startseite → Aktivitäten-Leiste → Symbole)">Symbol <button class="iconpick" data-a="akticon">${akt.icon ? `<ha-icon icon="mdi:${esc(akt.icon)}"></ha-icon>` : "keins"}</button></label>
       <label class="inl2">Bluetooth-Gerät <select data-akt="slot">${[0, 1, 2, 3].map((d) => `<option value="${d}" ${akt.slot === d ? "selected" : ""}>${esc(this.slotName(d))}</option>`).join("")}</select></label>
       <label class="sw small"><input type="checkbox" data-akt="dock" ${imDock(akt, s.act) ? "checked" : ""} ${!imDock(akt, s.act) && nDock >= 4 ? "disabled" : ""}><span>In der Leiste (${nDock}/4)</span></label>
+      ${imDock(akt, s.act) ? `<label class="inl2" title="Läuft diese Aktivität schon und du tippst sie in der Leiste der Startseite nochmal an, öffnet sich dieses Popup (Menü › Popups)">Nochmal tippen
+        <select data-akt="nochmal"><option value="">– nichts –</option>${(this.menu?.pages || []).filter((p) => p.popup).map((p) => `<option value="${esc(p.id)}" ${akt.nochmal === p.id ? "selected" : ""}>${esc(p.title || p.id)}</option>`).join("")}
+          ${akt.nochmal && !(this.menu?.pages || []).some((p) => p.id === akt.nochmal) ? `<option value="${esc(akt.nochmal)}" selected>${esc(akt.nochmal)} (fehlt)</option>` : ""}</select>
+        ${akt.nochmal && (this.menu?.pages || []).some((p) => p.id === akt.nochmal) ? `<button class="icon sm" data-a="akt_popup_bearb" title="Popup im Menü-Editor bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>`
+          : `<button class="btn small ghost" data-a="akt_popup_neu" title="Popup für diese Aktivität anlegen (Apps, Aktivität beenden, Schließen) und im Menü-Editor öffnen"><ha-icon icon="mdi:plus"></ha-icon>Popup anlegen</button>`}</label>` : ""}
       <span class="grow"></span>
       <button class="icon sm" data-a="actmove" data-d="-1" ${s.act > 0 ? "" : "disabled"} title="in der Leiste nach links"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
       <button class="icon sm" data-a="actmove" data-d="1" ${s.act < acts.length - 1 ? "" : "disabled"} title="nach rechts"><ha-icon icon="mdi:arrow-right"></ha-icon></button>
@@ -8481,9 +8986,9 @@ const OberflaecheTab = {
       if (!s.enabled[d]) H.push({ stufe: "info", icon: "mdi:power-plug-off-outline", text: `${n}: Konfigurator-Belegung ist aus`, sub: "Die Remote nutzt die fest eingebaute Belegung.", k: [["o_rem", d, "Ändern", "mdi:arrow-right"]] });
       if (L.akku != null && L.akku < 20 && !L.laden) H.push({ stufe: "warn", icon: "mdi:battery-alert-variant-outline", text: `${n}: Akku fast leer (${Math.round(L.akku)} %)`, sub: "Bitte ins Dock stellen." });
       if (g && !g.in_ha) H.push({ stufe: "warn", icon: "mdi:link-variant-off", text: `${n}: nicht in Home Assistant eingebunden`, sub: "Ohne Verbindung kommt keine Belegung an. Einstellungen → Geräte & Dienste → ESPHome → Hinzufügen, dann „Gerät darf Home-Assistant-Aktionen ausführen“.",
-        k: [["o_geh", "fw", "Firmware & Geräte", "mdi:chip"]] });
+        k: [["o_geh", "fw", "Werkstatt", "mdi:toolbox-outline"]] });
       if (g?.update && !g.gesperrt && !g.vorgemerkt) H.push({ stufe: "info", icon: "mdi:update", text: `${n}: Firmware-Update bereit`, sub: L.zustand === "schlaf" ? "Remote schläft – vormerken, dann startet es beim nächsten Aufwachen." : "Kann jetzt installiert werden.",
-        k: [["o_vormerken", g.datei, "Vormerken", "mdi:calendar-clock"], ["o_geh", "fw", "Firmware", "mdi:chip"]] });
+        k: [["o_vormerken", g.datei, "Vormerken", "mdi:calendar-clock"], ["o_geh", "fw", "Werkstatt", "mdi:toolbox-outline"]] });
       if (g?.vorgemerkt) H.push({ stufe: "info", icon: "mdi:calendar-clock", text: `${n}: Update vorgemerkt`, sub: "Startet automatisch, sobald die Remote online ist." });
       const G = this._groesse(d);
       if (G && G.pct >= 85) H.push({ stufe: G.pct >= 100 ? "err" : "warn", icon: "mdi:memory", text: `${n}: Belegung ${G.pct >= 100 ? "zu groß" : "fast voll"} (${G.text})`,
@@ -8528,10 +9033,9 @@ const OberflaecheTab = {
       <section><h2 class="abschn">Fernbedienungen</h2><div class="rgrid">${s.order.map((d) => this._remKarte(d)).join("")}</div></section>
       ${docks.length ? `<section><h2 class="abschn">Docks</h2><div class="dgrid">${this._docks().map((g) => this._dockKarte(g)).join("")}</div></section>` : ""}
       <section><h2 class="abschn">Schnellzugriff</h2><div class="kgrid">
-        ${this._kachel("o_geh", 'data-b="fw"', "mdi:chip", "Firmware & Geräte", fw?.geraete ? `${fw.geraete.filter((g) => g.update && !g.gesperrt && g.art !== "test").length || "Keine"} Updates bereit` : "Updates, USB, neue Docks")}
-        ${this._kachel("o_geh", 'data-b="dock"', "mdi:dock-window", "Dockingstation", "IR-Geräte, LED, Smart Display")}
+        ${this._kachel("o_geh", 'data-b="werk"', "mdi:toolbox-outline", "Werkstatt", fw?.geraete ? `${this._fwUpdZahl() || "Keine"} Updates bereit · Firmware, neue Geräte, Hardware-Test` : "Firmware, neue Remotes und Docks, Hardware-Test")}
+        ${this._kachel("o_rem", `data-d="${esc(s.dev)}" data-m="dockanz"`, "mdi:tablet-dashboard", "Smart Display", "Was die Remote im Dock zeigt")}
         ${this._kachel("bk_down", "", "mdi:download", "Sicherung herunterladen", "Alle Remotes als Datei")}
-        ${this._kachel("o_geh", 'data-b="werk"', "mdi:toolbox-outline", "Werkstatt", "Neue Remote, Kopieren, Hardware-Test")}
       </div></section></div>`;
   },
   // Akkustand der letzten 24 h aus dem HA-Verlauf (alle 10 min neu)
@@ -8612,10 +9116,16 @@ const OberflaecheTab = {
   },
 
   // ------------------------------------------------------------- Werkstatt
+  // Werkstatt (2026-10-31): Firmware & Geraete (Updates, Remotes, Docks, Streamer) oben, darunter die Werkzeuge
+  _fwUpdZahl() {
+    const g = this.s.fw?.geraete;
+    return g ? g.filter((x) => (x.update || x.veraltet) && !x.gesperrt && x.art !== "test" && !(x.art === "dock" && !x.online)).length : 0;
+  },
   _werkHtml() {
     const s = this.s, d = s.dev;
     const tests = this._fwSicher() ? this._fwTestHtml() : `<div class="lade"><span class="spin"></span> Lade …</div>`;
     return `<div class="werk">
+      <section class="werkfw">${this._fwHtml(true)}</section>
       <section><h2 class="abschn">Einrichten &amp; übertragen</h2><div class="kgrid">
         ${this._kachel("neu", "", "mdi:plus-circle-outline", "Neue Fernbedienung", "Name, Firmware bauen, flashen, in HA einbinden – Schritt für Schritt.")}
         ${this._kachel("kopie", "", "mdi:content-duplicate", `Alles nach ${devName(d)} kopieren`, "Aktivitäten, Tasten, Menü, Startseite, Einstellungen von einer anderen Remote.")}
@@ -8623,7 +9133,6 @@ const OberflaecheTab = {
         ${this._kachel("bk_up", "", "mdi:upload", "Sicherung einspielen", "Eine Sicherung wieder auf eine oder mehrere Remotes schreiben.")}
         ${this._kachel("o_geh", 'data-b="vergleich"', "mdi:compare-horizontal", "Remotes vergleichen", "Zwei beliebige Remotes, Unterschiede je Bereich, gezielt übernehmen.")}
         ${this._kachel("p_spick", "", "mdi:printer-outline", `Spickzettel ${devName(d)}`, "Tastenbelegung aller Aktivitäten zum Ausdrucken.")}
-        ${this._kachel("o_geh", 'data-b="fw"', "mdi:chip", "Firmware & Geräte", "Updates, USB-Flashen, Docks anlegen und einbinden.")}
       </div></section>
       ${this._fwSicher() && this.s.fw.entwickler != null ? `<section class="fw eingebettet"><div class="dkopf"><h3>Entwicklung</h3></div>${this._fwEntwicklerHtml()}</section>` : ""}
       <section class="fw eingebettet">${tests || `<div class="dkopf"><h3>Hardware-Test</h3></div><p class="hint">Kein Testprogramm gefunden (<code>esphome/hardware-test.yaml</code>).</p>`}</section>
@@ -8640,6 +9149,9 @@ const OberflaecheTab = {
     const geh = (b, m, extra) => () => { this._geh(b, m); if (extra) extra(); };
     E.push({ g: "Seiten", t: "Übersicht", u: "Alle Remotes und Docks auf einen Blick", i: "mdi:view-dashboard-variant-outline", go: geh("start") });
     for (const [m, t, i] of SEITEN_REMOTE) E.push({ g: "Seiten", t, u: rn, i, go: geh("remote", m) });
+    // verschoben (Struktur 2026-10-31) - unter dem alten Namen weiter auffindbar
+    E.push({ g: "Seiten", t: "Vergleichen", u: "Abgleich", i: "mdi:compare-horizontal", go: geh("vergleich") });
+    for (const g of this._docks?.() || []) E.push({ g: "Seiten", t: `Suchtempo`, u: `${devName(g.name)} · Einstellungen`, i: "mdi:radar", go: () => { s.dockSel = g.name; s.dockMode = "einst"; this._geh("dockgeraet"); } });
     for (const [k, t, i] of SEITEN_SYSTEM) E.push({ g: "Seiten", t, u: "Für alle Remotes", i, go: geh(k) });
     for (const o of s.order) if (o !== d) E.push({ g: "Fernbedienungen", t: devName(o), u: `Wechseln · ${this._live(o).kurz}`, i: "mdi:remote", go: () => { this._remWahl(o); this._geh("remote"); } });
     const A = (t, u, i, go, k = "") => E.push({ g: "Aktionen", t, u, i, go, k });
@@ -8672,7 +9184,9 @@ const OberflaecheTab = {
       if (!(k in w)) continue;
       const v = w[k];
       const wert = Array.isArray(art) ? (art.find(([x]) => x === v)?.[1] ?? String(v)) : art ? `${v} ${art.einheit}` : v ? "an" : "aus";
-      E.push({ g: "Einstellungen", t: name, u: `${gr} · ${wert}`, i: gi, go: geh("remote", "einst", () => { s.blink = `.ez[data-k="${k}"]`; }) });
+      const wo = EINST_WOANDERS[gr];
+      E.push({ g: "Einstellungen", t: name, u: `${gr} · ${wert}`, i: gi, go: wo ? geh("remote", wo[0], () => { if (wo[1]) s[wo[1]] = wo[2]; s.blink = `[data-einst="${k}"]`; })
+        : geh("remote", "einst", () => { s.einstTab = ""; s.blink = `.ez[data-k="${k}"]`; }) });
     }
     for (const p of c.menu?.pages || []) {
       E.push({ g: "Menüseiten", t: p.title || p.id, u: `${p.popup ? "Popup" : "Menüseite"} · ${(p.items || []).length} Einträge`, i: p.popup ? "mdi:message-badge-outline" : "mdi:card-outline",
@@ -8773,9 +9287,25 @@ const OberflaecheTab = {
     const s = this.s;
     switch (a) {
       case "o_geh": this._geh(t.dataset.b, t.dataset.m); return true;
+      case "reiter": s[t.dataset.k] = t.dataset.v; this._nachOben = true; return true;   // Reiter (2026-10-31)
+      case "anz_teil": {   // Smart Display: Teil hoch/runter
+        const an = [...(s.anz.cfg.teile || ANZ_TEILE.map(([k]) => k))], i = an.indexOf(t.dataset.k), j = i + Number(t.dataset.r);
+        if (i < 0 || j < 0 || j >= an.length) return true;
+        [an[i], an[j]] = [an[j], an[i]];
+        await this._anzSetzen({ teile: an });
+        return true;
+      }
+      case "anz_test":
+        try {
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/test_zeigen", device: s.dev, seite: "_smartdisplay" });
+          s.msg = { text: `Smart Display auf ${devName(s.dev)}${r?.direkt ? "" : " – über das Dock, sobald die Remote das nächste Mal nachfragt (Display an)"}.` };
+        } catch (e) { s.msg = { err: true, text: "Zeigen ging nicht: " + (e.message || e.code) }; }
+        return true;
       case "o_rem":   // nochmal auf die offene Remote: Unterpunkte ein-/ausklappen (2026-10-29)
         if (t.dataset.d === s.dev && s.bereich === "remote") { s.remZu = !s.remZu; return true; }
-        s.remZu = false; this._remWahl(t.dataset.d); this._geh("remote", t.dataset.m); return true;
+        s.remZu = false; this._remWahl(t.dataset.d); this._geh("remote", t.dataset.m);
+        if (t.dataset.tk) s[t.dataset.tk] = t.dataset.tab;   // Reiter gleich mit (z. B. Startseite › Im Dock)
+        return true;
       case "o_dockg":   // Dock in der Navigation: oeffnen, nochmal = ein-/ausklappen (2026-10-30)
         if (s.bereich === "dockgeraet" && s.dockSel === t.dataset.d) { s.dockZu = !s.dockZu; return true; }
         s.dockZu = false; s.dockSel = t.dataset.d; s.dockMode = t.dataset.m || s.dockMode || "ueber"; this._geh("dockgeraet"); return true;
@@ -9245,7 +9775,7 @@ const PruefTab = {
       <section><div class="vwahl"><label>Remote A ${sel("a", A)}</label><button class="icon" data-a="v_tausch" title="Tauschen"><ha-icon icon="mdi:swap-horizontal"></ha-icon></button><label>Remote B ${sel("b", B)}</label>
         <span class="grow"></span>${dirty.map((d) => `<button class="btn primary small" data-a="o_speichern" data-d="${esc(d)}"><ha-icon icon="mdi:content-save"></ha-icon>${esc(devName(d))} speichern</button>`).join("")}</div>
         <p class="hint">Vergleicht den Stand im Konfigurator. Pfeil = von dort übernehmen (ersetzt den Teil auf der anderen Seite, „Rückgängig“ geht bis zum Speichern).
-          Belegung muss danach gespeichert werden, Einstellungen gehen sofort an die Remote. Für dauerhaft gleiche Remotes gibt es <a href="#" data-a="o_geh" data-b="sync">Synchronisieren</a>.</p></section>
+          Belegung muss danach gespeichert werden, Einstellungen gehen sofort an die Remote. Für dauerhaft gleiche Remotes gibt es <a href="#" data-a="reiter" data-k="syncTab" data-v="">Synchronisieren</a>.</p></section>
       <section><h2 class="abschn">Belegung <i>${nAnders ? `${nAnders} Bereich${nAnders > 1 ? "e" : ""} anders` : "gleich"}</i></h2><div class="karte vliste">${karten}</div></section>
       <section><h2 class="abschn">Einstellungen <i>${eDiff.length || "gleich"}</i></h2><div class="karte vliste">${eZeilen || `<p class="hint">Keine Unterschiede (soweit beide Remotes ihre Einstellungen gemeldet haben).</p>`}</div></section>
     </div>`;
@@ -9406,24 +9936,26 @@ const PruefTab = {
     const s = this.s;
     if (!this._fwSicher()) return `<div class="lade"><span class="spin"></span> Lade …</div>`;
     const g = this._docks().find((x) => x.name === s.dockSel);
-    if (!g) return `<div class="dock"><div class="karte">Dieses Dock gibt es nicht mehr. <button class="btn small" data-a="o_geh" data-b="dock">Zur Dockingstation</button></div></div>`;
+    if (!g) return `<div class="dock"><div class="karte">Dieses Dock gibt es nicht mehr. <button class="btn small" data-a="o_geh" data-b="start">Zur Übersicht</button></div></div>`;
     const sl = g.name.replace(/-/g, "_"), f = this._df(g.name);
     let h;
     switch (s.dockMode) {
       case "bt": h = this._dbtHtml(sl) || `<div class="karte">Für Bluetooth-Plätze braucht das Dock eine aktuelle Firmware und muss online sein.</div>`; break;
-      case "led": h = this._lichtDockHtml(sl); break;
-      case "ir": h = g.sender ? this._dockIrHtml(g.sender) : `<div class="karte">Dieses Dock hat (noch) keinen IR-Sender in Home Assistant – erst flashen und einbinden.</div>`; break;
-      case "fw": h = `<div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware</h2></div>${this._fwDockKarte(g)}`; break;
-      default:
-        if ((!s.dockVerlauf || Date.now() - s.dockVerlauf.zeit > 3e5) && !this._dvHolt) setTimeout(() => this._dockVerlaufLaden(), 0);
-        h = `<div class="dzgrid eins">${this._dockZustand(g)}</div>
+      // Einstellungen (2026-10-31, wie bei den Remotes): LED, Farben, Suchtempo (gilt fuer alle Docks)
+      case "einst": h = this._lichtDockHtml(sl) + `
           <div class="dkopf"><h2><ha-icon icon="mdi:palette-outline"></ha-icon> Farben dieses Docks</h2></div>
           <p class="hint">Nur für die Anzeige hier im Konfigurator – damit du die Docks in der Leiste auseinanderhältst.</p>
           <div class="karte"><div class="inl">${miniDock(f, 34)}<div class="lsfarben">${DF_NAMEN.map(([k, n]) => `<label class="farbe"><input type="color" data-dfarbe="${k}" data-d="${esc(g.name)}" value="${f[k]}"><span>${n}</span></label>`).join("")}</div>
             ${s.dockEinst?.farben?.[g.name] ? `<button class="btn small ghost" data-a="dfarbe_weg" data-d="${esc(g.name)}"><ha-icon icon="mdi:backup-restore"></ha-icon>Standard</button>` : ""}</div></div>
+          <div class="dsuche">${this._scanHtml()}</div>`; break;
+      case "ir": h = g.sender ? this._dockIrHtml(g.sender) : `<div class="karte">Dieses Dock hat (noch) keinen IR-Sender in Home Assistant – erst flashen und einbinden.</div>`; break;
+      case "fw": h = `<div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware</h2></div>${this._fwDockKarte(g)}${this._fehlerHtml()}`; break;
+      default:
+        if ((!s.dockVerlauf || Date.now() - s.dockVerlauf.zeit > 3e5) && !this._dvHolt) setTimeout(() => this._dockVerlaufLaden(), 0);
+        h = `<div class="dzgrid eins">${this._dockZustand(g)}</div>
           <div class="kgrid">${SEITEN_DOCK.slice(1).map(([m, t, i]) => this._kachel("o_dockm", `data-d="${esc(g.name)}" data-m="${m}"`, i, t,
-            { bt: "Bis zu 4 Geräte am Dock", led: "Helligkeit, Automatik, Blinken", ir: "Geräte, die über dieses Dock senden", fw: g.update && !g.gesperrt ? "Update bereit" : g.version ? `Version ${g.version}` : "Bauen, installieren, sperren" }[m])).join("")}
-            ${this._kachel("o_geh", 'data-b="dock"', "mdi:dock-window", "Für alle Docks", "Suchtempo, Smart Display, Aktivitäts-Schalter, Fehler")}</div>`;
+            { bt: "Bis zu 4 Geräte am Dock", ir: "Geräte, die über dieses Dock senden", einst: "LED, Farben, Suchtempo",
+              fw: g.update && !g.gesperrt ? "Update bereit" : g.version ? `Version ${g.version}` : "Bauen, installieren, sperren" }[m])).join("")}</div>`;
     }
     return `<div class="dock">${h}</div>`;
   },

@@ -454,8 +454,15 @@ inline void dock_anwenden(int a) {
           lv_obj_set_style_max_width(l, st.sym == 'o' ? breite - 6 : breite - 32, 0);
         }
       }
-      lv_obj_add_event_cb(k, [](lv_event_t *e) { aktivitaet_setzen((int) (intptr_t) lv_event_get_user_data(e)); },
-                          LV_EVENT_CLICKED, (void *) (intptr_t) akt[i]);
+      lv_obj_add_event_cb(k, [](lv_event_t *e) {
+        const int a = (int) (intptr_t) lv_event_get_user_data(e);
+        // Laufende Aktivitaet nochmal angetippt: ihr Popup (2026-10-31, Konfigurator "Nochmal tippen")
+        if (akt_an->value() && activity->value() == a) {
+          const std::string p = tk_cfg->aktivitaet_nochmal(a);
+          if (!p.empty()) { menue_popup(p); return; }
+        }
+        aktivitaet_setzen(a);
+      }, LV_EVENT_CLICKED, (void *) (intptr_t) akt[i]);
       D.knoepfe.push_back(k);
     }
     D.akt = akt;
@@ -480,6 +487,13 @@ inline void dock_anwenden(int a) {
   lv_obj_set_style_border_color(home_dock, lv_color_hex(st.akt), 0);
   lv_obj_set_style_border_width(home_dock, st.linie ? 3 : 0, 0);
   lv_obj_set_style_border_side(home_dock, leiste_oben() ? LV_BORDER_SIDE_BOTTOM : LV_BORDER_SIDE_TOP, 0);
+  // Ecke direkt ueber die Leiste legen, nicht ganz nach vorn (2026-10-31): sonst lag sie ueber dem Schleier und dem
+  // Schnellmenue (blaue Eckchen ueber dem Tastenlicht-Regler)
+  auto ecke_ueber_leiste = [&](lv_obj_t *e) {
+    if (lv_obj_get_parent(e) != lv_obj_get_parent(home_dock)) { lv_obj_move_foreground(e); return; }
+    const int32_t ziel = lv_obj_get_index(home_dock) + 1;
+    lv_obj_move_to_index(e, lv_obj_get_index(e) < ziel ? ziel - 1 : ziel);
+  };
   // Runde Ecken an den Nachbarn des aktiven Felds (fuer 2, 3 und 4 Felder, auch bei verschobenem Dock)
   dock_ecke(D.ecke[0], true);
   dock_ecke(D.ecke[1], false);
@@ -501,12 +515,12 @@ inline void dock_anwenden(int a) {
     if (pos > 0) {   // linker Nachbar: Ecke endet am Anfang des aktiven Felds (deckt die Fuge)
       lv_obj_set_pos(D.ecke[0], k.x1 - 10 - s.x1, y);
       lv_obj_remove_flag(D.ecke[0], LV_OBJ_FLAG_HIDDEN);
-      lv_obj_move_foreground(D.ecke[0]);
+      ecke_ueber_leiste(D.ecke[0]);
     }
     if (pos < n - 1) {   // rechter Nachbar: Ecke beginnt am Ende des aktiven Felds
       lv_obj_set_pos(D.ecke[1], k.x2 + 1 - s.x1, y);
       lv_obj_remove_flag(D.ecke[1], LV_OBJ_FLAG_HIDDEN);
-      lv_obj_move_foreground(D.ecke[1]);
+      ecke_ueber_leiste(D.ecke[1]);
     }
   }
 }
@@ -825,6 +839,14 @@ inline void home_knopf(const char *bereich) {
   if (*ziel) { menue_popup(ziel); return; }
   if (!strcmp(bereich, "apps")) menue_popup("apps");
   else open_menu->execute();
+}
+
+// Medien-Karte der Startseite angetippt (2026-11-01): Ziel aus dem Konfigurator (z. B. Popup "Medien"), sonst die Media-Seite
+inline bool home_medien_klick() {
+  const char *ziel = tk_cfg->home_wert("medien", "ziel");
+  if (!*ziel) return false;
+  menue_popup(ziel);
+  return true;
 }
 
 // Startseite: Bereiche aus dem Konfigurator ins Raster 6 x 8 (40-px-Zellen, Displaykoordinaten) legen.

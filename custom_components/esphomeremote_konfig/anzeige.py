@@ -31,7 +31,14 @@ STANDARD = {
     "kalender": [],
     "tage": 7,
     "anzahl": 3,
+    # 2026-10-31: Teile der Uhr-Ansicht in dieser Reihenfolge (fehlende = ausgeblendet), Musik-Ansicht mit Titel,
+    # Antippen: "leiste" = Steuerleiste (Remote / Musik-Uhr / Heute aus), "remote" = gleich zur Fernbedienung
+    "teile": ["datum", "uhr", "wetter", "raum", "termine", "laden"],
+    "titel": True,      # alt (bis 2026-10-31), gilt nur, solange "musik" fehlt
+    "musik": "",        # "titel" Spektrum mit Titel, "nur" nur Spektrum, "cover" Cover im Hintergrund mit Titel
+    "tipp": "leiste",
 }
+TEILE = ("datum", "uhr", "wetter", "raum", "termine", "laden")
 WETTER = {
     "sunny": ("weather-sunny", "Sonnig"), "clear-night": ("weather-night", "Klar"),
     "partlycloudy": ("weather-partly-cloudy", "Teils bewölkt"), "cloudy": ("weather-cloudy", "Bewölkt"),
@@ -144,6 +151,7 @@ class Anzeige:
         if rt is not None or rf is not None:
             out["r"] = {"t": _rund(rt, 1), "f": _rund(rf)}
         out["k"] = await self._gemerkt("termine", 300, self._termine)
+        out["a"] = {"t": [x for x in c["teile"] if x in TEILE], "m": {"nur": 0, "titel": 1, "cover": 2}.get(c["musik"] or ("titel" if c["titel"] else "nur"), 1), "p": 1 if c["tipp"] == "leiste" else 0}
         return out
 
     def stand(self) -> dict:
@@ -166,6 +174,15 @@ class Anzeige:
             c["tage"] = max(1, min(31, int(neu["tage"])))
         if "anzahl" in neu:
             c["anzahl"] = max(0, min(4, int(neu["anzahl"])))
+        if "teile" in neu:
+            t = [str(x) for x in neu["teile"] if str(x) in TEILE]
+            c["teile"] = list(dict.fromkeys(t))
+        if "titel" in neu:
+            c["titel"] = bool(neu["titel"])
+        if "musik" in neu and neu["musik"] in ("titel", "nur", "cover"):
+            c["musik"] = neu["musik"]
+        if "tipp" in neu and neu["tipp"] in ("leiste", "remote"):
+            c["tipp"] = neu["tipp"]
         self.cache.clear()
         await self.kd.store.async_save(self.kd.data)
 

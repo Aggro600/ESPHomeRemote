@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.1.1 (2026-11-01)
+
+New: **Funktionen** page in the configurator – TV input (sensor reports the real input, e.g. 'HDMI 3'; popups like 'only if TV input is not HDMI 3'), camera on the TV (small/medium/large), restart via ADB, lamp blinks on new firmware, dock watch – no own packages or scripts in HA. Smart Display: control bar on tap (remote/music/clock/off for today/⏮⏯⏭), swipe gestures, parts and order configurable, music view cover/title/bars only. New quick settings: radio path remote → dock → device, tiles dock/Bluetooth/WLAN, bigger panel. Light widget: left/right dims, OK opens, OK long toggles; in the detail view every slider, colour, palette and scene can be selected with the D-pad. Tapping the running activity again opens a popup, app assistant, copy menu/start page to other remotes, readable trigger editor, media card opens a popup, test mode (WLAN stays on, no deep sleep, 12 h). Configurator restructured (all pages in the sidebar, docks with settings), touchpad/digits/keyboard preview like on the display. Radio reviewed: unnecessary maintenance windows removed, configuration via the dock first, HA only sends to reachable docks. Fix: SD card stayed mounted after config mode (microphone/music display blocked). Fix: page scrolled away while dragging in the editor. Fix: light slider got stuck when switching off.
+
+<details><summary>Deutsch</summary>
+
+Neu: Seite **Funktionen** im Konfigurator – TV-Eingang (Sensor meldet den echten Eingang, z. B. „HDMI 3“; Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“), Kamera auf dem Fernseher (Klein/Mittel/Groß), Neustart per ADB, Lampe blinkt bei neuer Firmware, Dock-Wache – ohne eigene Pakete oder Skripte in HA. Smart Display: Steuerleiste beim Antippen (Remote/Musik/Uhr/Heute aus/⏮⏯⏭), Wischgesten, Teile und Reihenfolge einstellbar, Musik-Ansicht Cover/Titel/nur Balken. Schnelleinstellungen neu: Funkweg Remote → Dock → Gerät, Kacheln Dock/Bluetooth/WLAN, größeres Panel. Licht-Widget: Links/Rechts dimmt, OK öffnet, OK lang schaltet; in der Detailansicht jeder Regler, jede Farbe, Palette und Szene per Steuerkreuz wählbar. Aktivität nochmal antippen öffnet ein Popup, App-Assistent, Menü/Startseite auf andere Remotes übertragen, lesbarer Auslöser-Editor, Medien-Karte öffnet ein Popup, Testmodus (WLAN bleibt an, kein Tiefschlaf, 12 h). Konfigurator neu gegliedert (alle Seiten in der Leiste, Docks mit Einstellungen), Vorschau von Touchpad/Ziffern/Tastatur wie auf dem Display. Funk geprüft: unnötige Wartungsfenster raus, Konfiguration zuerst übers Dock, HA schickt nur an erreichbare Docks. Fix: SD-Karte blieb nach dem Konfig-Modus eingebunden (Mikrofon/Musik-Anzeige gesperrt). Fix: Seite rollte beim Ziehen im Editor weg. Fix: Licht-Regler blieb beim Ausschalten stehen.
+
+</details>
+
 ## 2026.10.30.3 (2026-10-30)
 
 Fix: installing over WLAN failed after the build ("_offen() takes 1 positional argument but 2 were given").

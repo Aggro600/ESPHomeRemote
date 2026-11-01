@@ -1,31 +1,177 @@
-<p align="center">🇬🇧 <a href="README.md">English</a> · <b>🇩🇪 <a href="README.de.md">Deutsch</a></b></p>
+<p align="center">🇬🇧 <a href="README.md">English</a> · <b>🇩🇪 Deutsch</b></p>
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/bilder/logo-dunkel.png">
-    <img src="docs/bilder/logo.png" alt="ESPHomeRemote" width="560">
+    <img src="docs/bilder/logo.png" alt="ESPHomeRemote" width="520">
   </picture>
 </p>
 
-# ESPHomeRemote
+<h3 align="center">Die Fernbedienung, die dein Smart Home verdient.</h3>
 
-**Eine Fernbedienung für Fernseher, Streamer und dein ganzes Smart Home** – mit Touchdisplay,
-Bluetooth und Sprachassistent, gebaut auf der *OMOTE / Open Remote Rev6*-Platine und komplett in
-**ESPHome**. Tasten, Menü und Startseite stellst du bequem im Browser in **Home Assistant** ein,
-ohne zu programmieren.
+<p align="center">
+  Touch-Display · Bluetooth · Infrarot · Sprache · eine Dockingstation, die alles verbindet.<br>
+  Komplett im Browser eingerichtet, direkt in Home Assistant – <b>ohne Programmieren, ohne YAML-Gefummel</b>.
+</p>
 
-> Du brauchst keine Programmierkenntnisse. Wenn du Home Assistant schon benutzt, bist du in etwa
-> 30 Minuten fertig.
+<p align="center">
+  <a href="https://github.com/Aggro600/ESPHomeRemote/releases"><img src="https://img.shields.io/github/v/release/Aggro600/ESPHomeRemote?style=for-the-badge&color=03a9f4&label=version" alt="Aktuelle Version"></a>
+  <a href="https://hacs.xyz"><img src="https://img.shields.io/badge/HACS-benutzerdefiniert-41BDF5?style=for-the-badge" alt="HACS"></a>
+  <img src="https://img.shields.io/badge/ESPHome-nativ-1a1a1a?style=for-the-badge&logo=esphome&logoColor=white" alt="ESPHome">
+  <img src="https://img.shields.io/badge/Home%20Assistant-integriert-41BDF5?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Lizenz-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
+</p>
 
-<p align="center"><a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><img src="docs/bilder/showcase.png" alt="3D-Showcase: OpenRemote Rev6 im Dock mit Smart Display" width="900"></a></p>
-<p align="center"><b><a href="https://aggro600.github.io/ESPHomeRemote/showcase/">▶ Remote und Dockingstation in 3D ansehen</a></b><br>
-<sub>Interaktiv im Browser: aus den Original-CAD-Daten, mit der echten Display-Oberfläche, Andocken, Laden und Explosionsansicht</sub></p>
+<p align="center"><img src="docs/bilder/hero.png" alt="ESPHomeRemote: Fernbedienung mit Touch-Display und der Konfigurator in Home Assistant" width="100%"></p>
+
+<p align="center">
+  <a href="#schnellstart"><b>▶ In 30 Minuten startklar</b></a> &nbsp;·&nbsp;
+  <a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><b>🧊 In 3D ansehen</b></a> &nbsp;·&nbsp;
+  <a href="CHANGELOG.md"><b>✨ Was ist neu</b></a>
+</p>
 
 ---
 
-## Was sie kann
+<table>
+<tr>
+<td width="33%" valign="top">
 
-<p align="center"><img src="docs/bilder/uebersicht.png" alt="Konfigurator: Übersicht" width="900"></p>
+### 🖱️ Ohne eine Zeile Code
+Tasten, Menüs, Startseiten, Popups und Widgets – alles in einem durchdachten Konfigurator in der Seitenleiste
+von Home Assistant, am PC und am Handy. Änderungen sind in Sekunden auf der Remote.
+
+</td>
+<td width="33%" valign="top">
+
+### ⚡ Sofort da, selbst aus dem Schlaf
+Die Dockingstation leitet Tasten, Befehle und den Stand per Funk weiter. Remote mit einer Taste wecken – die
+Taste ist schon unterwegs, bevor das Display an ist.
+
+</td>
+<td width="33%" valign="top">
+
+### 🔋 Wochen mit einer Ladung
+Tiefschlaf mit klugem Wecken: hochheben, antippen oder irgendeine Taste. WLAN nur, wenn es wirklich nötig ist –
+den Rest macht das Dock.
+
+</td>
+</tr>
+</table>
+
+---
+
+## Eine Fernbedienung für alles
+
+<p align="center"><img src="docs/bilder/geraete-reihe.png" alt="Display der Remote: Menü, Licht, Fernseher, Schnelleinstellungen, Smart Display" width="100%"></p>
+
+- **Fernseher, Streamer, Tablets und PCs per Bluetooth** – vier Geräte, umgeschaltet über *Aktivitäten* wie bei
+  einer Harmony, als Tasten, **Maus (Touchpad)** oder **Tastatur**.
+- **Infrarot für den Rest** – rund 270.000 Geräte aus der Flipper-IRDB und dem Logitech-Harmony-Archiv, dazu
+  eigene, angelernte Codes.
+- **Dein Smart Home auf dem Display** – Licht mit Reglern und Farben, Rollos, Sensoren, Kameras, Szenen,
+  Klingel-Popups.
+- **Sprachassistent** – Google am Fernseher oder Home Assistant Assist, mit eingebautem Mikrofon.
+- **Bewegungsgesten** – schütteln, kippen oder eigene anlernen (Kreis, Wischen …).
+
+## Alles im Browser einstellen
+
+<p align="center"><img src="docs/bilder/konfig-uebersicht.png" alt="Konfigurator: Übersicht aller Remotes und Docks" width="100%"></p>
+
+Die Seite **Fernbedienung** in der Seitenleiste von Home Assistant zeigt jede Remote und jedes Dock auf einen
+Blick – Akku mit 24-Stunden-Verlauf, Verbindung, Firmware und Hinweise mit einem Knopf zum Beheben.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/bilder/konfig-tasten.png" alt="Tasten"></td>
+<td width="50%"><img src="docs/bilder/konfig-startseite.png" alt="Startseiten-Editor"></td>
+</tr>
+<tr>
+<td valign="top"><b>Jede Taste, wie du willst</b> – Taste auf der virtuellen Remote antippen, Aktionen für kurz,
+doppelt und lang anlegen: Bluetooth, Home Assistant, Infrarot, 433 MHz oder Funktionen der Remote. Je Aktivität
+anders.</td>
+<td valign="top"><b>Startseiten je Aktivität</b> – Uhr, Wetter, Medien, Timer, Kamera und Licht als Widgets im
+Raster, mit einer Live-Vorschau, die genau wie das Display aussieht.</td>
+</tr>
+</table>
+
+## Ein Smart Display im Dock
+
+<p align="center"><img src="docs/bilder/konfig-smartdisplay.png" alt="Einstellungen des Smart Displays" width="100%"></p>
+
+Stell die Remote ins Dock, und sie wird zum Display für Nachttisch oder Couchtisch: **Uhrzeit, Wetter,
+Raumklima, Termine und Ladestand** – welche Teile und in welcher Reihenfolge, bestimmst du. Läuft Musik,
+wechselt sie zum **Spektrum-Analyser**, auf Wunsch über dem Cover. Antippen zeigt eine **Steuerleiste**: zurück
+zur Fernbedienung, Musik ⇄ Uhr, ⏮ ⏯ ⏭ – oder *Heute aus* (aus, bis du sie aus dem Dock nimmst).
+
+## Apps öffnen – ganz einfach
+
+<p align="center"><img src="docs/bilder/konfig-app.png" alt="App-Assistent" width="100%"></p>
+
+Eine Taste, die Netflix öffnet? Öffne die App einmal am Fernseher – der Assistent **erkennt sie**, schlägt den
+Namen vor und legt den Befehl an. Mit einem Klick testen. Genau dort, wo du ihn brauchst: im Tasten-Editor und
+in jedem Menü oder Popup.
+
+## Immer im Blick, wie gefunkt wird
+
+<table>
+<tr>
+<td width="34%" align="center"><img src="docs/bilder/geraet-schnell.png" alt="Schnelleinstellungen mit Funkweg" width="300"></td>
+<td width="66%"><img src="docs/bilder/konfig-remote.png" alt="Übersicht einer Remote"></td>
+</tr>
+<tr>
+<td valign="top"><b>Schnelleinstellungen</b> zeigen den Funkweg live: Remote → Dock → Gerät, jede Strecke blau,
+wenn sie steht, rot, wenn nicht. Getrennte Schalter für Dock-Betrieb, Bluetooth und WLAN.</td>
+<td valign="top"><b>Übersicht je Remote</b> – Verbindung, Akku, Firmware und Abkürzungen zu allen Seiten.</td>
+</tr>
+</table>
+
+## Die Dockingstation
+
+<table>
+<tr>
+<td width="50%"><img src="docs/bilder/konfig-dock.png" alt="Übersicht eines Docks"></td>
+<td width="50%"><img src="docs/bilder/konfig-licht.png" alt="Dock-LED folgt dem Raumlicht"></td>
+</tr>
+<tr>
+<td valign="top"><b>Die Zentrale</b> (ESP32-C3) – hält bis zu vier Bluetooth-Geräte verbunden, ist
+<b>IR-Blaster</b> und <b>433-MHz-Sender</b> für Home Assistant und funkt alles für die Remote weiter.</td>
+<td valign="top"><b>Licht, das dem Raum folgt</b> – Display, Tastenbeleuchtung und Dock-LED richten sich nach
+einem Lichtsensor. Kurve ziehen; sie lernt mit, wenn du nachregelst.</td>
+</tr>
+</table>
+
+## Noch mehr Highlights
+
+<table>
+<tr>
+<td width="50%"><img src="docs/bilder/konfig-menue.png" alt="Menü-Editor"></td>
+<td width="50%"><img src="docs/bilder/konfig-tabelle.png" alt="Tabelle aller Tasten"></td>
+</tr>
+<tr>
+<td valign="top"><b>Menü-Editor</b> – Seiten, Unterseiten und Popups, die von selbst aufgehen (Klingel,
+Sleeptimer, Bildmodus …). Eine Seite mit einem Klick an deine anderen Remotes schicken.</td>
+<td valign="top"><b>Tabelle</b> – alle Aktivitäten und Folgemodi nebeneinander.</td>
+</tr>
+<tr>
+<td><img src="docs/bilder/konfig-gesten.png" alt="Gesten"></td>
+<td><img src="docs/bilder/konfig-suche.png" alt="Suche"></td>
+</tr>
+<tr>
+<td valign="top"><b>Gesten</b> – eingebaute und eigene, erkannt egal wie du die Remote hältst.</td>
+<td valign="top"><b>Suche (Strg K)</b> – findet jede Taste, Einstellung und Menüseite.</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/bilder/handy-uebersicht.png" alt="Am Handy" width="45%"> <img src="docs/bilder/handy-tasten.png" alt="Tasten am Handy" width="45%"></td>
+<td><img src="docs/bilder/kreisgeste.png" alt="Eigene Geste: Kreis"></td>
+</tr>
+<tr>
+<td valign="top"><b>Am Handy</b> – der ganze Konfigurator, gemacht für kleine Bildschirme.</td>
+<td valign="top"><b>Geste anlernen</b> – dreimal ausführen, fertig.</td>
+</tr>
+</table>
+
+<details>
+<summary><b>Alle Funktionen im Detail</b></summary>
 
 **Fernbedienung**
 - **Steuert Fernseher, Streamer, Tablets und PCs per Bluetooth** – 4 Geräte, Umschalten über „Aktivitäten“
@@ -62,22 +208,7 @@ ohne zu programmieren.
 Sicherung, **Firmware-Updates per WLAN** (auch vormerken, wenn die Remote schläft) und **USB-Flashen im Browser**.
 Einstellungen gleichen sich in beide Richtungen ab: was du an der Remote umstellst, sieht der Konfigurator.
 
----
-
-## Bilder
-
-| | |
-|---|---|
-| <img src="docs/bilder/kreisgeste.png" alt="Eigene Geste: Kreis"> | <img src="docs/bilder/lichtsensor.png" alt="Helligkeit nach Lichtsensor"> |
-| **Eigene Geste „Kreis“** – dreimal an der Remote ausgeführt, die Proben (X/Y/Z) im Konfigurator. | **Helligkeit nach Lichtsensor** – Punkte ziehen, die Kurve lernt beim Verstellen mit. |
-| <img src="docs/bilder/tasten.png" alt="Tasten belegen"> | <img src="docs/bilder/menue.png" alt="Menü-Editor"> |
-| **Tasten** – Fernbedienung antippen, je Druckart Aktionen anlegen. | **Menü-Editor** – mit Live-Vorschau des Displays. |
-| <img src="docs/bilder/gesten.png" alt="Gesten"> | <img src="docs/bilder/tabelle.png" alt="Tabelle"> |
-| **Gesten** – eingebaute und eigene, „wirkt wie Taste“ oder eigene Aktionen. | **Tabelle** – alle Aktivitäten und Folgemodi nebeneinander. |
-| <img src="docs/bilder/dock.png" alt="Dockingstation"> | <img src="docs/bilder/suche.png" alt="Suche"> |
-| **Dockingstation** – Dock-LED, Smart Display mit Vorschau, IR-Geräte. | **Suche (Strg+K)** – findet jede Taste, Einstellung und Menüseite. |
-| <img src="docs/bilder/bluetooth.png" alt="Bluetooth"> | <img src="docs/bilder/handy.png" alt="Am Handy" width="300"> <img src="docs/bilder/handy_tasten.png" alt="Tasten am Handy" width="300"> |
-| **Bluetooth** – vier Plätze, Eingabe je Gerät, Maus-Einstellungen. | **Am Handy** – gleiche Funktionen, Leiste unten. |
+</details>
 
 ---
 
@@ -161,27 +292,33 @@ Deinstallieren gehen dort genauso. Auf dem Fernseher zeigt sie unter „ESPHomeR
 
 ## Der Konfigurator
 
-In der Seitenleiste **„Fernbedienung“** (am Handy und am PC). Links stehen deine Fernbedienungen mit Akkustand,
-darunter je Remote ihre Seiten:
+In der Seitenleiste **„Fernbedienung“** – am Handy und am PC. Links stehen deine Remotes und Docks; aufklappen
+zeigt ihre Seiten:
+
+**Je Remote**
 
 | Seite | Was du dort machst |
 |---|---|
-| **Übersicht** | Alle Remotes und Docks: Akku mit 24-h-Verlauf, Verbindung, Firmware, Hinweise mit Knöpfen zum Erledigen. |
-| **Tasten** | Jede Taste je Aktivität belegen: kurz / doppelt / lang. Bluetooth, Home-Assistant-Aktion, Infrarot, 433 MHz, Funktion der Remote. Aktivitäten und Folgemodi anlegen, Tabellenansicht. |
-| **Startseite** | Je Aktivität eine eigene Startseite mit Einträgen und Widgets (Uhr, Wetter, Medien, Timer, Kamera) – oder die eingebaute anpassen. |
-| **Menü** | Seiten, Unterseiten und Popups im Raster gestalten, mit Vorschau. |
-| **Gesten** | Schütteln, Kippen und eigene Gesten belegen; Touchpad-Makros. |
-| **Bluetooth / Infrarot** | Plätze koppeln, Eingabe je Gerät, IR-Sendeweg (Remote, Dock, andere IR-Sender). |
-| **Verknüpfungen** | Welche Geräte aus Home Assistant die Remote nutzt: Wiedergabe-Player (Startseite, Media-Seite, Musik-Anzeige), Fernseher, Multiroom, Lautsprecher für den Assistenten, Streamer für Texteingabe, Timer neben der Uhr. |
-| **Einstellungen** | Alle Einstellungen der Remote, sofort übertragen; Helligkeit nach Lichtsensor. |
-| **Wiedergabe** | „Jetzt läuft“-Player anlegen: fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu einem Media Player zusammen. Streamer mit der App „ESPHomeRemote Streamer“ (Titel, Cover, Position jeder App, Tastatur-Popup). |
-| **Klingel** | Bis zu zwei Klingeln: Auslöser und Kamera – beim Klingeln kommt das Bild auf die Remotes. |
-| **Dockingstation** | IR-Geräte, Dock-LED, Smart Display, bekannte Fehler. |
-| **IR-Codes** | IR-Datenbanken (Flipper, Harmony) mit Abgleich gegen GitHub, eigene Codes anlernen, ordnen, exportieren. |
-| **Firmware & Geräte** | Updates per WLAN oder USB, neue Docks anlegen und einbinden. |
-| **Werkstatt** | Neue Fernbedienung, alles kopieren, Sicherung, Platinen-Test, Entwicklermodus. |
+| **Übersicht** | Zustand, Verbindung (Dock, WLAN, Bluetooth), Firmware und Abkürzungen zu allen Seiten. |
+| **Tasten** | Jede Taste je Aktivität: kurz / doppelt / lang. Bluetooth, Home Assistant, Infrarot, 433 MHz, Funktionen der Remote, der **App-Assistent**. Aktivitäten, Folgemodi, Tabelle, Popup beim erneuten Antippen der laufenden Aktivität. |
+| **Startseite** | Eine Startseite je Aktivität mit Einträgen und Widgets – oder die eingebaute anpassen. Was das Antippen des Covers öffnet. An andere Remotes übertragen. |
+| **Smart Display** | Was die Remote im Dock zeigt: Teile und Reihenfolge, Musik-Ansicht (Spektrum, Titel, Cover), Steuerleiste, Zeiten. |
+| **Menü** | Seiten, Unterseiten und Popups (Klingel, Timer, Bildmodus …) im Raster mit Vorschau. Seiten an andere Remotes übertragen. |
+| **Gesten** | Schütteln, Kippen und eigene Gesten; Touchpad-Makros. |
+| **Bluetooth / Infrarot** | Plätze koppeln, Eingabeart je Gerät, IR-Weg (Remote, Dock, andere IR-Sender). |
+| **Verknüpfungen** | Welche Geräte aus Home Assistant die Remote nutzt: „Jetzt läuft“-Player, Fernseher, Multiroom, Lautsprecher für den Assistenten, Streamer, Timer. |
+| **Akku** | Verlauf, Verbrauch je Zustand, Ladungen, warum sie nicht geschlafen hat. |
+| **Firmware** | Version, Update per WLAN oder USB. |
+| **Einstellungen** | Alle Einstellungen der Remote, sofort wirksam; Übersicht „Welcher Funk wofür?“. |
 
-**Speichern** (oder Strg+S) schickt alles an die Fernbedienung – schläft sie, holt sie es beim nächsten Aufwachen ab.
+**Je Dock:** Übersicht · Bluetooth (Geräte am Dock) · Infrarot (IR-Geräte) · Firmware · Einstellungen (LED,
+Farben, Suchtempo).
+
+**Für das ganze Zuhause:** **IR-Codes** (IR-Datenbanken und eigene Codes) · **Abgleich** (Remotes synchron
+halten, zwei Remotes vergleichen) · **Prüfen & Finden** (alles prüfen, finden wo eine Entität benutzt wird) ·
+**Werkstatt** (Updates für alle Geräte, neue Remote oder neues Dock, Sicherung, Platinentest).
+
+**Speichern** (oder Strg+S) schickt alles an die Remote – schläft sie, holt sie es beim nächsten Aufwachen.
 
 ---
 
@@ -216,8 +353,8 @@ Einige eingebaute Seiten (Startseite-Player, Klingel, Sleeptimer) nutzen die Ent
 ohnehin im Konfigurator.
 
 **Kamera auf dem Fernseher in Klein / Mittel / Groß** (optional):
-Beispiel in `home-assistant/packages/beispiel_kamera_tv.yaml` und die Blaupause in
-`home-assistant/blueprints/script/esphomeremote/`.
+im Konfigurator unter **Funktionen → Kamera auf dem Fernseher** (App *HA TV Dashboard* auf dem Fernseher).
+Dort stellst du auch den TV-Eingang (für Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“) und den Neustart per ADB ein.
 
 ---
 
@@ -240,7 +377,7 @@ Remotes tatsächlich gebaut werden:
   (Liste in `tools/remotes.json`, IP-Secret `ip_remote_wz_<name>`). Bauen/Flashen: `tools/esphome_run.mjs`.
 - `components/ha_tunnel`, `components/network` (Bluetooth-Schicht), `components/dock_direkt`, `dock_hid`,
   `bluetooth_connection` (Dock), `custom_components/esphomeremote_konfig/ble_link.py` (HA-Gegenstück der Bluetooth-Schicht),
-  `home-assistant/packages/` (Pakete, wie im Einsatz), `docs/entwicklung/` (Architektur, Funkkonzept, Messungen).
+  `home-assistant/packages/` (YAML-Alternative zur Integration), `docs/entwicklung/` (Architektur, Funkkonzept, Messungen).
 
 ## Lizenz
 

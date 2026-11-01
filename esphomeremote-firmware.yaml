@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.10.30.3"
+    version: "2026.11.1.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
@@ -277,7 +277,7 @@ esphome:
             // "Nur Bluetooth": WLAN nur bei Bedarf (Wartungsfenster/OTA/Notanker), sonst ging es hier kurz an und der
             // Tunnel gleich wieder aus - Strom und ein Kanalwechsel mitten im Funk zum Dock (2026-10-25)
             if (wlan_zugriff::g_nur_ble && (int32_t) (millis() - id(wartung_bis)) >= 0) {
-              ESP_LOGI("wlan", "Nach dem Aufwachen: WLAN bleibt aus (Nur Bluetooth)");
+              ESP_LOGI("wlan", "Nach dem Aufwachen: WLAN bleibt aus (Dock-Betrieb)");
               return;
             }
             wifi::global_wifi_component->enable();
@@ -726,11 +726,26 @@ api:
       variables: {kennung: string}
       then:
         - lambda: 'tasten::klingel::neu(kennung, tasten::klingel::stempel()[kennung] + 1);' 
-    # Menue-Seite als Popup zeigen / schliessen (z. B. Kamera-Popup, s. packages/esphomeremote_kamera_tv.yaml)
+    # Menue-Seite als Popup zeigen / schliessen (z. B. Kamera-Popup)
     - service: menue_popup
       variables: {seite: string}
       then:
-        - lambda: 'tasten::menue_popup(std::string(seite.c_str(), seite.size()));'
+        - lambda: |-
+            // "_smartdisplay" (2026-10-31): Konfigurator "Auf der Remote zeigen" fuer das Smart Display
+            if (seite == "_smartdisplay") { dockanz::vorschau(); return; }
+            if (seite == "_smartdisplay_leiste" || seite == "_musik_leiste") { dockanz::vorschau_leiste(seite == "_musik_leiste"); return; }
+            tasten::menue_popup(std::string(seite.c_str(), seite.size()));
+    # Schnelleinstellungen oeffnen (2026-10-31, zum Pruefen per Bildschirmfoto): liste = Geraete am Dock aufgeklappt
+    - service: schnell_zeigen
+      variables: {liste: bool}
+      then:
+        - lambda: 'funkweg::g_liste = liste;'
+        - script.execute: wake_backlight
+        - delay: 300ms
+        - if:
+            condition: {lambda: 'return lv_obj_has_flag(id(qs_panel), LV_OBJ_FLAG_HIDDEN);'}
+            then: [{script.execute: toggle_bri_overlay}]
+            else: [{script.execute: qs_refresh}]
     - service: menue_popup_zu
       then:
         - lambda: 'tasten::menue_popup_zu();'
@@ -996,6 +1011,18 @@ font:
     size: 40
     bpp: 4
     glyphs: ["\U000F0599", "\U000F0594", "\U000F0595", "\U000F0F31", "\U000F0590", "\U000F0591", "\U000F0592", "\U000F0593", "\U000F067E", "\U000F0596", "\U000F0597", "\U000F0598", "\U000F067F", "\U000F059D", "\U000F059E", "\U000F0F37"]
+  # Funkweg in den Schnelleinstellungen (2026-10-31): Remote, Dock, Fernseher, Infrarot
+  - file: 'fonts/mdi-subset.ttf'
+    id: ico_funk
+    size: 24
+    bpp: 4
+    glyphs: ["\U000F0454", "\U000F10AB", "\U000F0502", "\U000F1A7F", "\U000F00AF", "\U000F05A9"]
+  # Steuerleiste des Smart Displays (2026-10-31): Remote, Musik, Uhr, Heute aus, zurueck, Play/Pause, vor
+  - file: 'fonts/mdi-subset.ttf'
+    id: ico_leiste
+    size: 22
+    bpp: 4
+    glyphs: ["\U000F0454", "\U000F075A", "\U000F0150", "\U000F04B2", "\U000F04AE", "\U000F040E", "\U000F04AD"]
   - file: 'fonts/mdi-subset.ttf'
     id: mdi_klein
     size: 18
@@ -1042,6 +1069,8 @@ globals:
   # Live-Bild: Bedienung hat Vorrang. Ein Bild dekodieren blockiert die Remote 260-470 ms.
   # last_input_ms = letzte Taste/Beruehrung, live_next_ms = fruehester Start des naechsten Bildes.
   - {id: last_input_ms,     type: uint32_t, restore_value: false, initial_value: "0"}
+  # Nur Tasten (2026-10-31): das Smart Display unterscheidet Taste (-> Fernbedienung) und Tipp (-> Steuerleiste)
+  - {id: last_key_ms,       type: uint32_t, restore_value: false, initial_value: "0"}
   - {id: live_next_ms,      type: uint32_t, restore_value: false, initial_value: "0"}
   # Live-Bild (schnell): laeuft bis live_until (millis), live_busy = Download laeuft gerade.
   - {id: live_until,        type: uint32_t, restore_value: false, initial_value: "0"}
@@ -1180,6 +1209,7 @@ globals:
   - {id: logo_slug,      type: std::string, restore_value: false, initial_value: '""'}     # App, deren Logo gerade von der SD-Karte gezeigt werden soll
   - {id: sd_logos,       type: bool,      restore_value: true,  initial_value: "true"}    # Option: Logos von der SD-Karte
   - {id: sd_bild_laeuft, type: bool,      restore_value: false, initial_value: "false"}   # Karte wird gerade fuer ein Logo eingebunden
+  - {id: sd_vom_konfig,  type: bool,      restore_value: false, initial_value: "false"}   # Karte hat der Konfig-Modus eingebunden (wirft sie am Ende wieder aus)
   - {id: kbd_sel,        type: int,       restore_value: false, initial_value: "-1"}      # Seite 41: vom D-Pad markierte Taste (-1 = keine)
   - {id: kbd_mode,       type: int,       restore_value: false, initial_value: "1"}       # Seite 41: 0 = Ziffernblock, 1 = Tastatur
   - {id: kbd_shift,      type: bool,      restore_value: false, initial_value: "false"}   # Bildschirmtastatur: Umschalten aktiv
@@ -1320,6 +1350,8 @@ globals:
   # WLAN erreichbar. Wird bei jedem echten Start ausgeschaltet (on_boot 100); restore_value, damit er ueber
   # das Aufwachen aus dem Tiefschlaf erhalten bleibt.
   - {id: testmodus,      type: bool,      restore_value: true,  initial_value: "false"}
+  # Testmodus endet nach 12 h von selbst (2026-11-01, Akku schonen, falls er ueber Nacht an bleibt)
+  - {id: testmodus_ab,   type: uint32_t,  restore_value: false, initial_value: "0"}
   # Erste 2 min nach JEDEM Boot: kein Tiefschlaf, kein WLAN-Aus - so gibt es
   # nach jedem Flash sicher ein Fenster, um einen Fehler wieder zu flashen.
   - {id: boot_grace,     type: bool,      restore_value: false, initial_value: "true"}
@@ -1499,9 +1531,18 @@ dock_direkt:
   # der Startseite (Wiedergabe, Fernseher, Timer). Kommt HA danach, gelten dessen Werte.
   on_zustand:
     - lambda: |-
-        if (api::global_api_server->is_connected()) return;
         JsonDocument d;
         if (deserializeJson(d, text) != DeserializationError::Ok) { ESP_LOGW("dock", "Stand vom Dock unlesbar"); return; }
+        // Geraete an den Docks (2026-10-31, Funkweg-Anzeige): kommt nur hier, auch mit eigener HA-Verbindung uebernehmen
+        if (d["bt"].is<JsonObjectConst>()) {
+          funkweg::g_bt.clear();
+          for (JsonPairConst kv : d["bt"].as<JsonObjectConst>()) {
+            auto &v = funkweg::g_bt[kv.key().c_str()];
+            for (JsonArrayConst p : kv.value().as<JsonArrayConst>()) v.emplace_back(p[0] | "", (p[1] | 0) != 0);
+          }
+          funkweg::g_bt_ms = millis() | 1;
+        }
+        if (api::global_api_server->is_connected()) return;
         id(zustand_da) = true;
         // Wartungsfenster ueber das Dock (2026-10-25): HA will die Firmware aufspielen ("w": 1) - WLAN 3 min an. So geht
         // ein Update auch ohne Bluetooth-Link zu HA; einmal je Fenster.
@@ -1521,7 +1562,9 @@ dock_direkt:
           const uint32_t nr = d["tp"][1] | 0u;
           if (nr != 0 && nr != id(test_popup_nr)) {
             id(test_popup_nr) = nr;
-            tasten::menue_popup(d["tp"][0] | "");
+            const std::string tp = d["tp"][0] | "";
+            if (tp == "_smartdisplay") dockanz::vorschau();
+            else tasten::menue_popup(tp);
           }
         }
         // Docks, die laut HA online sind (2026-10-25): die werden zuerst probiert
@@ -1602,6 +1645,7 @@ image:
     type: RGB565
     on_download_finished:
       - lvgl.image.update: {id: media_cover, src: mp_cover_image}
+      - lambda: 'musik::cover_neu();'   # Musik-Ansicht "Cover" (2026-10-31)
       # Geladenes Cover immer zeigen (2026-10-11): war es vorher ausgeblendet (leerer Titel beim App-Wechsel,
       # Fehler beim letzten Abruf), blieb die Medienseite leer, waehrend die Startseite das Bild schon hatte.
       - lvgl.widget.show: media_cover
@@ -1619,7 +1663,9 @@ image:
       - lvgl.image.update: {id: home_cover_img, src: home_cover_image}
       - script.execute: sd_logo_pruefen
     on_error:
-      - lambda: 'ESP_LOGW("cover", "Startseiten-Cover-Download fehlgeschlagen");'
+      - lambda: |-
+          ESP_LOGW("cover", "Startseiten-Cover-Download fehlgeschlagen - beim naechsten Anzeigen neu");
+          id(cover_home_offen) = true;   // 2026-10-31: statt WLAN einzuschalten spaeter noch einmal
 
   # Bildplaetze der Widgets (2026-10-27): Kamera-Schnappschuss bzw. Cover, in HA passend verkleinert
   # (/api/esphomeremote_konfig/bild, custom_components/esphomeremote_konfig/widgets.py)
@@ -1975,6 +2021,7 @@ interval:
           uint32_t rest = 0;
           if (!wlan_zugriff::g_nur_ble) g = "immer";
           else if (id(ota_aktiv)) g = "Update";
+          else if (id(testmodus)) g = "Testmodus";
           else if ((int32_t) (id(wartung_bis) - jetzt) > 0) { g = wlan_zugriff::g_aktiv_grund; rest = (id(wartung_bis) - jetzt) / 1000; }
           else if (wlan_zugriff::bedarf_aktiv()) { g = wlan_zugriff::g_bedarf_grund; rest = (wlan_zugriff::g_bedarf_bis - jetzt) / 1000; }
           else g = an ? "geht aus" : "aus";
@@ -1996,6 +2043,18 @@ interval:
   - interval: 100ms
     then:
       - lambda: 'gesten::takt(); gestenseite::takt();'
+  # Testmodus nach 12 h beenden (2026-11-01): laeuft er ueber Nacht, haelt WLAN und kein Tiefschlaf sonst den Akku leer
+  - interval: 60s
+    then:
+      - lambda: |-
+          if (!id(testmodus)) { id(testmodus_ab) = 0; return; }
+          if (id(testmodus_ab) == 0) id(testmodus_ab) = millis() | 1;   // ueber Menue/Neustart eingeschaltet
+          if (millis() - id(testmodus_ab) < 12UL * 3600UL * 1000UL) return;
+          id(testmodus) = false;
+          id(testmodus_ab) = 0;
+          ESP_LOGW("test", "Testmodus nach 12 h beendet - Stromsparen wieder aktiv");
+          id(apply_power).execute();
+          id(backlight_idle_timeout).execute();
   # Notanker HA-Verbindung (2026-10-16): nach dem Ausstecken des Docks war Remote 2 3 min fuer HA weg (WLAN aus, keine
   # Bluetooth-Werbung) bis zum Neustart. Ist HA 3 min nicht verbunden, WLAN per Wartungsfenster 3 min erzwingen -
   # die Bruecke (ble_link.py) nimmt dann den WLAN-Weg. Wiederholung fruehestens nach 10 min (2026-10-18: einzige
@@ -2598,6 +2657,7 @@ script:
           if (id(tk_cfg).weck_frueh(wk, id(tk_cfg).tasten_akt(id(activity), id(akt_an)), true)) {
             id(keypad).weck_erledigt();
             id(last_input_ms) = millis();
+            id(last_key_ms) = millis();
             weck_log("Taste beim Start uebers Dock gesendet");
           }
 
@@ -3207,8 +3267,12 @@ script:
   # Vorgemerktes Cover der sichtbaren Seite laden: Medienseite (6) das grosse, Startseite (0) den Ausschnitt; bei
   # dunklem Display nichts (2026-10-20). Aufgerufen vom Dienst refresh_cover, beim Einschalten und beim Seitenwechsel.
   - id: cover_sichtbar
-    mode: queued
+    mode: restart   # 2026-10-31: queued stapelte bei vielen Tasten ("max instances reached") - nur das letzte zaehlt
     then:
+      # Tasten zuerst (2026-10-31): das Cover laeuft ueber das Dock ueber denselben Funk - erst nach 1,5 s ohne Taste
+      - wait_until:
+          condition: {lambda: 'return millis() - id(last_input_ms) > 1500;'}
+          timeout: 10s
       - if:
           condition: {lambda: 'return !id(disp_off) && id(cur_page) == 6 && id(cover_mp_offen);'}
           then:
@@ -3217,6 +3281,14 @@ script:
                 id: mp_cover_image
                 url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_voll.jpg");'
             - lvgl.widget.show: media_cover
+      # Musik-Ansicht mit Cover im Hintergrund (2026-10-31): dasselbe Bild wie die Media-Seite
+      - if:
+          condition: {lambda: 'return !id(disp_off) && id(cur_page) == 52 && dockanz::z().musik_stil == 2 && id(cover_mp_offen);'}
+          then:
+            - lambda: 'id(cover_mp_offen) = false; id(cover_title) = id(adb_title).state;'
+            - online_image.set_url:
+                id: mp_cover_image
+                url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_voll.jpg";'
       - if:
           condition: {lambda: 'return !id(disp_off) && id(cur_page) == 0 && id(cover_home_offen);'}
           then:
@@ -3237,6 +3309,7 @@ script:
             // Tastatur & Co. (2026-10-26): den naechsten Stand neu bewerten - ist die Streamer-Tastatur offen, kommt sie
             // auch dann, wenn die Remote ihr Zu- und Wiederaufgehen im Dunkeln verpasst hat. Und gleich beim Dock fragen.
             id(mn)->pegel_vergessen();
+            id(direkt).stand_vergessen();   // dann den ganzen Stand, nicht nur "unveraendert" (2026-10-31)
             if (id(ha_dock) != 0 && !api::global_api_server->is_connected()) id(tk_cfg).zustand_anfragen();
           }
           // Display geht an und zeigt die Startseite: Dock-Animation (Nutzerwunsch 2026-10-13)
@@ -3339,7 +3412,9 @@ script:
       - lambda: 'lv_label_set_text(id(sd_stat_lbl), "Karte wird eingebunden ...");'
       - script.execute: sd_strom_an
       - script.wait: sd_strom_an
-      - lambda: 'id(sd_status)->publish_state(id(sdkarte)->mount() ? "gemountet" : "Mount fehlgeschlagen");'
+      - lambda: |-
+          id(sd_vom_konfig) = false;   // bewusst eingebunden: bleibt bis zum Auswerfen
+          id(sd_status)->publish_state(id(sdkarte)->is_mounted() || id(sdkarte)->mount() ? "gemountet" : "Mount fehlgeschlagen");
       - script.execute: sd_anzeige
   # Karte auswerfen und das Mikrofon zurueckholen (ohne Neustart): SPI-Treiber gibt die Pins frei,
   # SD_EN aus, dann startet der I2S-Treiber wieder und legt die Pins neu an.
@@ -3367,7 +3442,10 @@ script:
       - script.execute: sd_strom_an
       - script.wait: sd_strom_an
       - lambda: |-
-          if (!id(sdkarte)->is_mounted()) id(sdkarte)->mount();
+          if (!id(sdkarte)->is_mounted()) {
+            id(sd_vom_konfig) = true;   // auch wenn das Einbinden scheitert: Strom und Mikrofon-Sperre am Ende zuruecknehmen
+            id(sdkarte)->mount();
+          }
           id(sdkarte)->http_enable(0);
           id(ota_aktiv) = true;
           char ipb[48] = {0};
@@ -3385,6 +3463,13 @@ script:
           id(sdkarte)->http_disable();
           id(ota_aktiv) = false;
           ESP_LOGI("sd", "Konfig-Modus AUS");
+      # Hat der Konfig-Modus die Karte eingebunden, wirft er sie wieder aus (2026-11-01): sonst blieb das Mikrofon
+      # bis zum Neustart gesperrt und die Musik-Anzeige meldete "Mikrofon gesperrt (SD-Karte)".
+      - if:
+          condition: {lambda: "return id(sd_vom_konfig);"}
+          then:
+            - lambda: 'id(sd_vom_konfig) = false;'
+            - script.execute: sd_auswerfen
       - script.execute: sd_anzeige
       - script.execute: backlight_idle_timeout       # Tiefschlaf-Pfad neu anstossen
   # ---- Logos/Cover von der SD-Karte ---------------------------------------------
@@ -3780,29 +3865,117 @@ script:
   - id: qs_refresh
     then:
       - lambda: |-
-          auto kachel = [](lv_obj_t *btn, lv_obj_t *lbl, bool an, const char *txt) {
-            lv_label_set_text(lbl, txt);
-            lv_obj_set_style_text_color(lbl, lv_color_hex(an ? 0xF1F3F5 : 0x8B94A3), LV_PART_MAIN);
-            lv_obj_set_style_bg_color(btn, lv_color_hex(an ? 0x1E3A8A : 0x232A35), LV_PART_MAIN);
-            lv_obj_set_style_border_color(btn, lv_color_hex(an ? 0x3B82F6 : 0x232A35), LV_PART_MAIN);
+          // Schnelleinstellungen (2026-10-31): Funkweg Remote -> Dock -> Geraet der Aktivitaet und drei Schalter.
+          // Farben: blau = steht, rot = gestoert, grau = aus / nicht benutzt, gelb = Notweg.
+          const uint32_t BLAU = 0x3B82F6, ROT = 0xEF4444, GRAU = 0x3A424E, GELB = 0xF59E0B, WEISS = 0xF1F3F5, MATT = 0x5B6472, OFFEN = 0x2B4A7A;
+          auto farbe = [](lv_obj_t *o, uint32_t c) { lv_obj_set_style_bg_color(o, lv_color_hex(c), LV_PART_MAIN); };
+          auto text = [](lv_obj_t *o, uint32_t c) { lv_obj_set_style_text_color(o, lv_color_hex(c), LV_PART_MAIN); };
+          // Kachel: 0 aus (grau), 1 an (blau), 2 gestoert (roter Rand), 3 Notweg (gelber Rand)
+          auto kachel = [&](lv_obj_t *btn, lv_obj_t *lbl, int art, const std::string &t) {
+            lv_label_set_text(lbl, t.c_str());
+            text(lbl, art == 0 ? 0x8B94A3 : art == 2 ? 0xFCA5A5 : art == 3 ? 0xFCD34D : WEISS);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(art == 1 ? 0x1E3A8A : art >= 2 ? 0x2A1D1D : 0x232A35), LV_PART_MAIN);
+            lv_obj_set_style_border_color(btn, lv_color_hex(art == 1 ? BLAU : art == 2 ? ROT : art == 3 ? GELB : 0x232A35), LV_PART_MAIN);
           };
-          // Echter Zustand mit Grund und Restzeit (2026-10-29): "immer"/"verbunden", "Dock weg 0:25", "Konfig. 9:41", AUS
-          const bool wlan_an = !wifi::global_wifi_component->is_disabled();
-          const bool wlan_ok = wifi::global_wifi_component->is_connected();
-          std::string wt;
-          const std::string &z = wlan_zugriff::g_zustand;
-          if (z == "immer") wt = wlan_ok ? "verbunden" : "AN";
-          else if (z == "aus" || !wlan_an) wt = "AUS";
-          else if (z == "Update") wt = "Update";
-          else {
-            wt = wlan_zugriff::kurz(z);
-            char b[12];
-            if (wlan_zugriff::g_rest > 0) { snprintf(b, sizeof(b), " %u:%02u", (unsigned) (wlan_zugriff::g_rest / 60), (unsigned) (wlan_zugriff::g_rest % 60)); wt += b; }
+          auto &tk = *id(tk_cfg);
+          auto *w = wifi::global_wifi_component;
+          const bool wlan_an = !w->is_disabled(), wlan_ok = w->is_connected();
+          const bool dockbetrieb = wlan_zugriff::g_nur_ble;
+          const bool hat_dock = !tk.dock_macs().empty();
+          const bool dock_ok = tk.dock_erreichbar();
+          const int dw = tk.dock_weg();
+          const uint32_t nw = tk.notweg_rest_s();
+          const bool bt_aus = id(kb).funk_aus(), bt_selbst = id(ble_paired).state;
+          // Geraet der Aktivitaet und sein Weg
+          std::string geraet, dname;
+          int slot = -1;
+          uint8_t dplatz = 0;
+          if (id(akt_an) && tk.aktiv()) {
+            const int a = tk.tasten_akt(id(activity), true);
+            slot = tk.aktivitaet_slot(a);
+            if (slot >= 0) geraet = tk.slot_name(slot);
+            if (geraet.empty()) geraet = tk.aktivitaet_name(a);
           }
-          kachel(id(qs_wlan_btn), id(qs_wlan_lbl), wlan_an, wt.c_str());
-          const bool bt = !id(kb).funk_aus();
-          // wie WLAN: "verbunden", sobald ein Geraet (Streamer, TV ...) gekoppelt verbunden ist
-          kachel(id(qs_bt_btn), id(qs_bt_lbl), bt, !bt ? "AUS" : (id(ble_paired).state ? "verbunden" : "AN"));
+          const bool ueber_dock = slot >= 0 && tk.bt_weg() != 1 && tk.dock_ziel(slot, dname, dplatz) && nw == 0;
+          int am_dock = -1;   // Geraet am Dock verbunden? -1 = unbekannt
+          if (dname.empty()) dname = tk.dock_ok_name();
+          auto f = funkweg::g_bt.find(dname);
+          if (ueber_dock && f != funkweg::g_bt.end() && dplatz < f->second.size()) {
+            am_dock = f->second[dplatz].second ? 1 : 0;
+            if (geraet.empty()) geraet = f->second[dplatz].first;
+          }
+          // Dock-Name lesbar: "dock_wz_couchtisch" -> "Couchtisch"
+          std::string dn = dname;
+          if (const size_t u = dn.rfind('_'); u != std::string::npos) dn = dn.substr(u + 1);
+          if (!dn.empty()) dn[0] = toupper((unsigned char) dn[0]);
+          const bool dock_rot = !dock_ok && (nw > 0 || dw == 3);
+          // ---- Funkweg
+          uint32_t l1 = GRAU, l2 = GRAU, i1 = MATT;
+          if (ueber_dock) {
+            l1 = dock_ok ? BLAU : dock_rot ? ROT : OFFEN;
+            l2 = am_dock == 1 ? BLAU : am_dock == 0 ? ROT : OFFEN;
+            i1 = dock_rot ? ROT : WEISS;
+          } else if (slot >= 0 && !geraet.empty()) {   // direkt per Bluetooth (Notweg, kein Dock-Platz, "nur Remote")
+            l1 = l2 = bt_aus ? GRAU : bt_selbst ? (nw > 0 ? GELB : BLAU) : OFFEN;
+            i1 = nw > 0 ? ROT : MATT;
+          }
+          farbe(id(qs_w_l1), l1);
+          farbe(id(qs_w_l2), l2);
+          text(id(qs_w_i1), i1);
+          lv_label_set_text(id(qs_w_n1), ueber_dock || nw > 0 ? (dn.empty() ? "Dock" : dn.c_str()) : hat_dock ? "–" : "kein Dock");
+          lv_label_set_text(id(qs_w_n2), geraet.empty() ? "-" : geraet.c_str());
+          lv_label_set_text(id(qs_w_i2), slot >= 0 && !tk.slot_name(slot).empty() ? "\U000F0502" : "\U000F1A7F");
+          char b[64];
+          std::string info;
+          uint32_t ic = WEISS;
+          if (funkweg::g_liste) { info = "Geräte am Dock " + (dn.empty() ? std::string() : dn); ic = 0x8B94A3; }
+          else if (!id(akt_an)) { info = "Keine Aktivität gewählt"; ic = 0x8B94A3; }
+          else if (nw > 0) { snprintf(b, sizeof(b), "Dock weg – Notweg %u:%02u", (unsigned) (nw / 60), (unsigned) (nw % 60)); info = b; ic = 0xFCD34D; }
+          else if (ueber_dock && dock_rot) { info = "Dock nicht erreicht"; ic = 0xFCA5A5; }
+          else if (ueber_dock && am_dock == 0) { info = "Gerät am Dock getrennt"; ic = 0xFCA5A5; }
+          else if (ueber_dock) info = "Übers Dock per Bluetooth";
+          else if (slot < 0 || tk.slot_name(slot).empty()) { info = "Ohne Bluetooth-Gerät"; ic = 0x8B94A3; }
+          else if (bt_aus) { info = "Bluetooth der Remote aus"; ic = 0xFCA5A5; }
+          else info = bt_selbst ? "Direkt per Bluetooth" : "Bluetooth verbindet …";
+          if (!funkweg::g_liste) info += "  ›";
+          lv_label_set_text(id(qs_w_info), info.c_str());
+          text(id(qs_w_info), ic);
+          // ---- Geraete am Dock (aufgeklappt)
+          lv_obj_t *rz[4] = {id(qs_wl_r0), id(qs_wl_r1), id(qs_wl_r2), id(qs_wl_r3)};
+          lv_obj_t *rn[4] = {id(qs_wl_n0), id(qs_wl_n1), id(qs_wl_n2), id(qs_wl_n3)};
+          lv_obj_t *rs[4] = {id(qs_wl_s0), id(qs_wl_s1), id(qs_wl_s2), id(qs_wl_s3)};
+          int n = 0;
+          if (f != funkweg::g_bt.end())
+            for (size_t i = 0; i < f->second.size() && n < 4; i++) {
+              if (f->second[i].first.empty()) continue;
+              lv_label_set_text(rn[n], f->second[i].first.c_str());
+              lv_label_set_text(rs[n], f->second[i].second ? "verbunden" : "getrennt");
+              text(rs[n], f->second[i].second ? 0x93C5FD : 0xFCA5A5);
+              n++;
+            }
+          if (n == 0) { lv_label_set_text(rn[0], hat_dock ? "Noch nichts vom Dock" : "Kein Dock eingerichtet"); lv_label_set_text(rs[0], ""); n = 1; }
+          for (int i = 0; i < 4; i++) { if (i < n) lv_obj_remove_flag(rz[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(rz[i], LV_OBJ_FLAG_HIDDEN); }
+          if (funkweg::g_liste) { lv_obj_remove_flag(id(qs_w_liste), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(qs_kacheln), LV_OBJ_FLAG_HIDDEN); }
+          else { lv_obj_add_flag(id(qs_w_liste), LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(id(qs_kacheln), LV_OBJ_FLAG_HIDDEN); }
+          // ---- Schalter
+          const bool scharf = funkweg::g_dock_scharf != 0 && millis() - funkweg::g_dock_scharf < 3000;
+          if (!dockbetrieb) kachel(id(qs_dock_btn), id(qs_dock_lbl), 0, "aus");
+          else if (scharf) kachel(id(qs_dock_btn), id(qs_dock_lbl), 2, "nochmal");
+          else if (!hat_dock) kachel(id(qs_dock_btn), id(qs_dock_lbl), 2, "keins");
+          else if (dock_rot) kachel(id(qs_dock_btn), id(qs_dock_lbl), 2, "weg");
+          else kachel(id(qs_dock_btn), id(qs_dock_lbl), 1, dock_ok ? "an" : "sucht");
+          if (bt_aus) kachel(id(qs_bt_btn), id(qs_bt_lbl), 0, "aus");
+          else if (nw > 0) kachel(id(qs_bt_btn), id(qs_bt_lbl), 3, "Notweg");
+          else if (bt_selbst) kachel(id(qs_bt_btn), id(qs_bt_lbl), 1, "direkt");
+          else kachel(id(qs_bt_btn), id(qs_bt_lbl), 1, "bereit");
+          const std::string &z = wlan_zugriff::g_zustand;
+          if (!dockbetrieb) kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, wlan_ok ? "immer" : "sucht");
+          else if (z == "Update") kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, "Update");
+          else if (!wlan_an || z == "aus") kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 0, "aus");
+          else if (wlan_zugriff::g_rest > 0) {
+            snprintf(b, sizeof(b), "%u:%02u", (unsigned) (wlan_zugriff::g_rest / 60), (unsigned) (wlan_zugriff::g_rest % 60));
+            kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, b);
+          } else kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, wlan_ok ? "an" : "endet");
   - id: toggle_bri_overlay
     then:
       - if:
@@ -3825,25 +3998,37 @@ script:
             - script.execute: hide_bri_overlay
   - id: toggle_kbd_overlay
     then: [{script.execute: toggle_bri_overlay}]
-  # WLAN-Kachel: AUS = "Nur Bluetooth" (WLAN bleibt aus, HA laeuft ueber den
-  # Tunnel). Ohne Tunnel (keine g_set_nur_ble) wirkt es nur bis zum Neustart.
+  # WLAN-Kachel (2026-10-31, getrennt vom Dock-Betrieb): an -> sofort aus, aus -> 10 min an ("von Hand").
+  # Bei "Nur WLAN" ist es ohnehin immer an - dann nichts.
   - id: qs_wlan_toggle
     then:
-      # Automatisch an (Fenster, Dock weg ...): ein Tippen schaltet es sofort aus (2026-10-29, vorher erst an, dann aus)
       - if:
-          condition: {lambda: 'return wlan_zugriff::g_nur_ble && !wifi::global_wifi_component->is_disabled();'}
+          condition: {lambda: 'return wlan_zugriff::g_nur_ble;'}
           then:
-            - script.execute: wlan_jetzt_aus
-            - delay: 100ms
-          else:
-            - lambda: |-
-                wlan_zugriff::g_nur_ble = !wlan_zugriff::g_nur_ble;
-                if (wlan_zugriff::g_set_nur_ble) wlan_zugriff::g_set_nur_ble(wlan_zugriff::g_nur_ble);
             - if:
-                condition: {lambda: "return wlan_zugriff::g_nur_ble;"}
-                then: [{wifi.disable:}]
-                # nach dem Aufwachen startet das WLAN erst nach dem Zeitfenster fuer den Funk zum Dock (on_boot -150)
-                else: [{if: {condition: {lambda: "return !id(wlan_nach_weck);"}, then: [{wifi.enable:}]}}]
+                condition: {lambda: 'return !wifi::global_wifi_component->is_disabled();'}
+                then:
+                  - script.execute: wlan_jetzt_aus
+                  - delay: 100ms
+                else:
+                  - lambda: 'wlan_zugriff::fenster(600, "von Hand");'
+                  - script.execute: wartungsfenster
+      - script.execute: qs_refresh
+      - script.execute: hide_bri_overlay
+  # Dock-Kachel: Dock-Betrieb an/aus. Aus (= "Nur WLAN", mehr Strom) erst beim zweiten Tippen binnen 3 s.
+  - id: qs_dock_toggle
+    then:
+      - lambda: |-
+          if (!wlan_zugriff::g_set_nur_ble) return;
+          if (wlan_zugriff::g_nur_ble) {
+            if (funkweg::g_dock_scharf == 0 || millis() - funkweg::g_dock_scharf >= 3000) { funkweg::g_dock_scharf = millis() | 1; return; }
+            funkweg::g_dock_scharf = 0;
+            wlan_zugriff::g_nur_ble = false;
+          } else {
+            wlan_zugriff::g_nur_ble = true;   // WLAN schaltet der Tunnel danach selbst ab (nicht hier: Funk zum Dock)
+          }
+          wlan_zugriff::g_set_nur_ble(wlan_zugriff::g_nur_ble);
+          ESP_LOGI("wlan", "Schnelleinstellungen: Dock-Betrieb %s", wlan_zugriff::g_nur_ble ? "an" : "aus (Nur WLAN)");
       - script.execute: qs_refresh
       - script.execute: apply_power
       - script.execute: hide_bri_overlay
@@ -4737,15 +4922,13 @@ script:
             id(apply_low_bat)->execute();
             ESP_LOGI("akku", "%s (%.1f %%/h)",
                      neu ? "laedt" : "laedt nicht", (double) rate);
-            // Ladegeraet gerade angesteckt -> aufwecken und WLAN 3 min
-            // erzwingen. So wird die Fernbedienung ueber "ans Kabel legen"
-            // zuverlaessig per Home Assistant / OTA erreichbar, auch wenn sie
-            // im Ruhezustand das WLAN abgeschaltet hatte.
-            if (flanke_an) {
-              ESP_LOGI("akku", "Ladegeraet angesteckt -> Wartungsfenster");
+            // Ladegeraet gerade angesteckt -> Display an. Das WLAN-Wartungsfenster am Kabel (3 min) ist raus (2026-10-31,
+            // Nutzer): Updates schalten das WLAN selbst ein, Konfiguration kommt ueber Dock/Bluetooth - und es sperrte
+            // beim Aufwachen den Funk zum Dock. Die ersten 15 s nach dem Start zaehlen nicht: nach dem Tiefschlaf ist
+            // "laedt" erst falsch, auf dem Ladedock sah jedes Aufwachen wie Einstecken aus.
+            if (flanke_an && millis() > 15000) {
+              ESP_LOGI("akku", "Ladegeraet angesteckt");
               id(wake_backlight)->execute();
-              // "Nur Bluetooth": kein WLAN beim Einstecken - Updates laufen durch den Tunnel (2026-10-07)
-              if (!wlan_zugriff::g_nur_ble) { wlan_zugriff::fenster(180, "Ladekabel"); id(wartungsfenster)->execute(); }
             }
           }
       - script.execute: apply_charge_icon
@@ -5035,7 +5218,7 @@ script:
           lv_label_set_text(id(h_kbdbri), "Helligkeit der Tastenbeleuchtung, wenn sie eingeschaltet ist.");
           lv_label_set_text(id(h_to), "So lange ohne Bedienung, dann geht das Display aus und die Remote schläft. Ganz links = Nie (kostet viel Akku). Ein Tipp oder Tastendruck weckt sie wieder.");
           lv_label_set_text(id(h_sh_ble), "Bluetooth zu Fernseher oder Streamer. Blau: verbunden (Balken = Empfang). Grau: an, aber nicht verbunden. Dunkel: Bluetooth aus.");
-          lv_label_set_text(id(h_sh_wifi), "WLAN. Grün: verbunden (Balken = Empfang). Grau: an, aber nicht verbunden. Dunkel: WLAN aus, z. B. im Ruhezustand oder bei „Nur Bluetooth“.");
+          lv_label_set_text(id(h_sh_wifi), "WLAN. Grün: verbunden (Balken = Empfang). Grau: an, aber nicht verbunden. Dunkel: WLAN aus – im Dock-Betrieb normal (es kommt nur als Ausweg), sonst im Ruhezustand.");
           lv_label_set_text(id(h_sh_ha), "Symbol hinter den Balken: Verbindung zu Home Assistant. Grün: über WLAN. Blau: über Bluetooth. Grau: nicht verbunden.");
           lv_label_set_text(id(h_sh_batt), "Ladezustand in Prozent. Beim Laden erscheint ein Blitz; 100 % erst, wenn der Akku wirklich voll geladen ist.");
           lv_label_set_text(id(h_sh_clock), "Uhrzeit oben in der Leiste. Ohne Uhr rutscht der Sleeptimer-Countdown nach links.");
@@ -5924,7 +6107,7 @@ switch:
     lambda: 'return id(testmodus);'
     turn_on_action:
       - globals.set: {id: testmodus, value: "true"}
-      - lambda: 'ESP_LOGI("test", "Testmodus AN - kein Tiefschlaf, kein WLAN-Aus");'
+      - lambda: 'ESP_LOGI("test", "Testmodus AN - kein Tiefschlaf, WLAN bleibt an (auch im Dock-Betrieb), endet nach 12 h"); id(testmodus_ab) = millis() | 1;'
       - script.execute: apply_power
     turn_off_action:
       - globals.set: {id: testmodus, value: "false"}
@@ -6208,6 +6391,7 @@ tca8418:
             else: [{script.execute: key_ohne_wecken}]
         - lambda: |-
             id(last_input_ms) = millis();
+            if (pressed) id(last_key_ms) = millis();
             // Roh-Ereignis mit Zeitstempel (Fehlersuche Doppel/Einzel-Erkennung).
             ESP_LOGD("taste", "%d %s t=%u", (int) keycode, pressed ? "runter" : "hoch", (unsigned) millis());
             // ---- Reinigungsmodus: alle Tasten gesperrt, nur Zurueck LANG bricht ab.
@@ -6315,14 +6499,8 @@ button:
     on_press:
       - script.execute: sd_auswerfen_neustart
 
-  # WLAN fuer 3 min erzwingen (Fernwartung/Flashen, auch im Modus "Nur Bluetooth")
-  - platform: template
-    name: "Wartungsfenster jetzt"
-    icon: "mdi:wifi-refresh"
-    entity_category: diagnostic
-    on_press:
-      - lambda: 'wlan_zugriff::fenster(180, "Wartung");'
-      - script.execute: wartungsfenster
+  # Knopf "Wartungsfenster jetzt" entfernt (2026-10-31): er wirkte nur, wenn die Remote schon per WLAN mit HA verbunden
+  # war - im Dock-Betrieb nie. WLAN fuer eine Zeit: Konfigurator (Dienst wlan_fenster bzw. ueber das Dock, "w").
 
 
 binary_sensor:
@@ -6360,7 +6538,7 @@ binary_sensor:
 
 
   # Ladekabel: TP4056 ~CHRG (GPIO1, LOW = laedt). Solange er LOW ist, kein Tiefschlaf (der ext1-Wecker wuerde
-  # sofort wieder wecken). Bei vollem Akku geht der Pin hochohmig - das Einstecken oeffnet deshalb ein Wartungsfenster.
+  # sofort wieder wecken). Bei vollem Akku geht der Pin hochohmig (kein WLAN-Fenster mehr beim Einstecken, 2026-10-31).
   - platform: gpio
     id: charger_present
     name: "Ladekabel"
@@ -6383,11 +6561,8 @@ binary_sensor:
           then:
             - lambda: 'akkustat::laden_start();'   # Akku-Statistik: Entladung beginnt nach dem Laden neu
             - script.execute: wake_backlight
-            # "Nur Bluetooth": kein Wartungsfenster beim Einstecken - Updates laufen durch den Bluetooth-Tunnel,
-            # WLAN bleibt aus (2026-10-07, Nutzerwunsch). Notausgang: Knopf "Wartungsfenster jetzt" in HA.
-            - if:
-                condition: {lambda: 'return !wlan_zugriff::g_nur_ble;'}
-                then: [{lambda: 'wlan_zugriff::fenster(180, "Ladekabel");'}, {script.execute: wartungsfenster}]
+            # Kein WLAN-Fenster beim Einstecken mehr (2026-10-31): im Dock-Betrieb gab es schon keins, bei "Nur WLAN" ist
+            # das WLAN ohnehin an. Updates fordert HA bei Bedarf selbst an (ueber das Dock).
             - script.execute: lade_popup
     # Icon jetzt direkt hier (apply_charge_icon), nicht mehr nur ueber den
     # Umweg refresh_laden -> CRATE-Register - das reagiert traege, s.
@@ -7136,8 +7311,12 @@ lvgl:
             # gleicht home_cover_img mit x/y: -2 aus.
             pad_all: 0
             on_click:
-              - lambda: 'id(media_from) = 0; id(media_home_ms) = 0;'
-              - lvgl.page.show: {id: page_media, animation: MOVE_LEFT, time: 150ms}
+              # Ziel einstellbar (Startseite > Medien > Antippen oeffnet, 2026-11-01), sonst die Media-Seite
+              - if:
+                  condition: {lambda: 'return !tasten::home_medien_klick();'}
+                  then:
+                    - lambda: 'id(media_from) = 0; id(media_home_ms) = 0;'
+                    - lvgl.page.show: {id: page_media, animation: MOVE_LEFT, time: 150ms}
             widgets:
               # Reihenfolge ist Zeichenreihenfolge (LVGL): Cover ganz unten,
               # dann Scrim, dann Text, dann der schwebende Kameras-Button
@@ -7261,8 +7440,8 @@ lvgl:
             id: qs_panel
             hidden: true
             align: TOP_MID
-            y: 24
-            width: 228
+            y: 6
+            width: 236
             height: SIZE_CONTENT
             bg_color: 0x111418
             bg_opa: COVER
@@ -7273,7 +7452,98 @@ lvgl:
             scrollable: false
             styles: [st_fx_c10]
             widgets:
+              # Funkweg (2026-10-31, Nutzerwunsch "Dock und Bluetooth besser erklaert"): wie eine Taste zum Geraet der
+              # Aktivitaet kommt - Remote -> Dock -> Geraet, je Strecke blau (steht), rot (gestoert), grau (nicht benutzt).
+              # Darunter ein Satz dazu. Tippen = Geraete am Dock (statt der Schalter). Alles in qs_refresh.
               - obj:
+                  id: qs_weg
+                  width: 100%
+                  height: 70
+                  bg_color: 0x1A1F27
+                  bg_opa: COVER
+                  radius: 10
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  on_click: [{lambda: 'funkweg::g_liste = !funkweg::g_liste;'}, {script.execute: qs_refresh}, {script.execute: hide_bri_overlay}]
+                  widgets:
+                    - label: {id: qs_w_i0, x: 8, y: 0, text: "\U000F0454", text_font: ico_funk, text_color: 0xF1F3F5}
+                    - obj: {id: qs_w_l1, x: 37, y: 11, width: 54, height: 3, radius: 2, bg_color: 0x3A424E, bg_opa: COVER, border_width: 0, pad_all: 0, scrollable: false, clickable: false}
+                    - label: {id: qs_w_i1, x: 96, y: 0, text: "\U000F10AB", text_font: ico_funk, text_color: 0xF1F3F5}
+                    - obj: {id: qs_w_l2, x: 125, y: 11, width: 54, height: 3, radius: 2, bg_color: 0x3A424E, bg_opa: COVER, border_width: 0, pad_all: 0, scrollable: false, clickable: false}
+                    - label: {id: qs_w_i2, x: 184, y: 0, text: "\U000F0502", text_font: ico_funk, text_color: 0xF1F3F5}
+                    - label: {id: qs_w_n0, x: 2, y: 28, width: 66, height: 15, text: "Remote", text_font: a11, text_color: 0x8B94A3, long_mode: DOT}
+                    - label: {id: qs_w_n1, x: 68, y: 28, width: 80, height: 15, text: "-", text_font: a11, text_color: 0x8B94A3, text_align: CENTER, long_mode: DOT}
+                    - label: {id: qs_w_n2, x: 148, y: 28, width: 66, height: 15, text: "-", text_font: a11, text_color: 0x8B94A3, text_align: RIGHT, long_mode: DOT}
+                    - label: {id: qs_w_info, x: 0, y: 47, width: 216, height: 18, text: "-", text_font: a13, text_color: 0xF1F3F5, text_align: CENTER, long_mode: DOT}
+              # Geraete am Dock (aufgeklappt statt der Schalter)
+              - obj:
+                  id: qs_w_liste
+                  hidden: true
+                  width: 100%
+                  height: SIZE_CONTENT
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  layout: {type: FLEX, flex_flow: COLUMN, pad_row: 0}
+                  on_click: [{lambda: 'funkweg::g_liste = false;'}, {script.execute: qs_refresh}]
+                  widgets:
+                    - obj:
+                        id: qs_wl_r0
+                        width: 100%
+                        height: 14
+                        bg_opa: TRANSP
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+                        clickable: false
+                        styles: [st_fx_sb]
+                        widgets:
+                          - label: {id: qs_wl_n0, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                          - label: {id: qs_wl_s0, text: "-", text_font: a11}
+                    - obj:
+                        id: qs_wl_r1
+                        width: 100%
+                        height: 14
+                        bg_opa: TRANSP
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+                        clickable: false
+                        styles: [st_fx_sb]
+                        widgets:
+                          - label: {id: qs_wl_n1, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                          - label: {id: qs_wl_s1, text: "-", text_font: a11}
+                    - obj:
+                        id: qs_wl_r2
+                        width: 100%
+                        height: 14
+                        bg_opa: TRANSP
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+                        clickable: false
+                        styles: [st_fx_sb]
+                        widgets:
+                          - label: {id: qs_wl_n2, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                          - label: {id: qs_wl_s2, text: "-", text_font: a11}
+                    - obj:
+                        id: qs_wl_r3
+                        width: 100%
+                        height: 14
+                        bg_opa: TRANSP
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+                        clickable: false
+                        styles: [st_fx_sb]
+                        widgets:
+                          - label: {id: qs_wl_n3, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                          - label: {id: qs_wl_s3, text: "-", text_font: a11}
+              # Drei Schalter, jeder mit einer Aufgabe: Dock-Betrieb, eigenes Bluetooth der Remote, WLAN jetzt
+              - obj:
+                  id: qs_kacheln
                   width: 100%
                   height: SIZE_CONTENT
                   bg_opa: TRANSP
@@ -7283,27 +7553,35 @@ lvgl:
                   styles: [st_fx_sb8]
                   widgets:
                     - button:
-                        id: qs_wlan_btn
-                        width: 100
-                        height: 50
+                        id: qs_dock_btn
+                        width: 68
+                        height: 58
                         styles: [st_ctrlbtn]
-                        on_click: [{script.execute: qs_wlan_toggle}]
+                        pad_all: 4
+                        on_click: [{script.execute: qs_dock_toggle}]
                         widgets:
-                          # Symbol + Name oben, Zustand darunter in eigener Zeile (vorher ueberlappte "verbunden" das Symbol)
-                          - label: {align: TOP_LEFT, x: -2, y: -4, text: "\U000F05A9", text_font: mdi_menu}
-                          - label: {align: TOP_LEFT, x: 22, y: 0, text: "WLAN", text_font: a13}
-                          - label: {id: qs_wlan_lbl, align: BOTTOM_LEFT, y: 3, text: "-", text_font: a13}
+                          - label: {align: TOP_MID, y: -1, text: "\U000F10AB", text_font: ico_funk}
+                          - label: {id: qs_dock_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
                     - button:
                         id: qs_bt_btn
-                        width: 100
-                        height: 50
+                        width: 68
+                        height: 58
                         styles: [st_ctrlbtn]
+                        pad_all: 4
                         on_click: [{script.execute: qs_bt_toggle}]
                         widgets:
-                          # Symbol + Name oben, Zustand darunter in eigener Zeile (vorher ueberlappte "verbunden" das Symbol)
-                          - label: {align: TOP_LEFT, x: -2, y: -4, text: "\U000F00AF", text_font: mdi_menu}
-                          - label: {align: TOP_LEFT, x: 22, y: 0, text: "Bluetooth", text_font: a13}
-                          - label: {id: qs_bt_lbl, align: BOTTOM_LEFT, y: 3, text: "-", text_font: a13}
+                          - label: {align: TOP_MID, y: -1, text: "\U000F00AF", text_font: ico_funk}
+                          - label: {id: qs_bt_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
+                    - button:
+                        id: qs_wlan_btn
+                        width: 68
+                        height: 58
+                        styles: [st_ctrlbtn]
+                        pad_all: 4
+                        on_click: [{script.execute: qs_wlan_toggle}]
+                        widgets:
+                          - label: {align: TOP_MID, y: -1, text: "\U000F05A9", text_font: ico_funk}
+                          - label: {id: qs_wlan_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
               # Regler wie im Menue (Einstellungen > Bildschirm): Zeile Name + Prozent,
               # darunter waagerechter Regler. Groesse/Farben setzt fix_slider_geometry.
               - obj:
@@ -8620,9 +8898,9 @@ lvgl:
                   }
               - script.execute: apply_power
             widgets:
-              - label: {text: "Nur Bluetooth", text_font: a15, styles: [st_grow]}
+              - label: {text: "Dock-Betrieb", text_font: a15, styles: [st_grow]}
               - label: {id: ps_nurble_lbl, text: "-", text_font: a13, text_color: 0x8B94A3}
-        - label: {id: ps_nurble_h, hidden: true, width: 216, text: "WLAN bleibt aus, Home Assistant, Bilder und Sprache laufen über Bluetooth. Für Updates schaltet das Wartungsfenster das WLAN kurz ein.", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
+        - label: {id: ps_nurble_h, hidden: true, width: 216, text: "AN: Tasten, Befehle, Bilder und Stand gehen per Funk übers Dock, das WLAN bleibt aus. Es kommt nur als Ausweg: kein Dock erreicht, Sprache, Update. Bluetooth nur zu Fernseher/Streamer, wenn das Dock es nicht kann. AUS: alles über das eigene WLAN.", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - button:
             id: ps_bleidle_btn
             width: 100%
@@ -9921,6 +10199,7 @@ lvgl:
       pad_all: 0
       on_load:
         - lambda: 'id(cur_page) = 52; musik::geladen();'
+        - script.execute: cover_sichtbar   # Ansicht "Cover": Bild holen, falls neu (2026-10-31)
       widgets:
         - obj:
             id: musik_root

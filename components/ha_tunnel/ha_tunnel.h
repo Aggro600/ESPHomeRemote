@@ -80,7 +80,7 @@ class HaTunnel : public Component {
   void set_http_weg(int w) { http_weg_.store((uint8_t) w); }
   // HTTP-Abruf fand keinen Weg (2026-10-25): die Remote holt dann ihr WLAN (Funkkonzept "Dock, WLAN als Ausweg").
   // Laeuft im HTTP-Task - nur Kurzes tun.
-  std::function<void()> ohne_weg;
+  std::function<void(const std::string &)> ohne_weg;   // Anfragezeile (GET /pfad ...), falls schon gelesen
   void set_http(uint16_t port, const std::string &ha_ip, uint16_t ha_port) {
     http_port_ = port;
     const uint32_t ip = ipaddr_addr(ha_ip.c_str());

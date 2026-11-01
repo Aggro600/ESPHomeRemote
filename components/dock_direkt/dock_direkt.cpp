@@ -50,6 +50,15 @@ static std::atomic<bool> s_ok{false};
 static std::atomic<int> s_besitzer{0};
 static bool besitz_nehmen(int wer) { int frei = 0; return s_besitzer.compare_exchange_strong(frei, wer); }
 static void besitz_abgeben(int wer) { int ich = wer; s_besitzer.compare_exchange_strong(ich, 0); }
+// Tasten vor Bildern (2026-10-31): loop() hat etwas zu senden, waehrend der HTTP-Task den Funk hat (Cover ueber das Dock
+// brauchte bis zu 3 s und hielt so lange jeden Befehl auf) - der HTTP-Task gibt den Funk dann kurz ab.
+static std::atomic<bool> s_loop_will{false};
+// Pruefwert eines Stands (2026-10-31): die Remote schickt ihn mit der Frage, das Dock antwortet bei Gleichstand leer
+static uint32_t stand_pruef(const std::string &t) {
+  uint32_t h = 2166136261u;
+  for (unsigned char c : t) h = (h ^ c) * 16777619u;
+  return h | 1;
+}
 
 // HTTP-Pakete (typ 6-9) gehen nicht durch loop(), sondern in diese Schlange des HTTP-Tasks
 struct HttpRx { uint8_t mac[6]; std::vector<uint8_t> d; };
@@ -277,7 +286,10 @@ void DockDirekt::an_remote_senden_(uint8_t platz, uint8_t art, const std::vector
 
 bool DockDirekt::zustand_anfragen(const uint8_t mac[6], const std::string &name, std::function<void()> &&fehlschlag) {
   std::vector<uint8_t> inhalt(name.begin(), name.end());
-  return einreihen_(mac, ZUSTAND_FRAGE, 0, (uint16_t) inhalt.size(), inhalt, std::move(fehlschlag));
+  // Bekannten Stand mitschicken (2026-10-31): unveraendert -> kurze leere Antwort statt ~600 Byte. Mindestens jede
+  // Minute wieder ganz (einmalige Anforderungen wie Wartungsfenster wirken so wie bisher).
+  const uint32_t pruef = stand_pruef_ != 0 && millis() - stand_ms_ < 300000 ? stand_pruef_ : 0;   // 5 min: die Minuten-Abfrage kam nach ~61 s - immer voll
+  return einreihen_(mac, ZUSTAND_FRAGE, pruef, (uint16_t) inhalt.size(), inhalt, std::move(fehlschlag));
 }
 
 bool DockDirekt::senden_hid(const uint8_t mac[6], uint8_t platz, bool antwort, const std::vector<uint8_t> &ereignisse,
@@ -356,11 +368,12 @@ void DockDirekt::funk_zurueck_() {
 void DockDirekt::naechster_versuch_() {
   // Einzelnes verlorenes Paket (2026-10-27): das Dock teilt seinen Funk mit WLAN und Bluetooth - erst zweimal
   // nachlegen, bevor das Dock als "nicht erreicht" gilt (sonst schaltet ein Paket den Bluetooth-Notweg ein)
-  if (!funk_geliehen_ && aktuell_.gesendet && aktuell_.nochmal > 0) {
+  // 2026-10-31: auch bei geliehenem Funk (WLAN aus) - vorher ging es nach einem verlorenen Paket gleich ueber alle
+  // anderen Kanaele und dann in den Ausweichweg: Taste weg, Bluetooth-Notweg an. Nachgelegt wird nach 25 ms.
+  if (aktuell_.gesendet && aktuell_.nochmal > 0) {
     aktuell_.nochmal--;
-    s_fertig = false;
-    gesendet_ms_ = millis();
-    if (esp_now_send(aktuell_.mac, aktuell_.paket.data(), aktuell_.paket.size()) == ESP_OK) return;
+    aktuell_.erneut_ms = (millis() + 25) | 1;
+    return;
   }
   if (funk_geliehen_ && !kanaele_.empty()) {
     const uint8_t k = kanaele_.front();
@@ -368,6 +381,8 @@ void DockDirekt::naechster_versuch_() {
     esp_wifi_set_channel(k, WIFI_SECOND_CHAN_NONE);
     s_fertig = false;
     gesendet_ms_ = millis();
+    // Auf dem Kanal des Docks (bzw. des WLANs, solange keiner gemerkt ist) zaehlt das Nachlegen
+    aktuell_.gesendet = k == (dock_kanal_ != 0 ? dock_kanal_ : kanal_);
     const esp_err_t e = esp_now_send(aktuell_.mac, aktuell_.paket.data(), aktuell_.paket.size());
     if (e == ESP_OK) return;
     ESP_LOGW(TAG, "Senden auf Kanal %u: %s", (unsigned) k, esp_err_to_name(e));
@@ -464,6 +479,14 @@ void DockDirekt::loop() {
     }
   }
 
+  if (unterwegs_ && aktuell_.erneut_ms != 0) {   // Nachlegen auf demselben Kanal
+    if ((int32_t) (millis() - aktuell_.erneut_ms) < 0) return;
+    aktuell_.erneut_ms = 0;
+    s_fertig = false;
+    gesendet_ms_ = millis();
+    if (esp_now_send(aktuell_.mac, aktuell_.paket.data(), aktuell_.paket.size()) != ESP_OK) naechster_versuch_();
+    if (unterwegs_) return;
+  }
   if (unterwegs_) {
     if (s_fertig) {
       if (s_ok) {
@@ -524,9 +547,13 @@ void DockDirekt::loop() {
   } else {
     http_funk_bereit_ = false;
   }
-  if (s_besitzer == 2) return;   // HTTP-Task sendet gerade - eigene Auftraege warten
+  if (s_besitzer == 2) {   // HTTP-Task sendet gerade: er gibt den Funk fuer unsere Auftraege kurz frei
+    if (!warte_.empty()) s_loop_will = true;
+    return;
+  }
 
   if (warte_.empty()) {
+    s_loop_will = false;
     if ((int32_t) (millis() - antwort_bis_ms_) >= 0 && !http_funk_wunsch_) funk_zurueck_();
     return;
   }
@@ -768,14 +795,22 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
 #endif
       auto it = zustaende_.find(text);
       if (it == zustaende_.end()) { ESP_LOGI(TAG, "%s (%s) fragt - noch kein Stand", von, text.c_str()); return; }
+      const uint32_t pruef = stand_pruef(it->second);
+      if (param != 0 && param == pruef) {   // Remote hat diesen Stand schon (2026-10-31)
+        if (einreihen_(mac, ZUSTAND, pruef, 0, {}, {})) ESP_LOGD(TAG, "%s (%s): Stand unveraendert", von, text.c_str());
+        return;
+      }
       std::vector<uint8_t> inhalt(it->second.begin(), it->second.end());
-      if (einreihen_(mac, ZUSTAND, 0, (uint16_t) inhalt.size(), inhalt, {}))
+      if (einreihen_(mac, ZUSTAND, pruef, (uint16_t) inhalt.size(), inhalt, {}))
         ESP_LOGI(TAG, "%s (%s): Stand geschickt (%u Byte)", von, text.c_str(), (unsigned) inhalt.size());
     }
 #else
     if (typ == ZUSTAND) {   // Remote: Stand vom Dock
-      ESP_LOGI(TAG, "Stand vom Dock %s (%u Byte)", von, (unsigned) text.size());
       antwort_bis_ms_ = 0;
+      if (text.empty()) { ESP_LOGD(TAG, "Stand vom Dock %s: unveraendert", von); return; }
+      ESP_LOGI(TAG, "Stand vom Dock %s (%u Byte)", von, (unsigned) text.size());
+      stand_pruef_ = stand_pruef(text);
+      stand_ms_ = millis();
       for (auto &f : zustand_cbs_) f(text);
     }
 #endif
@@ -1097,6 +1132,18 @@ bool DockDirekt::http_relay(int c, std::vector<uint8_t> &vorab) {
   int wdh = 0;
   while (!fertig && millis() - letzte < 3000) {
     bool aktiv = false;
+    if (s_loop_will.load()) {   // Befehle (Tasten, HA-Aufrufe) gehen vor: Funk kurz abgeben, danach weiter
+      besitz_abgeben(2);
+      besitz = false;
+      const uint32_t p0 = millis();
+      while ((s_loop_will.load() || s_besitzer.load() != 0) && millis() - p0 < 800) vTaskDelay(pdMS_TO_TICKS(3));
+      while (!(besitz = besitz_nehmen(2)) && millis() - p0 < 1500) vTaskDelay(pdMS_TO_TICKS(3));
+      s_loop_will = false;
+      if (!besitz) break;
+      if (funk_geliehen_ && dock_kanal_ != 0) esp_wifi_set_channel(dock_kanal_, WIFI_SECOND_CHAN_NONE);
+      ESP_LOGD(TAG, "HTTP (Dock): %u ms Pause fuer Befehle", (unsigned) (millis() - p0));
+      letzte = req_ms = millis();
+    }
     // Anfrage-Bytes senden (Fenster)
     while (req_gesendet < anfrage.size() && req_gesendet - req_quittiert < HTTP_FENSTER) {
       const size_t n = std::min<size_t>(HTTP_STUECK, anfrage.size() - req_gesendet);

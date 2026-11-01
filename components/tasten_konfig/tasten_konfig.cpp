@@ -224,7 +224,11 @@ void TastenKonfig::einst_pruefen_() {
       }
     }
 #endif
-    if (millis() - einst_log_ms_ > 60000) { einst_log_ms_ = millis(); ESP_LOGI(TAG, "Einstellungen geaendert, warte auf HA"); }
+    // Nur, wenn wirklich geaenderte Werte warten (einst_voll_ allein = voller Stand, sobald HA verbunden ist) - die
+    // Zeile kam sonst ohne eigene HA-Verbindung jede Minute (2026-10-31)
+    bool warten = false;
+    for (auto &f : einst_) if (f.get() != f.gemeldet) { warten = true; break; }
+    if (warten && millis() - einst_log_ms_ > 60000) { einst_log_ms_ = millis(); ESP_LOGI(TAG, "Einstellungen geaendert, warte auf HA"); }
     return;
   }
   JsonDocument d(&alloc_);
@@ -367,7 +371,8 @@ void TastenKonfig::loop() {
     const bool con = api_ok_();
     for (auto it = ha_q_.begin(); it != ha_q_.end();) {
       if (con) { kb_->call_homeassistant_service(it->svc, it->d); it = ha_q_.erase(it); }
-      else if (millis() - it->t0 > 10000) { ESP_LOGW(TAG, "HA-Aufruf %s verworfen (keine Verbindung)", it->svc.c_str()); it = ha_q_.erase(it); }
+      // 20 s (2026-10-31, vorher 10): WLAN an + Anmelden + HA verbindet - 10 s reichten oft nicht
+      else if (millis() - it->t0 > 20000) { ESP_LOGW(TAG, "HA-Aufruf %s verworfen (keine Verbindung)", it->svc.c_str()); it = ha_q_.erase(it); }
       else ++it;
     }
   }
@@ -433,8 +438,13 @@ void TastenKonfig::loop() {
   if (dl_laeuft_) grund = millis() - dl_start_ > 30000 ? "Download haengt" : "Download laeuft";
   else if (versuch_ >= 8) grund = "zu viele Versuche";
   else if ((int32_t) (millis() - laden_ab_) < 0) grund = "Wartezeit";
-  else if (!api_ok_() && wlan_holen && wlan_holen()) grund = "WLAN kommt";
-  else if (!api_ok_() && !(laden_ueber_dock && laden_ueber_dock())) grund = "keine HA-Verbindung";
+  else if (!api_ok_()) {
+    // Dock zuerst (2026-10-31): vorher kam bei jeder neuen Belegung erst das WLAN (60 s, bis 12 s Warten) - in der Zeit
+    // war der Funk zum Dock gesperrt und Tasten kamen spaet. WLAN nur ohne Dock oder nach 2 Fehlversuchen uebers Dock.
+    const bool dock = laden_ueber_dock && laden_ueber_dock();
+    if ((!dock || versuch_ >= 2) && wlan_holen && wlan_holen()) grund = "WLAN kommt";
+    else if (!dock) grund = "keine HA-Verbindung";
+  }
   else if (darf_laden && !darf_laden()) { laden_ab_ = millis() + 2000; grund = "Sprache aktiv"; }
   if (grund != nullptr) {
     if (millis() - grund_log_ > 15000) { grund_log_ = millis(); ESP_LOGD(TAG, "Belegung %s ausstehend: %s", soll_hash_.c_str(), grund); }
@@ -546,6 +556,16 @@ std::vector<std::string> TastenKonfig::dock_macs() const {
     }
 #endif
   return macs;
+}
+
+std::string TastenKonfig::dock_ok_name() const {
+#ifdef TK_USE_DIREKT
+  uint8_t ok[6], m[6];
+  if (direkt_ == nullptr || doc_ == nullptr || !direkt_->letztes_ok(ok)) return "";
+  for (JsonPairConst kv : (*doc_)["dmac"].as<JsonObjectConst>())
+    if (dock_direkt::DockDirekt::mac_lesen(kv.value() | "", m) && memcmp(m, ok, 6) == 0) return kv.key().c_str();
+#endif
+  return "";
 }
 
 void TastenKonfig::dock_pruefen() {

@@ -105,7 +105,12 @@ void HaTunnel::http_task_() {
       else if (kb_->link_connected()) http_ble_(c, vorab);
       else if (!(http_weg_.load() == 0 && http_dock_ && http_dock_(c, vorab))) {
         ESP_LOGW(TAG, "HTTP: kein Weg (weder WLAN noch Link noch Dock)");
-        if (ohne_weg) ohne_weg();
+        if (ohne_weg) {
+          std::string zeile((const char *) vorab.data(), std::min<size_t>(vorab.size(), 160));
+          const size_t e = zeile.find('\r');
+          if (e != std::string::npos) zeile.resize(e);
+          ohne_weg(zeile);
+        }
       }
     }
     lwip_close(c);

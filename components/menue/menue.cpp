@@ -1878,15 +1878,19 @@ bool Menue::taste(int k, bool gedrueckt) {
     }
   }
   // OK lang (2026-10-26): Eintrag mit "lang" - kurz = normale Aktion beim Loslassen, gehalten (600 ms) = "lang"
-  if (k == 34 && !tmodus_ && fokus_ >= 0 && fokus_ < (int) items_.size() && !items_[fokus_].j["lang"].isNull() &&
-      !items_[fokus_].gesperrt) {
+  // Licht-Widget mit Unterseite (2026-11-01): kurz = Unterseite, lang = an/aus
+  auto licht_lang = [this](Item &x) { return x.typ == T_WIDGET && x.wart == W_LICHT && *(x.j["ziel"] | ""); };
+  if (k == 34 && !tmodus_ && fokus_ >= 0 && fokus_ < (int) items_.size() &&
+      (!items_[fokus_].j["lang"].isNull() || licht_lang(items_[fokus_])) && !items_[fokus_].gesperrt) {
     if (gedrueckt) {
       ok_lang_i_ = fokus_;
       ok_lang_fertig_ = false;
-      set_timeout("ok_lang", 600, [this]() {
+      set_timeout("ok_lang", 600, [this, licht_lang]() {
         if (ok_lang_i_ < 0 || ok_lang_i_ >= (int) items_.size()) return;
         ok_lang_fertig_ = true;
-        tk_->schritte(items_[ok_lang_i_].j["lang"].as<JsonArrayConst>());
+        Item &x = items_[ok_lang_i_];
+        if (!x.j["lang"].isNull()) tk_->schritte(x.j["lang"].as<JsonArrayConst>());
+        else if (licht_lang(x)) { licht_senden_(x, "toggle", ""); licht_zustand_(x); }
       });
     } else {
       cancel_timeout("ok_lang");
@@ -2174,6 +2178,8 @@ void Menue::fokus(int dx, int dy) {
     return;
   }
   Item &a = items_[fokus_];
+  // Licht-Widget (2026-11-01): Zeilen im Widget und Links/Rechts = Wert (licht_taste_), erst am Rand weiter
+  if (a.typ == T_WIDGET && a.wart == W_LICHT && licht_taste_(a, dx, dy)) return;
   // Links/Rechts auf breitem Licht/Rollo: Wert aendern statt Fokus bewegen
   if (dx != 0 && dy == 0 && a.w >= 4 && (a.typ == T_LIGHT || a.typ == T_COVER || a.typ == T_ZAHL || a.typ == T_AUSWAHL)) { ausloesen_(a, dx); return; }
   if (dx != 0 && dy == 0 && a.teil == P_PRESET && a.j["werte"].size() >= 2) { ausloesen_(a, dx); return; }

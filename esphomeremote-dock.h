@@ -17,6 +17,9 @@ namespace musik {
 inline bool im_dock_zeigen();
 inline void zeigen(bool vom_dock);
 inline void dock_takt(bool im_dock);
+inline bool player_spielt();
+inline void titel_anwenden();
+inline void ausgewaehlt_verlassen();
 }
 
 namespace dockanz {
@@ -38,6 +41,20 @@ struct Zustand {
       *raum_ico{nullptr}, *k_box{nullptr}, *lade{nullptr}, *lade_ico{nullptr}, *balken{nullptr};
   lv_obj_t *k_zeile[4]{}, *k_tag[4]{}, *k_titel[4]{};
   int uhr_min{-1};
+  // Steuerleiste und Wahl (2026-10-31, Nutzer: Musik/Uhr umschalten, "Heute aus", Tipp nicht gleich weg)
+  int wahl{0};                  // 0 automatisch, 1 Uhr, 2 Musik - zurueck auf 0, wenn Musik anfaengt/aufhoert
+  bool spielte{false};
+  bool pausiert{false};         // "Heute aus": bis zum naechsten Herausnehmen kein Smart Display
+  lv_obj_t *leiste{nullptr};
+  uint32_t leiste_bis{0};
+  uint32_t geste_ms{0};
+  bool geste_an[2]{false, false};
+  // Ansicht aus dem Konfigurator (Daten "a"): Teile in Reihenfolge, Musik mit Titel, Antippen = Steuerleiste
+  std::vector<std::string> teile{"datum", "uhr", "wetter", "raum", "termine", "laden"};
+  bool musik_titel{true};
+  int musik_stil{1};            // 0 nur Spektrum, 1 mit Titel, 2 Cover im Hintergrund mit Titel
+  bool tipp_leiste{true};
+  lv_obj_t *c_wetter{nullptr}, *c_raum{nullptr}, *c_termine{nullptr}, *c_laden{nullptr};
   // Abruf (eigener Task, Stapel im PSRAM)
   void *task{nullptr};
   std::string url;
@@ -47,6 +64,8 @@ struct Zustand {
   volatile bool laeuft{false};
 };
 inline Zustand &z() { static Zustand s; return s; }
+inline void leiste_weg();   // Steuerleiste (weiter unten)
+inline void geste_anmelden(lv_obj_t *root, int i);
 
 inline std::string utf8(uint32_t cp) {
   std::string s;
@@ -106,7 +125,9 @@ inline void abruf_task(void *) {
 inline void abrufen() {
   auto &s = z();
   // fertig = Ergebnis noch nicht uebernommen: erst anwenden (sonst gibt der Task den Puffer frei, waehrend er gelesen wird)
-  if (s.laeuft || s.fertig || !api::global_api_server || !api::global_api_server->is_connected()) return;
+  // Ohne eigene HA-Verbindung ueber das Dock (2026-10-31: im Dock-Betrieb kamen sonst nie Wetter/Termine)
+  const bool api = api::global_api_server && api::global_api_server->is_connected();
+  if (s.laeuft || s.fertig || (!api && !(tk_cfg->laden_ueber_dock && tk_cfg->laden_ueber_dock()))) return;
   s.url = "http://" + tk_cfg->host() + "/api/esphomeremote_konfig/anzeige/" + App.get_name() + "?k=" + tk_cfg->schluessel();
   if (s.task == nullptr) {
     static StaticTask_t tcb;
@@ -155,7 +176,7 @@ inline void aufbauen() {
   s.uhr = text(r, a48->get_lv_font(), 0xF1F3F5, "--:--");
   lv_obj_align(s.uhr, LV_ALIGN_TOP_MID, 0, 34);
   // Wetter: Symbol | Temperatur ueber Beschreibung, als Ganzes mittig
-  lv_obj_t *w = rahmen(r, LV_FLEX_FLOW_ROW, 10);
+  lv_obj_t *w = s.c_wetter = rahmen(r, LV_FLEX_FLOW_ROW, 10);
   lv_obj_align(w, LV_ALIGN_TOP_MID, 0, 102);
   s.w_ico = text(w, mdi_wetter->get_lv_font(), 0xFACC15);
   lv_obj_t *wt = rahmen(w, LV_FLEX_FLOW_COLUMN, 2);
@@ -164,24 +185,25 @@ inline void aufbauen() {
   lv_obj_set_style_max_width(s.w_text, 170, 0);
   lv_label_set_long_mode(s.w_text, LV_LABEL_LONG_DOT);
   // Raum
-  lv_obj_t *rm = rahmen(r, LV_FLEX_FLOW_ROW, 6);
+  lv_obj_t *rm = s.c_raum = rahmen(r, LV_FLEX_FLOW_ROW, 6);
   lv_obj_align(rm, LV_ALIGN_TOP_MID, 0, 154);
   s.raum_ico = text(rm, mdi_klein->get_lv_font(), 0x3B82F6, utf8(0xF050F).c_str());
   s.raum = text(rm, a15->get_lv_font(), 0xF1F3F5);
-  // grauer Trennstrich zwischen Raumklima und Terminen
-  lv_obj_t *strich = lv_obj_create(r);
+  // grauer Trennstrich ueber den Terminen (Block "termine" = Strich + Kasten, 2026-10-31)
+  s.c_termine = rahmen(r, LV_FLEX_FLOW_COLUMN, 6);
+  lv_obj_t *strich = lv_obj_create(s.c_termine);
   lv_obj_remove_style_all(strich);
   lv_obj_set_size(strich, 200, 3);
-  lv_obj_align(strich, LV_ALIGN_TOP_MID, 0, 181);
+
   lv_obj_set_style_radius(strich, 2, 0);
   lv_obj_set_style_bg_color(strich, lv_color_hex(0x5B6472), 0);
   lv_obj_set_style_bg_opa(strich, LV_OPA_COVER, 0);
   lv_obj_add_flag(strich, LV_OBJ_FLAG_EVENT_BUBBLE);
   // Termine
-  s.k_box = lv_obj_create(r);
+  s.k_box = lv_obj_create(s.c_termine);
   lv_obj_remove_style_all(s.k_box);
   lv_obj_set_size(s.k_box, 220, 92);
-  lv_obj_align(s.k_box, LV_ALIGN_TOP_MID, 0, 190);
+
   lv_obj_set_style_bg_color(s.k_box, lv_color_hex(0x1A1F27), 0);
   lv_obj_set_style_bg_opa(s.k_box, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(s.k_box, 10, 0);
@@ -194,13 +216,14 @@ inline void aufbauen() {
     lv_obj_set_pos(s.k_titel[i], 8, 6 + i * 28 + 13);
     for (lv_obj_t *l : {s.k_tag[i], s.k_titel[i]}) {
       lv_obj_set_width(l, 204);
+      lv_obj_set_height(l, 16);   // eine Zeile - lange Titel enden mit "..." statt in den naechsten Termin zu laufen (2026-11-01)
       lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
       lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
     }
   }
   // Laden: Symbol + Text mittig, darunter der Balken ueber die ganze Breite am unteren Rand -
   // mit sichtbarer Schiene, damit man sieht, wo "voll" ist
-  lv_obj_t *ld = rahmen(r, LV_FLEX_FLOW_ROW, 6);
+  lv_obj_t *ld = s.c_laden = rahmen(r, LV_FLEX_FLOW_ROW, 6);
   lv_obj_align(ld, LV_ALIGN_TOP_MID, 0, 288);
   s.lade_ico = text(ld, mdi_klein->get_lv_font(), 0x22C55E, utf8(0xF12A6).c_str());
   s.lade = text(ld, a13->get_lv_font(), 0x22C55E);
@@ -216,6 +239,32 @@ inline void aufbauen() {
   lv_obj_set_style_bg_opa(s.balken, LV_OPA_COVER, LV_PART_INDICATOR);
   for (lv_obj_t *o : {s.datum, s.uhr, s.w_ico, s.w_temp, s.w_text, s.raum_ico, s.raum, s.lade_ico, s.lade, s.balken})
     lv_obj_add_flag(o, LV_OBJ_FLAG_EVENT_BUBBLE);
+}
+
+// Teile in der gewaehlten Reihenfolge untereinander, das Ganze senkrecht mittig (2026-10-31). Ausgeblendetes faellt weg.
+inline void anordnen() {
+  auto &s = z();
+  if (!s.gebaut) return;
+  struct B { const char *n; lv_obj_t *o; int luecke; };
+  const B alle[] = {{"datum", s.datum, 4}, {"uhr", s.uhr, 8}, {"wetter", s.c_wetter, 10}, {"raum", s.c_raum, 8},
+                    {"termine", s.c_termine, 8}, {"laden", s.c_laden, 0}};
+  std::vector<const B *> zeigen;
+  for (const auto &t : s.teile)
+    for (const auto &b : alle) if (t == b.n) zeigen.push_back(&b);
+  for (const auto &b : alle) lv_obj_add_flag(b.o, LV_OBJ_FLAG_HIDDEN);
+  for (const B *b : zeigen) lv_obj_remove_flag(b->o, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_update_layout(dock_root);
+  const bool balken = std::any_of(zeigen.begin(), zeigen.end(), [](const B *b) { return !strcmp(b->n, "laden"); });
+  if (balken) lv_obj_remove_flag(s.balken, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(s.balken, LV_OBJ_FLAG_HIDDEN);
+  int gesamt = 0;
+  for (size_t i = 0; i < zeigen.size(); i++) gesamt += lv_obj_get_height(zeigen[i]->o) + (i + 1 < zeigen.size() ? zeigen[i]->luecke : 0);
+  const int frei = 320 - (balken ? 10 : 0);
+  int y = std::max(8, (frei - gesamt) / 2);
+  if (gesamt > frei - 40) y = std::min(y, 12);   // fast voll: oben anfangen wie bisher, sonst mittig (2026-11-01)
+  for (const B *b : zeigen) {
+    lv_obj_align(b->o, LV_ALIGN_TOP_MID, 0, y);
+    y += lv_obj_get_height(b->o) + b->luecke;
+  }
 }
 
 inline void uhr_zeigen(bool immer) {
@@ -286,6 +335,18 @@ inline void daten_anwenden() {
   }
   for (int i = n; i < 3; i++) { lv_label_set_text(s.k_tag[i], i == 0 ? "Keine Termine" : ""); lv_label_set_text(s.k_titel[i], ""); }
   lv_obj_set_height(s.k_box, n == 0 ? 26 : 8 + n * 28);
+  // Ansicht aus dem Konfigurator
+  JsonObjectConst a = doc["a"];
+  if (!a.isNull()) {
+    std::vector<std::string> t;
+    for (JsonVariantConst x : a["t"].as<JsonArrayConst>()) t.emplace_back(x | "");
+    s.teile = t;
+    s.musik_stil = a["m"] | 1;
+    s.musik_titel = s.musik_stil != 0;
+    s.tipp_leiste = (a["p"] | 1) != 0;
+    musik::titel_anwenden();
+  }
+  anordnen();
 }
 
 // ---------------------------------------------------------------- Ablauf
@@ -295,7 +356,7 @@ inline bool im_dock() { return z().im_dock; }
 inline bool display_soll_an();
 inline bool anzeige_haelt_an() {
   const int p = cur_page->value();
-  return z().im_dock && (p == 50 || p == 52 || millis() - z().gezeigt_ms < 2000) && display_soll_an();
+  return z().im_dock && !z().pausiert && (p == 50 || p == 52 || millis() - z().gezeigt_ms < 2000) && display_soll_an();
 }
 // Start des Display-Ruhe-Timers (backlight_idle_timeout setzt ihn) - daraus: wann das Display ausginge
 inline uint32_t &ruhe_start_ms() { static uint32_t t = 0; return t; }
@@ -314,6 +375,7 @@ inline void zeigen() {
   z().gezeigt_ms = millis();
   if (z().im_dock && musik::im_dock_zeigen()) { musik::zeigen(true); return; }
   aufbauen();
+  anordnen();
   uhr_zeigen(true);
   laden_zeigen();
   tasten::seite_zeigen(page_dock, LV_SCR_LOAD_ANIM_FADE_IN);
@@ -326,6 +388,9 @@ inline void verlassen(const char *grund) {
   if (!s.im_dock) return;
   s.im_dock = false;
   s.lage_ok = false;
+  s.pausiert = false;
+  s.wahl = 0;
+  leiste_weg();
   ESP_LOGI("dock", "Aus dem Dock (%s)", grund);
   if (cur_page->value() == 50) { go_home->execute(); wake_backlight->execute(); }
 }
@@ -333,14 +398,140 @@ inline void verlassen(const char *grund) {
 // Seite geladen (on_load)
 inline void geladen() {
   aufbauen();
+  anordnen();
   uhr_zeigen(true);
   laden_zeigen();
+  geste_anmelden(dock_root, 0);
 }
 
-// Tipp auf die Dock-Anzeige: Fernbedienung zeigen
-inline void beruehrt() {
+// ---------------------------------------------------------------- Steuerleiste (2026-10-31)
+// Tipp auf Smart Display oder Musik-Anzeige: unten eine Leiste fuer 5 s, Inhalt je nach Ansicht:
+//   Uhr:   [Remote] [Musik] [Heute aus]          Musik: [<<] [>||] [>>] [Uhr] [Remote]
+// Wischen links/rechts = Uhr <-> Musik, nach unten = Fernbedienung. Tasten wirken wie immer (-> Fernbedienung).
+enum Aktion : intptr_t { A_REMOTE = 1, A_MUSIK, A_UHR, A_AUS, A_ZURUECK, A_PLAY, A_VOR };
+
+inline void leiste_weg() {
+  auto &s = z();
+  if (s.leiste) lv_obj_add_flag(s.leiste, LV_OBJ_FLAG_HIDDEN);
+  s.leiste_bis = 0;
+}
+
+inline void zur_fernbedienung() {
+  leiste_weg();
+  musik::ausgewaehlt_verlassen();
   last_input_ms->value() = millis();
   go_home->execute();
+}
+
+inline void zur_uhr();
+inline void zur_musik();
+inline void heute_aus();
+inline void leiste_zeigen();
+
+inline void leiste_klick(lv_event_t *e) {
+  const intptr_t a = (intptr_t) lv_event_get_user_data(e);
+  auto &s = z();
+  s.leiste_bis = millis() + 5000;
+  last_input_ms->value() = millis();
+  switch (a) {
+    case A_REMOTE: zur_fernbedienung(); break;
+    case A_MUSIK: zur_musik(); break;
+    case A_UHR: zur_uhr(); break;
+    case A_AUS: heute_aus(); break;
+    case A_ZURUECK: mp_taste->execute(2); break;
+    case A_PLAY: mp_taste->execute(0); break;
+    case A_VOR: mp_taste->execute(1); break;
+  }
+}
+
+inline void knopf(lv_obj_t *p, const char *ico, const char *t, Aktion a, int breite) {
+  lv_obj_t *b = lv_button_create(p);
+  lv_obj_set_size(b, breite, 50);
+  lv_obj_set_style_bg_color(b, lv_color_hex(0x232A35), 0);
+  lv_obj_set_style_bg_color(b, lv_color_hex(0x2563EB), LV_STATE_PRESSED);
+  lv_obj_set_style_radius(b, 12, 0);
+  lv_obj_set_style_shadow_width(b, 0, 0);
+  lv_obj_set_style_pad_all(b, 2, 0);
+  lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(b, 1, 0);
+  text(b, ico_leiste->get_lv_font(), 0xF1F3F5, ico);
+  if (t && *t) text(b, a11->get_lv_font(), 0x8B94A3, t);
+  lv_obj_add_event_cb(b, leiste_klick, LV_EVENT_CLICKED, (void *) (intptr_t) a);
+}
+
+inline void leiste_zeigen() {
+  auto &s = z();
+  if (s.leiste == nullptr) {
+    s.leiste = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s.leiste);
+    lv_obj_set_size(s.leiste, 228, 62);
+    lv_obj_align(s.leiste, LV_ALIGN_BOTTOM_MID, 0, -12);
+    lv_obj_set_style_bg_color(s.leiste, lv_color_hex(0x111418), 0);
+    lv_obj_set_style_bg_opa(s.leiste, 240, 0);
+    lv_obj_set_style_radius(s.leiste, 16, 0);
+    lv_obj_set_style_border_width(s.leiste, 2, 0);
+    lv_obj_set_style_border_color(s.leiste, lv_color_hex(0x3A424E), 0);
+    lv_obj_set_style_pad_all(s.leiste, 4, 0);
+    lv_obj_set_flex_flow(s.leiste, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s.leiste, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(s.leiste, LV_OBJ_FLAG_SCROLLABLE);
+  }
+  lv_obj_clean(s.leiste);
+  if (cur_page->value() == 52) {
+    knopf(s.leiste, utf8(0xF04AE).c_str(), "", A_ZURUECK, 36);
+    knopf(s.leiste, utf8(0xF040E).c_str(), "", A_PLAY, 36);
+    knopf(s.leiste, utf8(0xF04AD).c_str(), "", A_VOR, 36);
+    knopf(s.leiste, utf8(0xF0150).c_str(), "Uhr", A_UHR, 50);
+    knopf(s.leiste, utf8(0xF0454).c_str(), "Remote", A_REMOTE, 56);
+  } else {
+    knopf(s.leiste, utf8(0xF0454).c_str(), "Remote", A_REMOTE, 64);
+    if (mic_allowed->value()) knopf(s.leiste, utf8(0xF075A).c_str(), musik::player_spielt() ? "Musik" : "Spektrum", A_MUSIK, 72);
+    if (s.im_dock) knopf(s.leiste, utf8(0xF04B2).c_str(), "Heute aus", A_AUS, 72);
+  }
+  lv_obj_remove_flag(s.leiste, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s.leiste);
+  s.leiste_bis = millis() + 5000;
+}
+
+// Leiste neu aufbauen, wenn die neue Seite steht (2026-11-01: nach "Musik"/"Uhr" zeigte sie noch die Knoepfe der alten
+// Ansicht - cur_page wechselt erst nach dem Einblenden)
+inline void leiste_spaeter() {
+  z().leiste_bis = millis() + 5000;   // takt blendet sie in der Zwischenzeit nicht aus
+  lv_timer_t *t = lv_timer_create([](lv_timer_t *t) { lv_timer_delete(t); const int p = cur_page->value(); if (p == 50 || p == 52) leiste_zeigen(); }, 450, nullptr);
+  (void) t;
+}
+
+// Tipp auf die Dock-/Musik-Anzeige: Steuerleiste (Einstellung "Antippen") oder wie frueher gleich die Fernbedienung
+inline void beruehrt() {
+  auto &s = z();
+  last_input_ms->value() = millis();
+  if (millis() - s.geste_ms < 500) return;   // Wischen loest auch einen Klick aus
+  if (!s.tipp_leiste) { zur_fernbedienung(); return; }
+  if (s.leiste && !lv_obj_has_flag(s.leiste, LV_OBJ_FLAG_HIDDEN)) leiste_weg();
+  else leiste_zeigen();
+}
+
+// Wischen auf der Anzeige: links/rechts Uhr <-> Musik, nach unten Fernbedienung
+inline void geste(lv_event_t *) {
+  auto &s = z();
+  lv_indev_t *in = lv_indev_active();
+  if (in == nullptr) return;
+  const lv_dir_t d = lv_indev_get_gesture_dir(in);
+  s.geste_ms = millis();
+  last_input_ms->value() = millis();
+  if (d == LV_DIR_BOTTOM) zur_fernbedienung();
+  else if (d == LV_DIR_LEFT || d == LV_DIR_RIGHT) {
+    if (cur_page->value() == 52) zur_uhr();
+    else if (mic_allowed->value()) zur_musik();
+  }
+}
+inline void geste_anmelden(lv_obj_t *root, int i) {
+  auto &s = z();
+  if (s.geste_an[i]) return;
+  s.geste_an[i] = true;
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_GESTURE_BUBBLE);   // Geste hier auswerten, nicht beim Bildschirm
+  lv_obj_add_event_cb(root, geste, LV_EVENT_GESTURE, nullptr);
 }
 
 inline void dock_takt();
@@ -350,6 +541,44 @@ inline void takt() {
   seite_takt();
   dock_takt();
   musik::dock_takt(z().im_dock);
+  auto &s = z();
+  const int p = cur_page->value();
+  if (s.leiste_bis != 0 && ((int32_t) (millis() - s.leiste_bis) >= 0 || ((p != 50 && p != 52) && millis() - s.gezeigt_ms > 1500) || disp_off->value())) leiste_weg();
+}
+
+// Aktionen der Steuerleiste
+inline void zur_uhr() {
+  auto &s = z();
+  s.wahl = 1;
+  musik::ausgewaehlt_verlassen();
+  zeigen();
+  if (s.leiste_bis) leiste_spaeter();
+}
+inline void zur_musik() {
+  auto &s = z();
+  s.wahl = 2;
+  s.gezeigt_ms = millis();
+  musik::zeigen(s.im_dock);
+  if (s.leiste_bis) leiste_spaeter();
+}
+inline void heute_aus() {
+  auto &s = z();
+  s.pausiert = true;
+  ESP_LOGI("dock", "Smart Display: heute aus (bis zum Herausnehmen)");
+  zur_fernbedienung();
+}
+// Konfigurator "Auf der Remote zeigen" (auch ausserhalb des Docks; Tipp -> Leiste -> Remote)
+inline void vorschau() {
+  wake_backlight->execute();
+  zeigen();
+  abrufen();
+}
+// Pruefen per Bildschirmfoto (Dienst menue_popup "_smartdisplay_leiste" / "_musik_leiste"): Ansicht mit Steuerleiste
+inline void vorschau_leiste(bool musik) {
+  wake_backlight->execute();
+  if (musik) { z().wahl = 2; z().gezeigt_ms = millis(); musik::zeigen(z().im_dock); } else zeigen();
+  abrufen();
+  leiste_spaeter();
 }
 
 inline void dock_takt() {
@@ -367,6 +596,8 @@ inline void dock_takt() {
     // Hineingestellt: Kabel seit 1,5 s da, Lage ruhig -> Dock-Lage merken
     if (kabel && jetzt - s.kabel_seit > 1500 && lage) {
       s.im_dock = true;
+      s.pausiert = false;
+      s.wahl = 0;
       s.lx = x; s.ly = y; s.lz = zz;
       s.lage_ok = true;
       s.weg = 0;
@@ -405,6 +636,11 @@ inline void dock_takt() {
   } else {
     s.ohne_strom_ms = 0;
   }
+  // Musik faengt an oder hoert auf: die Wahl (Uhr/Musik) gilt nur bis dahin
+  const bool spielt = musik::player_spielt();
+  if (spielt != s.spielte) { s.spielte = spielt; s.wahl = 0; }
+  // "Heute aus": bis zum Herausnehmen nichts halten und nicht zurueckholen
+  if (s.pausiert) return;
   const int p = cur_page->value();
   const bool anzeige = p == 50 || p == 52;   // Dock- oder Musik-Anzeige sichtbar
   // Display wach halten - nur die Dock-/Musik-Anzeige. Auf der Fernbedienung laeuft die normale Display-Zeit, damit
@@ -423,7 +659,8 @@ inline void dock_takt() {
     zeigen();
     idle_touch_ping->execute();
   }
-  if (p == 50 && jetzt - last_input_ms->value() < 400) go_home->execute();   // Taste im Dock: Fernbedienung
+  // Taste im Dock: Fernbedienung (nur Tasten - ein Tipp holt die Steuerleiste, 2026-10-31)
+  if (p == 50 && jetzt - last_key_ms->value() < 400) { leiste_weg(); go_home->execute(); }
 }
 
 // Sichtbare Seite aktuell halten (auch wenn sie ueber Menue/Taste geoeffnet wurde)

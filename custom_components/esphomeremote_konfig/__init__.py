@@ -45,7 +45,7 @@ DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
 PANEL_URL = "fernbedienung"
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "157"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "173"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -106,6 +106,9 @@ def validate_config(cfg: dict) -> dict:
         # Eigene Startseite (2026-10-27): ID einer Menueseite, fehlt = eingebaute Startseite
         if re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", str(a.get("home") or "")):
             out_acts[-1]["home"] = str(a["home"])
+        # Popup beim erneuten Tippen auf die laufende Aktivitaet in der Leiste (2026-10-31): ID einer Menueseite
+        if re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", str(a.get("nochmal") or "")):
+            out_acts[-1]["nochmal"] = str(a["nochmal"])
         if re.fullmatch(r"[a-z0-9\-]{1,40}", str(a.get("icon") or "")):   # Symbol in der Aktivitaeten-Leiste (2026-10-30)
             out_acts[-1]["icon"] = str(a["icon"])
     if sum(1 for a in out_acts if a["dock"]) > 4:
@@ -391,6 +394,8 @@ def validate_home(h: dict) -> dict:
         if k == "status":
             x, y, w, hh = 0, 0, 6, 1
         areas[k] = {"x": x, "y": y, "w": w, "h": hh, "on": bool(b.get("on", True))}
+        if k == "medien" and re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", str(b.get("ziel") or "")):   # Antippen oeffnet (2026-11-01)
+            areas[k]["ziel"] = b["ziel"]
         if k in ("menu", "apps"):   # Ziel (Seite/Popup) und Beschriftung der Knoepfe (2026-10-26)
             if re.fullmatch(r"[a-z0-9_]{1,40}", str(b.get("ziel") or "")):
                 areas[k]["ziel"] = b["ziel"]
@@ -584,6 +589,9 @@ def widget_optionen(it: dict) -> dict:
     for k, werte in (("mz", ("immer", "nur", "ueber")), ("leer", ("weg",)), ("datum", ("nach", "vor", "aus")), ("bild", ("ganz",))):
         if it.get(k) in werte:
             o[k] = it[k]
+    # Medien-/Kombi-Widget: Antippen oeffnet ein Popup (2026-11-01), leer = Play/Pause
+    if re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", str(it.get("tipp") or "")):
+        o["tipp"] = it["tipp"]
     if it.get("takt"):
         o["takt"] = max(3, min(600, int(it["takt"])))
     if o["art"] == "medien" and it.get("stil") == "karte":   # Medien-Karte wie die eingebaute (2026-10-30)
@@ -1358,6 +1366,11 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .anzeige import Anzeige, AnzeigeView
 
     anzeige = hass.data[DOMAIN + "_anzeige"] = Anzeige(hass, kd)
+    # Funktionen fuer das ganze Zuhause (2026-11-01): TV-Eingang, Kamera auf dem TV, Neustart per ADB, Blinken bei
+    # neuer Firmware, Dock-Wache - vorher persoenliche Pakete (funktionen.py)
+    from .funktionen import Funktionen
+
+    funktionen = hass.data[DOMAIN + "_funktionen"] = Funktionen(hass, kd)
     hass.http.register_view(AnzeigeView(kd, anzeige))
     bruecke = hass.data[DOMAIN + "_bruecke"] = Bruecke(hass, kd)
     licht = hass.data[DOMAIN + "_licht"] = Licht(hass, kd)
@@ -1368,6 +1381,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Bluetooth-Bruecke: Abgleich fehlgeschlagen")
         await licht.starten()
+        await funktionen.starten()
 
     if hass.is_running:
         hass.async_create_task(bruecke_start())
@@ -1438,7 +1452,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
 
     hass.bus.async_listen("esphome.remote_gesten_aendern", gesten_aendern)
     hass.bus.async_listen("esphome.remote_geste_lernstand", lernstand)
-    for cmd in (ws_licht_get, ws_licht_set, ws_bruecke, ws_anzeige_get, ws_anzeige_set, ws_geste_anlernen):
+    for cmd in (ws_licht_get, ws_licht_set, ws_bruecke, ws_anzeige_get, ws_anzeige_set, ws_geste_anlernen, ws_funktionen_get, ws_funktionen_set):
         websocket_api.async_register_command(hass, cmd)
 
 
@@ -1484,6 +1498,22 @@ async def ws_geste_anlernen(hass: HomeAssistant, connection: websocket_api.Activ
         connection.send_error(msg["id"], "schlaeft", f"Remote nicht erreichbar ({err}) - eine Taste drücken und nochmal.")
         return
     connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/funktionen_get"})
+@websocket_api.async_response
+async def ws_funktionen_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    connection.send_result(msg["id"], hass.data[DOMAIN + "_funktionen"].stand())
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/funktionen_set", vol.Required("werte"): dict})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_funktionen_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    try:
+        connection.send_result(msg["id"], await hass.data[DOMAIN + "_funktionen"].setzen(msg["werte"]))
+    except (ValueError, TypeError) as err:
+        connection.send_error(msg["id"], "ungueltig", str(err))
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/anzeige_get"})

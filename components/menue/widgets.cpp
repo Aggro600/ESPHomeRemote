@@ -626,7 +626,7 @@ void Menue::widget_bild_(Item &it, bool sofort) {
     w = (int) (it.w * zelle_) - LUECKE; h = it.h * ZEILE - LUECKE;
   } else { w = h = it.h * ZEILE - LUECKE - 8; }   // Cover quadratisch
   char q[48];
-  snprintf(q, sizeof(q), "&w=%d&h=%d&m=%s", w, h, it.wart == W_KAMERA && !strcmp(it.j["bild"] | "", "ganz") ? "ganz" : "voll");
+  snprintf(q, sizeof(q), "&w=%d&h=%d&m=%s", w, h, (it.wart == W_KAMERA || it.wart == W_MEDIEN) && !strcmp(it.j["bild"] | "", "ganz") ? "ganz" : "voll");   // Medien: Cover ganz/voll (2026-10-31)
   const std::string url = "http://" + tk_->host() + "/api/esphomeremote_konfig/bild?k=" + tk_->schluessel() + "&e=" + e + q;
   if (it.wart == W_KAMERA) g_wkey[it.wslot] = e;
   wbild_laden(it.wslot, url);
@@ -649,12 +649,22 @@ void Menue::wbild_fertig(int slot) {
 }
 
 void Menue::widget_ausloesen_(Item &it, int richtung) {
-  if (it.wart == W_LICHT) {   // OK: an/aus, Links/Rechts: dunkler/heller
-    if (richtung == 0) { licht_senden_(it, "toggle", ""); return; }
-    if (it.wo[WR_L_HELL] == nullptr) return;
-    const int v = std::max(1, std::min(100, (int) lv_slider_get_value(it.wo[WR_L_HELL]) + richtung * 10));
-    lv_slider_set_value(it.wo[WR_L_HELL], v, LV_ANIM_ON);
+  if (it.wart == W_LICHT) {
+    // 2026-11-01 (Nutzer): OK kurz = Unterseite (falls eingetragen, sonst an/aus), OK lang = an/aus (Menue::taste),
+    // Links/Rechts = dunkler/heller - auch ohne sichtbaren Regler (kleine Karte), dann vom bekannten Stand aus
+    if (richtung == 0) {
+      if (licht_ok_(it)) return;   // Palette / Szene unter dem Steuerkreuz
+      const std::string ziel = it.j["ziel"] | "";
+      if (!ziel.empty() && seite_index_(ziel.c_str()) >= 0) { unterseite_oeffnen_(ziel); return; }
+      licht_senden_(it, "toggle", "");
+      return;
+    }
+    if (it.lteil != 0 && it.lteil != 2 && licht_taste_(it, richtung, 0)) return;
+    const int jetzt = it.wo[WR_L_HELL] != nullptr ? (int) lv_slider_get_value(it.wo[WR_L_HELL]) : licht_hell_jetzt_(it);
+    const int v = std::max(1, std::min(100, jetzt + richtung * 10));
+    if (it.wo[WR_L_HELL] != nullptr) lv_slider_set_value(it.wo[WR_L_HELL], v, LV_ANIM_ON);
     licht_senden_(it, "hell", std::to_string(v));
+    licht_zustand_(it);
     return;
   }
   const char *e = it.wart == W_KOMBI ? (it.j["me"] | "") : (it.j["entity"] | "");
@@ -664,6 +674,9 @@ void Menue::widget_ausloesen_(Item &it, int richtung) {
     const bool laeuft = f != zustand_cache_.end() && f->second.state == "active";
     tk_->ha_aufruf(laeuft ? "timer.pause" : "timer.start", {{"entity_id", e}});
   } else if (it.wart == W_MEDIEN || (it.wart == W_KOMBI && (it.wbau & (1 << W_MEDIEN)))) {
+    // Antippen/OK oeffnet ein Popup (Konfigurator "Antippen", 2026-11-01), sonst Play/Pause
+    const char *tipp = it.j["tipp"] | "";
+    if (richtung == 0 && *tipp && popup_auf) { popup_auf(tipp, true); return; }
     if (medien_taste && medien_taste(e, richtung == -1 ? 2 : richtung == 1 ? 1 : richtung == 3 ? 3 : richtung == 4 ? 4 : 0)) { abf_ab_ = millis() + 700; return; }
     const char *svc = richtung == -1 ? "media_player.media_previous_track" : richtung == 1 ? "media_player.media_next_track"
                       : richtung == 3 ? "media_player.volume_up" : richtung == 4 ? "media_player.volume_down" : "media_player.media_play_pause";
@@ -976,7 +989,8 @@ void Menue::licht_zustand_(Item &it) {
     if (ok) lv_obj_remove_state(o, LV_STATE_DISABLED); else lv_obj_add_state(o, LV_STATE_DISABLED);
   };
   const bool unbekannt = caps == 0 && zeig == nullptr;   // noch keine Daten: alles bedienbar lassen
-  if (frei(it.wo[WR_L_HELL]) && pct >= 0) lv_slider_set_value(it.wo[WR_L_HELL], pct, LV_ANIM_ON);
+  // aus = ganz links (2026-11-01: nach dem Ausschalten blieb der Regler auf dem alten Wert stehen)
+  if (frei(it.wo[WR_L_HELL]) && (pct >= 0 || !an)) lv_slider_set_value(it.wo[WR_L_HELL], an ? pct : 1, LV_ANIM_ON);
   if (it.wo[WR_L_HELL]) lv_obj_set_style_bg_color(it.wo[WR_L_HELL], lv_color_hex(an ? farbe : 0x6B7280), LV_PART_INDICATOR);
   kann(it.wo[WR_L_HELL], unbekannt || (caps & 1));
   if (it.wo[WR_L_TEMP] != nullptr) {
@@ -1005,6 +1019,141 @@ void Menue::licht_zustand_(Item &it) {
       if (l) lv_obj_set_style_text_color(l, lv_color_hex(it.lwahl == i || ein ? C_TEXT : C_GRAU), 0);
     }
   }
+}
+
+// Unterseite oeffnen - verzoegert (aus einem LVGL-Ereignis heraus wird die Seite dabei neu gebaut)
+void Menue::unterseite_oeffnen_(const std::string &z) {
+  static std::string ziel;
+  ziel = z;
+  lv_async_call([](void *p) {
+    auto *m = (Menue *) p;
+    if (m->seite_index_(ziel.c_str()) < 0) return;
+    if (m->nur_anzeige_) { if (m->seite_oeffnen) m->seite_oeffnen(ziel); return; }
+    if (m->fokus_ >= 0 && !m->stapel_.empty()) m->fokus_mem_[PStr(m->stapel_.back().c_str())] = m->fokus_;
+    m->stapel_.push_back(ziel.c_str());
+    m->rutsch_ = 1;
+    m->bauen_();
+    m->rutschen_(1);
+  }, this);
+}
+
+// Steuerkreuz im Licht-Widget (2026-11-01, Nutzer: "jeden Slider, jede Farbe auswaehlen und bestaetigen"):
+// Hoch/Runter wechselt die Zeile im Widget (am Rand geht es zum naechsten Eintrag), Links/Rechts verstellt den Regler
+// bzw. waehlt Lampe/Farbe/Szene, OK bestaetigt. Karten mit Unterseite (Liste der Raeume) haben nur den Kopf:
+// Links/Rechts dimmt, OK oeffnet die Unterseite, OK lang schaltet.
+static std::vector<int8_t> licht_zeilen(const Item &it) {
+  std::vector<int8_t> z{0};
+  if (*(it.j["ziel"] | "")) return z;
+  const int wr[] = {WR_L_CHIPS, WR_L_HELL, WR_L_TEMP, WR_L_FARBE, WR_L_PAL, WR_L_SZENEN};
+  for (int i = 0; i < 6; i++) if (it.wo[wr[i]] != nullptr) z.push_back((int8_t) (i + 1));
+  return z;
+}
+
+void Menue::licht_fokus_zeigen_(Item &it, bool an) {
+  auto rand = [&](lv_obj_t *o, bool r) {
+    if (o == nullptr) return;
+    lv_obj_set_style_outline_width(o, r ? 2 : 0, 0);
+    lv_obj_set_style_outline_color(o, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_outline_pad(o, 2, 0);
+  };
+  for (int w : {WR_L_HELL, WR_L_TEMP, WR_L_FARBE}) rand(it.wo[w], an && it.lteil == w - WR_L_HELL + 2);
+  for (int w : {WR_L_CHIPS, WR_L_PAL, WR_L_SZENEN}) {
+    lv_obj_t *r = it.wo[w];
+    if (r == nullptr) continue;
+    const int sel = w == WR_L_CHIPS ? it.lwahl + 1 : it.lsel;
+    const int8_t zeile = w == WR_L_CHIPS ? 1 : w == WR_L_PAL ? 5 : 6;
+    for (int i = 0; i < (int) lv_obj_get_child_count(r); i++) {
+      lv_obj_t *c = lv_obj_get_child(r, i);
+      rand(c, an && it.lteil == zeile && i == sel);
+      if (an && it.lteil == zeile && i == sel) lv_obj_scroll_to_view(c, LV_ANIM_ON);
+    }
+  }
+}
+
+// OK auf Palette oder Szene (Zeile unter dem Steuerkreuz); false = normales OK (Kopf/Regler)
+bool Menue::licht_ok_(Item &it) {
+  if (it.lteil == 5 && it.wo[WR_L_PAL] != nullptr) {
+    const PalEintrag &p = PALETTE[std::max(0, std::min<int>(it.lsel, sizeof(PALETTE) / sizeof(PALETTE[0]) - 1))];
+    licht_senden_(it, p.kelvin ? "kelvin" : "farbe", p.kelvin ? std::to_string(p.wert) : std::to_string(p.wert) + ",100");
+    return true;
+  }
+  if (it.lteil == 6 && it.wo[WR_L_SZENEN] != nullptr) {
+    const char *s = it.j["szenen"][(int) it.lsel]["e"] | "";
+    if (*s) tk_->ha_aufruf("esphomeremote_konfig.licht", {{"entity_id", s}, {"aktion", "szene"}, {"wert", s}});
+    abf_ab_ = millis() + 1200;
+    return true;
+  }
+  return false;
+}
+
+bool Menue::licht_taste_(Item &it, int dx, int dy) {
+  const std::vector<int8_t> z = licht_zeilen(it);
+  int p = 0;
+  for (size_t i = 0; i < z.size(); i++) if (z[i] == it.lteil) p = (int) i;
+  if (dy != 0) {
+    const int np = p + (dy > 0 ? 1 : -1);
+    if (np < 0 || np >= (int) z.size()) { it.lteil = 0; licht_fokus_zeigen_(it, false); return false; }   // raus aus dem Widget
+    it.lteil = z[np];
+    it.lsel = 0;
+    licht_fokus_zeigen_(it, true);
+    return true;
+  }
+  if (dx == 0) return false;
+  const int r = dx > 0 ? 1 : -1;
+  auto wert = [&](lv_obj_t *sl, int schritt, bool rund) {
+    const int lo = lv_slider_get_min_value(sl), hi = lv_slider_get_max_value(sl);
+    int v = lv_slider_get_value(sl) + r * schritt;
+    v = rund ? (v < lo ? hi : v > hi ? lo : v) : std::max(lo, std::min(hi, v));
+    lv_slider_set_value(sl, v, LV_ANIM_ON);
+    return v;
+  };
+  switch (it.lteil) {
+    case 1: {   // Lampe waehlen (-1 = alle)
+      const int n = std::min<int>(it.j["lichter"].size(), 15);
+      int w = it.lwahl + r;
+      if (w < -1) w = n - 1;
+      if (w >= n) w = -1;
+      it.lwahl = (int8_t) w;
+      licht_zustand_(it);
+      break;
+    }
+    case 3:
+      if (it.wo[WR_L_TEMP] && !lv_obj_has_state(it.wo[WR_L_TEMP], LV_STATE_DISABLED))
+        licht_senden_(it, "kelvin", std::to_string(wert(it.wo[WR_L_TEMP], 250, false)));
+      break;
+    case 4:
+      if (it.wo[WR_L_FARBE] && !lv_obj_has_state(it.wo[WR_L_FARBE], LV_STATE_DISABLED))
+        licht_senden_(it, "farbe", std::to_string(wert(it.wo[WR_L_FARBE], 20, true)) + ",100");
+      break;
+    case 5: case 6: {
+      lv_obj_t *row = it.wo[it.lteil == 5 ? WR_L_PAL : WR_L_SZENEN];
+      const int n = row ? (int) lv_obj_get_child_count(row) : 0;
+      if (n > 0) it.lsel = (int8_t) ((it.lsel + r + n) % n);
+      break;
+    }
+    default: {   // Kopf und Helligkeit: dimmen
+      const int jetzt = it.wo[WR_L_HELL] != nullptr ? (int) lv_slider_get_value(it.wo[WR_L_HELL]) : licht_hell_jetzt_(it);
+      const int v = std::max(1, std::min(100, jetzt + r * 10));
+      if (it.wo[WR_L_HELL] != nullptr) lv_slider_set_value(it.wo[WR_L_HELL], v, LV_ANIM_ON);
+      licht_senden_(it, "hell", std::to_string(v));
+      licht_zustand_(it);
+    }
+  }
+  licht_fokus_zeigen_(it, true);
+  abf_ab_ = millis() + 900;
+  return true;
+}
+
+// Hellste eingeschaltete (gewaehlte) Lampe in %, 0 = alle aus (fuer Links/Rechts ohne sichtbaren Regler)
+int Menue::licht_hell_jetzt_(Item &it) {
+  JsonArrayConst la = it.j["lichter"];
+  int b = 0;
+  for (int i = 0; i < (int) la.size(); i++) {
+    if (it.lwahl >= 0 && i != it.lwahl) continue;
+    const EntZustand *z = ez_(la[i]["e"] | "");
+    if (z != nullptr && z->state == "on") b = std::max(b, z->bri >= 0 ? (z->bri * 100 + 127) / 255 : 100);
+  }
+  return b;
 }
 
 void Menue::licht_senden_(Item &it, const char *aktion, const std::string &wert) {
@@ -1060,19 +1209,8 @@ void Menue::licht_cb_(lv_event_t *e) {
   self->fokus_setzen_(i);
   if (code == LC_POWER) {
     self->licht_senden_(it, "toggle", "");
-  } else if (code == LC_KOPF) {   // Unterseite (ausserhalb des Ereignisses: die Seite wird dabei neu gebaut)
-    static std::string ziel;
-    ziel = it.j["ziel"] | "";
-    lv_async_call([](void *p) {
-      auto *m = (Menue *) p;
-      if (m->seite_index_(ziel.c_str()) < 0) return;
-      if (m->nur_anzeige_) { if (m->seite_oeffnen) m->seite_oeffnen(ziel); return; }
-      if (m->fokus_ >= 0 && !m->stapel_.empty()) m->fokus_mem_[PStr(m->stapel_.back().c_str())] = m->fokus_;
-      m->stapel_.push_back(ziel.c_str());
-      m->rutsch_ = 1;
-      m->bauen_();
-      m->rutschen_(1);
-    }, self);
+  } else if (code == LC_KOPF) {   // Unterseite
+    self->unterseite_oeffnen_(it.j["ziel"] | "");
   } else if (code >= LC_CHIP && code < LC_PAL) {
     it.lwahl = code - LC_CHIP - 1;
     self->licht_zustand_(it);

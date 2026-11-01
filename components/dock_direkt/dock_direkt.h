@@ -119,6 +119,7 @@ class DockDirekt : public Component
   // Remote: loop() selbst drehen, bis alles gesendet ist (hoechstens max_ms) - fuer den Versand waehrend setup()
   void pumpen(uint32_t max_ms);
   // Funk nach dem Senden noch so lange offen halten (Antwort des Docks abwarten, WLAN der Remote aus)
+  void stand_vergessen() { stand_pruef_ = 0; }   // naechste Anfrage bekommt den ganzen Stand
   void antwort_abwarten(uint32_t ms) { if ((int32_t) (millis() + ms - antwort_bis_ms_) > 0) antwort_bis_ms_ = millis() + ms; }
   // Dock: Stand einer Remote ablegen (HA-Aktion esphome.<dock>_zustand)
   void zustand_setzen(const std::string &remote, const std::string &text);
@@ -177,6 +178,7 @@ class DockDirekt : public Component
     std::function<void()> fehlschlag;
     bool gesendet{false};   // auf dem aktuellen Kanal schon abgeschickt
     uint8_t nochmal{2};     // so oft nachlegen, bevor es als "nicht erreicht" gilt
+    uint32_t erneut_ms{0};  // Nachlegen erst ab dann (Dock-Funk kurz mit Bluetooth beschaeftigt)
   };
   std::vector<Auftrag> warte_;     // noch nicht gesendet
   bool unterwegs_{false};
@@ -245,6 +247,7 @@ class DockDirekt : public Component
 #ifdef DD_HID
   dock_hid::DockHid *hid_{nullptr};
 #endif
+  uint32_t stand_pruef_{0}, stand_ms_{0};   // Remote: Pruefwert und Zeit des zuletzt ganz erhaltenen Stands
   uint32_t antwort_bis_ms_{0};   // Remote: Funk bis dahin offen halten (Antwort auf die Zustands-Anfrage)
 #ifdef DD_HA
   struct HaAuftrag { std::string dienst; std::map<std::string, std::string> daten; uint32_t t0; };

@@ -108,6 +108,8 @@ struct Item {
   uint32_t wtakt_ms{0};       // T_WIDGET: naechstes Nachladen des Bilds
   lv_obj_t *wo[WR_ANZAHL]{};  // T_WIDGET: Unter-Widgets nach Rolle
   int8_t lwahl{-1};           // W_LICHT: gewaehlte Lampe (-1 = alle)
+  int8_t lteil{0};            // W_LICHT: Zeile unter dem Steuerkreuz (0 Kopf, 1 Lampen, 2 Hell, 3 Temp, 4 Farbe, 5 Palette, 6 Szenen)
+  int8_t lsel{0};             // W_LICHT: gewaehlter Knopf in Palette/Szenen
   uint32_t lsend_ms{0};       // W_LICHT: letzter Aufruf beim Ziehen (hoechstens alle 350 ms)
   bool fokusierbar() const {
     if (typ == T_WIDGET) return !gesperrt && (wart == W_MEDIEN || wart == W_TIMER || wart == W_KOMBI || wart == W_LICHT);
@@ -395,6 +397,11 @@ class Menue : public Component {
   void licht_bauen_(Item &it);
   void licht_zustand_(Item &it);
   void licht_senden_(Item &it, const char *aktion, const std::string &wert);
+  void unterseite_oeffnen_(const std::string &ziel);   // Unterseite (aus einem LVGL-Ereignis heraus: verzoegert)
+  int licht_hell_jetzt_(Item &it);                     // Helligkeit der (gewaehlten) Lampen in %, 0 = aus
+  bool licht_taste_(Item &it, int dx, int dy);         // Steuerkreuz im Licht-Widget (true = erledigt)
+  bool licht_ok_(Item &it);                            // OK auf Palette/Szene im Licht-Widget
+  void licht_fokus_zeigen_(Item &it, bool an);         // Rahmen um die Zeile unter dem Steuerkreuz
   std::string licht_ziele_(const Item &it, bool fuer_aufruf) const;
   static void licht_cb_(lv_event_t *e);
  public:
