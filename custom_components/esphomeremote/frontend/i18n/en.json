@@ -3089,5 +3089,13 @@
 "→ nach „Display aus nach“": "→ after “Display off after”",
 "▶ sendet sofort über den IR-Sender des Geräts. Ein Befehl antippen = einzeln übernehmen.": "▶ sends immediately via the device's IR transmitter. Tapping a command = take it over individually.",
 "▶ testet direkt über die Remote (Sendeweg wie gespeichert). Tipp: mehrere Geräte derselben Marke ausprobieren.": "▶ tests directly via the remote (send route as saved). Tip: try several devices of the same brand.",
-"◀ ▶ ändern um": "◀ ▶ change by"
+"◀ ▶ ändern um": "◀ ▶ change by",
+"Eigene IR-Codes": "Own IR codes",
+"Funktionen (Kamera, TV-Eingang, Neustart)": "Functions (camera, TV input, restart)",
+"Dock-Einstellungen": "Dock settings",
+"Standard-Einstellungen": "Default settings",
+"Reihenfolge der Remotes": "Order of the remotes",
+"Gesperrte Firmware": "Locked firmware",
+"Prüfen": "Check",
+"Höchstens 8 eigene Gesten": "At most 8 custom gestures"
 }

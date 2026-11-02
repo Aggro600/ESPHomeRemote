@@ -1,5 +1,25 @@
 # What's new · Was ist neu
 
+## 2026.11.2.6 (2026-11-02)
+
+**Updating from before 2026.11.2.4 lost your setup? It comes back with this version.** Layouts, settings and own IR codes stayed under the old name in .storage and are now taken over automatically. If the integration is missing, add ESPHomeRemote once: key and remotes are filled in from the old entry. Delete the old folder custom_components/esphomeremote_konfig.
+
+- Backups from older versions can be restored again.
+- Backups are now complete: all settings, own IR codes, functions (camera, TV input, restart), dock settings, default settings, factory settings, order of the remotes and locked firmware.
+- New remotes start with recommended settings.
+- Configurator: buttons are no longer cut off in narrow windows, activities wrap on small screens.
+
+<details><summary>Deutsch</summary>
+
+**Nach dem Update vor 2026.11.2.4 war alles leer? Mit dieser Version kommt es zurück.** Belegungen, Einstellungen und eigene IR-Codes lagen weiter unter dem alten Namen in .storage und werden jetzt automatisch übernommen. Fehlt die Integration, ESPHomeRemote einmal hinzufügen: Schlüssel und Remotes stehen schon im Dialog. Den alten Ordner custom_components/esphomeremote_konfig löschen.
+
+- Sicherungen älterer Versionen lassen sich wieder einspielen.
+- Sicherungen sind jetzt vollständig: alle Einstellungen, eigene IR-Codes, Funktionen (Kamera, TV-Eingang, Neustart), Dock-Einstellungen, Standard- und Werkseinstellungen, Reihenfolge der Remotes und gesperrte Firmware.
+- Neue Remotes starten mit empfohlenen Einstellungen.
+- Konfigurator: Knöpfe werden in schmalen Fenstern nicht mehr abgeschnitten, Aktivitäten brechen auf kleinen Bildschirmen um.
+
+</details>
+
 ## 2026.11.2.5 (2026-11-02)
 
 Fixes for the display language on the remote:

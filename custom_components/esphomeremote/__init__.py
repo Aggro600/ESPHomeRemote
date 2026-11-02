@@ -35,7 +35,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .defaults import default_config, default_menu
+from .defaults import EINST_STANDARD, default_config, default_menu
 from .compat import old_sensor
 from .compat import setup as compat_setup
 from .settings import EINST_SEITEN
@@ -922,7 +922,7 @@ class KonfigData:
             werte = self.einst_werte(vorlage)[0]
         else:
             self.data["devices"][dev] = {"config": default_config(), "enabled": False}
-            werte = self.data.get("einst_standard") or {}
+            werte = self.data.get("einst_standard") or EINST_STANDARD
         await self.store.async_save(self.data)
         self.announce(dev)
         if werte:   # Einstellungen der Vorlage bzw. die Standard-Einstellungen
@@ -1225,6 +1225,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
     i18n_setzen(hass)   # Sprache fuer Entitaetsnamen und Meldungen (2026-11-01), vor allen Plattformen
     if DOMAIN in config:
+        from .migration import take_over
+
+        await take_over(hass)
         await _starten(hass, config[DOMAIN]["key"], config[DOMAIN]["devices"])
     return True
 
@@ -1236,6 +1239,9 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     """Einrichtung ueber die Oberflaeche (Schluessel + Geraete aus dem Dialog)."""
     if DOMAIN in hass.data:   # schon per YAML eingerichtet
         return True
+    from .migration import take_over
+
+    await take_over(hass, entry)
     await _starten(hass, entry.data["key"], entry.options.get("devices", entry.data["devices"]))
 
     async def geaendert(hass: HomeAssistant, e) -> None:
@@ -1317,6 +1323,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     websocket_api.async_register_command(hass, ws_get)
     websocket_api.async_register_command(hass, ws_save)
     websocket_api.async_register_command(hass, ws_sicherung)
+    websocket_api.async_register_command(hass, ws_sicherung_global)
     websocket_api.async_register_command(hass, ws_wlan_an)
     websocket_api.async_register_command(hass, ws_reihenfolge_save)
     websocket_api.async_register_command(hass, ws_docks_einst_save)
@@ -1392,7 +1399,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
 
     from .irdb import IrDb, registrieren as irdb_registrieren
 
-    irdb = IrDb(hass)
+    irdb = hass.data[DOMAIN + "_irdb"] = IrDb(hass)
     await irdb.laden()
     irdb_registrieren(hass, irdb)
 
@@ -1822,7 +1829,8 @@ async def wlan_fenster(hass: HomeAssistant, dev: str, sek: int, grund: str = "Ko
 
 
 # ---- Sicherung (2026-10-26): alles, was der Konfigurator verwaltet, und Einspielen ohne Abgleich ----
-SICHERUNG_GLOBAL = ("jetzt", "streamer", "klingel", "licht", "anzeige", "dock", "dockscan")
+SICHERUNG_GLOBAL = ("jetzt", "streamer", "klingel", "licht", "anzeige", "dock", "dockscan", "funktionen", "docks_einst",
+                    "einst_standard", "werk", "reihenfolge")
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sicherung"})
@@ -1835,11 +1843,48 @@ async def ws_sicherung(hass: HomeAssistant, connection: websocket_api.ActiveConn
     for dev in kd.devices:
         e = kd.entry(dev)
         geraete[dev] = {"config": copy.deepcopy(e["config"]), "enabled": bool(e.get("enabled")),
-                        "einst": {k: v[0] if isinstance(v, list) else v for k, v in (e.get("einst") or {}).items()}}
+                        "einst": kd.einst_werte(dev)[0]}   # auch an der Remote Umgestelltes (2026-11-03)
     glob = {k: copy.deepcopy(kd.data[k]) for k in SICHERUNG_GLOBAL if kd.data.get(k) is not None}
     if kd.data.get("sync"):
         glob["sync"] = {k: copy.deepcopy(kd.data["sync"].get(k)) for k in ("an", "geraete", "aus")}
+    # Eigene IR-Codes und gesperrte Firmware liegen in eigenen Speichern (2026-11-03: fehlten in der Sicherung)
+    if (db := hass.data.get(DOMAIN + "_irdb")) is not None and db.eigen.get("geraete"):
+        glob["ircodes"] = copy.deepcopy(db.eigen)
+    from .firmware import _speicher
+    _, sp = await _speicher(hass)
+    if sp.get("gesperrt"):
+        glob["gesperrt"] = list(sp["gesperrt"])
     connection.send_result(msg["id"], {"order": reihenfolge(kd), "remotes": geraete, "global": glob})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sicherung_global", vol.Required("werte"): dict})
+@websocket_api.async_response
+async def ws_sicherung_global(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Gemeinsame Bereiche aus einer Sicherung, die keinen eigenen Speicherweg im Konfigurator haben (2026-11-03)."""
+    kd: KonfigData = hass.data[DOMAIN]
+    w = msg["werte"]
+    try:
+        if isinstance(w.get("funktionen"), dict):
+            await hass.data[DOMAIN + "_funktionen"].setzen(w["funktionen"])
+        for k in ("docks_einst", "einst_standard", "werk"):
+            if isinstance(w.get(k), dict):
+                kd.data[k] = w[k]
+        if isinstance(w.get("reihenfolge"), list):
+            kd.data["reihenfolge"] = [d for d in w["reihenfolge"] if isinstance(d, str)]
+        if "ircodes" in w and (db := hass.data.get(DOMAIN + "_irdb")) is not None:
+            from .irdb import EIGEN
+            db.eigen = EIGEN(w["ircodes"])
+            await db.eigen_store.async_save(db.eigen)
+        if isinstance(w.get("gesperrt"), list):
+            from .firmware import _speicher
+            st, sp = await _speicher(hass)
+            sp["gesperrt"] = [d for d in w["gesperrt"] if isinstance(d, str)]
+            await st.async_save(sp)
+    except (vol.Invalid, ValueError, TypeError) as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    await kd.store.async_save(kd.data)
+    connection.send_result(msg["id"], {"ok": True})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/einspielen", vol.Required("device"): str,
@@ -1862,6 +1907,8 @@ async def ws_einspielen(hass: HomeAssistant, connection: websocket_api.ActiveCon
             h = await kd.save(dev, msg["config"], msg["enabled"], f"Sicherung ({user})" if user else "Sicherung")
         if msg.get("einst"):
             werte = {k: v for k, v in msg["einst"].items() if isinstance(v, (bool, int))}
+            if isinstance(werte.get("sprache"), bool):   # alte Sicherung: Sprache kam als Ja/Nein, der Wert ist unbrauchbar
+                del werte["sprache"]
             n = await kd.einst_setzen(dev, werte)
     except (vol.Invalid, ValueError, TypeError) as err:
         connection.send_error(msg["id"], "invalid", str(err))

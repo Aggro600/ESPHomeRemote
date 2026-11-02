@@ -26,5 +26,5 @@ lang = sorted((i for i, (k, v) in enumerate(paare) if len(k.encode()) >= 8), key
 z += ["};", f"inline const unsigned TAB_EN_N = {len(paare)};",
       "inline const unsigned short TEIL_EN[] = {" + ", ".join(map(str, lang)) + "};",
       f"inline const unsigned TEIL_EN_N = {len(lang)};", "}  // namespace sprache", ""]
-(E / "components" / "menue" / "language_table.h").write_text("\n".join(z), encoding="utf-8")
+(E / "components" / "menu" / "language_table.h").write_text("\n".join(z), encoding="utf-8")
 print(len(paare), "Eintraege")
