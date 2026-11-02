@@ -381,6 +381,12 @@ Remotes tatsächlich gebaut werden:
   `bluetooth_connection` (Dock), `custom_components/esphomeremote_konfig/ble_link.py` (HA-Gegenstück der Bluetooth-Schicht),
   `home-assistant/packages/` (YAML-Alternative zur Integration), `docs/entwicklung/` (Architektur, Funkkonzept, Messungen).
 
+## Extra: Logitech Z906 im WLAN
+
+Ein ESP32 zwischen Konsole und Verstärker eines Logitech Z906 bringt Lautstärke, Pegel, Eingang, Effekt und
+Ein/Aus-Zustand in Home Assistant – die Konsole funktioniert weiter wie vorher. Komponente, Beispielkonfiguration
+und Verkabelung: [`z906/`](z906/LIESMICH.md).
+
 ## Lizenz
 
 MIT, siehe [LICENSE](LICENSE). Fremd-Assets: [THIRD-PARTY.md](THIRD-PARTY.md).

@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.2.2 (2026-11-02)
+
+New: **Logitech Z906 on Wi-Fi** as a bonus in the repo (folder z906): ESPHome component for an ESP32 between console and amplifier – volume, levels, input, effect and power state in Home Assistant, the console keeps working. With start-up protection (turning the knob while powering on no longer aborts the start), example configuration and guide.
+
+<details><summary>Deutsch</summary>
+
+Neu: **Logitech Z906 im WLAN** als Extra im Repo (Ordner z906): ESPHome-Komponente für einen ESP32 zwischen Konsole und Verstärker – Lautstärke, Pegel, Eingang, Effekt und Ein/Aus in Home Assistant, die Konsole funktioniert weiter. Mit Startschutz (Drehen am Regler während des Einschaltens bricht den Start nicht mehr ab), Beispielkonfiguration und Anleitung.
+
+</details>
+
 ## 2026.11.2.1 (2026-11-02)
 
 New: **Language** – the configurator, the integration and the remote's display are available in English and German. Home Assistant's language applies (otherwise English), selectable in the configurator (bottom left) and per remote ("Display language"). The configurator now lives at /remote (/fernbedienung still works). **Camera on the TV via our own streamer app**: overlay above everything, the running video keeps playing; WebRTC via Home Assistant (otherwise HLS or still images), small/medium/large/almost full screen, corner selectable (new action kamera_position), round card with a thin border; calling it again reopens the camera popup. **Dock stand-in**: no dock? An ESP32, ESP32-S3, ESP32-C6 or bare ESP32-C3 becomes a dock (Bluetooth proxy, Bluetooth keyboard, radio) – the configurator detects the chip when flashing via USB. **Accent colour** instead of blue on the whole remote (Back/X buttons too), set under Settings › Display. Left-handed mode and X button on the right per remote, touchpad and number pad freely arrangeable, gestures only while holding a key, sort the activity bar by dragging. Fix: the dock deleted pairings of unknown addresses (TV had to be re-paired). Fix: Back in the light popup goes up one level.

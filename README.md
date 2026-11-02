@@ -389,6 +389,12 @@ everything the remotes are actually built with:
   Bluetooth layer), `home-assistant/packages/` (YAML alternative to the integration), `docs/entwicklung/` (architecture, radio
   concept, measurements).
 
+## Bonus: Logitech Z906 on Wi-Fi
+
+An ESP32 between the console and the amplifier of a Logitech Z906 brings volume, levels, input, effect and
+power state into Home Assistant – the console keeps working as before. Component, example configuration and
+wiring: [`z906/`](z906/README.md).
+
 ## License
 
 MIT, see [LICENSE](LICENSE). Third-party assets: [THIRD-PARTY.md](THIRD-PARTY.md).
