@@ -1,8 +1,8 @@
 // Einstellungsseite "Smart Display" (2026-10-17, page_extras) und die Maus-/Eingabe-Teile der Bluetooth-Seite
 // (Zeigertempo, Eingabe je Bluetooth-Platz) - dieselben Werte wie im Konfigurator (Einstellungen > Dock-Anzeige und
-// Bluetooth & Maus, Seite Bluetooth). Abgleich mit HA ueber esphomeremote-einst-sync.h.
+// Bluetooth & Maus, Seite Bluetooth). Abgleich mit HA ueber esphomeremote-settings-sync.h.
 #pragma once
-#include "esphomeremote-stufen.h"
+#include "esphomeremote-levels.h"
 
 namespace extras {
 

@@ -253,7 +253,7 @@ In Home Assistant: *Settings → Add-ons → Add-on Store →* install and start
 5. **Restart** Home Assistant (*Settings → System → ⏻ at the top right → Restart*).
 6. *Settings → Devices & services →* **"+ Add integration"** → **"ESPHomeRemote"**.
    Keep the remote's name as it is (`esphomeremote`) → **Submit**.
-7. A line like `esphomeremote_konfig_key: "…"` appears – **copy** it, you'll need it in a moment.
+7. A line like `esphomeremote_key: "…"` appears – **copy** it, you'll need it in a moment.
 
 **Step 3 – Enter passwords**
 In the ESPHome add-on, click **"Secrets"** at the top right and add these lines
@@ -262,7 +262,7 @@ In the ESPHome add-on, click **"Secrets"** at the top right and add these lines
 ota_pw: "a-password"
 ap_password: "another-password"
 direkt_schluessel: "…"             # 32 hex characters, e.g. from  openssl rand -hex 16  (radio link to the dock)
-esphomeremote_konfig_key: "…"      # the line you copied in step 2
+esphomeremote_key: "…"      # the line you copied in step 2
 ```
 
 **Step 4 – Flash the remote**
@@ -348,7 +348,7 @@ Turn on "Allow the device to perform Home Assistant actions" on the ESPHome devi
 
 **The configurator says "noch nicht übertragen" (not yet transferred).**
 The remote is asleep. Press a key once – it then fetches the assignment.
-If it never works: does `esphomeremote_konfig_key` in the ESPHome secrets match the integration's key
+If it never works: does `esphomeremote_key` in the ESPHome secrets match the integration's key
 (*ESPHomeRemote → Configure* shows it), and is `ha_host` in the YAML correct?
 
 **Several remotes?**
@@ -368,25 +368,25 @@ That is also where you set up the TV input (for popups like "only if TV input is
 
 ## For developers
 
-- `esphomeremote-firmware.yaml` is generated from the developer version (`tools/veroeffentlichen.py` in the
+- `esphomeremote-firmware.yaml` is generated from the developer version (`tools/publish.py` in the
   developer setup) – please make changes there, not here.
 - Custom components in `components/`: display (`ili9341_i80`), keypad (`tca8418`), battery gauge
   (`max17048`), motion sensor (`lis3dh`), Bluetooth HID (`espidf_ble_keyboard`, `atv_voice`),
   configurator (`tasten_konfig`, `menue`), SD card, touch (`ft63x6`).
-- `custom_components/esphomeremote_konfig`: integration with panel (`frontend/konfigurator.js`), delivers the
+- `custom_components/esphomeremote`: integration with panel (`frontend/configurator.js`), delivers the
   assignment to the remote over HTTP.
-- Code comments and the developer notes in `docs/entwicklung/` are in German.
+- Code comments and the developer notes in `docs/development/` are in German.
 
 **Developer version (1:1 as in use)** – in addition to the simple version above, this repository contains
 everything the remotes are actually built with:
 - `templates/remote.yaml` (firmware) and `templates/remote-halink.yaml` (Bluetooth layer "Bluetooth only",
-  HA via BLE/dock – this file is flashed), `templates/dock-basis.yaml` (docking station = `dock-kern.yaml` + `dock-platine.yaml`; a dock stand-in on another ESP32 uses only the core),
+  HA via BLE/dock – this file is flashed), `templates/dock-base.yaml` (docking station = `dock-core.yaml` + `dock-board.yaml`; a dock stand-in on another ESP32 uses only the core),
   `remote-dev-tests.yaml` (test tools, can be turned off).
 - `tools/remotes.py` generates `remote-wz-<name>.yaml` and `remote-wz-<name>-halink.yaml` per remote
   (list in `tools/remotes.json`, IP secret `ip_remote_wz_<name>`). Build/flash: `tools/esphome_run.mjs`.
 - `components/ha_tunnel`, `components/network` (Bluetooth layer), `components/dock_direkt`, `dock_hid`,
-  `bluetooth_connection` (dock), `custom_components/esphomeremote_konfig/ble_link.py` (HA counterpart of the
-  Bluetooth layer), `home-assistant/packages/` (YAML alternative to the integration), `docs/entwicklung/` (architecture, radio
+  `bluetooth_connection` (dock), `custom_components/esphomeremote/ble_link.py` (HA counterpart of the
+  Bluetooth layer), `home-assistant/packages/` (YAML alternative to the integration), `docs/development/` (architecture, radio
   concept, measurements).
 
 ## Bonus: Logitech Z906 on Wi-Fi

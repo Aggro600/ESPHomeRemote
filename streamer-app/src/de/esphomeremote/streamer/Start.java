@@ -84,7 +84,7 @@ public class Start extends Activity {
         knoepfe.setGravity(Gravity.CENTER);
         knoepfe.setPadding(0, dp(22), 0, 0);
         hilfe = knopf("Bedienungshilfe öffnen", v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        Button melden = knopf("Jetzt melden", v -> { Zustand.get(this).erneutSenden(); meldung.setText("Wird gesendet …"); });
+        Button melden = knopf("Jetzt melden", v -> { State.get(this).erneutSenden(); meldung.setText("Wird gesendet …"); });
         Button weg = knopf("Deinstallieren", v -> startActivity(new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + getPackageName()))));
         knoepfe.addView(hilfe);
         knoepfe.addView(melden);
@@ -115,8 +115,8 @@ public class Start extends Activity {
         zeile(0, a, "App und Bildschirmtastatur erkennen", "Bedienungshilfe ist aus");
         zeile(1, n, "Titel und Cover lesen", "Benachrichtigungszugriff fehlt");
         zeile(2, u, "Mit Home Assistant verbunden", "Noch nicht mit Home Assistant verbunden");
-        final long ok = Zustand.letzteOkMs;
-        final String f = Zustand.letzterFehler;
+        final long ok = State.letzteOkMs;
+        final String f = State.letzterFehler;
         final boolean laeuft = f == null && ok > 0;
         if (f != null) zeile(3, false, "", f);
         else if (ok > 0) zeile(3, true, "Letzte Meldung vor " + dauer(System.currentTimeMillis() - ok), "");

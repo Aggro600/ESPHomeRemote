@@ -24,7 +24,7 @@ substitutions:
   ota_pw:            !secret ota_pw
   ap_password:       !secret ap_password
   direkt_schluessel: !secret direkt_schluessel
-  konfig_key:        !secret esphomeremote_konfig_key
+  konfig_key:        !secret esphomeremote_key
   # Alles andere (Media Player, Fernseher, Lautsprecher, Timer, Kameras, Klingel, Streamer) stellst du im
   # Konfigurator ein (Seitenleiste "Fernbedienung") - ohne neue Firmware. Die Adresse von Home Assistant
   # findet die Fernbedienung selbst.

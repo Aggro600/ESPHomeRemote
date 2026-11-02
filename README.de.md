@@ -249,7 +249,7 @@ und starten.
 5. Home Assistant **neu starten** (*Einstellungen → System → oben rechts ⏻ → Neu starten*).
 6. *Einstellungen → Geräte & Dienste →* **„+ Integration hinzufügen“** → **„ESPHomeRemote“**.
    Den Namen der Fernbedienung so lassen (`esphomeremote`) → **Absenden**.
-7. Es erscheint eine Zeile wie `esphomeremote_konfig_key: "…"` – **kopieren**, die brauchst du gleich.
+7. Es erscheint eine Zeile wie `esphomeremote_key: "…"` – **kopieren**, die brauchst du gleich.
 
 **Schritt 3 – Passwörter eintragen**
 Im ESPHome-Add-on oben rechts auf **„Secrets“** klicken und diese Zeilen ergänzen
@@ -258,7 +258,7 @@ Im ESPHome-Add-on oben rechts auf **„Secrets“** klicken und diese Zeilen erg
 ota_pw: "ein-passwort"
 ap_password: "noch-ein-passwort"
 direkt_schluessel: "…"             # 32 Hex-Zeichen, z. B. von  openssl rand -hex 16  (Funkweg zum Dock)
-esphomeremote_konfig_key: "…"      # die kopierte Zeile aus Schritt 2
+esphomeremote_key: "…"      # die kopierte Zeile aus Schritt 2
 ```
 
 **Schritt 4 – Fernbedienung aufspielen**
@@ -342,7 +342,7 @@ Beim ESPHome-Gerät „Gerät darf Home-Assistant-Aktionen ausführen“ einscha
 
 **Im Konfigurator steht „noch nicht übertragen“.**
 Die Fernbedienung schläft. Einmal eine Taste drücken – sie holt die Belegung dann ab.
-Klappt es nie: Stimmt `esphomeremote_konfig_key` in den ESPHome-Secrets mit dem Schlüssel der
+Klappt es nie: Stimmt `esphomeremote_key` in den ESPHome-Secrets mit dem Schlüssel der
 Integration überein (*ESPHomeRemote → Konfigurieren* zeigt ihn) und `ha_host` in der YAML?
 
 **Mehrere Fernbedienungen?**
@@ -362,24 +362,24 @@ Dort stellst du auch den TV-Eingang (für Popups wie „Nur wenn TV-Eingang ist 
 
 ## Für Entwickler
 
-- `esphomeremote-firmware.yaml` wird aus der Entwickler-Fassung erzeugt (`tools/veroeffentlichen.py`
+- `esphomeremote-firmware.yaml` wird aus der Entwickler-Fassung erzeugt (`tools/publish.py`
   im Entwickler-Setup) – Änderungen bitte dort, nicht hier.
 - Eigene Komponenten in `components/`: Display (`ili9341_i80`), Tastenfeld (`tca8418`), Akku
   (`max17048`), Lagesensor (`lis3dh`), Bluetooth-HID (`espidf_ble_keyboard`, `atv_voice`),
   Konfigurator (`tasten_konfig`, `menue`), SD-Karte, Touch (`ft63x6`).
-- `custom_components/esphomeremote_konfig`: Integration mit Panel
-  (`frontend/konfigurator.js`), liefert die Belegung per HTTP an die Fernbedienung.
+- `custom_components/esphomeremote`: Integration mit Panel
+  (`frontend/configurator.js`), liefert die Belegung per HTTP an die Fernbedienung.
 
 **Entwickler-Fassung (1:1 wie im Einsatz)** – zusätzlich zur einfachen Fassung oben liegt hier alles, womit die
 Remotes tatsächlich gebaut werden:
 - `templates/remote.yaml` (Firmware) und `templates/remote-halink.yaml` (Bluetooth-Schicht „Nur Bluetooth“,
-  HA über BLE/Dock – diese Datei wird geflasht), `templates/dock-basis.yaml` (Dockingstation = `dock-kern.yaml` + `dock-platine.yaml`; ein Dock-Nachbau auf einem anderen ESP32 nutzt nur den Kern),
+  HA über BLE/Dock – diese Datei wird geflasht), `templates/dock-base.yaml` (Dockingstation = `dock-core.yaml` + `dock-board.yaml`; ein Dock-Nachbau auf einem anderen ESP32 nutzt nur den Kern),
   `remote-dev-tests.yaml` (Testwerkzeuge, abschaltbar).
 - `tools/remotes.py` erzeugt daraus je Remote `remote-wz-<name>.yaml` und `remote-wz-<name>-halink.yaml`
   (Liste in `tools/remotes.json`, IP-Secret `ip_remote_wz_<name>`). Bauen/Flashen: `tools/esphome_run.mjs`.
 - `components/ha_tunnel`, `components/network` (Bluetooth-Schicht), `components/dock_direkt`, `dock_hid`,
-  `bluetooth_connection` (Dock), `custom_components/esphomeremote_konfig/ble_link.py` (HA-Gegenstück der Bluetooth-Schicht),
-  `home-assistant/packages/` (YAML-Alternative zur Integration), `docs/entwicklung/` (Architektur, Funkkonzept, Messungen).
+  `bluetooth_connection` (Dock), `custom_components/esphomeremote/ble_link.py` (HA-Gegenstück der Bluetooth-Schicht),
+  `home-assistant/packages/` (YAML-Alternative zur Integration), `docs/development/` (Architektur, Funkkonzept, Messungen).
 
 ## Extra: Logitech Z906 im WLAN
 
@@ -387,7 +387,7 @@ Remotes tatsächlich gebaut werden:
 
 Ein ESP32 zwischen Konsole und Verstärker eines Logitech Z906 bringt Lautstärke, Pegel, Eingang, Effekt und
 Ein/Aus-Zustand in Home Assistant – die Konsole funktioniert weiter wie vorher. Komponente, Beispielkonfiguration
-und Verkabelung: [`z906/`](z906/LIESMICH.md).
+und Verkabelung: [`z906/`](z906/README.de.md).
 
 ## Lizenz
 

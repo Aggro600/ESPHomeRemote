@@ -1,4 +1,4 @@
-🇬🇧 English · 🇩🇪 [Deutsch](LIESMICH.md)
+🇬🇧 English · 🇩🇪 [Deutsch](README.de.md)
 
 # ESPHomeRemote Streamer (Android TV)
 
@@ -22,4 +22,4 @@ By hand: `adb install esphomeremote-streamer.apk`, then
    `adb shell settings put secure accessibility_enabled 1`
    and in the configurator **Am Streamer eintragen** (register on the streamer).
 
-Build it yourself: `sh bauen.sh` (JDK 17, Android build-tools 35, platform 35; paths in the script).
+Build it yourself: `sh build.sh` (JDK 17, Android build-tools 35, platform 35; paths in the script).

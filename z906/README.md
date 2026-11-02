@@ -1,4 +1,4 @@
-🇬🇧 English · 🇩🇪 [Deutsch](LIESMICH.md)
+🇬🇧 English · 🇩🇪 [Deutsch](README.de.md)
 
 <p align="center">
   <picture>

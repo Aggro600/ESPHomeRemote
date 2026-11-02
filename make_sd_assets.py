@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Erzeugt die Bilddateien fuer die SD-Karte der Fernbedienung (Stand 2026-09-21).
 
-Ergebnis in sd-karte/ (Ordner-Aufbau wie bei OpenRemote, damit dessen Studio/Konfigurator spaeter
+Ergebnis in sd-card/ (Ordner-Aufbau wie bei OpenRemote, damit dessen Studio/Konfigurator spaeter
 mit unserer ESPHome-Firmware zusammenarbeiten kann):
 
   icons/Custom/<app>.png          64x64 RGBA, "eigene Icons" (Studio-kompatibel)
@@ -17,7 +17,7 @@ import io, struct, subprocess, sys, urllib.request
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-OUT = Path(__file__).resolve().parent.parent / "sd-karte"
+OUT = Path(__file__).resolve().parent.parent / "sd-card"
 FONT = Path(__file__).resolve().parent.parent / "fonts" / "Audiowide-Regular.ttf"
 BG = (14, 17, 22)
 # slug (Dateiname) : (Anzeigename, simple-icons-Name oder None, Markenfarbe)

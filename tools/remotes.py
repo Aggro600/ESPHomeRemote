@@ -18,7 +18,7 @@ tools/remotes.json (alle, auch Remote 1). Neue Remotes legt der Konfigurator in 
     python3 tools/remotes.py --entfernen gast             # wieder austragen (Datei + Secret weg)
     python3 tools/remotes.py --entwickler an|aus           # Testwerkzeuge (remote-dev-tests.yaml) mitbauen?
 
-Entwicklermodus (2026-10-18, Schalter im Konfigurator): steht in tools/entwickler.json ({"an": true}), fehlt die Datei,
+Entwicklermodus (2026-10-18, Schalter im Konfigurator): steht in tools/developer.json ({"an": true}), fehlt die Datei,
 ist er AN. Aus = die Zeile mit remote-dev-tests.yaml in der -halink-Vorlage wird beim Erzeugen auskommentiert.
 
 Kommentarzeilen bleiben unveraendert.
@@ -34,7 +34,7 @@ HERE = Path(__file__).resolve().parent.parent
 SRC = HERE / "templates" / "remote.yaml"
 SRC_HALINK = HERE / "templates" / "remote-halink.yaml"
 LISTE = Path(__file__).resolve().parent / "remotes.json"
-ENTWICKLER = Path(__file__).resolve().parent / "entwickler.json"
+ENTWICKLER = Path(__file__).resolve().parent / "developer.json"
 DEV_PAKET = "remote-dev-tests.yaml"
 SECRETS = HERE / "secrets.yaml"
 MAX_NAME = 14   # WLAN-Fallback-SSID "Remote WZ <Name> Fallback" hoechstens 32 Zeichen
