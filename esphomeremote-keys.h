@@ -1081,7 +1081,7 @@ inline void einrichten() {
         sprache_ha_en->value() = en;
         if (sprache_wahl->value() == 0 && en != sprache::englisch()) {
           ESP_LOGI("sprache", "Sprache von HA: %s - Neustart", en ? "en" : "de");
-          lv_timer_create([](lv_timer_t *) { App.safe_reboot(); }, 3000, nullptr);
+          App.scheduler.set_timeout(tk_cfg, "neustart", 3000, []() { global_preferences->sync(); App.safe_reboot(); });
         }
       }
     }

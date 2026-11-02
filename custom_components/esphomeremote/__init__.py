@@ -1018,7 +1018,9 @@ class KonfigData:
         for k, v in werte.items():
             if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", str(k)) or not isinstance(v, (bool, int)):
                 raise vol.Invalid(f"Einstellung {k}: ungültig")
-            if aktuell.get(k) == v and k in soll:
+            ak = aktuell.get(k)
+            # 1 ist nicht True: ein Auswahlfeld (Sprache 0/1/2) kam frueher als Ja/Nein von der Remote (2026-11-02)
+            if ak == v and isinstance(ak, bool) == isinstance(v, bool) and k in soll:
                 continue
             n += 1
             neu += 1

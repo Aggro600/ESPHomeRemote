@@ -7,6 +7,7 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include "esphome/core/hal.h"
 #include "lvgl.h"
 #include "language_table.h"
 
@@ -100,6 +101,7 @@ inline void label_text(lv_obj_t *o, const char *t) {
 
 inline void baum_(lv_obj_t *o) {
   if (o == nullptr) return;
+  esphome::arch_feed_wdt();   // ~2000 Tabelleneintraege je Text: der ganze Baum dauert laenger als der Watchdog erlaubt
   if (lv_obj_check_type(o, &lv_label_class)) {
     const char *t = lv_label_get_text(o);
     const char *n = tr(t);
@@ -130,7 +132,11 @@ inline void baum_(lv_obj_t *o) {
 
 // Alle Seiten (und die Ebene darueber) einmal uebersetzen
 template<typename V> inline void anwenden(const V &seiten) {
-  if (!englisch()) return;
+  // Nur einmal: spaeter gesetzte Texte uebersetzt das Makro. Lief es bei jeder neuen Konfiguration, stand die
+  // Hauptschleife jedes Mal Sekunden und der Watchdog startete die Remote neu (2026-11-02)
+  static bool fertig = false;
+  if (!englisch() || fertig) return;
+  fertig = true;
   for (auto *s : seiten) baum_(s);
   baum_(lv_layer_top());
 }

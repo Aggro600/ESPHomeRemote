@@ -48,17 +48,17 @@ inline void einrichten() {
     if (x_rechts->value() == (v != 0)) return;
     x_rechts->value() = v != 0;
     if (millis() < 30000) return;   // beim Start nur uebernehmen
-    lv_timer_create([](lv_timer_t *) { App.safe_reboot(); }, 3000, nullptr);
+    App.scheduler.set_timeout(tk_cfg, "neustart", 3000, []() { global_preferences->sync(); App.safe_reboot(); });
   });
   // Sprache des Displays (2026-11-01): 0 wie HA, 1 Deutsch, 2 Englisch - die Seiten werden einmal aufgebaut, darum
   // nach einer Aenderung kurz neu starten. Laeuft im Abgleich nicht mit (je Person).
-  t->einst_feld("sprache", true, []() { return (int) sprache_wahl->value(); }, [](int v) {
+  t->einst_feld("sprache", false, []() { return (int) sprache_wahl->value(); }, [](int v) {
     v = v < 0 || v > 2 ? 0 : v;
     if (sprache_wahl->value() == v) return;
     const bool vorher = sprache::englisch();
     sprache_wahl->value() = v;
-    const bool neu = v == 2 || (v == 0 && sprache_ha_en->value());
-    if (neu != vorher) lv_timer_create([](lv_timer_t *) { App.safe_reboot(); }, 3000, nullptr);
+    const bool neu = v == 2 || (v == 0 && strcmp(tk_cfg->wurzel()["sprache"] | "de", "de") != 0);
+    if (neu != vorher) App.scheduler.set_timeout(tk_cfg, "neustart", 3000, []() { global_preferences->sync(); App.safe_reboot(); });
   });
 #undef EINST_B
 #undef EINST_I

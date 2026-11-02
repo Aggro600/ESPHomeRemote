@@ -1,5 +1,23 @@
 # What's new · Was ist neu
 
+## 2026.11.2.5 (2026-11-02)
+
+Fixes for the display language on the remote:
+
+- The language setting no longer shows True/False in the configurator, and choosing German is no longer ignored.
+- The remote takes the language from the saved configuration at start, so a choice survives a restart.
+- English mode no longer crashes the remote: translating all screens blocked the main loop until the watchdog restarted it.
+
+<details><summary>Deutsch</summary>
+
+Korrekturen für die Display-Sprache der Remote:
+
+- Die Spracheinstellung zeigt im Konfigurator nicht mehr True/False, und die Auswahl Deutsch wird nicht mehr ignoriert.
+- Die Remote übernimmt die Sprache beim Start aus der gespeicherten Konfiguration, die Auswahl übersteht also einen Neustart.
+- Der englische Modus bringt die Remote nicht mehr zum Absturz: Das Übersetzen aller Bildschirme blockierte die Hauptschleife, bis der Watchdog neu startete.
+
+</details>
+
 ## 2026.11.2.4 (2026-11-02)
 
 **All names are now English.** The integration domain changed from esphomeremote_konfig to esphomeremote, along with service names (camera_tv, camera_size, light, restart, rules …), ESPHome components (menu, key_config, dock_direct), file names, packages (dock-core, dock-board), tools and docs.
