@@ -1589,7 +1589,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         // gespeicherter Stand aus HA (nicht ungespeicherte Aenderungen im Browser). Version 2 (2026-10-26): je Remote auch
         // die Einstellungen, dazu die gemeinsamen Bereiche (Wiedergabe, Streamer, Klingel, Licht, Anzeige, Docks, Abgleich)
         const r = await this._hass.callWS({ type: "esphomeremote/sicherung" });
-        const daten = { format: "esphomeremote", version: 2, exportiert: new Date().toISOString(), remotes: r.remotes, global: r.global };
+        const daten = { format: "esphomeremote", version: 3, exportiert: new Date().toISOString(), remotes: r.remotes, global: r.global };
         const blob = new Blob([JSON.stringify(daten, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -1623,7 +1623,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
           const datei = f.files[0];
           if (!datei) return;
           try {
-            const d = JSON.parse(await datei.text());
+            const d = JSON.parse(bkMigrieren(await datei.text()));
             if (d.format !== "esphomeremote" || !d.remotes) throw new Error("keine Fernbedienungs-Sicherung");
             const quellen = Object.keys(d.remotes);
             // Vorschlag: gleicher Name, sonst gleiche Position
@@ -1667,6 +1667,12 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         if (T.sync && G.sync) {
           try { await this._hass.callWS({ type: "esphomeremote/sync_set", ...G.sync }); fertig.push(BK_NAMEN.sync); }
           catch (e) { fehler.push(`${BK_NAMEN.sync}: ${e.message || e.code}`); }
+        }
+        const rest = Object.fromEntries(["funktionen", "docks_einst", "einst_standard", "werk", "reihenfolge", "ircodes", "gesperrt"]
+          .filter((k) => T[k] && G[k] != null).map((k) => [k, G[k]]));
+        if (Object.keys(rest).length) {
+          try { await this._hass.callWS({ type: "esphomeremote/sicherung_global", werte: rest }); fertig.push(...Object.keys(rest).map((k) => BK_NAMEN[k])); }
+          catch (e) { fehler.push(`${Object.keys(rest).map((k) => BK_NAMEN[k]).join(", ")}: ${e.message || e.code}`); }
         }
         s.modal = null; s.mitem = null; s.key = null;
         s.msg = fehler.length ? { err: true, text: `Einspielen teilweise fehlgeschlagen: ${fehler.join("; ")}` }
@@ -2063,7 +2069,16 @@ function mStil(it) {
 
 // Gemeinsame Bereiche einer Sicherung (Version 2)
 const BK_NAMEN = { jetzt: "Wiedergabe („Jetzt läuft“)", streamer: "Streamer", klingel: "Klingel", licht: "Licht (Helligkeit)", anzeige: "Smart Display (Anzeige)",
-  dock: "Dock-Geräte (Infrarot)", dockscan: "Dock-Suche", sync: "Abgleich-Gruppe" };
+  dock: "Dock-Geräte (Infrarot)", dockscan: "Dock-Suche", sync: "Abgleich-Gruppe", ircodes: "Eigene IR-Codes",
+  funktionen: "Funktionen (Kamera, TV-Eingang, Neustart)", docks_einst: "Dock-Einstellungen", einst_standard: "Standard-Einstellungen",
+  werk: "Werkseinstellung", reihenfolge: "Reihenfolge der Remotes", gesperrt: "Gesperrte Firmware" };
+
+// Sicherungen von vor der Umbenennung (bis 2026.11.2.3): Domain, Dienste und Sensoren auf die neuen Namen
+const BK_DIENSTE = { an_remotes: "to_remotes", blaster_senden: "blaster_send", einst_melden: "settings_report", kamera_groesse: "camera_size",
+  kamera_position: "camera_position", kamera_tv: "camera_tv", licht: "light", neustart: "restart", regeln: "rules",
+  timer_neu_starten: "timer_restart", timer_verlaengern: "timer_extend", wlan_kommt: "wifi_coming" };
+const bkMigrieren = (t) => t.replace(/esphomeremote_konfig\.(\w+)/g, (_, d) => `esphomeremote.${BK_DIENSTE[d] || d}`)
+  .replaceAll("sensor.esphomeremote_konfig_", "sensor.esphomeremote_config_").replaceAll("esphomeremote_konfig", "esphomeremote");
 
 // Entitaet ueberall ersetzen (Eintraege, Quellen, Aktionen, Ausloeser) - nur exakt gleiche Texte. Rueckgabe: Anzahl
 function tiefErsetzen(o, von, nach) {
@@ -4209,6 +4224,8 @@ ha-icon { --mdc-icon-size:20px; }
 .none { color:var(--sec); font-size:13px; padding:4px 2px; }
 .note { display:block; color:var(--sec); font-size:12px; margin-top:4px; }
 .step { border:1px solid var(--div); border-radius:10px; margin-bottom:8px; overflow:hidden; }
+.step .sh { min-width:0; } .step .sh select { min-width:0; flex:1 1 60px; }   /* schmale Fenster: Knoepfe rechts nicht abschneiden */
+.step .sh .icon { flex:none; } .step .sh .grow { flex:0 1 auto; }
 .sh { display:flex; align-items:center; gap:6px; padding:4px 4px 4px 10px; background:rgba(127,127,127,.08); }
 .sh select { border:0; background:transparent; font-weight:500; }
 .sb { padding:10px; display:flex; flex-direction:column; gap:8px; }
@@ -7156,7 +7173,7 @@ const EinstTab = {
           : !alles ? `<button class="btn primary" data-a="st_app" data-v="einrichten" data-si="${si}"><ha-icon icon="mdi:auto-fix"></ha-icon>Reparieren</button>` : ""}
         ${a.installiert ? `<button class="btn small" data-a="st_app" data-v="einrichten" data-si="${si}" title="Neu aufspielen, Dienste freigeben, Adresse eintragen"><ha-icon icon="mdi:refresh"></ha-icon>Neu einrichten</button>
           <button class="btn small ghost" data-a="st_app" data-v="entfernen" data-si="${si}"><ha-icon icon="mdi:delete-outline"></ha-icon>Deinstallieren</button>` : ""}
-        <button class="btn small ghost" data-a="st_app" data-v="status" data-si="${si}" title="Neu prüfen"><ha-icon icon="mdi:magnify"></ha-icon></button></div>
+        <button class="btn small ghost" data-a="st_app" data-v="status" data-si="${si}" title="Neu prüfen"><ha-icon icon="mdi:stethoscope"></ha-icon>Prüfen</button></div>
       <small class="note">Auf dem Streamer ist die App unter „ESPHomeRemote Streamer“ in der App-Liste – sie zeigt dort ebenfalls, ob alles läuft.</small></div>`;
   },
   async _strmAppLaden(id, aktion = "status") {
@@ -8626,7 +8643,7 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
   .main, .mmain { padding:14px 12px 20px; } .mbar, .aktleiste { padding:14px 12px 0; } .aktset { padding:10px 12px 0; } .modhint { margin:8px 12px 0; }
   .gesten { padding:14px 12px 30px; } .einst, .dock, .fw, .alsseite, .matrixw { padding:14px 12px 30px; }
   .ueber, .werk { padding:20px 14px 30px; gap:24px; } .hero h1 { font-size:24px; }
-  .akts { flex-wrap:nowrap; overflow-x:auto; max-width:100%; scrollbar-width:none; padding-bottom:2px; } .aktleiste { flex-wrap:wrap; } .trenner { display:none; }
+  .akts { flex-wrap:wrap; max-width:100%; } .aktleiste { flex-wrap:wrap; } .trenner { display:none; }
   .rkarte { padding:18px; border-radius:20px; } .fakt b { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; } .ringw { width:72px; height:72px; } .ringw .rw b { font-size:20px; }
   .sbzahlen { grid-template-columns:repeat(2, minmax(0,1fr)); }
   .alsseite .dlg { padding:4px 14px 18px; border-radius:18px; }

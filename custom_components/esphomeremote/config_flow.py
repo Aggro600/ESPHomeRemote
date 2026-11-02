@@ -41,6 +41,11 @@ class EsphomeremoteFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="user", data_schema=self._schema())
 
     def _schema(self, vorher=None):
+        # Update von esphomeremote_konfig: Schluessel und Remotes uebernehmen, sonst kommen die Remotes nicht mehr durch
+        alt = self.hass.config_entries.async_entries("esphomeremote_konfig")
+        if alt and not vorher:
+            vorher = {"key": alt[0].data.get("key", ""),
+                      "devices": ", ".join(alt[0].options.get("devices", alt[0].data.get("devices", [])))}
         vorher = vorher or {}
         return vol.Schema({
             vol.Required("devices", default=vorher.get("devices", _vorschlag(self.hass))): str,
