@@ -21,7 +21,7 @@ const TAGE = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const MONATE = ["Jan", "Feb", "März", "Apr", "Mai", "Juni", "Juli", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const KTAGE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 
-// Beispieldaten (im Geraet kommen sie aus Home Assistant: anzeige.py, GET /api/esphomeremote_konfig/anzeige/<geraet>)
+// Beispieldaten (im Geraet kommen sie aus Home Assistant: anzeige.py, GET /api/esphomeremote/anzeige/<geraet>)
 export const BEISPIEL = {
   aktivitaeten: ["TV", "Musik", "Kino", "Spiele"],
   aktiv: 0,

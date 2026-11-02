@@ -1,0 +1,8 @@
+# Tasten-Konfigurator der Fernbedienungen (Seitenleiste "Fernbedienung").
+# Code: custom_components/esphomeremote/, Seite: .../frontend/configurator.js
+# Die Remote holt ihre Belegung ueber /api/esphomeremote/cfg/<geraet>?k=<key>.
+esphomeremote:
+  key: !secret esphomeremote_key
+  devices:
+    - remote-wz-couch
+    - remote-wz-wohnzimmer

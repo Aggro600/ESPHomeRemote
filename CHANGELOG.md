@@ -1,5 +1,23 @@
 # What's new · Was ist neu
 
+## 2026.11.2.4 (2026-11-02)
+
+**All names are now English.** The integration domain changed from esphomeremote_konfig to esphomeremote, along with service names (camera_tv, camera_size, light, restart, rules …), ESPHome components (menu, key_config, dock_direct), file names, packages (dock-core, dock-board), tools and docs.
+
+**Breaking:** existing installations must switch folder and domain. Flash docks first, then remotes; a compatibility layer keeps older firmware working in the meantime. Streamer app permissions have to be granted again after updating.
+
+Camera pictures on the remote now show the complete image with black bars instead of being cropped.
+
+<details><summary>Deutsch</summary>
+
+**Alle Namen sind jetzt englisch.** Die Domain der Integration wechselt von esphomeremote_konfig zu esphomeremote, dazu Dienste (camera_tv, camera_size, light, restart, rules …), ESPHome-Komponenten (menu, key_config, dock_direct), Dateien, Pakete (dock-core, dock-board), Werkzeuge und Doku.
+
+**Achtung:** Bestehende Installationen müssen Ordner und Domain umstellen. Erst die Docks flashen, dann die Remotes; eine Übergangsschicht hält ältere Firmware so lange lauffähig. Die Freigaben der Streamer-App müssen nach dem Update neu gesetzt werden.
+
+Kamerabilder auf der Remote zeigen jetzt das ganze Bild mit schwarzen Balken statt eines Ausschnitts.
+
+</details>
+
 ## 2026.11.2.3 (2026-11-02)
 
 Validation for HACS and Home Assistant (hassfest) in the repo, preparing for the HACS default list. Logo for the Z906 bridge.

@@ -5,7 +5,7 @@
 # =============================================================================
 # Nicht hier anpassen: Namen, Entitaeten und die HA-Adresse stehen als substitutions in
 # esphomeremote.yaml, Passwoerter in secrets.yaml. Diese Datei wird automatisch aus der
-# Entwickler-Fassung erzeugt (tools/veroeffentlichen.py).
+# Entwickler-Fassung erzeugt (tools/publish.py).
 # =============================================================================
 # GENERIERT aus templates/remote.yaml durch tools/remotes.py - NICHT von Hand bearbeiten (Aenderungen in der Vorlage machen).
 # VORLAGE fuer ALLE Fernbedienungen (seit 2026-10-16) - nur diese Datei von Hand pflegen.
@@ -16,8 +16,8 @@
 # =============================================================================
 # Startseite: Uhr und Statusleiste, Wiedergabe-Karte ("Jetzt laeuft"), Menue/Apps, Aktivitaetsleiste.
 # Tasten, Menue, Startseite und Popups kommen aus dem Konfigurator in Home Assistant
-# (custom_components/esphomeremote_konfig, Seitenleiste "Fernbedienung"): die Remote laedt die
-# Belegung per HTTP (tasten_konfig) und baut das Menue zur Laufzeit (components/menue).
+# (custom_components/esphomeremote, Seitenleiste "Fernbedienung"): die Remote laedt die
+# Belegung per HTTP (tasten_konfig) und baut das Menue zur Laufzeit (components/menu).
 # Eingebaute Seiten: Media-Player, Kamerabild/Live-Bild, Tastatur und die Einstellungen (Bildschirm,
 # Anzeige, Energie & Wecken, Sprache, Bluetooth, Akku, Wartung & Tests, SD-Karte).
 #
@@ -48,12 +48,12 @@ substitutions:
   ha_host:        "homeassistant.local:8123"
   ha_adresse:     "homeassistant.local:8123"   # dasselbe fuer den Bluetooth-Tunnel (dort ist ha_host der Tunnel selbst)
   # Nur der Startwert: Home Assistant kuendigt seine Adresse an (Attribut "basis" von
-  # sensor.esphomeremote_konfig_<remote>), die Remote uebernimmt sie zur Laufzeit.
+  # sensor.esphomeremote_config_<remote>), die Remote uebernimmt sie zur Laufzeit.
   # true in der Bluetooth-Schicht (remote-halink.yaml): dort laeuft HTTP ueber den Tunnel, der die Adresse bekommt.
   ha_ueber_tunnel: "false"
   # Entitaeten in Home Assistant (Media Player, Fernseher, Lautsprecher, Streamer, Timer) waehlt man im Konfigurator
   # (Seite "Verknuepfungen", 2026-10-19). Gelesen wird ueber die Spiegel der Integration
-  # (sensor.esphomeremote_spiegel_<remote>_<rolle>, custom_components/esphomeremote_konfig/spiegel.py), Aktionen gehen
+  # (sensor.esphomeremote_spiegel_<remote>_<rolle>, custom_components/esphomeremote/mirror.py), Aktionen gehen
   # an die gewaehlte Entitaet (id(tk_cfg).ent("tv") ...).
 
 esphome:
@@ -61,30 +61,30 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.2.3"
+    version: "2026.11.2.4"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
-    - esphomeremote-sprache.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
-    - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
+    - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
+    - esphomeremote-log-buffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
     - esphomeremote-pm.h
-    - esphomeremote-strom.h
-    - esphomeremote-eingabe.h
-    - esphomeremote-einstellungen.h   # Einstellungen fuers Konfigurator-Menue (generiert, 2026-10-04)
-    - esphomeremote-akzent.h   # Akzentfarbe aus dem Konfigurator (2026-11-01)
-    - esphomeremote-tasten.h   # Tasten-Konfigurator (2026-10-03)
-    - esphomeremote-wlan.h
-    - esphomeremote-sd-bilder.h
-    - esphomeremote-stufen.h
-    - esphomeremote-akku.h
+    - esphomeremote-power.h
+    - esphomeremote-input.h
+    - esphomeremote-settings.h   # Einstellungen fuers Konfigurator-Menue (generiert, 2026-10-04)
+    - esphomeremote-accent.h   # Akzentfarbe aus dem Konfigurator (2026-11-01)
+    - esphomeremote-keys.h   # Tasten-Konfigurator (2026-10-03)
+    - esphomeremote-wifi.h
+    - esphomeremote-sd-images.h
+    - esphomeremote-levels.h
+    - esphomeremote-battery.h
     - esphomeremote-rmt.h   # IR-Kanaele nur bei Bedarf (Leichtschlaf, 2026-10-07)
-    - esphomeremote-schlaf.h   # Bedingungen fuer den Tiefschlaf
-    - esphomeremote-einst-sync.h   # Einstellungen mit dem Konfigurator abgleichen (2026-10-16)
+    - esphomeremote-sleep.h   # Bedingungen fuer den Tiefschlaf
+    - esphomeremote-settings-sync.h   # Einstellungen mit dem Konfigurator abgleichen (2026-10-16)
     - esphomeremote-dock.h   # Dock-Anzeige / Smart Display (2026-10-17)
-    - esphomeremote-maus.h   # Touchpad (2026-10-17)
-    - esphomeremote-gesten.h   # Bewegungsgesten (2026-10-17)
+    - esphomeremote-mouse.h   # Touchpad (2026-10-17)
+    - esphomeremote-gestures.h   # Bewegungsgesten (2026-10-17)
     - esphomeremote-extras.h   # Einstellungsseite Smart Display + Bluetooth "Maus & Tastatur" (2026-10-17)
-    - esphomeremote-gestenseite.h   # Seite Gesten: Liste, Belegung, Anlernen (2026-10-17)
-    - esphomeremote-musik.h   # Musik-Anzeige: Spektrum ueber das Mikrofon (2026-10-18)
+    - esphomeremote-gestures-page.h   # Seite Gesten: Liste, Belegung, Anlernen (2026-10-17)
+    - esphomeremote-music.h   # Musik-Anzeige: Spektrum ueber das Mikrofon (2026-10-18)
   on_boot:
     # Prioritaet 1100: laeuft VOR dem I2C-Bus (setup_priority BUS = 1000).
     # Nach einem Deep-Sleep-Wake zuerst die Holds loesen UND die +VSW-Rail
@@ -364,12 +364,12 @@ esphome:
               lv_indev_set_scroll_throw(in, 4);
               lv_indev_set_scroll_limit(in, 6);
             }
-            tasten::einrichten();   // Tasten-Konfigurator + Menue: Hooks setzen (esphomeremote-tasten.h)
-            einst_sync::einrichten();   // Einstellungen <-> Konfigurator (esphomeremote-einst-sync.h)
+            tasten::einrichten();   // Tasten-Konfigurator + Menue: Hooks setzen (esphomeremote-keys.h)
+            einst_sync::einrichten();   // Einstellungen <-> Konfigurator (esphomeremote-settings-sync.h)
             // HA-Befehl hat kein Dock erreicht (er wartet jetzt auf die eigene Verbindung): bei "WLAN aus" das WLAN holen
             id(tk_cfg).ha_wecken = []() { if (wlan_zugriff::g_nur_ble) wlan_zugriff::bedarf(60000, "Dock nicht erreicht"); };
             // WLAN kommt: HA ueber das Dock Bescheid sagen (verbindet dann sofort, Bruecke ble_link.py wlan_kommt)
-            wlan_zugriff::g_bedarf_neu = []() { id(tk_cfg).dock_aufruf("esphomeremote_konfig.wlan_kommt", {}, true); };
+            wlan_zugriff::g_bedarf_neu = []() { id(tk_cfg).dock_aufruf("esphomeremote.wifi_coming", {}, true); };
             // Bluetooth-Notweg: Einstellung, und danach den Platz der Aktivitaet wieder anwenden (Dock uebernimmt)
             id(tk_cfg).notweg_modus = []() { return (int) id(bt_notweg); };
             id(tk_cfg).notweg_vorbei = []() { id(apply_activity).execute(); };
@@ -654,7 +654,7 @@ external_components:
     refresh: 0s
     # online_image: eigene Fassung (2026-10-10) - Download und JPEG-Dekodierung im Hintergrund-Task, die Remote
     # bleibt bedienbar, waehrend Cover/Klingelbilder per WLAN oder Bluetooth kommen (s. components/online_image).
-    components: [ili9341_i80, tca8418, max17048, lis3dh, espidf_ble_keyboard, atv_voice, ft63x6, sd_card, tasten_konfig, menue, online_image, dock_direkt]
+    components: [ili9341_i80, tca8418, max17048, lis3dh, espidf_ble_keyboard, atv_voice, ft63x6, sd_card, key_config, menu, online_image, dock_direct]
 
 logger:
   level: DEBUG
@@ -704,13 +704,13 @@ api:
   on_client_disconnected:
     - script.execute: refresh_wifi_bars
   services:
-    # Aktivitaet von HA (Schalter je Aktivitaet, esphomeremote_konfig): nr = Index, -1 = laufende beenden
+    # Aktivitaet von HA (Schalter je Aktivitaet, esphomeremote): nr = Index, -1 = laufende beenden
     - service: aktivitaet_setzen
       variables:
         nr: int
       then:
         - lambda: 'if (nr < 0) tasten::aktivitaet_aus(); else tasten::aktivitaet_setzen(nr);'
-    # Cover neu laden: von der Integration (esphomeremote_konfig/cover.py), NACHDEM sie das Bild verkleinert abgelegt
+    # Cover neu laden: von der Integration (esphomeremote/cover.py), NACHDEM sie das Bild verkleinert abgelegt
     # hat - sonst kam das Cover des vorherigen Titels.
     # Neues Cover (2026-10-20): beide Bilder nur vormerken, geladen wird je Seite, wenn sie zu sehen ist (cover_sichtbar) -
     # vorher lud jede Remote bei jedem Titelwechsel beide Bilder, auch bei dunklem Display durch den langsamen
@@ -1001,7 +1001,7 @@ font:
     bpp: 4
     glyphs: ["\U000F0241"]
   # Symbole fuer Menue-Eintraege ("icon" im Konfigurator). Glyphliste und Name->Codepoint-Tabelle
-  # (components/menue/mdi_icons.h) sind aus fonts/mdi-subset.ttf erzeugt - nur diese ~150 stehen zur Auswahl.
+  # (components/menu/mdi_icons.h) sind aus fonts/mdi-subset.ttf erzeugt - nur diese ~150 stehen zur Auswahl.
   - file: 'fonts/mdi-subset.ttf'
     id: mdi_menu
     size: 20
@@ -1319,7 +1319,7 @@ globals:
   # -1 = Unendlich, bleibt offen bis man selbst zurueckgeht.
   - {id: menu_close_s,   type: int,       restore_value: true,  initial_value: "20"}
   # Cover-Darstellung, getrennt fuer Media-Seite und Startseite: AN = GANZ (ganzes Bild, ggf. Balken), AUS = VOLL
-  # (randlos zugeschnitten). HA legt immer alle vier Varianten je Remote ab (esphomeremote_konfig/cover.py), die Remote waehlt nur
+  # (randlos zugeschnitten). HA legt immer alle vier Varianten je Remote ab (esphomeremote/cover.py), die Remote waehlt nur
   # die URL. Reinigungsmodus (Einstellungen): Display + Tasten clean_s Sekunden gesperrt.
   - {id: clean_mode,        type: bool,   restore_value: false, initial_value: "false"}
   - {id: clean_left,        type: int,    restore_value: false, initial_value: "0"}
@@ -1395,13 +1395,13 @@ globals:
   - {id: dock_disp,      type: int,       restore_value: true,  initial_value: "2"}
   - {id: dock_von,       type: int,       restore_value: true,  initial_value: "7"}
   - {id: dock_bis,       type: int,       restore_value: true,  initial_value: "23"}
-  # Musik-Anzeige (2026-10-18, esphomeremote-musik.h): musik_dock = im Dock statt Smart Display, solange Musik laeuft;
+  # Musik-Anzeige (2026-10-18, esphomeremote-music.h): musik_dock = im Dock statt Smart Display, solange Musik laeuft;
   # musik_player = nur zuhoeren, wenn der "Jetzt laeuft"-Player spielt
   - {id: musik_dock,     type: bool,      restore_value: true,  initial_value: "true"}
   # Begruessung nach jedem Start/Aufwachen (2026-10-20, Konfigurator: Einstellungen > Begruessung). Text: cfg.begruessung
   # (leer = "Hallo <Name>").
   - {id: begruessung,    type: bool,      restore_value: true,  initial_value: "true"}
-  # HA-Befehle ueber das Dock (2026-10-19, components/dock_direkt typ 3): 0 aus, 1 nur ohne HA-Verbindung,
+  # HA-Befehle ueber das Dock (2026-10-19, components/dock_direct typ 3): 0 aus, 1 nur ohne HA-Verbindung,
   # 2 immer zuerst ueber das Dock (sofort, auch direkt nach dem Tiefschlaf) - sonst/als Ausweg wie bisher
   - {id: ha_dock,        type: int,       restore_value: true,  initial_value: "2"}
   # Bluetooth ueber das Dock (2026-10-22, components/dock_hid): 0 automatisch (Remote, wenn sie selbst verbunden ist,
@@ -1438,7 +1438,7 @@ globals:
   - {id: ha_link_modus,  type: int,       restore_value: true,  initial_value: "1"}
   - {id: zustand_da,     type: bool,      restore_value: false, initial_value: "false"}   # Stand vom Dock schon da
   - {id: musik_player,   type: bool,      restore_value: true,  initial_value: "true"}
-  # Touchpad (esphomeremote-maus.h): Bit je Bluetooth-Platz - maus_slots = Maus melden, voll_slots = volle Tastatur
+  # Touchpad (esphomeremote-mouse.h): Bit je Bluetooth-Platz - maus_slots = Maus melden, voll_slots = volle Tastatur
   # trotz kb_ziffern; maus_tempo = Zeigertempo in %
   - {id: maus_slots,     type: int,       restore_value: true,  initial_value: "0"}
   - {id: voll_slots,     type: int,       restore_value: true,  initial_value: "0"}
@@ -1449,7 +1449,7 @@ globals:
   - {id: maus_dpad,      type: bool,      restore_value: true,  initial_value: "true"}
   - {id: maus_dpad_tempo, type: int,      restore_value: true,  initial_value: "100"}
   - {id: maus_zurueck,   type: int,       restore_value: true,  initial_value: "1"}
-  # Bewegungsgesten (esphomeremote-gesten.h): an, auch bei dunklem Display, Empfindlichkeit 0 streng .. 2 empfindlich
+  # Bewegungsgesten (esphomeremote-gestures.h): an, auch bei dunklem Display, Empfindlichkeit 0 streng .. 2 empfindlich
   - {id: gesten_an,      type: bool,      restore_value: true,  initial_value: "false"}
   - {id: gesten_dunkel,  type: bool,      restore_value: true,  initial_value: "true"}
   - {id: linkshaender,   type: bool,      restore_value: true,  initial_value: "false"}   # Linkshaender (2026-11-01): Touchpad/Ziffern gespiegelt, je Remote
@@ -1518,10 +1518,10 @@ i2c:
   scan: true
 
 # Tasten-Konfigurator (2026-10-03): Belegung aller Tasten je Aktivitaet und kurz/doppelt/lang,
-# gepflegt in Home Assistant (Seitenleiste "Fernbedienung", custom_components/esphomeremote_konfig).
+# gepflegt in Home Assistant (Seitenleiste "Fernbedienung", custom_components/esphomeremote).
 # Die Remote holt sie per HTTP, sobald HA einen neuen Stand ankuendigt (tk_hash_ha), und speichert
 # sie im NVS. Ohne Belegung oder ausgeschaltet gilt die eingebaute Logik (on_key/gesture_action).
-tasten_konfig:
+key_config:
   id: tk_cfg
   host: ${ha_host}
   key: "${konfig_key}"
@@ -1535,8 +1535,8 @@ tasten_konfig:
 
 # Direkter Funkweg zum Dock (2026-10-18): Infrarot/433 MHz ueber "Dock" gehen per ESP-NOW direkt ans Dock, ohne HA.
 # Nur wenn das Dock nicht bestaetigt: ueber HA, sonst sendet die Remote selbst. Adressen der Docks kommen aus der
-# Tasten-Konfiguration ("dmac"). Beschreibung: components/dock_direkt/dock_direkt.h
-dock_direkt:
+# Tasten-Konfiguration ("dmac"). Beschreibung: components/dock_direct/dock_direct.h
+dock_direct:
   id: direkt
   schluessel: "${direkt_schluessel}"
   # Stand vom Dock (2026-10-19): nach dem Start, bevor die eigene HA-Verbindung steht, sofort die richtigen Werte auf
@@ -1623,12 +1623,12 @@ dock_direkt:
 
 # Konfigurierbares Menue (2026-10-03): Seiten/Eintraege aus derselben HA-Konfiguration, Raster 6x40 px.
 # Anzeige auf page_konfig (Seite 98). Ohne Konfiguration gibt es kein Menue.
-menue:
+menu:
   - id: mn
-    tasten_konfig: tk_cfg
+    key_config: tk_cfg
   # Startseite je Aktivitaet (2026-10-27): eigene Menueseite statt der eingebauten Startseite, nur Anzeige/Touch
   - id: mn_home
-    tasten_konfig: tk_cfg
+    key_config: tk_cfg
     nur_anzeige: true
 
 lis3dh:
@@ -1680,7 +1680,7 @@ image:
           id(cover_home_offen) = true;   // 2026-10-31: statt WLAN einzuschalten spaeter noch einmal
 
   # Bildplaetze der Widgets (2026-10-27): Kamera-Schnappschuss bzw. Cover, in HA passend verkleinert
-  # (/api/esphomeremote_konfig/bild, custom_components/esphomeremote_konfig/widgets.py)
+  # (/api/esphomeremote/bild, custom_components/esphomeremote/widgets.py)
   - platform: online_image
     id: wbild_0
     url: "http://${ha_host}/"
@@ -1834,7 +1834,7 @@ touchscreen:
             id(tt_move)->execute();
           }
           bool neu_bewegt = false;
-          // Ziehen ist kein Tippen (2026-10-02, s. esphomeremote-eingabe.h): ueberall ausser Touch-Test (36).
+          // Ziehen ist kein Tippen (2026-10-02, s. esphomeremote-input.h): ueberall ausser Touch-Test (36).
           // Aufsetzpunkt der JEWEILIGEN Beruehrung (x_org/y_org) - on_update laeuft bei einer neuen Beruehrung
           // VOR on_touch, touch_x/touch_y waeren dann noch die des vorigen Tipps (schnelle Tipps gingen verloren).
           for (auto t : touches) ziehen_pruefen((int) t.x - (int) t.x_org, (int) t.y - (int) t.y_org, id(cur_page) == 36 || id(cur_page) == 51, t.x_org, t.y_org);
@@ -2364,7 +2364,7 @@ script:
               return b;
             aktiv: !lambda 'return (int) id(kb).active_host_slot();'
             verbunden: !lambda 'return id(ble_paired).state ? 1 : 0;'
-  # Einstellungen an den Konfigurator melden (2026-10-16, esphomeremote-einst-sync.h): JSON {"name": wert}
+  # Einstellungen an den Konfigurator melden (2026-10-16, esphomeremote-settings-sync.h): JSON {"name": wert}
   # Neustart nach einer Aenderung, die erst beim Start greift (Maus-Merkmale der Bluetooth-Tastatur)
   - id: neustart_gleich
     mode: single
@@ -2379,7 +2379,7 @@ script:
       - delay: 8s
       - lambda: 'App.safe_reboot();'
   # Bewegungsgesten: erkannte Gesten (Test im Konfigurator)
-  # Gesten-Seite der Remote (esphomeremote-gestenseite.h): Aenderungen an HA, das sie in cfg.gesten speichert
+  # Gesten-Seite der Remote (esphomeremote-gestures-page.h): Aenderungen an HA, das sie in cfg.gesten speichert
   - id: gesten_aendern_an_ha
     mode: queued
     max_runs: 8
@@ -2425,7 +2425,7 @@ script:
           std::map<std::string, std::string> d;
           d["hash"] = id(tk_cfg)->hash();
           if (werte.size() < 1000) d["werte"] = werte;
-          id(tk_cfg).dock_aufruf("esphomeremote_konfig.einst_melden", d);
+          id(tk_cfg).dock_aufruf("esphomeremote.settings_report", d);
       - homeassistant.event:
           event: esphome.remote_einstellungen
           data:
@@ -2525,7 +2525,7 @@ script:
       - script.execute: apply_hints
   # ---- Ruhe-Zeiten (Energie & Wecken) ----
   # Alle starten beim Display-Aus (backlight_idle_timeout) und zaehlen ab da; wake_backlight stoppt sie. Bei
-  # niedrigem Akku (low_bat) gelten gekuerzte Zeiten (esphomeremote-strom.h).
+  # niedrigem Akku (low_bat) gelten gekuerzte Zeiten (esphomeremote-power.h).
   - id: wifi_ruhe_timer
     mode: restart
     then:
@@ -2644,7 +2644,7 @@ script:
                 else id(kb).set_link_schlummer(true);
 
   # Tiefschlaf-Status (Diagnose-Sensor) neu bewerten und nur bei Aenderung senden
-  # Werte ueber das Dock an HA (2026-10-23, Umbau "Dock als Zentrale", HA: esphomeremote_konfig/dockstatus.py) - nur
+  # Werte ueber das Dock an HA (2026-10-23, Umbau "Dock als Zentrale", HA: esphomeremote/dockstatus.py) - nur
   # ohne eigene HA-Verbindung; nach Aenderungen (kurz gesammelt) und jede Minute. schlaf = vor dem Tiefschlaf.
   # Weck-Taste / beim Start gedrueckte Taste sofort uebers Dock (2026-10-23): on_boot 248, 244.4, 101 - liest den
   # Tastenchip nach (tca8418::nachlesen), schickt die erste gedrueckte Taste einmal (tasten_konfig::weck_frueh).
@@ -2710,7 +2710,7 @@ script:
               const uint32_t vorher = logpuffer::gesendet();
               const std::string z = logpuffer::fuer_dock(800);
               if (z.empty()) break;
-              if (!id(tk_cfg).dock_aufruf("esphomeremote_konfig.remote_log", {{"z", z}}, false, [vorher]() { logpuffer::zurueck(vorher); })) {
+              if (!id(tk_cfg).dock_aufruf("esphomeremote.remote_log", {{"z", z}}, false, [vorher]() { logpuffer::zurueck(vorher); })) {
                 logpuffer::zurueck(vorher);
                 break;
               }
@@ -3585,7 +3585,7 @@ script:
   # Anstoss - Ladekabel anstecken oder Schalter "Wartungsfenster jetzt" in HA;
   # kein stuendliches Aufwachen mehr. mode: restart, damit ein neuer Anstoss das
   # Fenster verlaengert statt zu stapeln.
-  # Firmware-Update von der Remote anstossen (Wartung & Tests). HA baut und spielt auf (esphomeremote_konfig/firmware.py)
+  # Firmware-Update von der Remote anstossen (Wartung & Tests). HA baut und spielt auf (esphomeremote/firmware.py)
   # und meldet den Stand ueber fw_status.
   - id: fw_update_anfordern
     then:
@@ -3761,7 +3761,7 @@ script:
           vorher = a;
 
   # Startseite anordnen: Wiedergabe-Karte mit Cover (216 x 172, von HA passend zugeschnitten), danach die
-  # Akzentfarbe aus dem Konfigurator (2026-11-01, esphomeremote-akzent.h): alle Seiten umfaerben; Anzeigen, deren
+  # Akzentfarbe aus dem Konfigurator (2026-11-01, esphomeremote-accent.h): alle Seiten umfaerben; Anzeigen, deren
   # Blau "Bluetooth" heisst, bleiben blau.
   - id: akzent_anwenden
     then:
@@ -3859,7 +3859,7 @@ script:
   # apply_mic_power aufgerufen wird (die SD-Skripte steuern MIC_VDD selbst, zeitkritisch) -
   # das Symbol muss trotzdem sofort umschalten (Nutzerwunsch 2026-09-24).
   # Knopf "Fernseher einschalten" (Media-Seite): nur bei gewaehltem Fernseher (Verknuepfung "tv"), solange er aus ist.
-  # Auch nach jeder neuen Konfiguration (esphomeremote-tasten.h) - die Verknuepfung kann nach dem TV-Zustand kommen.
+  # Auch nach jeder neuen Konfiguration (esphomeremote-keys.h) - die Verknuepfung kann nach dem TV-Zustand kommen.
   - id: tv_knopf_pruefen
     then:
       - lambda: |-
@@ -5598,7 +5598,7 @@ script:
   - id: kbd_setup
     then:
       - lambda: |-
-          // Belegung, Breiten und Navigation stehen in esphomeremote-eingabe.h.
+          // Belegung, Breiten und Navigation stehen in esphomeremote-input.h.
           const auto &L = eingabe::layout(id(kbd_mode), id(kbd_shift));
           static lv_buttonmatrix_ctrl_t ctrl[50];
           static bool init = false;
@@ -6502,7 +6502,7 @@ button:
     name: "Neu starten"
     id: btn_restart
     icon: "mdi:restart"
-  # Protokoll-Puffer ins Protokoll schreiben (s. esphomeremote-logpuffer.h)
+  # Protokoll-Puffer ins Protokoll schreiben (s. esphomeremote-log-buffer.h)
   - platform: template
     name: "Protokoll-Puffer ausgeben"
     icon: "mdi:text-box-search-outline"
@@ -6781,14 +6781,14 @@ text_sensor:
   # Von HA angekuendigter Stand -> bei Abweichung neu holen
   - platform: homeassistant
     id: tk_hash_ha
-    entity_id: sensor.esphomeremote_konfig_${ha_name}
+    entity_id: sensor.esphomeremote_config_${ha_name}
     internal: true
     on_value:
       - lambda: 'id(tk_cfg).angekuendigt(x);'
   # Adresse von Home Assistant (Attribut "basis", 2026-10-19): Bilder und Konfiguration kommen von dort
   - platform: homeassistant
     id: ha_basis
-    entity_id: sensor.esphomeremote_konfig_${ha_name}
+    entity_id: sensor.esphomeremote_config_${ha_name}
     attribute: basis
     internal: true
     on_value:
@@ -6833,7 +6833,7 @@ text_sensor:
       return std::string("Platz ") + std::to_string(id(kb).active_host_slot() + 1);
 
   # ---- "Jetzt laeuft": eine HA-Entitaet fasst Streamer, Multiroom, Chromecast und Fernseher zusammen
-  # (Konfigurator > Wiedergabe, esphomeremote_konfig/jetzt.py). Welche, waehlt die Verknuepfung "jetzt"; gelesen ueber den
+  # (Konfigurator > Wiedergabe, esphomeremote/jetzt.py). Welche, waehlt die Verknuepfung "jetzt"; gelesen ueber den
   # Spiegel sensor.esphomeremote_spiegel_<remote>_jetzt.
   - platform: homeassistant
     id: mp_state
@@ -7151,7 +7151,7 @@ lvgl:
   #  2. Neuer Regler: in fix_slider_geometry eintragen (sonst LVGL-Standardgroesse und -farben).
   #  3. on_load der Seite: "id(cur_page) = <Nummer>; id(frow) = 0; id(fcol) = 0;" + focus_apply.
   #  4. Hinweistext (h_*): Text in apply_hints setzen, sonst bleibt das Feld leer.
-  #  5. Einstellungsseiten: danach tools/einst_parse.py + einst_gen.py laufen lassen (Konfigurator-Eintraege).
+  #  5. Einstellungsseiten: danach tools/settings_parse.py + settings_gen.py laufen lassen (Konfigurator-Eintraege).
   # ==========================================================================================
   pages:
     # ================================================ 0: HOME
@@ -7671,7 +7671,7 @@ lvgl:
                     - lambda: 'id(kbd_bri) = (int) x;'
                     - script.execute: apply_brightness
                     - script.execute: hide_bri_overlay
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 43: AKKU (Statistik)
     - id: page_akku
@@ -7838,7 +7838,7 @@ lvgl:
               - label: {text: "vor 24 h", text_font: a13, text_color: 0x8B94A3}
               - label: {text: "jetzt", text_font: a13, text_color: 0x8B94A3}
         - label: {width: 216, text: "Raten ohne Ladezeiten, aus Messpunkten alle 5 min - auch über den Tiefschlaf hinweg. Minus = Entladen.", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
     - id: page_ble
       styles: [st_screen, st_fx_c10]
       scrollbar_mode: "off"
@@ -8077,7 +8077,7 @@ lvgl:
               - label: {text: "Zurück-Taste", text_font: a15, styles: [st_grow]}
               - label: {id: maus_zurueck_lbl, text: "-", text_font: a13, text_color: 0xF1F3F5}
         - label: {id: h_maus_dpad, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
     - id: page_media
       styles: [st_screen]
       scrollbar_mode: "off"
@@ -8134,7 +8134,7 @@ lvgl:
         - script.execute: focus_apply
       widgets:
         # Cover als Vollbild-Hintergrund (240x320, s. adb_title oben und
-        # esphomeremote_konfig/cover.py) - MUSS das erste Widget sein, damit es
+        # esphomeremote/cover.py) - MUSS das erste Widget sein, damit es
         # hinter allem anderen liegt (LVGL zeichnet in Listenreihenfolge).
         # Start versteckt - erst adb_title zeigt es, sonst haengt ein
         # leeres/kaputtes Bild rum, solange HA noch keine Cover-URL hat.
@@ -8297,7 +8297,7 @@ lvgl:
             styles: [st_ctrlbtn]
             on_click: [{script.execute: {id: mp_taste, was: 3}}]
             widgets: [{label: {align: CENTER, text: "+", text_font: a18}}]
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
 
     - id: page_voice_set
@@ -8380,7 +8380,7 @@ lvgl:
               - label: {text: "Mikrofon vorwärmen", text_font: a15, styles: [st_grow]}
               - label: {id: mic_warm_lbl, text: "AN", text_font: a13, text_color: 0x22C55E}
         - label: {id: h_mic_warm, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
     - id: page_bright
       styles: [st_screen, st_fx_c10]
       scrollbar_mode: "off"
@@ -8526,7 +8526,7 @@ lvgl:
                   id(ps_dim_s) = v;
               - script.execute: apply_power
         - label: {id: ps_h_dim, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::DIM_PCT in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::DIM_PCT in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -8552,7 +8552,7 @@ lvgl:
                   id(ps_dim_pct) = w;
               - script.execute: apply_power
         - label: {id: ps_h_dimp, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
     # ================================================ 23: ANZEIGE
     # ================================================ 24: BEGRUESSUNG
     # Wird nach jedem Start gezeigt. Nebenbei die Rueckmeldung, dass wirklich
@@ -8616,7 +8616,7 @@ lvgl:
                   text_font: a13
                   text_color: 0x3B82F6
                   text_align: CENTER
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 25: NEUSTART-RUECKFRAGE
     - id: page_restart
@@ -8678,7 +8678,7 @@ lvgl:
             styles: [st_ctrlbtn]
             on_click: [{script.execute: nav_back}]
             widgets: [{label: {align: CENTER, text: "Abbrechen", text_font: a15}}]
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 26: SPRACHANTWORT
     # Zeigt, was Home Assistant verstanden hat und was es antwortet. Die
@@ -8726,7 +8726,7 @@ lvgl:
             styles: [st_ctrlbtn]
             on_click: [{script.execute: go_home}]
             widgets: [{label: {align: CENTER, text: "Schließen", text_font: a13}}]
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 27: ENERGIE SPAREN
     - id: page_power
@@ -8797,7 +8797,7 @@ lvgl:
               - label: {text: "WLAN aus im Ruhezustand", text_font: a15, styles: [st_grow]}
               - label: {id: ps_off_lbl, text: "-", text_font: a13, text_color: 0x8B94A3}
         - label: {id: ps_h_off, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::WIFI_AUS in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::WIFI_AUS in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -8823,7 +8823,7 @@ lvgl:
                   id(ps_wifi_off_s) = w;
               - script.execute: apply_power
         - label: {id: ps_h_offs, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TV_AUS in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TV_AUS in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -8850,7 +8850,7 @@ lvgl:
               - script.execute: apply_power
         - label: {id: ps_h_wifitv, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {text: "PROZESSOR & BLUETOOTH", text_font: a13, text_color: 0x3B82F6, pad_top: 6}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::CPU in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::CPU in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -8950,7 +8950,7 @@ lvgl:
               - label: {text: "BLE-Verbindung langsam", text_font: a15, styles: [st_grow]}
               - label: {id: ps_bleidle_lbl, text: "-", text_font: a13, text_color: 0x8B94A3}
         - label: {id: ps_h_ble, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::BLE in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::BLE in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9189,7 +9189,7 @@ lvgl:
               - label: {text: "Touch weckt", text_font: a15, styles: [st_grow]}
               - label: {id: ps_touch_lbl, text: "-", text_font: a13, text_color: 0x8B94A3}
         - label: {id: ps_h_touch, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TOUCH_MS in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TOUCH_MS in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9243,7 +9243,7 @@ lvgl:
               - label: {text: "Nur ohne Bluetooth", text_font: a15, styles: [st_grow]}
               - label: {id: ps_deepble_lbl, text: "-", text_font: a13, text_color: 0x8B94A3}
         - label: {width: 216, text: "Solange Streamer, TV oder Tablet verbunden sind, kein Tiefschlaf: die Verbindung bleibt im Spartakt, kein Neuverbinden und kein Bildzucken. WLAN geht trotzdem aus. Die Bluetooth-Verbindung zu Home Assistant zählt dabei nicht - sie allein verhindert den Tiefschlaf nicht.", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TIEF in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TIEF in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9269,7 +9269,7 @@ lvgl:
                   id(ps_deep_s) = w;
               - script.execute: apply_power
         - label: {id: ps_h_deeps, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TV_AUS in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::TV_AUS in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9296,7 +9296,7 @@ lvgl:
               - script.execute: apply_power
         - label: {id: ps_h_deeptv, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {text: "AKKU", text_font: a13, text_color: 0x3B82F6, pad_top: 6}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::AKKU_PCT in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::AKKU_PCT in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9323,7 +9323,7 @@ lvgl:
               - script.execute: apply_power
         - label: {id: ps_h_low, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {id: ps_timeline, width: 216, text: " ", text_font: a13, text_color: 0x3B82F6, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     - id: page_show
       styles: [st_screen, st_fx_c10]
@@ -9477,7 +9477,7 @@ lvgl:
               - label: {id: cover_home_lbl, text: "GANZ", text_font: a13, text_color: 0xF1F3F5}
         - label: {id: h_cov_h, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {text: "MENÜ", text_font: a13, text_color: 0x3B82F6, pad_top: 6}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::MERKEN in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::MERKEN in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9503,7 +9503,7 @@ lvgl:
                   id(mem_s) = w;
               - script.execute: apply_power
         - label: {id: ps_h_mem, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::SCHLIESSEN in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::SCHLIESSEN in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9543,8 +9543,8 @@ lvgl:
               - label: {text: "Logos von SD-Karte", text_font: a15, styles: [st_grow]}
               - label: {id: sd_logos_lbl, text: "AN", text_font: a13, text_color: 0x22C55E}
         - label: {id: h_sd_logos, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
-    # ================================================ 45: GESTEN (esphomeremote-gestenseite.h)
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
+    # ================================================ 45: GESTEN (esphomeremote-gestures-page.h)
     - id: page_gesten
       styles: [st_screen, st_fx_c10]
       scrollbar_mode: "off"
@@ -9744,7 +9744,7 @@ lvgl:
               - label: {text: "HA in Ruhe: Art", text_font: a15, styles: [st_grow]}
               - label: {id: ha_linkm_lbl, text: "Langsam", text_font: a13, text_color: 0x22C55E}
         - label: {id: h_ha_linkm, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
     - id: page_service
       styles: [st_screen, st_fx_c10]
       scrollbar_mode: "off"
@@ -9795,7 +9795,7 @@ lvgl:
               - label: {text: ">", text_font: a15, text_color: 0x8B94A3}
         - label: {id: h_btn, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
         - label: {text: "REINIGUNG", text_font: a13, text_color: 0x3B82F6, pad_top: 6}
-        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::REINIGEN in esphomeremote-stufen.h
+        # Stufen-Regler statt Durchschalt-Button (2026-09-28). Werte: stufen::REINIGEN in esphomeremote-levels.h
         - obj:
             width: 100%
             height: 26
@@ -9902,7 +9902,7 @@ lvgl:
               - label: {text: "Gerät neu starten", text_font: a15, styles: [st_grow]}
               - label: {id: restart_lbl, text: ">", text_font: a15, text_color: 0x8B94A3}
         - label: {id: h_restart, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
 
     # ================================================ 37: LIVE-BILD
@@ -9985,7 +9985,7 @@ lvgl:
             styles: [st_ctrlbtn]
             on_click: [{script.execute: cam_view_request}]
             widgets: [{label: {align: CENTER, text: "Aktualisieren", text_font: a15}}]
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 38: LIVE-BILD (SCHNELL)
     - id: page_cam_live
@@ -10067,7 +10067,7 @@ lvgl:
             styles: [st_ctrlbtn]
             on_click: [{script.execute: live_start}]
             widgets: [{label: {align: CENTER, text: "Neu starten", text_font: a15}}]
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 41: TASTATUR
     # Ziffernblock (Menue > Ziffern, kbd_mode 0, braucht kb_tasten digits/true) und
@@ -10117,7 +10117,7 @@ lvgl:
                         then: [{script.execute: nav_back}]
                   widgets: [{label: {id: back_kbd_lbl, align: CENTER, text: "<", text_font: a15}}]
               - label: {id: kbd_title, text: "Tastatur", styles: [st_title, st_grow], pad_bottom: 0, height: 22, long_mode: DOT}
-              # Rechts: Umschalter Maus | Tastatur | Ziffern (esphomeremote-maus.h, eingabewahl - wird beim Laden angehaengt)
+              # Rechts: Umschalter Maus | Tastatur | Ziffern (esphomeremote-mouse.h, eingabewahl - wird beim Laden angehaengt)
         - buttonmatrix:
             id: kbd_matrix
             width: 100%
@@ -10142,11 +10142,11 @@ lvgl:
               - lambda: |-
                   if (id(kbd_wdh_lief)) { id(kbd_wdh_lief) = false; return; }
                   id(kbd_press)->execute();
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
 
     # ================================================ 98: KONFIGURIERBARES MENUE
-    # Inhalt baut components/menue zur Laufzeit in konf_root (Raster 6 x 40 px).
+    # Inhalt baut components/menu zur Laufzeit in konf_root (Raster 6 x 40 px).
     - id: page_konfig
       styles: [st_screen]
       scrollbar_mode: "off"
@@ -10196,7 +10196,7 @@ lvgl:
             pad_bottom: 2
             scrollable: true
             scrollbar_mode: "off"
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 50: DOCK-ANZEIGE (esphomeremote-dock.h)
     - id: page_dock
@@ -10221,7 +10221,7 @@ lvgl:
             on_click:
               - lambda: 'dockanz::beruehrt();'
 
-    # ================================================ 52: MUSIK-ANZEIGE (esphomeremote-musik.h)
+    # ================================================ 52: MUSIK-ANZEIGE (esphomeremote-music.h)
     - id: page_musik
       styles: [st_screen]
       scrollbar_mode: "off"
@@ -10245,7 +10245,7 @@ lvgl:
             on_click:
               - lambda: 'musik::beruehrt();'
 
-    # ================================================ 51: TOUCHPAD (esphomeremote-maus.h)
+    # ================================================ 51: TOUCHPAD (esphomeremote-mouse.h)
     - id: page_maus
       styles: [st_screen]
       scrollbar_mode: "off"
@@ -10334,7 +10334,7 @@ lvgl:
             widgets:
               - label: {text: "Auswerfen", text_font: a15, styles: [st_grow]}
         - label: {id: h_sd_eject, width: 216, text: " ", text_font: a13, text_color: 0x8B94A3, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 39: UPDATE (OTA)
     - id: page_ota
@@ -10361,7 +10361,7 @@ lvgl:
             value: 0
             indicator: {bg_color: 0x3B82F6}
         - label: {id: ota_hint_lbl, align: CENTER, y: 56, width: 200, text_align: CENTER, text: "Nicht ausschalten", text_font: a13, text_color: 0x8B94A3}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 35: REINIGUNGSMODUS
     - id: page_clean
@@ -10374,7 +10374,7 @@ lvgl:
         - label: {align: TOP_MID, y: 30, text: "Reinigungsmodus", styles: [st_title]}
         - label: {id: clean_lbl, align: CENTER, y: -10, text: "-", text_font: a18, text_color: 0x3B82F6}
         - label: {align: BOTTOM_MID, y: -30, width: 216, text: "Display und Tasten sind gesperrt. Zurück-Taste lang halten bricht ab.", text_font: a13, text_color: 0x8B94A3, text_align: CENTER, long_mode: WRAP}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 36: TOUCH-TEST
     - id: page_touch_test
@@ -10401,7 +10401,7 @@ lvgl:
         - obj: {x: 24, y: 8, width: 12, height: 12, radius: 6, bg_opa: TRANSP, border_width: 2, border_color: 0x8B94A3, pad_all: 0, clickable: false, scrollable: false}
         - obj: {x: 204, y: 8, width: 12, height: 12, radius: 6, bg_opa: TRANSP, border_width: 2, border_color: 0x8B94A3, pad_all: 0, clickable: false, scrollable: false}
         - obj: {id: tt_ring, x: 0, y: 0, width: 32, height: 32, radius: 16, bg_opa: TRANSP, border_width: 3, border_color: 0x3B82F6, pad_all: 0, hidden: true, scrollable: false, clickable: false}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 34: TASTEN-TEST
     # Zeigt fuer jeden physischen Tastendruck Einzeln/Doppelt/Lang und die
@@ -10485,4 +10485,4 @@ lvgl:
         - label: {id: bt_hist_2, text: " ", text_font: a13, width: 216, long_mode: DOT, styles: [st_muted]}
         - label: {id: bt_hist_3, text: " ", text_font: a13, width: 216, long_mode: DOT, styles: [st_muted]}
         - label: {id: bt_hist_4, text: " ", text_font: a13, width: 216, long_mode: DOT, styles: [st_muted]}
-        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wlan.h
+        - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h

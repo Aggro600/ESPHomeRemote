@@ -26,7 +26,7 @@ import urllib.request
 import urllib.error
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SD_KARTE = os.path.join(HERE, "sd-karte")
+SD_KARTE = os.path.join(HERE, "sd-card")
 
 
 def ha_service(service_path: str, entity_id: str | None, daten: dict | None = None) -> None:

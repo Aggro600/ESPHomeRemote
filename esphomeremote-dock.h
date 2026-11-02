@@ -8,11 +8,11 @@
 // Taste oder Tipp im Dock: die Fernbedienung erscheint; wenn das Display sonst ausginge, wieder die Dock-Anzeige.
 // Display im Dock (Einstellung dock_disp): 0 = wie sonst (geht nach der Zeit aus), 1 = bleibt an,
 // 2 = bleibt an zwischen dock_von und dock_bis Uhr. Helligkeit wie immer (Lichtsensor-Kurve).
-// Daten: GET /api/esphomeremote_konfig/anzeige/<geraet> (HA, anzeige.py), jede Minute solange sichtbar.
+// Daten: GET /api/esphomeremote/anzeige/<geraet> (HA, anzeige.py), jede Minute solange sichtbar.
 
 #include <esp_http_client.h>
 
-// Musik-Anzeige (esphomeremote-musik.h, danach eingebunden): im Dock statt des Smart Displays, solange Musik laeuft
+// Musik-Anzeige (esphomeremote-music.h, danach eingebunden): im Dock statt des Smart Displays, solange Musik laeuft
 namespace musik {
 inline bool im_dock_zeigen();
 inline void zeigen(bool vom_dock);
@@ -128,7 +128,7 @@ inline void abrufen() {
   // Ohne eigene HA-Verbindung ueber das Dock (2026-10-31: im Dock-Betrieb kamen sonst nie Wetter/Termine)
   const bool api = api::global_api_server && api::global_api_server->is_connected();
   if (s.laeuft || s.fertig || (!api && !(tk_cfg->laden_ueber_dock && tk_cfg->laden_ueber_dock()))) return;
-  s.url = "http://" + tk_cfg->host() + "/api/esphomeremote_konfig/anzeige/" + App.get_name() + "?k=" + tk_cfg->schluessel();
+  s.url = "http://" + tk_cfg->host() + "/api/esphomeremote/anzeige/" + App.get_name() + "?k=" + tk_cfg->schluessel();
   if (s.task == nullptr) {
     static StaticTask_t tcb;
     const size_t groesse = 6144;

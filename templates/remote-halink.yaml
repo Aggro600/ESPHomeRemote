@@ -76,7 +76,7 @@ text_sensor:
   # Adresse von Home Assistant fuer den WLAN-Weg des Vermittlers (Attribut "basis", 2026-10-19)
   - platform: homeassistant
     id: ha_basis_tunnel
-    entity_id: sensor.esphomeremote_konfig_remote_wz_remotename
+    entity_id: sensor.esphomeremote_config_remote_wz_remotename
     attribute: basis
     internal: true
     on_value:
@@ -121,7 +121,7 @@ switch:
       - lambda: 'id(tunnel).set_ble_only(false);'
 
 # WLAN-Skripte der Remote (wlan_frueh_an, wake_backlight, Sparschalter) fragen wlan_zugriff::g_nur_ble.
-# Haken fuer die Firmware (esphomeremote-wlan.h): Nur-Bluetooth-Schalter, Sprache und HA-Symbol ueber den Tunnel.
+# Haken fuer die Firmware (esphomeremote-wifi.h): Nur-Bluetooth-Schalter, Sprache und HA-Symbol ueber den Tunnel.
 # Prioritaet -90 (nach dem Start der Komponenten): der Knopf "Nur Bluetooth" wird hier sichtbar gemacht.
 esphome:
   on_boot:

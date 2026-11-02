@@ -38,7 +38,7 @@
         </activity>
         <!-- Medien-Sitzungen (Titel, Cover, Wiedergabe): nur als Benachrichtigungs-Zuhoerer erlaubt -->
         <service
-            android:name=".Medien"
+            android:name=".MediaListener"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
@@ -47,7 +47,7 @@
         </service>
         <!-- Vorderste App und Bildschirmtastatur (Fensterwechsel, ohne Inhalte mitzulesen) -->
         <service
-            android:name=".Bedienung"
+            android:name=".AccessibilityHelper"
             android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
@@ -55,7 +55,7 @@
             </intent-filter>
             <meta-data
                 android:name="android.accessibilityservice"
-                android:resource="@xml/bedienung" />
+                android:resource="@xml/accessibility" />
         </service>
     </application>
 </manifest>

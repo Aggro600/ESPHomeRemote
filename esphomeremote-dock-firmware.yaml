@@ -1,4 +1,4 @@
 # ESPHomeRemote - Dock-Firmware (Original-Dock: Kern + Platine) (wird als Paket geladen, automatisch erzeugt)
 packages:
-  kern: !include esphomeremote-dock-kern.yaml
-  platine: !include esphomeremote-dock-platine.yaml
+  core: !include esphomeremote-dock-core.yaml
+  board: !include esphomeremote-dock-board.yaml

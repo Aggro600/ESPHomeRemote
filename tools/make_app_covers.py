@@ -6,8 +6,8 @@ Streamer-App (Version 4, Port 8790) die Liste aller TV-Apps (/apps) und deren An
 und baut daraus covers/<slug>_player.rle und _home.rle - fuer alle Apps, die noch kein Logo haben.
 <slug> = Anzeigename wie in Home Assistant (sensor.esphomeremote_medien_app), so wie die Remote ihn bildet.
 
-  python3 tools/make_app_covers.py [streamer-ip]          -> sd-karte/covers/
-  danach hochladen: tools/sd_upload.py <remote-ip> sd-karte/covers/<slug>_player.rle /covers/<slug>_player.rle ...
+  python3 tools/make_app_covers.py [streamer-ip]          -> sd-card/covers/
+  danach hochladen: tools/sd_upload.py <remote-ip> sd-card/covers/<slug>_player.rle /covers/<slug>_player.rle ...
 """
 import io, sys, urllib.request
 from pathlib import Path
