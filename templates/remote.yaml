@@ -48,7 +48,7 @@ esphome:
   friendly_name: Remote WZ Remotename
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.2.4"
+    version: "2026.11.2.5"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
@@ -407,7 +407,14 @@ esphome:
             ESP_LOGI("tasten", "Start-Aktivitaet: %s", id(akt_an) ? id(tk_cfg).aktivitaet_name(id(activity)).c_str() : "keine");
             id(apply_activity).execute();
             if (id(cur_page) == 0) { tasten::startseite_anwenden(); tasten::dock_anwenden(id(activity)); }
-        - lambda: 'sprache::englisch() = id(sprache_wahl) == 2 || (id(sprache_wahl) == 0 && id(sprache_ha_en));'
+        # Sprache: die gespeicherte Konfiguration von HA ist massgeblich (2026-11-02: der lokale Wert ging beim Neustart
+        # verloren, die Konfiguration nicht - Remote 2 blieb dadurch auf Englisch haengen)
+        - lambda: |-
+            JsonVariantConst w = id(tk_cfg).wurzel()["einst"]["sprache"][0];
+            if (w.is<int>() && w.as<int>() >= 0 && w.as<int>() <= 2) id(sprache_wahl) = w.as<int>();
+            id(sprache_ha_en) = strcmp(id(tk_cfg).wurzel()["sprache"] | "de", "de") != 0;
+            sprache::englisch() = id(sprache_wahl) == 2 || (id(sprache_wahl) == 0 && id(sprache_ha_en));
+            ESP_LOGI("sprache", "Sprache: Wahl %d, HA %s -> %s", id(sprache_wahl), id(sprache_ha_en) ? "en" : "de", sprache::englisch() ? "Englisch" : "Deutsch");
         - script.execute: akzent_anwenden
         - lambda: 'id(mn)->set_spiegel(id(x_rechts)); touchpad::menue_anbinden();'   # X-Knopf rechts; Touchpad-Teile im Menue
         # Log-Ausfuehrlichkeit aus der Einstellung (Standard INFO).
