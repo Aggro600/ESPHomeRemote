@@ -187,7 +187,7 @@ inline void aufbauen() {
   // Raum
   lv_obj_t *rm = s.c_raum = rahmen(r, LV_FLEX_FLOW_ROW, 6);
   lv_obj_align(rm, LV_ALIGN_TOP_MID, 0, 154);
-  s.raum_ico = text(rm, mdi_klein->get_lv_font(), 0x3B82F6, utf8(0xF050F).c_str());
+  s.raum_ico = text(rm, mdi_klein->get_lv_font(), akzent::farbe(), utf8(0xF050F).c_str());
   s.raum = text(rm, a15->get_lv_font(), 0xF1F3F5);
   // grauer Trennstrich ueber den Terminen (Block "termine" = Strich + Kasten, 2026-10-31)
   s.c_termine = rahmen(r, LV_FLEX_FLOW_COLUMN, 6);
@@ -210,7 +210,7 @@ inline void aufbauen() {
   lv_obj_clear_flag(s.k_box, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s.k_box, LV_OBJ_FLAG_EVENT_BUBBLE);
   for (int i = 0; i < 3; i++) {
-    s.k_tag[i] = text(s.k_box, a13->get_lv_font(), 0x3B82F6);
+    s.k_tag[i] = text(s.k_box, a13->get_lv_font(), akzent::farbe());
     lv_obj_set_pos(s.k_tag[i], 8, 6 + i * 28);
     s.k_titel[i] = text(s.k_box, a13->get_lv_font(), 0xF1F3F5);
     lv_obj_set_pos(s.k_titel[i], 8, 6 + i * 28 + 13);
@@ -280,7 +280,8 @@ inline void uhr_zeigen(bool immer) {
   static const char *TAG_N[] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};
   static const char *MON[] = {"Jan", "Feb", "März", "Apr", "Mai", "Juni", "Juli", "Aug", "Sep", "Okt", "Nov", "Dez"};
   char d[32];
-  snprintf(d, sizeof(d), "%s, %d. %s", TAG_N[(t.day_of_week + 6) % 7], t.day_of_month, MON[(t.month + 11) % 12]);
+  snprintf(d, sizeof(d), sprache::englisch() ? "%s, %d %s" : "%s, %d. %s", sprache::tr(TAG_N[(t.day_of_week + 6) % 7]), t.day_of_month,
+           sprache::tr(MON[(t.month + 11) % 12]));
   lv_label_set_text(s.datum, d);
 }
 
@@ -448,7 +449,7 @@ inline void knopf(lv_obj_t *p, const char *ico, const char *t, Aktion a, int bre
   lv_obj_t *b = lv_button_create(p);
   lv_obj_set_size(b, breite, 50);
   lv_obj_set_style_bg_color(b, lv_color_hex(0x232A35), 0);
-  lv_obj_set_style_bg_color(b, lv_color_hex(0x2563EB), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(b, lv_color_hex(akzent::stufen(akzent::farbe()).f[1]), LV_STATE_PRESSED);
   lv_obj_set_style_radius(b, 12, 0);
   lv_obj_set_style_shadow_width(b, 0, 0);
   lv_obj_set_style_pad_all(b, 2, 0);

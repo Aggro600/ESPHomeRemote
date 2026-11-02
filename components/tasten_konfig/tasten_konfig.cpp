@@ -1,4 +1,5 @@
 #include "tasten_konfig.h"
+#include "esphome/components/menue/sprache.h"   // Texte auf Englisch, wenn gewaehlt (2026-11-01)
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"

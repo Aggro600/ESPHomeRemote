@@ -6,6 +6,8 @@
 namespace esphome { namespace menue {
 struct IconEntry { const char *name; uint32_t cp; };
 static const IconEntry MDI_ICONS[] = {
+  {"cursor-move", 0xF01BE}, {"arrow-up-down", 0xF0E79}, {"mouse-left-click-outline", 0xF1D08},
+  {"mouse-right-click-outline", 0xF1D0B}, {"format-list-bulleted", 0xF0279}, {"mouse", 0xF037D},   // Touchpad-Teile (2026-11-01)
   {"air-conditioner", 0xF001B},
   {"alarm", 0xF0020},
   {"alert", 0xF0026},

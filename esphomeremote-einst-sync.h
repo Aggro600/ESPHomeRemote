@@ -42,6 +42,24 @@ inline void einrichten() {
   EINST_I(maus_slots); EINST_I(voll_slots); EINST_I(maus_tempo);
   EINST_B(maus_dpad); EINST_I(maus_dpad_tempo); EINST_I(maus_zurueck);
   EINST_B(gesten_an); EINST_B(gesten_dunkel); EINST_I(gesten_sens);
+  EINST_B(linkshaender);   // 2026-11-01, laeuft im Abgleich standardmaessig nicht mit (je Person)
+  // X-Knopf rechts (2026-11-01): die Kopfzeilen werden einmal aufgebaut - nach einer Aenderung kurz neu starten
+  t->einst_feld("x_rechts", true, []() { return (int) x_rechts->value(); }, [](int v) {
+    if (x_rechts->value() == (v != 0)) return;
+    x_rechts->value() = v != 0;
+    if (millis() < 30000) return;   // beim Start nur uebernehmen
+    lv_timer_create([](lv_timer_t *) { App.safe_reboot(); }, 3000, nullptr);
+  });
+  // Sprache des Displays (2026-11-01): 0 wie HA, 1 Deutsch, 2 Englisch - die Seiten werden einmal aufgebaut, darum
+  // nach einer Aenderung kurz neu starten. Laeuft im Abgleich nicht mit (je Person).
+  t->einst_feld("sprache", true, []() { return (int) sprache_wahl->value(); }, [](int v) {
+    v = v < 0 || v > 2 ? 0 : v;
+    if (sprache_wahl->value() == v) return;
+    const bool vorher = sprache::englisch();
+    sprache_wahl->value() = v;
+    const bool neu = v == 2 || (v == 0 && sprache_ha_en->value());
+    if (neu != vorher) lv_timer_create([](lv_timer_t *) { App.safe_reboot(); }, 3000, nullptr);
+  });
 #undef EINST_B
 #undef EINST_I
   // Nur Bluetooth (WLAN aus): liegt im HA-Link (ha_tunnel), nicht in einem global

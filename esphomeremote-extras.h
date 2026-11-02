@@ -133,7 +133,7 @@ inline void fw_status(const std::string &text, int stufe) {
   stufe = std::max(0, std::min(3, stufe));
   fw_upd_text->value() = text;
   fw_upd_stufe->value() = stufe;
-  static const uint32_t FARBE[] = {0x8B94A3, 0x3B82F6, 0x22C55E, 0xEF4444};
+  const uint32_t FARBE[] = {0x8B94A3, akzent::farbe(), 0x22C55E, 0xEF4444};
   static const char *ZEICHEN[] = {">", "läuft", "fertig", "Fehler"};
   lv_label_set_text(fw_upd_lbl, ZEICHEN[stufe]);
   lv_obj_set_style_text_color(fw_upd_lbl, lv_color_hex(FARBE[stufe]), LV_PART_MAIN);

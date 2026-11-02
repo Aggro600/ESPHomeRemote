@@ -25,6 +25,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .spiegel import als_liste
+from .i18n import t as _t
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote_konfig"
@@ -64,7 +65,7 @@ class TimerWache:
     @callback
     def starten(self) -> None:
         if self.hass.states.get(SENSOR) is None:
-            self.hass.states.async_set(SENSOR, "–", {"status": "aus", "friendly_name": "Timer abgelaufen", "icon": "mdi:timer-alert-outline"})
+            self.hass.states.async_set(SENSOR, "–", {"status": "aus", "friendly_name": _t(self.hass, "Timer abgelaufen"), "icon": "mdi:timer-alert-outline"})
         self.hass.bus.async_listen("timer.finished", self._abgelaufen)
         self.hass.bus.async_listen("timer.started", self._gestartet)
         self.hass.bus.async_listen("timer.restarted", self._gestartet)
@@ -87,7 +88,7 @@ class TimerWache:
         self.letzter, self.dauer = e, dauer
         self.hass.states.async_set(SENSOR, name, {
             "status": "abgelaufen", "entity_id": e, "dauer": _dauer_text(dauer), "gestartet_um": start,
-            "abgelaufen_um": jetzt.strftime("%H:%M Uhr"), "friendly_name": "Timer abgelaufen", "icon": "mdi:timer-alert-outline"})
+            "abgelaufen_um": jetzt.strftime("%H:%M Uhr"), "friendly_name": _t(self.hass, "Timer abgelaufen"), "icon": "mdi:timer-alert-outline"})
         _LOGGER.info("Timer %s abgelaufen - Popup an die Remotes", e)
         if self._aus:
             self._aus()

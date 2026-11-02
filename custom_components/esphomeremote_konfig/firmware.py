@@ -18,6 +18,7 @@ naechsten esphome.remote_verbunden. Den Stand bekommt die Remote ueber ihre API-
 """
 
 from __future__ import annotations
+from .i18n import t as _t
 
 import asyncio
 from collections import deque
@@ -44,6 +45,11 @@ DOMAIN = "esphomeremote_konfig"
 ADDON = os.environ.get("ESPHOME_ADDON", "5c53de3b_esphome")
 ESPHOME_DIR = Path("/config/esphome")
 DOCK_BASIS = "templates/dock-basis.yaml"
+# Dock-Nachbau (2026-11-01): anderer ESP32 ohne Platine - nur der Kern (Proxy, Bluetooth-Tastatur, Funk der Remote)
+DOCK_KERN = "templates/dock-kern.yaml"
+# Chip -> (Name wie esptool, ESPHome-Board). Original-Dock = ESP32-C3 mit Platine (dock-basis.yaml)
+DOCK_CHIPS = {"esp32c3": ("ESP32-C3", "esp32-c3-devkitm-1"), "esp32": ("ESP32", "esp32dev"),
+              "esp32s3": ("ESP32-S3", "esp32-s3-devkitc-1"), "esp32c6": ("ESP32-C6", "esp32-c6-devkitc-1")}
 ESPRESSIF_VID = 0x303A
 _DASH_ENDE = {"completed", "failed", "cancelled", "canceled", "error"}
 # Gesperrt wird nur noch von Hand im Firmware-Bereich (die Vorgabe "Remote 1 gesperrt" vom 13.10. galt der alten,
@@ -133,14 +139,18 @@ def dock_dateien() -> list[dict]:
     out = []
     for f in sorted(ESPHOME_DIR.glob("*.yaml")):
         t = _lesen(f)   # jeder Dateiname (2026-10-26: von Hand angelegte Docks hiessen nicht immer dock-...)
-        if "dock-basis.yaml" not in t and DOCK_PAKET not in t and DOCK_PAKET_ALT not in t:   # eigene Docks und GitHub
+        nachbau = "dock-kern.yaml" in t   # templates/dock-kern.yaml oder esphomeremote-dock-kern.yaml (GitHub)
+        if "dock-basis.yaml" not in t and DOCK_PAKET not in t and DOCK_PAKET_ALT not in t and not nachbau:   # eigene Docks und GitHub
             continue
         name = re.search(r"^\s+name:\s*(\S+)", t, re.M)
         fn = re.search(r"^\s+friendly_name:\s*(.+)$", t, re.M)
+        chip = re.search(r"^\s+dock_variant:\s*(\S+)", t, re.M)
         out.append({"art": "dock", "datei": f.name, "name": name.group(1) if name else f.stem,
+                    "nachbau": nachbau, "chip": chip.group(1) if nachbau and chip else "esp32c3",
                     "friendly": fn.group(1).strip().strip("\"'") if fn else f.stem,
                     # angelegt vor 2026.10.26.3: bindet die lokale Vorlage ein, die es nur beim Entwickler gibt
                     "alt": ("!include templates/dock-basis.yaml" in t and not (ESPHOME_DIR / DOCK_BASIS).exists())
+                    or ("!include templates/dock-kern.yaml" in t and not (ESPHOME_DIR / DOCK_KERN).exists())
                     or (DOCK_PAKET_ALT in t and DOCK_PAKET not in t)})   # 2026-10-27: alter Dateiname im Repo
     return out
 
@@ -660,6 +670,7 @@ _letzter_versuch: dict[str, float] = {}   # Geraet -> letzter Start eines vorgem
 async def _an_remote(hass: HomeAssistant, g: dict, text: str, stufe: int) -> None:
     """Stand an die Remote (API-Aktion fw_status; aeltere Firmware ohne die Aktion: nichts)."""
     dienst = f"{g['name'].replace('-', '_')}_fw_status"
+    text = _t(hass, text)   # Meldung auf dem Display in der Sprache von HA (2026-11-01)
     if not hass.services.has_service("esphome", dienst):
         return
     try:
@@ -865,13 +876,18 @@ def umstellen(datei: str) -> str:
     t = pfad.read_text(encoding="utf-8")
     sub = lambda k, d: (re.search(rf"^\s+{k}:\s*\"?([^\"#\n]+?)\"?\s*(#.*)?$", t, re.M) or [None, d])[1].strip()
     datum = time.strftime("%Y-%m-%d")
-    if "dock-basis.yaml" in t or DOCK_PAKET in t or DOCK_PAKET_ALT in t:
+    if "dock-basis.yaml" in t or DOCK_PAKET in t or DOCK_PAKET_ALT in t or "dock-kern.yaml" in t:
         name, fr = sub("name", pfad.stem), sub("friendly_name", pfad.stem)
-        neu = (f"# {fr} - umgestellt im Konfigurator ({datum}): Firmware von GitHub ({DOCK_PAKET}, Zweig stabil).\n"
-               f"substitutions:\n  name: {name}\n  friendly_name: {fr}\n"
+        # Dock-Nachbau (2026-11-01): nur der Kern, Chip bleibt
+        kern = "dock-kern.yaml" in t
+        paket = "esphomeremote-dock-kern.yaml" if kern else DOCK_PAKET
+        chip = (f"  dock_board: {sub('dock_board', 'esp32-c3-devkitm-1')}\n  dock_variant: {sub('dock_variant', 'esp32c3')}\n"
+                if kern else "")
+        neu = (f"# {fr} - umgestellt im Konfigurator ({datum}): Firmware von GitHub ({paket}, Zweig stabil).\n"
+               f"substitutions:\n  name: {name}\n  friendly_name: {fr}\n" + chip +
                "  wifi_ssid:         !secret wifi_ssid\n  wifi_password:     !secret wifi_password\n"
                "  ota_pw:            !secret ota_pw\n  direkt_schluessel: !secret direkt_schluessel\n\n"
-               + GITHUB_PAKET.format(k="basis", f=DOCK_PAKET))
+               + GITHUB_PAKET.format(k="basis", f=paket))
     elif REMOTE_PAKET in t or REMOTE_PAKET_ALT in t:
         dev = sub("device_name", pfad.stem)
         fr, ha = sub("friendly_name", dev), sub("ha_name", dev.replace("-", "_"))

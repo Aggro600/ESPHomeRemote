@@ -29,18 +29,30 @@ public class Bedienung extends AccessibilityService {
     private final BroadcastReceiver cursor = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) { cursorBewegen(i.getIntExtra("d", 0)); }
     };
+    // Kamera als Overlay (2026-11-01, Kamera.java): am broadcast -a de.esphomeremote.streamer.KAMERA ...
+    private final BroadcastReceiver kamera = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { Kamera.befehl(Bedienung.this, i); }
+    };
 
     @Override
     protected void onServiceConnected() {
         IntentFilter f = new IntentFilter(CURSOR);
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(cursor, f, Context.RECEIVER_EXPORTED);
-        else registerReceiver(cursor, f);
+        IntentFilter fk = new IntentFilter(Kamera.AKTION);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(cursor, f, Context.RECEIVER_EXPORTED);
+            registerReceiver(kamera, fk, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(cursor, f);
+            registerReceiver(kamera, fk);
+        }
         pruefen();
     }
 
     @Override
     public void onDestroy() {
         try { unregisterReceiver(cursor); } catch (Exception ignored) { }
+        try { unregisterReceiver(kamera); } catch (Exception ignored) { }
+        Kamera.aus();
         super.onDestroy();
     }
 

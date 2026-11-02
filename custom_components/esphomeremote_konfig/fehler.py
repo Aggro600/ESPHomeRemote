@@ -9,6 +9,7 @@ Alles ohne Anmeldung (GitHub erlaubt 60 Anfragen je Stunde, hier ~4 je Pruefung)
 """
 
 from __future__ import annotations
+from .i18n import t as _t
 
 import logging
 import time
@@ -91,9 +92,9 @@ class Beobachter:
                 gruende.append(f"Der Fehlerbericht ist geschlossen ({e['issue']['grund'] or 'erledigt'}).")
             gruende += [f"{s['tag']} bringt eine neue Fassung des {f['bibliothek']['name']}." for s in e["bibliothek"] if s["neu"]]
             persistent_notification.async_create(
-                self.hass, f"**{f['titel']}**\n\n" + " ".join(gruende)
-                + "\n\nEs lohnt sich, die Umgehung testweise abzuschalten (Konfigurator › Dockingstation › Bekannte Fehler).",
-                title="ESPHomeRemote: Fehler vielleicht behoben", notification_id=f"esphomeremote_fehler_{f['id']}")
+                self.hass, _t(self.hass, f"**{f['titel']}**\n\n" + " ".join(gruende)
+                + "\n\nEs lohnt sich, die Umgehung testweise abzuschalten (Konfigurator › Dockingstation › Bekannte Fehler)."),
+                title=_t(self.hass, "ESPHomeRemote: Fehler vielleicht behoben"), notification_id=f"esphomeremote_fehler_{f['id']}")
         return e
 
     async def pruefen(self) -> None:

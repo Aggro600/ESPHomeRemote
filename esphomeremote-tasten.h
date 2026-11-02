@@ -17,6 +17,7 @@ namespace musik { inline void zeigen(bool vom_dock); }
 
 namespace touchpad { inline void oeffnen(); inline bool taste(int k, bool gedrueckt); }   // esphomeremote-maus.h
 namespace eingabewahl { inline void wechseln(int ziel); }   // esphomeremote-maus.h: 0 Maus, 1 Tastatur, 2 Ziffern
+namespace gesten { inline bool taste(int keycode, bool pressed); }   // esphomeremote-gesten.h: Ausloese-Taste
 
 // Popup geht auf (2026-10-03): Herkunft merken, damit Schliessen dorthin zurueckfuehrt.
 inline void popup_oeffnet(int seite) {
@@ -226,7 +227,7 @@ inline LeisteStil leiste_stil() {
   const char *fs = tk_cfg->wurzel()["home"]["leiste"]["fs"] | "";
   const int fs_px = tk_cfg->wurzel()["home"]["leiste"]["fs"] | 0;   // Zahl = px (2026-10-30), naechste vorhandene Schrift
   return {leiste_farbe_("grund", 0x000000), leiste_farbe_("feld", 0x1A1F27), leiste_farbe_("text", 0x8B94A3),
-          leiste_farbe_("akt", 0x3B82F6), leiste_farbe_("akt_text", 0xF1F3F5), strcmp(tk_cfg->wurzel()["home"]["leiste"]["linie"] | "", "aus") != 0,
+          leiste_farbe_("akt", akzent::farbe()), leiste_farbe_("akt_text", 0xF1F3F5), strcmp(tk_cfg->wurzel()["home"]["leiste"]["linie"] | "", "aus") != 0,
           fs_px > 0 && mn->schrift(fs_px) ? mn->schrift(fs_px)
           : !strcmp(fs, "w") ? a9->get_lv_font() : !strcmp(fs, "k") ? a11->get_lv_font() : !strcmp(fs, "m") ? a15->get_lv_font() : !strcmp(fs, "g") ? a18->get_lv_font()
           : !strcmp(fs, "x") ? a24->get_lv_font() : a13->get_lv_font(),
@@ -240,7 +241,7 @@ inline void dock_ecke(lv_obj_t *&e, bool links) {
   e = lv_obj_create(lv_obj_get_parent(home_dock));
   lv_obj_set_size(e, 10, 10);
   lv_obj_set_style_radius(e, 0, 0);
-  lv_obj_set_style_bg_color(e, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_bg_color(e, lv_color_hex(akzent::farbe()), 0);
   lv_obj_set_style_bg_opa(e, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(e, 0, 0);
   lv_obj_set_style_pad_all(e, 0, 0);
@@ -259,10 +260,10 @@ inline void dock_ecke(lv_obj_t *&e, bool links) {
 // der Zurueck-Knopf sitzt in einem blauen Feld, das bis an den linken und oberen Displayrand reicht und
 // rechts ueber eine ausgerundete Ecke in die Linie uebergeht. hinter = Hintergrundfarbe der Kopfzeile.
 // Einmal pro Kopfzeile; hd ist ein Flex-Behaelter, die Zierde liegt ausserhalb des Layouts.
-struct KopfZier { lv_obj_t *hd, *btn, *linie, *feld, *ecke; int16_t lx, lw, fy, fh, ex, ey, eo; };
+struct KopfZier { lv_obj_t *hd, *btn, *linie, *feld, *ecke; int16_t lx, lw, fy, fh, ex, ey, eo; bool rechts; };
 inline std::deque<KopfZier> &kopf_ziere() { static std::deque<KopfZier> v; return v; }   // deque: Zeiger bleiben gueltig (Animation)
 inline void kopf_linie(lv_obj_t *hd, lv_obj_t *btn, uint32_t hinter = 0x0E1116) {
-  static const uint32_t BLAU = 0x3B82F6;
+  const uint32_t BLAU = akzent::farbe();
   static const int DICK = 3, R = 10;
   if (hd == nullptr || btn == nullptr || lv_obj_get_user_data(hd) == (void *) 0x4B4C) return;
   lv_obj_set_user_data(hd, (void *) 0x4B4C);
@@ -275,9 +276,21 @@ inline void kopf_linie(lv_obj_t *hd, lv_obj_t *btn, uint32_t hinter = 0x0E1116) 
   static const int RAND = 4;
   lv_obj_set_height(btn, (k.y2 - DICK + 1) - k.y1 - 2 * RAND);
   lv_obj_update_layout(hd);
+  // X-Knopf rechts (2026-11-01, Einstellung x_rechts): die ganze Kopfzeile spiegeln - jedes Kind an die
+  // gespiegelte Stelle (Knopf rechts, Umschalter links), Feld/Linie/Ausrundung unten ebenso
+  const bool rechts = x_rechts->value();
+  if (rechts) {
+    for (uint32_t i = 0; i < lv_obj_get_child_count(hd); i++) {
+      lv_obj_t *c = lv_obj_get_child(hd, i);
+      lv_area_t a;
+      lv_obj_get_coords(c, &a);
+      lv_obj_set_style_translate_x(c, lv_obj_get_style_translate_x(c, LV_PART_MAIN) + (k.x1 + (k.x2 - a.x2)) - a.x1, 0);
+    }
+    lv_obj_update_layout(hd);
+  }
   lv_obj_get_coords(btn, &b);
-  const int dx = (k.x1 + RAND) - b.x1, dy = (k.y1 + RAND) - b.y1;
-  lv_obj_set_style_translate_x(btn, dx, 0);
+  const int dx = rechts ? (k.x2 - RAND) - b.x2 : (k.x1 + RAND) - b.x1, dy = (k.y1 + RAND) - b.y1;
+  lv_obj_set_style_translate_x(btn, lv_obj_get_style_translate_x(btn, LV_PART_MAIN) + dx, 0);
   lv_obj_set_style_translate_y(btn, dy, 0);
   b.x1 += dx; b.x2 += dx; b.y1 += dy; b.y2 += dy;
   // Titel & Co. auf Knopfmitte (Hoehe), sonst sitzen sie nach dem Verschieben tiefer als der Knopf
@@ -288,7 +301,7 @@ inline void kopf_linie(lv_obj_t *hd, lv_obj_t *btn, uint32_t hinter = 0x0E1116) 
     lv_obj_get_coords(c, &a);
     lv_obj_set_style_translate_y(c, ((b.y1 + b.y2) - (a.y1 + a.y2)) / 2, 0);
   }
-  b.x2 += RAND;   // ab hier: rechter Rand des Feldes
+  if (rechts) b.x1 -= RAND; else b.x2 += RAND;   // ab hier: innerer Rand des Feldes
   lv_obj_get_content_coords(hd, &in);
   // absolute Displaykoordinaten -> Position im Inhaltsbereich von hd
   auto teil = [&](int x, int y, int w, int hh, uint32_t farbe) {
@@ -307,17 +320,18 @@ inline void kopf_linie(lv_obj_t *hd, lv_obj_t *btn, uint32_t hinter = 0x0E1116) 
   };
   const int linie = k.y2 - DICK + 1;
   KopfZier z{};
-  z.hd = hd; z.btn = btn;
+  z.hd = hd; z.btn = btn; z.rechts = rechts;
   z.linie = teil(k.x1, linie, k.x2 - k.x1 + 1, DICK, BLAU);              // Linie ueber die ganze Breite
   // Feld: links und oben bis zum Rand, oben rechts abgerundet. Die anderen drei Ecken liegen ausserhalb
-  // der Kopfzeile (links/unten ueberstehend) und werden abgeschnitten.
-  z.feld = teil(k.x1 - R, k.y1, b.x2 - k.x1 + 1 + R, k.y2 - k.y1 + 1 + R, BLAU);
+  // der Kopfzeile (links/unten ueberstehend) und werden abgeschnitten. Gespiegelt: rechts, oben links abgerundet.
+  if (rechts) z.feld = teil(b.x1, k.y1, (k.x2 + R) - b.x1 + 1, k.y2 - k.y1 + 1 + R, BLAU);
+  else z.feld = teil(k.x1 - R, k.y1, b.x2 - k.x1 + 1 + R, k.y2 - k.y1 + 1 + R, BLAU);
   lv_obj_set_style_radius(z.feld, R, 0);
-  z.ecke = teil(b.x2 + 1, linie - R, R, R, BLAU);                         // Ausrundung rechts in die Linie
+  z.ecke = teil(rechts ? b.x1 - R : b.x2 + 1, linie - R, R, R, BLAU);    // Ausrundung in die Linie
   lv_obj_t *kreis = lv_obj_create(z.ecke);
   lv_obj_remove_flag(kreis, (lv_obj_flag_t) (LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
   lv_obj_set_size(kreis, 2 * R, 2 * R);
-  lv_obj_set_pos(kreis, 0, -R);
+  lv_obj_set_pos(kreis, rechts ? -R : 0, -R);
   lv_obj_set_style_radius(kreis, R, 0);
   lv_obj_set_style_bg_color(kreis, lv_color_hex(hinter), 0);
   lv_obj_set_style_bg_opa(kreis, LV_OPA_COVER, 0);
@@ -325,7 +339,7 @@ inline void kopf_linie(lv_obj_t *hd, lv_obj_t *btn, uint32_t hinter = 0x0E1116) 
   // Masse direkt merken: lv_obj_get_x/width liefern erst nach dem naechsten Layoutlauf die neuen Werte
   z.lx = k.x1 - in.x1;      z.lw = k.x2 - k.x1 + 1;
   z.fy = k.y1 - in.y1;      z.fh = k.y2 - k.y1 + 1 + R;
-  z.ex = b.x2 + 1 - in.x1;
+  z.ex = (rechts ? b.x1 - R : b.x2 + 1) - in.x1;
   z.ey = linie - R - in.y1;   // Ecke: oberer Rand
   z.eo = R + DICK;            // Fuellhoehe, ab der das Feld ueber der Linie ankommt (Feld steht R unter dem Kopf ueber)
   kopf_ziere().push_back(z);
@@ -343,7 +357,7 @@ inline void kopf_anim(lv_obj_t *hd, lv_obj_t *btn, uint32_t verzoegerung = 150) 
   // Startbild: Linie leer, Feld und Ecke leer, Knopf ohne Farbe (nur das X)
   lv_anim_delete(&z, nullptr);
   lv_obj_set_width(z.linie, 0);
-  lv_obj_set_x(z.linie, z.lx + z.lw);
+  lv_obj_set_x(z.linie, z.rechts ? z.lx : z.lx + z.lw);
   lv_obj_set_height(z.feld, 0);
   lv_obj_set_y(z.feld, z.fy + z.fh);
   lv_obj_add_flag(z.ecke, LV_OBJ_FLAG_HIDDEN);
@@ -359,7 +373,7 @@ inline void kopf_anim(lv_obj_t *hd, lv_obj_t *btn, uint32_t verzoegerung = 150) 
   lv_anim_set_exec_cb(&a, [](void *v, int32_t w) {
     auto *z = (KopfZier *) v;
     lv_obj_set_width(z->linie, w);
-    lv_obj_set_x(z->linie, z->lx + z->lw - w);
+    lv_obj_set_x(z->linie, z->rechts ? z->lx : z->lx + z->lw - w);   // waechst zum Knopf hin
   });
   lv_anim_start(&a);
   lv_anim_t f;
@@ -398,6 +412,11 @@ inline void dock_anwenden(int a) {
   std::vector<int> akt;
   for (int i = 0; i < tk_cfg->aktivitaeten() && akt.size() < 4; i++)
     if (tk_cfg->aktivitaet_im_dock(i)) akt.push_back(i);
+  // Reihenfolge in der Leiste (2026-11-01, Konfigurator: Felder in der Vorschau ziehen): "lpos" je Aktivitaet - die
+  // Aktivitaeten selbst behalten ihre Nummer (Knoepfe "Aktivitaet wechseln zu", Sensor in HA zaehlen danach)
+  std::stable_sort(akt.begin(), akt.end(), [](int x, int y) {
+    return (tk_cfg->wurzel()["activities"][x]["lpos"] | x) < (tk_cfg->wurzel()["activities"][y]["lpos"] | y);
+  });
   const int n = (int) akt.size();
   Dock &D = dock();
   std::string sig;
@@ -695,8 +714,15 @@ inline const char *spezial_name(int nr) {
   for (const auto &s : spezial_tabelle()) if (s.nr == nr) return s.name;
   return nullptr;
 }
+// Seitenwechsel-Richtung: mit X-Knopf rechts laeuft alles andersherum (2026-11-01)
+inline lv_screen_load_anim_t richtung(lv_screen_load_anim_t a) {
+  if (!x_rechts->value()) return a;
+  if (a == LV_SCR_LOAD_ANIM_MOVE_LEFT) return LV_SCR_LOAD_ANIM_MOVE_RIGHT;
+  if (a == LV_SCR_LOAD_ANIM_MOVE_RIGHT) return LV_SCR_LOAD_ANIM_MOVE_LEFT;
+  return a;
+}
 inline void seite_zeigen(lvgl::LvPageType *seite, lv_screen_load_anim_t anim) {
-  seite->get_parent()->show_page(seite->index, anim, 150);
+  seite->get_parent()->show_page(seite->index, richtung(anim), 150);
 }
 // Menueseite zeigen (page_konfig) mit Aufbau-Animation: Kopfzeile, dann die Karten
 inline void menue_zeigen() {
@@ -738,7 +764,7 @@ inline void modus_anzeige(const char *name, uint32_t ms) {
     lv_obj_set_style_bg_opa(pille, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(pille, 17, 0);
     lv_obj_set_style_border_width(pille, 2, 0);
-    lv_obj_set_style_border_color(pille, lv_color_hex(0x3B82F6), 0);
+    lv_obj_set_style_border_color(pille, lv_color_hex(akzent::farbe()), 0);
     lv_obj_set_style_clip_corner(pille, true, 0);
     lv_obj_clear_flag(pille, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(pille, LV_OBJ_FLAG_CLICKABLE);
@@ -754,7 +780,7 @@ inline void modus_anzeige(const char *name, uint32_t ms) {
     lv_obj_align(balken, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_bar_set_range(balken, 0, 1000);
     lv_obj_set_style_bg_opa(balken, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(balken, lv_color_hex(0x3B82F6), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(balken, lv_color_hex(akzent::farbe()), LV_PART_INDICATOR);
     lv_obj_set_style_radius(balken, 0, LV_PART_INDICATOR);
   }
   lv_label_set_text(text, name);
@@ -807,7 +833,7 @@ inline void konfig_anzeige(int phase, int pct, const char *text) {
     lv_obj_align(zeile, LV_ALIGN_TOP_MID, 0, 62);
   }
   const uint32_t gen = ++K.gen;   // jede neue Meldung macht ein laufendes Ausblenden ungueltig
-  const uint32_t farbe = phase == 3 ? 0x22C55E : phase == 4 ? 0xEF4444 : 0x3B82F6;
+  const uint32_t farbe = phase == 3 ? 0x22C55E : phase == 4 ? 0xEF4444 : akzent::farbe();
   lv_obj_set_style_border_color(karte, lv_color_hex(farbe), 0);
   lv_obj_set_style_bg_color(balken, lv_color_hex(farbe), LV_PART_INDICATOR);
   char b[48];
@@ -1048,6 +1074,18 @@ inline void einrichten() {
       for (int i = 0; i < aktivitaeten_anzahl(); i++)
         if (aktivitaet_slot(i) == dock().slot) { activity->value() = i; break; }
     if (activity->value() >= aktivitaeten_anzahl()) activity->value() = 0;
+    // Sprache von HA (2026-11-01): aendert sie sich und gilt "wie HA", einmal neu starten (Seiten werden einmal gebaut)
+    {
+      const bool en = strcmp(tk_cfg->wurzel()["sprache"] | "de", "de") != 0;
+      if (en != sprache_ha_en->value()) {
+        sprache_ha_en->value() = en;
+        if (sprache_wahl->value() == 0 && en != sprache::englisch()) {
+          ESP_LOGI("sprache", "Sprache von HA: %s - Neustart", en ? "en" : "de");
+          lv_timer_create([](lv_timer_t *) { App.safe_reboot(); }, 3000, nullptr);
+        }
+      }
+    }
+    akzent_anwenden->execute();   // vor dem Neuaufbau: neue Teile holen akzent::farbe()
     apply_activity->execute();
     apply_home_layout->execute();
     tv_knopf_pruefen->execute();   // Verknuepfung "tv" kann sich geaendert haben
@@ -1062,6 +1100,7 @@ inline void einrichten() {
 // Aus on_key. true = von der Belegung verarbeitet; false = Navigation auf den Seiten der Remote.
 inline bool ereignis(int keycode, bool pressed) {
   auto *t = tk_cfg;
+  if (gesten::taste(keycode, pressed)) { held_key->value() = 0; return true; }   // Ausloese-Taste der Gesten (2026-11-01)
   // Der Tasten-Test behaelt seine eigene Logik; auf Menueseiten gehoeren
   // D-Pad/OK/Zurueck der Navigation.
   const int p = cur_page->value();

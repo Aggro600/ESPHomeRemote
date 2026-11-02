@@ -22,6 +22,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
 </p>
 
+<p align="center"><img src="docs/bilder/remote-echt.png" alt="The remote in its dock showing the smart display, a second remote showing the menu" width="100%"><br>
+<sub>Rendered from the 3D model of the hardware (<a href="https://github.com/LORDSn1per/OpenRemote-Hardware">OpenRemote Rev6</a>, GPL-3.0) – the screens show this firmware.</sub></p>
+
 <p align="center"><img src="docs/bilder/hero.png" alt="ESPHomeRemote: remote with touch display and the configurator in Home Assistant" width="100%"></p>
 
 <p align="center">
@@ -208,6 +211,9 @@ timer, picture mode …). Send a page to your other remotes with one click.</td>
 - **Radio bridge to Home Assistant** – key commands, state (player, TV, timer) and cover art go encrypted via
   ESP-NOW through the dock: right after waking up, without the remote having to connect first.
   Selectable in the configurator: **Wi-Fi**, **Bluetooth**, **Dock + Bluetooth** or **Dock, power saving**.
+- **No dock? Use any ESP32** – an ESP32, ESP32-S3, ESP32-C6 or a bare ESP32-C3 can stand in for the dock: Bluetooth
+  proxy for the remote, Bluetooth keyboard for the TV and the radio bridge work, IR, 433 MHz, LEDs and charging
+  contacts are missing. Flash it from the configurator over USB – the chip is detected automatically.
 
 **Configurator in Home Assistant** – everything in the browser, on PC and phone:
 overview with battery history, **search with Ctrl+K**, table of all keys, change list with undo, backup,
@@ -288,10 +294,6 @@ whether everything is running. Details: [streamer-app/README.md](streamer-app/RE
 - **Remotes and docks:** afterwards the configurator shows "Neue Version …" (new version) under *Firmware* –
   **Alle aktualisieren** (update all) builds and flashes them (touch sleeping remotes briefly).
 - The firmware comes from the `stabil` branch (latest release).
-- **Old file names:** until 27 Oct 2026 the files were called `open-remote.yaml` / `open-remote-firmware.yaml` and
-  `open-dock.yaml` / `open-dock-firmware.yaml`. The old firmware names still work for now; in the configurator
-  under *Firmware*, **Umstellen** (switch over) changes the device file to the new names (the old one is kept as
-  `.alt`). By hand: replace the `packages:` block with the one from [`esphomeremote.yaml`](esphomeremote.yaml).
 - What's new: [CHANGELOG.md](CHANGELOG.md).
 
 
@@ -378,7 +380,7 @@ That is also where you set up the TV input (for popups like "only if TV input is
 **Developer version (1:1 as in use)** – in addition to the simple version above, this repository contains
 everything the remotes are actually built with:
 - `templates/remote.yaml` (firmware) and `templates/remote-halink.yaml` (Bluetooth layer "Bluetooth only",
-  HA via BLE/dock – this file is flashed), `templates/dock-basis.yaml` (docking station),
+  HA via BLE/dock – this file is flashed), `templates/dock-basis.yaml` (docking station = `dock-kern.yaml` + `dock-platine.yaml`; a dock stand-in on another ESP32 uses only the core),
   `remote-dev-tests.yaml` (test tools, can be turned off).
 - `tools/remotes.py` generates `remote-wz-<name>.yaml` and `remote-wz-<name>-halink.yaml` per remote
   (list in `tools/remotes.json`, IP secret `ip_remote_wz_<name>`). Build/flash: `tools/esphome_run.mjs`.

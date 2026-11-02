@@ -12,6 +12,7 @@ from homeassistant.components.select import SelectEntity
 
 from .dock import DOMAIN, Verwalter
 from .switch import AktBasis, _remote_name
+from .i18n import t as _t
 
 AUS = "Aus"
 
@@ -27,7 +28,7 @@ class AktAuswahl(AktBasis, SelectEntity):
     def __init__(self, v: Verwalter, uid: str, dev: str, namen: list[str]) -> None:
         super().__init__(v, uid, dev, -1)
         self._namen = namen
-        self._attr_name = f"{_remote_name(dev)} Aktivität"
+        self._attr_name = f"{_remote_name(dev)} {_t(None, 'Aktivität')}"
         self._attr_options = [*namen, AUS]
 
     @property

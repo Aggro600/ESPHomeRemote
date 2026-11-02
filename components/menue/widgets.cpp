@@ -3,6 +3,7 @@
 // Daten: Zustaende per HTTP wie alle Kacheln (StatesView liefert Wetter/Timer mit Zusatzfeldern), Bilder ueber den
 // Endpunkt /api/esphomeremote_konfig/bild (Kamera-Schnappschuss, Cover) in zwei Bildplaetzen der YAML (wbild_0/1).
 #include "menue.h"
+#include "sprache.h"   // Texte auf Englisch, wenn gewaehlt (2026-11-01)
 #include "esphome/components/tasten_konfig/tasten_konfig.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
@@ -13,7 +14,7 @@ namespace menue {
 
 static const char *const TAG = "menue.widget";
 static const int ZEILE = 40, LUECKE = 4;
-static const uint32_t C_TEXT = 0xF1F3F5, C_GRAU = 0x8B94A3, C_KARTE = 0x1A1F27, C_BLAU = 0x3B82F6, C_GRUEN = 0x22C55E;
+static const uint32_t C_TEXT = 0xF1F3F5, C_GRAU = 0x8B94A3, C_KARTE = 0x1A1F27, C_GRUEN = 0x22C55E;
 static std::string g_wkey[2];   // was gerade im Bildplatz liegt (Entitaet + Titel bzw. Kamera)
 
 static lv_obj_t *wtext_(lv_obj_t *p, const char *t, const lv_font_t *f, uint32_t farbe) {
@@ -101,7 +102,8 @@ bool Menue::widget_weg_(JsonObjectConst j) const {
 
 void Menue::widget_karte_(Item &it) {
   static const struct { const char *n; WidgetArt a; } ARTEN[] = {{"uhr", W_UHR}, {"wetter", W_WETTER}, {"akku", W_AKKU},
-      {"medien", W_MEDIEN}, {"timer", W_TIMER}, {"kamera", W_KAMERA}, {"kombi", W_KOMBI}, {"licht", W_LICHT}};
+      {"medien", W_MEDIEN}, {"timer", W_TIMER}, {"kamera", W_KAMERA}, {"kombi", W_KOMBI}, {"licht", W_LICHT},
+      {"touchpad", W_TPAD}, {"scroll", W_TSCROLL}, {"mausknopf", W_MKNOPF}};
   const char *art = it.j["art"] | "uhr";
   it.wart = W_UHR;
   for (auto &a : ARTEN) if (!strcmp(a.n, art)) it.wart = a.a;
@@ -133,6 +135,7 @@ void Menue::widget_teile_(Item &it) {
   lv_obj_clean(it.obj);
   for (auto &o : it.wo) o = nullptr;
   if (it.wart == W_LICHT) { licht_bauen_(it); return; }
+  if (it.wart >= W_TPAD) { maus_bauen_(it); return; }
   const uint8_t m = widget_maske_(it);
   it.wbau = m;
   const bool gross = it.h >= 2;
@@ -258,7 +261,7 @@ void Menue::widget_teil_(Item &it, lv_obj_t *p, uint8_t art, int breite, int hoe
         lv_obj_set_size(b, groesse, groesse);
         lv_obj_set_style_radius(b, groesse / 2, 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(fn == 1 ? C_BLAU : 0x232A35), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(fn == 1 ? akzent_ : 0x232A35), 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x4B5563), LV_STATE_PRESSED);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
@@ -389,11 +392,11 @@ void Menue::widget_teil_(Item &it, lv_obj_t *p, uint8_t art, int breite, int hoe
         lv_obj_align(it.wo[WR_T_NAME], LV_ALIGN_TOP_LEFT, 2, 0);
         it.wo[WR_T_ZEIT] = wtext_(p, "--:--", f_uhr_ != nullptr && breite >= 150 && hoehe >= 70 ? f_uhr_ : f_xl, C_TEXT);
         lv_obj_align(it.wo[WR_T_ZEIT], LV_ALIGN_CENTER, 0, 2);
-        it.wo[WR_T_BAR] = wbalken_(p, breite - 8, C_BLAU);
+        it.wo[WR_T_BAR] = wbalken_(p, breite - 8, akzent_);
         lv_obj_align(it.wo[WR_T_BAR], LV_ALIGN_BOTTOM_MID, 0, -4);
       } else {
         const char *gl = icon_("timer-outline");
-        lv_obj_align(wtext_(p, gl ? gl : "", f_icon_ ? f_icon_ : f_text_, C_BLAU), LV_ALIGN_LEFT_MID, 2, 0);
+        lv_obj_align(wtext_(p, gl ? gl : "", f_icon_ ? f_icon_ : f_text_, akzent_), LV_ALIGN_LEFT_MID, 2, 0);
         it.wo[WR_T_NAME] = wtext_(p, it.j["label"] | "Timer", f_klein_, C_GRAU);
         punkte_(it.wo[WR_T_NAME]);
         lv_obj_set_width(it.wo[WR_T_NAME], breite - 110);
@@ -430,6 +433,7 @@ void Menue::widget_teil_(Item &it, lv_obj_t *p, uint8_t art, int breite, int hoe
 void Menue::widget_zustand_(Item &it) {
   if (it.obj == nullptr) return;
   if (it.wart == W_LICHT) { licht_zustand_(it); return; }
+  if (it.wart >= W_TPAD) return;   // Touchpad-Teile haben keinen Zustand
   // Kombi: Medien kommt/geht mit der Wiedergabe -> Inhalt neu aufbauen
   if (it.wart == W_KOMBI && widget_maske_(it) != it.wbau) widget_teile_(it);
   const char *e = it.j["entity"] | "";
@@ -554,7 +558,7 @@ void Menue::widget_tick_() {
       if (zeit_ok) snprintf(b, sizeof(b), "%02d:%02d", h, mi); else snprintf(b, sizeof(b), "--:--");
       if (strcmp(lv_label_get_text(it.wo[WR_ZEIT]), b)) lv_label_set_text(it.wo[WR_ZEIT], b);
       if (it.wo[WR_DATUM] != nullptr && zeit_ok && wt >= 0 && wt < 7 && mo >= 1 && mo <= 12) {
-        snprintf(b, sizeof(b), "%s, %d. %s", WTAG[wt], tg, MON[mo - 1]);
+        snprintf(b, sizeof(b), sprache::englisch() ? "%s, %d %s" : "%s, %d. %s", sprache::tr(WTAG[wt]), tg, sprache::tr(MON[mo - 1]));
         if (strcmp(lv_label_get_text(it.wo[WR_DATUM]), b)) lv_label_set_text(it.wo[WR_DATUM], b);
       }
     }
@@ -1022,6 +1026,37 @@ void Menue::licht_zustand_(Item &it) {
 }
 
 // Unterseite oeffnen - verzoegert (aus einem LVGL-Ereignis heraus wird die Seite dabei neu gebaut)
+// Touchpad-Teile (2026-11-01, Nutzer: Touchpad frei anordnen wie andere Menueseiten): Flaeche, Scroll-Streifen und
+// Mausknoepfe als Widgets. Die Logik (Zeigertempo, Tippen = Klick, Schwung ...) liegt in esphomeremote-maus.h
+// (maus_ereignis); hier nur Aussehen und das Weiterreichen der Beruehrungen.
+void Menue::maus_bauen_(Item &it) {
+  lv_obj_t *k = it.obj;
+  const bool rechts = !strcmp(it.j["knopf"] | "links", "rechts");
+  const int art = it.wart == W_TPAD ? 0 : it.wart == W_TSCROLL ? 1 : rechts ? 3 : 2;
+  lv_obj_set_style_bg_color(k, lv_color_hex(art == 0 ? 0x1A1F27 : 0x232A35), 0);
+  lv_obj_set_style_border_color(k, lv_color_hex(art == 0 ? 0x2A3240 : 0x232A35), 0);
+  lv_obj_set_style_border_width(k, art == 0 ? 1 : 0, 0);
+  lv_obj_set_style_radius(k, art == 0 ? 12 : 10, 0);
+  if (art >= 2) lv_obj_set_style_bg_color(k, lv_color_hex(hl_), LV_STATE_PRESSED);
+  lv_obj_add_flag(k, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+  lv_obj_clear_flag(k, (lv_obj_flag_t) (LV_OBJ_FLAG_SCROLL_CHAIN | LV_OBJ_FLAG_GESTURE_BUBBLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS));
+  lv_obj_set_user_data(k, (void *) (intptr_t) art);
+  // Symbol: Zeiger, Pfeil hoch/runter, Maus links/rechts (oder eigenes Symbol/Text des Eintrags)
+  const char *ic = *(it.j["icon"] | "") ? it.j["icon"] | "" : art == 0 ? "cursor-move" : art == 1 ? "arrow-up-down"
+                   : rechts ? "mouse-right-click-outline" : "mouse-left-click-outline";
+  const char *sym = symbol(ic);
+  lv_obj_t *l = lv_label_create(k);
+  lv_obj_set_style_text_font(l, sym != nullptr && f_icon_ ? f_icon_ : f_text_, 0);
+  lv_obj_set_style_text_color(l, lv_color_hex(art == 0 ? 0x2A3240 : art == 1 ? 0x8B94A3 : 0xD0D4DA), 0);
+  lv_label_set_text(l, sym != nullptr ? sym : (it.j["label"] | ""));
+  lv_obj_center(l);
+  lv_obj_add_event_cb(k, [](lv_event_t *e) {
+    auto *m = (Menue *) lv_event_get_user_data(e);
+    lv_obj_t *o = (lv_obj_t *) lv_event_get_current_target(e);
+    if (m->maus_ereignis) m->maus_ereignis(e, (int) (intptr_t) lv_obj_get_user_data(o));
+  }, LV_EVENT_ALL, this);
+}
+
 void Menue::unterseite_oeffnen_(const std::string &z) {
   static std::string ziel;
   ziel = z;

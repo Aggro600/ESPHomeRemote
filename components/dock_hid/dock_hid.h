@@ -152,6 +152,7 @@ class DockHid : public Component {
   struct Gehalten { bool an{false}; uint8_t art; uint8_t p; uint32_t bis_ms; };
 
   int platz_von_(const uint8_t bda[6]) const;
+  int platz_ueber_bindung_(const uint8_t bda[6]);   // ueber die gespeicherte Bindung (neue Adresse eines bekannten Geraets)
   bool aufloesen_(const uint8_t bda[6], const uint8_t irk[16]) const;
   void speichern_();
   void werbung_();

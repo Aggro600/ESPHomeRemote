@@ -11,6 +11,7 @@ Die Ziel-Adresse traegt der Knopf "Am Streamer eintragen" per ADB ein (settings 
 """
 
 from __future__ import annotations
+from .i18n import t as _t
 
 import json
 import logging
@@ -423,7 +424,7 @@ class StreamerSensor(SensorEntity):
     def __init__(self, cfg: dict, key: str) -> None:
         self._sid, self._key = cfg["id"], key
         name, self._attr_icon, self._wert = SENSOREN[key]
-        self._attr_name = f"{cfg['name']} {name}"
+        self._attr_name = f"{cfg['name']} {_t(None, name)}"
         self._attr_unique_id = f"streamer_{cfg['id']}_{key}"
         self.entity_id = f"sensor.esphomeremote_streamer_{cfg['id']}_{key}"
 
@@ -445,7 +446,7 @@ class StreamerKnopf(ButtonEntity):
 
     def __init__(self, cfg: dict, key: str) -> None:
         self._sid, self._key = cfg["id"], key
-        self._attr_name = f"{cfg['name']} " + ("App beenden" if key == "app_beenden" else "neu starten")
+        self._attr_name = f"{cfg['name']} " + _t(None, "App beenden" if key == "app_beenden" else "neu starten")
         self._attr_icon = "mdi:close-box-outline" if key == "app_beenden" else "mdi:restart"
         self._attr_unique_id = f"streamer_{cfg['id']}_{key}"
         self.entity_id = f"button.esphomeremote_streamer_{cfg['id']}_{key}"

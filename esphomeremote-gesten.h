@@ -323,7 +323,7 @@ inline void hinweis(const std::string &text) {
     lv_obj_set_style_radius(s.toast, 14, 0);
     lv_obj_set_style_pad_hor(s.toast, 14, 0);
     lv_obj_set_style_pad_ver(s.toast, 7, 0);
-    lv_obj_set_style_border_color(s.toast, lv_color_hex(0x3B82F6), 0);
+    lv_obj_set_style_border_color(s.toast, lv_color_hex(akzent::farbe()), 0);
     lv_obj_set_style_border_width(s.toast, 2, 0);
     lv_obj_align(s.toast, LV_ALIGN_TOP_MID, 0, 30);
   }
@@ -367,10 +367,19 @@ inline bool fest_an(const char *art) {
   return !g.isNull() && (g["an"] | true) && (g["s"].size() > 0 || (g["k"] | 0) > 0);
 }
 
+// Ausloese-Taste (2026-11-01, Nutzer: "Geste nur beim Gedrueckthalten einer speziellen Taste"): Konfigurator
+// gesten.taste = Tastencode. Dann misst die Remote nur, solange die Taste gehalten wird (spart Akku, auch bei dunklem
+// Display), und die Taste selbst loest nichts anderes aus.
+inline int ausloese_taste() { return tk_cfg->konfig("gesten")["taste"] | 0; }
+struct TasteZ { bool gehalten{false}; uint32_t los_ms{0}; };
+inline TasteZ &taste_z() { static TasteZ t; return t; }
+inline bool taste_frei() { auto &t = taste_z(); return t.gehalten || millis() - t.los_ms < 400; }
+
 // Erlaubt? (Sicherheitslogik ausser Ruhe/Abstand)
 inline bool erlaubt() {
   if (!gesten_an->value() || !tk_cfg->aktiv()) return false;
   if (charger_present->state || dockanz_im_dock()) return false;
+  if (ausloese_taste() > 0) return taste_frei() && (int32_t) (millis() - z().sperre_bis) >= 0;
   if (disp_off->value() && !gesten_dunkel->value()) return false;
   if (millis() - last_input_ms->value() < 800) return false;
   return (int32_t) (millis() - z().sperre_bis) >= 0;
@@ -478,7 +487,7 @@ inline void messung(float x, float y, float zz) {
   if (still) { if (s.ruhig < 1000) s.ruhig++; } else s.ruhig = 0;
   if (!s.in_bewegung) {
     if (s.ruhig >= (int) (0.3f * HZ)) s.ruhe_ms = millis();
-    if (m > start && millis() - s.ruhe_ms < 400) {   // deutlicher Ausschlag kurz nach Ruhe
+    if (m > start && (millis() - s.ruhe_ms < 400 || (ausloese_taste() > 0 && taste_z().gehalten))) {   // deutlicher Ausschlag kurz nach Ruhe (mit Taste: solange sie gehalten wird)
       s.in_bewegung = true;
       s.seg.clear();
       s.sx = s.gx; s.sy = s.gy; s.sz = s.gz;
@@ -498,10 +507,32 @@ inline void messung(float x, float y, float zz) {
   }
 }
 
+// Aus tasten::ereignis: die Ausloese-Taste (true = verbraucht). Loslassen beendet eine laufende Bewegung sofort.
+inline bool taste(int keycode, bool pressed) {
+  const int k = ausloese_taste();
+  if (k <= 0 || keycode != k || !gesten_an->value() || !tk_cfg->aktiv() || z().lernen) return false;
+  auto &t = taste_z();
+  auto &s = z();
+  if (pressed) {
+    t.gehalten = true;
+    s.ruhe_ms = millis();
+  } else {
+    t.gehalten = false;
+    t.los_ms = millis();
+    if (s.in_bewegung) {
+      s.in_bewegung = false;
+      schuetteln_pruefen_und_vergleichen();
+      s.seg.clear();
+    }
+  }
+  return true;
+}
+
 // Alle 100 ms aus dem YAML-Intervall
 inline void takt() {
   auto &s = z();
-  const bool soll = s.lernen || (gesten_an->value() && tk_cfg->aktiv() && (!disp_off->value() || gesten_dunkel->value()));
+  const bool soll = s.lernen || (gesten_an->value() && tk_cfg->aktiv() &&
+                                  (ausloese_taste() > 0 ? taste_frei() : (!disp_off->value() || gesten_dunkel->value())));
   if (soll != s.fifo_an) {
     motion_chip->set_fifo(soll);
     s.fifo_an = soll;

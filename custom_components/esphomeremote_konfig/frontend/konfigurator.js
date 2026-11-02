@@ -139,6 +139,66 @@ const SVC_DE = {
 const devName = (d) => String(d).startsWith("remote-wz-")
   ? "Remote " + String(d).slice(10).replace(/^./, (x) => x.toUpperCase())
   : String(d).split("-").map((w) => w.replace(/^./, (x) => x.toUpperCase())).join(" ");   // "open-remote" -> "Open Remote"
+// ---------------------------------------------------------------- Sprache (2026-11-01)
+// Nutzer: "alles lokalisieren, nach der Home-Assistant-Sprache, Fallback Englisch - und waehlbar". Der Code bleibt
+// deutsch; ist die Sprache nicht Deutsch, uebersetzt ein Woerterbuch (i18n/<sprache>.json: deutsches Stueck ->
+// Uebersetzung) alles Sichtbare nach jedem Aufbau: Text, title, placeholder, aria-label, dazu confirm/prompt/alert.
+// Ein Durchgang mit einer Alternation (laengste Stuecke zuerst) - schon Uebersetztes wird nicht nochmal ersetzt.
+const I18N = { sprache: "de", wb: null, re: null, aus: false };
+const I18N_ATTR = ["title", "placeholder", "aria-label", "alt"];
+function i18nSprache(hass) {
+  let w = "auto";
+  try { w = localStorage.getItem("esphomeremote_sprache_" + (hass?.user?.id || "")) || "auto"; } catch (e) { /* egal */ }
+  const ha = String(hass?.locale?.language || hass?.language || "en").toLowerCase();
+  const l = w === "auto" ? ha : w;
+  return l.startsWith("de") ? "de" : "en";   // weitere Sprachen: i18n/<code>.json, dann hier aufnehmen
+}
+async function i18nLaden(sprache, url) {
+  I18N.sprache = sprache;
+  if (sprache === "de") { I18N.wb = null; I18N.re = null; return; }
+  try {
+    const wb = await (await fetch(url)).json();
+    // Regeln fuer Satzbau mit Zahlen ("vor 5 min" -> "5 min ago"), laufen vor dem Woerterbuch
+    I18N.regeln = (wb.__regeln || []).map(([m, e]) => [new RegExp(m, "gu"), e]);
+    delete wb.__regeln;
+    const keys = Object.keys(wb).filter((k) => wb[k] && wb[k] !== k).sort((a, b) => b.length - a.length);
+    const q = (k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Woerter nur ganz ersetzen (nicht "an" in "Kanal"); Stuecke mit Satzzeichen am Rand duerfen angrenzen
+    const teil = (k) => `${/^[\p{L}\p{N}]/u.test(k) ? "(?<![\\p{L}\\p{N}])" : ""}${q(k)}${/[\p{L}\p{N}]$/u.test(k) ? "(?![\\p{L}\\p{N}])" : ""}`;
+    I18N.wb = new Map(keys.map((k) => [k, wb[k]]));
+    I18N.re = keys.length ? new RegExp(keys.map(teil).join("|"), "gu") : null;
+  } catch (e) { I18N.wb = null; I18N.re = null; }
+}
+function tr(s) {
+  if (!I18N.re || s == null) return s;
+  // Zeilenumbrueche/Einrueckung aus dem Code wie ein Leerzeichen (so steht es im Woerterbuch, HTML zeigt es ebenso)
+  s = String(s).replace(/\s+/g, " ");
+  for (const [m, e] of I18N.regeln || []) s = s.replace(m, e);
+  const ganz = I18N.wb.get(s.trim());
+  if (ganz) return s.replace(s.trim(), ganz);
+  return s.replace(I18N.re, (m) => I18N.wb.get(m) ?? m);
+}
+function i18nKnoten(root) {
+  if (!I18N.re || !root) return;
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let n = root.nodeType === 1 || root.nodeType === 11 ? w.currentNode : root; n; n = w.nextNode()) {
+    if (n.nodeType === 3) {
+      const p = n.parentNode;
+      if (!/[A-Za-zÄÖÜäöüß]/.test(n.data) || (p && (p.nodeName === "STYLE" || p.nodeName === "SCRIPT" || p.closest?.("[translate=no]")))) continue;
+      const neu = tr(n.data);
+      if (neu !== n.data) n.data = neu;
+    } else if (n.nodeType === 1) {
+      for (const a of I18N_ATTR) {
+        const v = n.getAttribute?.(a);
+        if (v && /[A-Za-zÄÖÜäöüß]/.test(v)) { const neu = tr(v); if (neu !== v) n.setAttribute(a, neu); }
+      }
+    }
+  }
+}
+// Dialoge der Seite gehen ebenfalls durch das Woerterbuch (Modul-Namen ueberdecken die globalen)
+const confirm = (m) => window.confirm(tr(m));
+const prompt = (m, v) => window.prompt(tr(m), v);
+const alert = (m) => window.alert(tr(m));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const hex = (n, w = 2) => "0x" + Number(n).toString(16).toUpperCase().padStart(w, "0");
@@ -207,6 +267,25 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     // Zwischenablage nur fuer diese Sitzung (2026-10-29: im localStorage stand sie bei jedem Oeffnen wieder da)
     try { localStorage.removeItem("erk_clip"); this.s.clip = JSON.parse(sessionStorage.getItem("erk_clip") || "null"); } catch (e) { /* egal */ }
     this._onKey = (ev) => this._shortcut(ev);
+    this._i18nBeob = new MutationObserver((ms) => {
+      if (!I18N.re) return;
+      this._i18nBeob.disconnect();
+      for (const m of ms) {
+        if (m.type === "childList") for (const n of m.addedNodes) i18nKnoten(n);
+        else if (m.type === "characterData") i18nKnoten(m.target);
+        else if (m.type === "attributes") i18nKnoten(m.target);
+      }
+      this._i18nBeob.observe(this.shadowRoot, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: I18N_ATTR });
+    });
+    this._i18nBeob.observe(this.shadowRoot, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: I18N_ATTR });
+  }
+
+  // Sprache (neu) bestimmen und Woerterbuch laden; danach alles neu zeichnen
+  async _i18nPruefen() {
+    const sp = i18nSprache(this._hass);
+    if (sp === I18N.sprache && (sp === "de" || I18N.re)) return;
+    await i18nLaden(sp, new URL(`i18n/${sp}.json`, import.meta.url).href + "?v=" + PANEL_STAND);
+    this._render();
   }
 
   connectedCallback() { window.addEventListener("keydown", this._onKey); }
@@ -394,6 +473,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (this.style.colorScheme !== dunkel) this.style.colorScheme = dunkel;
     if (first) this._load();
     else if (this.s.loaded) { this._updateStatus(); this._liveAuffrischen(); }
+    if (i18nSprache(h) !== I18N.sprache || (I18N.sprache !== "de" && !I18N.re)) this._i18nPruefen();
   }
   // Uebersicht und Seitenleiste zeigen Akku und Verbindung live - hoechstens alle 3 s neu zeichnen
   _liveAuffrischen() {
@@ -822,7 +902,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         <div class="row r2">${AKT_EVENTS.map((k) => this._keyBtn(k)).join("")}</div></div>
       ${this._mGrp("rfarben", "mdi:palette-outline", "Farben dieser Remote", Object.keys(this.cfg?.rfarben || {}).length ? "angepasst" : "Standard", `
         <div class="lsfarben">${RF_NAMEN.map(([k, n]) => `<label class="farbe"><input type="color" data-rf="${k}" value="${rf[k]}"><span>${n}</span>${this.cfg?.rfarben?.[k] ? `<button class="icon sm" data-a="rfweg" data-k="${k}" title="Standard"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</label>`).join("")}</div>
-        <small class="note">Nur für die Ansicht hier, links in der Navigation und in der Übersicht – damit du die Remotes auseinanderhältst.</small>`, false)}`;
+        <small class="note">Nur für die Ansicht hier, links in der Navigation und in der Übersicht – damit du die Remotes auseinanderhältst.</small>`, false)}
+      ${this._mGrp("akzent", "mdi:format-color-fill", "Akzentfarbe auf der Remote", this.cfg?.akzent ? this.cfg.akzent : "Blau (Standard)", `${this._akzentHtml()}`, false)}`;
   }
   // Display-Inhalt (240 x 320 wie die Remote) auf die Groesse des Displayfensters skalieren
   _rmSkala() {
@@ -1235,6 +1316,30 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   // ----------------------------------------------------------------- Events
   _bind() {
     const r = this.shadowRoot;
+    // Felder der Aktivitaeten-Leiste ziehen = Reihenfolge in der Leiste (2026-11-01; Vorschau und Einstellungen)
+    r.querySelectorAll(".rsleiste span[data-ai], .lsvor span[data-ai]").forEach((el) => {
+      el.onpointerdown = (e) => {
+        const von = Number(el.dataset.ai), x0 = e.clientX;
+        let zieht = false;
+        const move = (ev) => {
+          if (!zieht && Math.abs(ev.clientX - x0) < 6) return;
+          zieht = true;
+          el.classList.add("zieht");
+          r.querySelectorAll(".ziel").forEach((z) => z.classList.remove("ziel"));
+          r.elementFromPoint(ev.clientX, ev.clientY)?.closest("span[data-ai]")?.classList.add("ziel");
+        };
+        const up = (ev) => {
+          window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+          if (!zieht) return;
+          this._klickWeg = true; setTimeout(() => { this._klickWeg = false; }, 50);
+          const ziel = r.elementFromPoint(ev.clientX, ev.clientY)?.closest("span[data-ai]");
+          if (ziel) this._leisteSchieben(von, Number(ziel.dataset.ai));
+          this._render();
+        };
+        window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+        e.preventDefault();
+      };
+    });
     const q = r.querySelector("#q");
     if (q) {
       q.oninput = () => {
@@ -1277,6 +1382,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   }
 
   async _click(ev) {
+    if (this._klickWeg) { this._klickWeg = false; return; }   // war ein Ziehen (Leiste), kein Antippen
     const t = ev.target.closest("[data-a]");
     if (this.s.syncOffen && !ev.target.closest(".syncw")) { this.s.syncOffen = false; if (!t) { this._render(); return; } }
     if (this.s.wlanMenu && !ev.target.closest(".wlanw")) { this.s.wlanMenu = null; if (!t) { this._render(); return; } }
@@ -1473,6 +1579,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         s.act = j; this._touch();
         break;
       }
+      case "akzentweg": delete this.cfg.akzent; this._touch(); break;
+      case "akzentsetz": if (t.dataset.c === "#3B82F6") delete this.cfg.akzent; else this.cfg.akzent = t.dataset.c; this._touch(); break;
       case "rfweg": { const r = this.cfg.rfarben || {}; delete r[t.dataset.k]; if (!Object.keys(r).length) delete this.cfg.rfarben; this._touch(); break; }
       case "key": s.key = Number(t.dataset.k); break;
       case "close": s.key = null; break;
@@ -1721,10 +1829,28 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       else mo.s = Math.max(2, Math.min(60, Number(t.value) || 7));
       this._touch(); return this._render();
     }
+    if (t.dataset.sprache != null) {
+      try { localStorage.setItem("esphomeremote_sprache_" + (this._hass?.user?.id || ""), t.value); } catch (e) { /* egal */ }
+      I18N.re = null; I18N.sprache = "";
+      location.reload();   // sauber neu aufbauen (Texte, die schon uebersetzt im DOM stehen)
+      return;
+    }
+    if (t.dataset.neudock != null) { this.s.fw.neudock[t.dataset.neudock] = t.value; if (t.dataset.neudock === "chip") this._render(); return; }
     if (t.dataset.fwwlan != null) { this.s.fw.wlanNachher = Number(t.value); try { localStorage.setItem("esphomeremote_fwwlan", t.value); } catch (e) { /* egal */ } return; }
     if (t.dataset.dfarbe) {   // Farben eines Docks (2026-10-30)
       const n = t.dataset.d, alt = this.s.dockEinst?.farben?.[n] || {};
       return this._dockFarbe(n, { ...alt, [t.dataset.dfarbe]: t.value });
+    }
+    if (t.dataset.eing) {   // Anordnung Touchpad/Ziffernblock (2026-11-01)
+      const e = (this.cfg.eingabe ||= {});
+      if (t.value) e[t.dataset.eing] = t.value; else delete e[t.dataset.eing];
+      if (!Object.keys(e).length) delete this.cfg.eingabe;
+      this._touch(); return this._render();
+    }
+    if (t.dataset.akzent) {   // Akzentfarbe der Remote (2026-11-01)
+      const c = t.value.toUpperCase();
+      if (c === "#3B82F6") delete this.cfg.akzent; else this.cfg.akzent = c;
+      this._touch(); return this._render();
     }
     if (t.dataset.rf) {   // Farben der Remote-Ansicht (2026-10-29)
       (this.cfg.rfarben ||= {})[t.dataset.rf] = t.value;
@@ -1843,7 +1969,7 @@ const M_COLS = 6, M_ROW = 40, M_PAD = 6, M_GAP = 4, M_W = 240;
 // Zeichen der Remote-Schrift (glyphs in templates/remote.yaml) - alles andere bleibt auf dem Display leer
 const REMOTE_ZEICHEN = new Set([..."€°±·«»¿¡ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ–—’‘”“„…−›"]);
 const fremdeZeichen = (t) => [...new Set([...String(t || "")].filter((c) => c.charCodeAt(0) > 126 && !REMOTE_ZEICHEN.has(c)))];
-const M_ICONS = "air-conditioner alarm alert apple arrow-down arrow-left arrow-right arrow-up bathtub battery battery-charging bed bed-outline bell bell-outline blinds blinds-open bluetooth brightness-6 camera car cast cast-connected cctv ceiling-light cellphone check chevron-down chevron-left chevron-right chevron-up close coffee cog cog-outline controller-classic curtains desk desktop-tower-monitor door door-closed door-open doorbell doorbell-video dots-horizontal dots-vertical fan fast-forward flash flash-outline floor-lamp flower fridge gamepad-variant garage garage-open garage-variant google-chrome heart heat-wave home home-outline image information key key-variant keyboard-return kodi lamp laptop leaf led-strip lightbulb lightbulb-group lightbulb-on lock lock-open-variant menu microphone minus minus-circle movie movie-open music music-note netflix nintendo-switch palette pause pine-tree play play-pause plex plus plus-circle podcast power power-standby printer-3d radiator radio record remote remote-tv repeat rewind roller-shade set-top-box shower shuffle silverware-fork-knife skip-next skip-previous sleep snowflake sofa sony-playstation soundbar speaker speaker-multiple spotify star stop stove string-lights tablet television television-classic tent thermometer thermostat timer timer-outline video vlc volume-high volume-low volume-medium volume-minus volume-mute volume-off volume-plus washing-machine weather-night weather-partly-cloudy weather-sunny white-balance-sunny wifi window-closed-variant window-shutter window-shutter-open youtube youtube-tv".split(" ");
+const M_ICONS = "cursor-move arrow-up-down mouse mouse-left-click-outline mouse-right-click-outline format-list-bulleted air-conditioner alarm alert apple arrow-down arrow-left arrow-right arrow-up bathtub battery battery-charging bed bed-outline bell bell-outline blinds blinds-open bluetooth brightness-6 camera car cast cast-connected cctv ceiling-light cellphone check chevron-down chevron-left chevron-right chevron-up close coffee cog cog-outline controller-classic curtains desk desktop-tower-monitor door door-closed door-open doorbell doorbell-video dots-horizontal dots-vertical fan fast-forward flash flash-outline floor-lamp flower fridge gamepad-variant garage garage-open garage-variant google-chrome heart heat-wave home home-outline image information key key-variant keyboard-return kodi lamp laptop leaf led-strip lightbulb lightbulb-group lightbulb-on lock lock-open-variant menu microphone minus minus-circle movie movie-open music music-note netflix nintendo-switch palette pause pine-tree play play-pause plex plus plus-circle podcast power power-standby printer-3d radiator radio record remote remote-tv repeat rewind roller-shade set-top-box shower shuffle silverware-fork-knife skip-next skip-previous sleep snowflake sofa sony-playstation soundbar speaker speaker-multiple spotify star stop stove string-lights tablet television television-classic tent thermometer thermostat timer timer-outline video vlc volume-high volume-low volume-medium volume-minus volume-mute volume-off volume-plus washing-machine weather-night weather-partly-cloudy weather-sunny white-balance-sunny wifi window-closed-variant window-shutter window-shutter-open youtube youtube-tv".split(" ");
 const M_TYPES = [
   ["page", "Unterseite", "mdi:folder-arrow-right-outline"],
   ["special", "Eingebaute Seite", "mdi:application-outline"],
@@ -1866,7 +1992,8 @@ const M_TYPES = [
 const M_WIDGETS = [["uhr", "Uhr & Datum", "mdi:clock-outline", ""], ["wetter", "Wetter", "mdi:weather-partly-cloudy", "weather"],
   ["akku", "Akku der Remote", "mdi:battery-70", ""], ["medien", "Medien", "mdi:play-box-outline", "media_player"],
   ["timer", "Timer", "mdi:timer-outline", "timer"], ["kamera", "Kamera", "mdi:cctv", "camera"],
-  ["kombi", "Kombi (bis zu 3 nebeneinander)", "mdi:view-column-outline", ""], ["licht", "Licht (Lampen, Farbe, Szenen)", "mdi:lightbulb-group-outline", ""]];
+  ["kombi", "Kombi (bis zu 3 nebeneinander)", "mdi:view-column-outline", ""], ["licht", "Licht (Lampen, Farbe, Szenen)", "mdi:lightbulb-group-outline", ""],
+  ["touchpad", "Touchpad-Fläche (Maus)", "mdi:gesture-tap", ""], ["scroll", "Scroll-Streifen (Mausrad)", "mdi:arrow-up-down", ""], ["mausknopf", "Mausknopf (Klick, halten = ziehen)", "mdi:mouse", ""]];
 // Licht-Widget (2026-10-29): Teile von oben nach unten - was nicht in die Hoehe passt, faellt auf der Remote weg
 const L_TEILE = [["lampen", "Lampen"], ["hell", "Helligkeit"], ["temp", "Farbtemperatur"], ["farbe", "Farbe"], ["palette", "Palette"], ["szenen", "Szenen"]];
 const L_PAL = ["#ff9f45", "#ffb46b", "#ffe4c4", "#e6f0ff", "#ff3b30", "#ff9500", "#34c759", "#0a84ff", "#bf5af2", "#ff2d78"];
@@ -2261,6 +2388,8 @@ const MenuEditor = {
       ["tastatur", "Tastatur (Streamer)", "mdi:keyboard-outline", "Geht auf, wenn am Streamer eine Eingabe offen ist"],
       ["ziffern", "Ziffernblock", "mdi:numeric", "Eingebauter Ziffernblock – per Taste oder Auslöser"],
       ["touchpad", "Touchpad (Maus)", "mdi:gesture-tap", "Eingebautes Touchpad – per Taste oder Auslöser"],
+      ["touchpad_frei", "Touchpad zum Anpassen", "mdi:gesture-tap-box", "Fläche, Scroll-Streifen und Mausknöpfe als Einträge – frei verschieben und vergrößern"],
+      ["ziffern_frei", "Ziffernblock zum Anpassen", "mdi:dialpad", "Ziffern, OK und Löschen als Einträge – frei anordnen, eigene Tasten dazu"],
       ["frage", "Frage (Ja / Nein)", "mdi:help-circle-outline", "Text und zwei Knöpfe"],
       ["timer", "Timer abgelaufen", "mdi:timer-alert-outline", "Name, Dauer, Uhrzeit, +5 min, Nochmal, OK"]];
     const mps = liste("media_player");
@@ -2303,7 +2432,8 @@ const MenuEditor = {
 
   _mVorlageAnlegen() {
     const s = this.s, m = s.modal, menu = this.menu;
-    const NAMEN = { leer: "Neues Popup", medien: "Medien", klingel: "Klingel", tastatur: "Tastatur", ziffern: "Ziffern", touchpad: "Touchpad", frage: "Frage", timer: "Timer" };
+    const NAMEN = { leer: "Neues Popup", medien: "Medien", klingel: "Klingel", tastatur: "Tastatur", ziffern: "Ziffern", touchpad: "Touchpad", frage: "Frage", timer: "Timer",
+      touchpad_frei: "Touchpad", ziffern_frei: "Ziffern" };
     const titel = (m.titel || "").trim() || NAMEN[m.art];
     const id = this._mNewId("popup_" + (titel.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "neu"));
     const pg = { id, title: titel, remember: false, flow: false, popup: { open: [], close: [], timeout: 0, wake: true }, items: [] };
@@ -2332,6 +2462,19 @@ const MenuEditor = {
       }
     } else if (m.art === "ziffern" || m.art === "touchpad") {
       pg.inhalt = m.art;
+    } else if (m.art === "touchpad_frei") {   // 2026-11-01: Touchpad aus Eintraegen, wie die eingebaute Anordnung (Linkshaender gespiegelt)
+      const lh = this._eingabeSeite("tp_streifen"), sp = this._eingabeSeite("tp_reihe");
+      add({ t: "widget", art: "touchpad" }, lh ? 1 : 0, 0, 5, 6);
+      add({ t: "widget", art: "scroll" }, lh ? 0 : 5, 0, 1, 6);
+      add({ t: "widget", art: "mausknopf", knopf: "links" }, sp ? 3 : 0, 6, 3, 1);
+      add({ t: "widget", art: "mausknopf", knopf: "rechts" }, sp ? 0 : 3, 6, 3, 1);
+    } else if (m.art === "ziffern_frei") {   // 2026-11-01: Ziffern als Bluetooth-Tasten ans Geraet der Aktivitaet
+      const taste = (label, code) => ({ t: "action", label, align: "c", size: "l", steps: [{ t: "ble", kind: "key", code }] });
+      const reihen = this.cfg?.eingabe?.zf_reihe === "789" ? [[7, 8, 9], [4, 5, 6], [1, 2, 3]] : [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+      reihen.forEach((r, y) => r.forEach((n, x) => add(taste(String(n), 0x1D + n), x * 2, y * 2, 2, 2)));
+      const unten = [taste("<–", 0x2A), taste("0", 0x27), taste("OK", 0x28)];
+      if (this._eingabeSeite("zf_unten")) unten.reverse();
+      unten.forEach((it, x) => add(it, x * 2, 6, 2, 1));
     } else if (m.art === "timer") {   // wie __init__.py _timer_popup
       const t = "sensor.esphomeremote_timer_abgelaufen";
       pg.popup = { open: [{ entity: t, attr: "status", to: "abgelaufen" }], close: [{ entity: t, attr: "status", to: "aus" }], timeout: 0, wake: true, excl: true };
@@ -2361,6 +2504,7 @@ const MenuEditor = {
       <div class="inl"><label class="inl2">Inhalt <select data-ppg="inhalt"><option value="">Einträge dieser Seite</option>
         ${M_INHALTE.map(([k, l]) => `<option value="${k}" ${p.inhalt === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
       ${p.inhalt ? `<small class="note">${M_INHALT_HINWEIS[p.inhalt] || ""}</small>` : ""}
+      ${p.inhalt === "touchpad" || p.inhalt === "ziffern" || p.inhalt === "tastatur" ? this._eingabeOptHtml(p.inhalt) : ""}
       ${p.inhalt ? "" : this._mKlingelBlock(p)}
       <div class="ph">Öffnen, wenn … <button class="btn small" data-a="mtrigadd" data-art="open"><ha-icon icon="mdi:plus"></ha-icon>Auslöser</button>
         <button class="btn small" data-a="mtrigakt" data-art="open"><ha-icon icon="mdi:plus"></ha-icon>Aktivität</button></div>
@@ -2541,6 +2685,11 @@ const MenuEditor = {
 
   // Widget-Vorschau (wie widgets.cpp, vereinfacht) mit den Zustaenden aus HA
   _mWidgetVorschau(it, l) {
+    // Touchpad-Teile (2026-11-01)
+    if (it.art === "touchpad" || it.art === "scroll" || it.art === "mausknopf") {
+      const ic = it.icon ? "mdi:" + it.icon : it.art === "touchpad" ? "mdi:cursor-move" : it.art === "scroll" ? "mdi:arrow-up-down" : it.knopf === "rechts" ? "mdi:mouse-right-click-outline" : "mdi:mouse-left-click-outline";
+      return `<span class="wmaus ${it.art}"><ha-icon icon="${ic}"></ha-icon></span>`;
+    }
     const gross = l.h >= 2, H = this._hass.states, jetzt = new Date();
     const teil = (a) => {
       if (a === "uhr") {
@@ -2644,6 +2793,25 @@ const MenuEditor = {
   },
 
   // Eingebaute Tastatur in der Vorschau (esphomeremote-eingabe.h: QWERTZ bzw. Ziffernblock)
+  // Anordnung von Touchpad/Ziffernblock (2026-11-01): cfg.eingabe, "auto" folgt der Einstellung Linkshaender der Remote
+  _eingabeSeite(k) {
+    const v = this.cfg?.eingabe?.[k];
+    if (!v) return !!this.s.meta[this.s.dev]?.einst?.linkshaender;
+    return v === "l" || v === "s";
+  },
+  _eingabeOptHtml(art) {
+    const e = this.cfg?.eingabe || {}, lh = !!this.s.meta[this.s.dev]?.einst?.linkshaender;
+    const auto = `automatisch (${lh ? "Linkshänder" : "Rechtshänder"})`;
+    const sel = (k, opts) => `<select data-eing="${k}">${opts.map(([v, l]) => `<option value="${v}" ${(e[k] || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    const z = art === "touchpad"
+      ? `<label class="inl2">Scroll-Streifen ${sel("tp_streifen", [["", auto], ["r", "rechts"], ["l", "links"]])}</label>
+         <label class="inl2">Untere Knöpfe ${sel("tp_reihe", [["", auto], ["n", "Linksklick · Rechtsklick · Makros"], ["s", "Makros · Rechtsklick · Linksklick"]])}</label>`
+      : `<label class="inl2">Ziffern ${sel("zf_reihe", [["", "1 2 3 oben (Telefon)"], ["789", "7 8 9 oben (Rechner)"]])}</label>
+         <label class="inl2">Untere Reihe ${sel("zf_unten", [["", auto], ["n", "<– · 0 · OK"], ["s", "OK · 0 · <–"]])}</label>`;
+    const w = this.s.meta[this.s.dev]?.einst || {};
+    const hand = ["linkshaender", "x_rechts"].filter((k) => k in w).map((k) => `<label class="sw small"><input type="checkbox" data-einst="${k}" ${w[k] ? "checked" : ""}><span>${k === "linkshaender" ? "Linkshänder" : "X-Knopf rechts (gespiegelte Kopfzeilen)"}</span></label>`).join("");
+    return `<div class="eingopt">${hand}${z}<small class="note">Gilt für ${art === "touchpad" ? "das Touchpad" : "den Ziffernblock"} dieser Remote überall. „Automatisch“ richtet sich nach der Einstellung <b>Linkshänder</b> der Remote (Einstellungen → Anzeige), die im Abgleich nicht mitläuft.</small></div>`;
+  },
   _mDisplayInhalt(p, zahlen) {
     const tp = p.inhalt === "touchpad", modus = tp ? "maus" : zahlen ? "zahlen" : "tastatur";
     const titel = p.title || (tp ? "Touchpad" : zahlen ? "Ziffern" : "Tastatur");
@@ -2651,16 +2819,21 @@ const MenuEditor = {
     const kopf = `<div class="dkopf"><span class="dx" title="${p.pknopf === "min" ? "Minimieren" : "Schließen"}">${p.pknopf === "min" ? "_" : "X"}</span><b>${esc(titel)}</b>
       ${knopf("maus", '<ha-icon icon="mdi:mouse"></ha-icon>')}${knopf("tastatur", '<ha-icon icon="mdi:keyboard"></ha-icon>')}${knopf("zahlen", "123")}</div>`;
     let koerper;
-    if (tp) koerper = `<div class="dtp"><div><span class="dfeld"><ha-icon icon="mdi:cursor-move"></ha-icon></span><span class="dleiste"><ha-icon icon="mdi:arrow-up-down"></ha-icon></span></div>
-      <div><span class="dk"><ha-icon icon="mdi:mouse-left-click-outline"></ha-icon></span><span class="dk"><ha-icon icon="mdi:mouse-right-click-outline"></ha-icon></span><span class="dk"><ha-icon icon="mdi:format-list-bulleted"></ha-icon></span></div></div>`;
+    if (tp) {
+      const feld = '<span class="dfeld"><ha-icon icon="mdi:cursor-move"></ha-icon></span>', leiste = '<span class="dleiste"><ha-icon icon="mdi:arrow-up-down"></ha-icon></span>';
+      const kn = ['<span class="dk"><ha-icon icon="mdi:mouse-left-click-outline"></ha-icon></span>', '<span class="dk"><ha-icon icon="mdi:mouse-right-click-outline"></ha-icon></span>', '<span class="dk"><ha-icon icon="mdi:format-list-bulleted"></ha-icon></span>'];
+      if (this._eingabeSeite("tp_reihe")) kn.reverse();
+      koerper = `<div class="dtp"><div>${this._eingabeSeite("tp_streifen") ? leiste + feld : feld + leiste}</div><div>${kn.join("")}</div></div>`;
+    }
     else {
-      const R = zahlen ? [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["<-", "0", "OK"]]
+      const unten = this._eingabeSeite("zf_unten") ? ["OK", "0", "<-"] : ["<-", "0", "OK"];
+      const R = zahlen ? [...(this.cfg?.eingabe?.zf_reihe === "789" ? [["7", "8", "9"], ["4", "5", "6"], ["1", "2", "3"]] : [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]]), unten]
         : [["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], ["q", "w", "e", "r", "t", "z", "u", "i", "o", "p"],
           ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ö"], ["^", "y", "x", "c", "v", "b", "n", "m", ["<-", 2]], ["ä", "ü", ["Leer", 2], ".", ",", "<", ">", ["Ent", 2]]];
       koerper = `<div class="dkbd ${zahlen ? "zahlen" : ""}">${R.map((r) => `<div>${r.map((k) => Array.isArray(k)
         ? `<span style="flex:${k[1]}">${esc(k[0])}</span>` : `<span>${esc(k)}</span>`).join("")}</div>`).join("")}</div>`;
     }
-    return `<div class="dscr">${kopf}${koerper}</div>`;
+    return `<div class="dscr" style="--akz:${this.cfg?.akzent || "#3b82f6"}">${kopf}${koerper}</div>`;
   },
 
   _mKopierKnoepfe(g, n) {
@@ -2837,6 +3010,8 @@ const MenuEditor = {
       <small class="note">Höhe und Breite lassen sich auch frei ziehen – ab 2 Zeilen gilt die große Darstellung.</small>`}`;
     if (W[3]) h += ent("entity", W[3], { weather: "Wetter-Entität", media_player: "Media Player", timer: "Timer", camera: "Kamera" }[W[3]]);
     if (art === "uhr" || (art === "kombi" && (it.teile || ["uhr", "wetter"]).includes("uhr"))) h += sel("datum", [["nach", "Datum unter / rechts neben der Uhrzeit"], ["vor", "Datum über / links vor der Uhrzeit"], ["aus", "Ohne Datum"]], "nach", "Datum");
+    if (art === "mausknopf") h += sel("knopf", [["links", "Linksklick"], ["rechts", "Rechtsklick"]], "links", "Knopf");
+    if (["touchpad", "scroll", "mausknopf"].includes(art)) h += `<small class="note">${art === "touchpad" ? "Wischen bewegt den Zeiger, Tippen = Klick, lang = Rechtsklick, zweimal tippen und halten = ziehen." : art === "scroll" ? "Hoch/runter wischen scrollt (mit Schwung)." : "Halten = Taste gedrückt (zum Ziehen)."} Geht an das Bluetooth-Gerät der Aktivität – wie das eingebaute Touchpad. Symbol frei wählbar.</small>`;
     if (art === "medien") h += this._mJetztImWidget(it.entity);
     if (art === "medien") h += sel("stil", [["", "Cover links, Titel und Tasten daneben"], ["karte", "Karte: Cover als Hintergrund (wie die eingebaute Startseite)"]], "", "Darstellung")
       + (it.stil === "karte" ? `<label class="sw small"><input type="checkbox" data-mk="laut" data-typ="nichtfalse" ${it.laut !== false ? "checked" : ""}><span>Leiser/Lauter-Tasten (ab 5 Spalten)</span></label>` : "")
@@ -3546,6 +3721,10 @@ details.btprox { margin-top:12px; } details.btprox summary { cursor:pointer; fon
 .ha .rs { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, #3b82f6 50%); border-bottom-right-radius:8px; }
 .hlist { flex:1 1 260px; max-width:420px; } .hlist h3 { margin:0 0 8px; }
 .hl { padding:8px 10px; border-radius:10px; border:1px solid var(--div); margin-bottom:6px; } .hl.sel { border-color:var(--primary-color); }
+/* 2026-11-01: Felder blieben in der Karte nicht drin (Antippen oeffnet, Text, Schrift-Auswahl) */
+.hl .hziel { display:flex; flex-wrap:wrap; gap:6px 12px; } .hl .inl2 { flex-wrap:wrap; min-width:0; max-width:100%; }
+.hl .inl2 select { min-width:0; max-width:100%; flex:1 1 140px; } .hl .inl2 input { max-width:100%; }
+.inl2 > .seg { flex-wrap:wrap; max-width:100%; } .inl2 { flex-wrap:wrap; max-width:100%; }
 .hl small { display:block; color:var(--secondary-text-color); margin:2px 0 0 34px; }
 .pgsep { display:flex; align-items:center; }
 .seg { display:inline-flex; border:1px solid var(--div); border-radius:18px; overflow:hidden; }
@@ -3659,15 +3838,18 @@ code { font-size:12px; background:rgba(127,127,127,.15); padding:1px 4px; border
 .zst { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:4px 0; } .zst > input:first-child { width:110px; }
 .phone.dspl { width:auto; display:inline-flex; flex-direction:column; align-items:center; padding:12px; }
 .dscr { position:relative; width:240px; height:320px; zoom:1.25; background:#0b0f14; overflow:hidden; color:#f1f3f5; display:flex; flex-direction:column; }
-.dkopf { flex:0 0 40px; display:flex; align-items:center; gap:4px; padding-right:5px; border-bottom:3px solid #3b82f6; }
-.dkopf .dx { align-self:stretch; width:54px; background:#3b82f6; display:flex; align-items:center; justify-content:center; font-size:17px; }
+.dkopf { flex:0 0 40px; display:flex; align-items:center; gap:4px; padding-right:5px; border-bottom:3px solid var(--akz, #3b82f6); }
+.dkopf .dx { align-self:stretch; width:54px; background:var(--akz, #3b82f6); display:flex; align-items:center; justify-content:center; font-size:17px; }
 .dkopf b { flex:1; min-width:0; font-size:17px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-left:4px; }
 .dkopf .dm { flex:0 0 30px; height:30px; border-radius:8px; background:#1f2933; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; --mdc-icon-size:18px; }
-.dkopf .dm.an { background:#3b82f6; }
+.dkopf .dm.an { background:var(--akz, #3b82f6); }
 .dkbd { flex:1; display:flex; flex-direction:column; gap:6px; padding:5px 4px 3px; }
 .dkbd > div { flex:1; display:flex; gap:4px; }
 .dkbd span { flex:1; min-width:0; background:#1f2933; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:12px; }
 .dkbd.zahlen { gap:5px; } .dkbd.zahlen > div { gap:5px; } .dkbd.zahlen span { font-size:18px; border-radius:9px; }
+.wmaus { display:flex; align-items:center; justify-content:center; width:100%; height:100%; border-radius:inherit; color:#d0d4da; --mdc-icon-size:18px; }
+.wmaus.touchpad { background:#1a1f27; color:#3a4250; box-shadow:inset 0 0 0 1px #2a3240; } .wmaus.scroll { background:#232a35; color:#8b94a3; } .wmaus.mausknopf { background:#232a35; }
+.eingopt { display:flex; flex-wrap:wrap; gap:6px 14px; margin:6px 0; }
 .dtp { flex:1; display:flex; flex-direction:column; gap:6px; padding:4px 6px 6px; }
 .dtp > div { display:flex; gap:4px; } .dtp > div:first-child { flex:1; } .dtp > div:last-child { flex:0 0 46px; gap:7px; }
 .dtp .dfeld { flex:1; border:1px solid #2a3038; } .dtp .dleiste { flex:0 0 28px; } .dtp .dk { flex:1; }
@@ -3966,6 +4148,11 @@ ha-icon { --mdc-icon-size:20px; }
 .lsvor { display:flex; gap:var(--lgap,2px); height:40px; width:240px; max-width:100%; background:var(--lg); border-top:var(--ll) solid var(--la); box-sizing:border-box; margin:4px 0 8px; }
 .lsvor span { font-size:var(--lfs); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; } .lsvor small { font-size:var(--lfs); overflow:hidden; text-overflow:ellipsis; }
 .lsvor span.an { background:var(--la); color:var(--lat); }
+.akzfeld { width:22px; height:22px; border-radius:50%; border:2px solid transparent; padding:0; cursor:pointer; } .akzfeld.on { border-color:var(--primary-text-color); }
+.hdisp .klickbar { cursor:pointer; } .hdisp .klickbar:hover { outline:1px dashed rgba(255,255,255,.55); outline-offset:-1px; }
+.hdisp .klickbar.fok { outline:2px solid var(--blau, #3b82f6); outline-offset:-2px; }
+.rsleiste span[data-ai], .lsvor span[data-ai] { cursor:grab; touch-action:none; } .rsleiste span.zieht, .lsvor span.zieht { opacity:.5; }
+.rsleiste span.ziel, .lsvor span.ziel { box-shadow:inset 0 0 0 2px #fff; }
 .lsfarben { display:flex; flex-wrap:wrap; gap:6px 12px; margin-bottom:8px; }
 .hleisten { flex-wrap:wrap; gap:6px 14px; align-items:center; } .hleisten small { color:var(--sec,#8b94a3); }
 .rsleiste small { font-size:var(--lfs); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -4202,14 +4389,14 @@ const HomeEditor = {
   // Inhaltsfenster (scrollt wie auf der Remote) und Aktivitaeten-Leiste; das Raster darin ist der Editor
   _hStatusleiste(an = true) {
     const ew = this.s.meta[this.s.dev]?.einst || {};
-    return `<div class="rsbar" ${an ? "" : "hidden"}>${ew.show_clock === false ? "" : `<i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i>`}<span class="grow"></span>${ew.show_ha === false ? "" : '<ha-icon icon="mdi:home-assistant"></ha-icon>'}${ew.show_wifi === false ? "" : '<ha-icon icon="mdi:wifi"></ha-icon>'}${ew.show_ble === false ? "" : '<ha-icon icon="mdi:bluetooth"></ha-icon>'}${ew.show_batt === false ? "" : '<ha-icon icon="mdi:battery-80"></ha-icon>'}</div>`;
+    return `<div class="rsbar klickbar ${this.s.hfok === "status" ? "fok" : ""}" data-a="hfok" data-k="status" title="Statusleiste bearbeiten" ${an ? "" : "hidden"}>${ew.show_clock === false ? "" : `<i>${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</i>`}<span class="grow"></span>${ew.show_ha === false ? "" : '<ha-icon icon="mdi:home-assistant"></ha-icon>'}${ew.show_wifi === false ? "" : '<ha-icon icon="mdi:wifi"></ha-icon>'}${ew.show_ble === false ? "" : '<ha-icon icon="mdi:bluetooth"></ha-icon>'}${ew.show_batt === false ? "" : '<ha-icon icon="mdi:battery-80"></ha-icon>'}</div>`;
   },
   _hLive(p) {
     const fe = hFenster(p), z = Math.round((fe.u - fe.o) / 40);
     const n = Math.max(0, ...mLayout(p).map((l) => l.y + l.h));
     return `<div class="hlive"><div class="hdisp">${this._hStatusleiste(fe.st)}
         <div class="hfen" style="top:${fe.o}px;height:${fe.u - fe.o}px">${this._mPreview(p, true)}</div>
-        ${fe.l === "aus" ? "" : `<div class="rsleiste ${fe.l === "oben" ? "oben" : ""}" style="${this._leisteStil()};${fe.l === "oben" ? `top:${fe.st ? 40 : 0}px` : ""}">${this._leisteFelder(this.s.act)}</div>`}
+        ${fe.l === "aus" ? "" : `<div class="rsleiste klickbar ${this.s.hfok === "leiste" ? "fok" : ""} ${fe.l === "oben" ? "oben" : ""}" data-a="hfok" data-k="leiste" title="Aktivitäten-Leiste bearbeiten – Felder ziehen ändert die Reihenfolge" style="${this._leisteStil()};${fe.l === "oben" ? `top:${fe.st ? 40 : 0}px` : ""}">${this._leisteFelder(this.s.act)}</div>`}
       </div><div class="pinfo">${n <= z ? `<ha-icon icon="mdi:check"></ha-icon>Passt ohne Scrollen (${n} von ${z} Zeilen)` : `<ha-icon icon="mdi:arrow-expand-vertical"></ha-icon>${n} Zeilen – im Fenster scrollen (${z} sichtbar)`}</div></div>`;
   },
   // Eingebaute Startseite live: Bereiche an ihrer Stelle mit echtem Inhalt (Cover/Titel, Knoepfe, Leisten)
@@ -4222,7 +4409,7 @@ const HomeEditor = {
     return `<div class="hlive"><div class="hdisp">${this._hStatusleiste(!hm.custom || hm.areas.status?.on !== false)}
       ${box("medien", `<span class="mw karte" style="${bild}"><span class="mwu"><b>${esc(laeuft ? a.media_title || a.app_name || "Wiedergabe" : "Nichts läuft")}</b><small>${esc(laeuft ? a.media_artist || a.app_name || "" : "")}</small></span></span>`, "med")}
       ${box("menu", `<b>${esc(hm.areas.menu?.label || "Menü")}</b>`, "kn")}${box("apps", `<b>${esc(hm.areas.apps?.label || "Apps")}</b>`, "kn")}
-      <div class="rsleiste" style="${this._leisteStil()}">${this._leisteFelder(this.s.act)}</div>
+      <div class="rsleiste klickbar ${this.s.hfok === "leiste" ? "fok" : ""}" data-a="hfok" data-k="leiste" title="Aktivitäten-Leiste bearbeiten – Felder ziehen ändert die Reihenfolge" style="${this._leisteStil()}">${this._leisteFelder(this.s.act)}</div>
     </div><div class="pinfo"><ha-icon icon="mdi:monitor"></ha-icon>So sieht die eingebaute Startseite auf der Remote aus</div></div>`;
   },
   // Einstellungen rechts im Hauptfenster (2026-10-30, vorher gequetscht links): Seite, Aktivitaeten-Leiste, Statusleiste
@@ -4265,15 +4452,29 @@ const HomeEditor = {
   },
   // CSS-Variablen der Leiste fuer Vorschauen
   _leisteStil() {
-    const l = this.home?.leiste || this.cfg.home?.leiste || {}, f = (k) => l[k] || L_STD[k];
+    const l = this.home?.leiste || this.cfg.home?.leiste || {}, f = (k) => l[k] || (k === "akt" && this.cfg?.akzent) || L_STD[k];
     const just = l.ausr === "l" ? "flex-start" : l.ausr === "r" ? "flex-end" : "center";
     return `--lg:${f("grund")};--lf:${f("feld")};--lt:${f("text")};--la:${f("akt")};--lat:${f("akt_text")};--lfs:${typeof l.fs === "number" ? l.fs : L_FS[l.fs || "n"]}px;--ll:${l.linie === "aus" ? 0 : 3}px;--lr:${l.ecken ?? 0}px;--lgap:${l.fuge ?? 2}px;--ljust:${just};--lsym:${l.sym === "oben" ? "column" : "row"}`;
+  },
+  // Aktivitaeten der Leiste in ihrer Reihenfolge (2026-11-01: "lpos" je Aktivitaet, wie die Firmware dock_anwenden)
+  _leisteReihe() {
+    const acts = this.cfg?.activities || [];
+    return acts.map((a, i) => i).filter((i) => acts[i].dock ?? i < 4).slice(0, 4).sort((x, y) => (acts[x].lpos ?? x) - (acts[y].lpos ?? y));
+  },
+  // Feld in der Leiste an die Stelle eines anderen ziehen
+  _leisteSchieben(von, nach) {
+    const r = this._leisteReihe(), a = r.indexOf(von), b = r.indexOf(nach);
+    if (a < 0 || b < 0 || a === b) return false;
+    r.splice(b, 0, r.splice(a, 1)[0]);
+    r.forEach((i, k) => { this.cfg.activities[i].lpos = k; });
+    this._touch();
+    return true;
   },
   // Felder der Aktivitaeten-Leiste fuer die Vorschauen (2026-10-30: mit Symbolen)
   _leisteFelder(an) {
     const l = this.home?.leiste || this.cfg.home?.leiste || {};
-    return (this.cfg?.activities || []).map((a, i) => [a, i]).filter(([a, i]) => a.dock ?? i < 4).slice(0, 4)
-      .map(([a, i]) => `<span class="${i === an ? "an" : ""}">${l.sym && a.icon ? `<ha-icon icon="mdi:${esc(a.icon)}"></ha-icon>` : ""}${l.sym === "nur" && a.icon ? "" : `<small>${esc(a.name)}</small>`}</span>`).join("");
+    return this._leisteReihe().map((i) => [this.cfg.activities[i], i])
+      .map(([a, i]) => `<span class="${i === an ? "an" : ""}" data-ai="${i}" title="Ziehen = Reihenfolge in der Leiste">${l.sym && a.icon ? `<ha-icon icon="mdi:${esc(a.icon)}"></ha-icon>` : ""}${l.sym === "nur" && a.icon ? "" : `<small>${esc(a.name)}</small>`}</span>`).join("");
   },
   _hPageHead(p) {
     return `<div class="phd">
@@ -4324,6 +4525,14 @@ const HomeEditor = {
     return id;
   },
   _hClick(a, t) {
+    // Leisten in der Vorschau antippen (2026-11-01): ihre Einstellungen aufklappen und hinrollen
+    if (a === "hfok") {
+      const k = t.dataset.k, grp = k === "leiste" ? "hleiste" : "hstatus";
+      Object.assign(this.s, { hfok: k, mitem: null, msel: [], harea: null });
+      (this.s.mgrp ||= {})[grp] = true;
+      this.s.blink = `details[data-grp="${grp}"]`;
+      return true;
+    }
     if (a === "hstdsel") { this.s.hstd = true; this.s.mitem = null; return true; }
     if (a === "hneuseite") { const id = this._hVorlage(-1); Object.assign(this.s, { hstd: false, mpage: id, mitem: null }); this.s.msg = { text: "Startseite angelegt – links einer Aktivität zuordnen. Speichern nicht vergessen." }; this._touch(); return true; }
     if (a === "hakt_neu") { const id = this._hVorlage(Number(t.dataset.i)); this.s.msg = { text: "Startseite angelegt – „Bearbeiten“ öffnet sie im Menü-Editor. Speichern nicht vergessen." }; this.s.hneu = id; this._touch(); return true; }
@@ -4566,7 +4775,7 @@ const NeuEditor = {
         ${web ? `<esp-web-install-button manifest="${esc(m.manifest)}"><button slot="activate" class="btn primary"><ha-icon icon="mdi:usb"></ha-icon>Verbinden &amp; flashen</button>
           <span slot="unsupported">Dieser Browser kann kein USB – bitte Chrome oder Edge am PC.</span></esp-web-install-button>
           <small class="note">Im Fenster des Browsers den Port der Remote wählen (meist „USB JTAG/serial debug unit“). Löschen bestätigen.</small>`
-        : `<p class="note">Geht nur in <b>Chrome oder Edge am PC</b> und über https.${extern ? ` Öffne dafür <a href="${esc(extern)}/fernbedienung" target="_blank">${esc(extern)}/fernbedienung</a>.` : ""}</p>`}
+        : `<p class="note">Geht nur in <b>Chrome oder Edge am PC</b> und über https.${extern ? ` Öffne dafür <a href="${esc(extern)}/remote" target="_blank">${esc(extern)}/remote</a>.` : ""}</p>`}
         </section>
         <section class="neuweg"><h3><ha-icon icon="mdi:server"></ha-icon>USB am Home-Assistant-Server</h3>
           <label class="col">Port<select data-neu="port">${(m.ports || []).map((p) => `<option value="${esc(p.port)}" ${p.port === m.port ? "selected" : ""}>${esc(p.port)} – ${esc(p.desc || "")}</option>`).join("") || "<option value=''>keine Remote gefunden – per USB einstecken und Fenster neu öffnen</option>"}</select></label>
@@ -5826,6 +6035,13 @@ Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnProper
 // USB im Browser: Web Serial + esptool-js (lokal: esptool-0.5.4.js) - nur Chrome/Edge am PC und ueber https.
 const ESPTOOL_URL = new URL("esptool-0.5.4.js", import.meta.url).href;
 const CHIP = { dock: "ESP32-C3", remote: "ESP32-S3", test: "ESP32-S3" };
+// Docks (2026-11-01): auch ein anderer ESP32 darf das Dock nachahmen ("Dock-Nachbau": Proxy, Bluetooth-Tastatur,
+// Funk der Remote - ohne IR, 433 MHz, LEDs, Ladekontakte). Name wie esptool (chip.CHIP_NAME) -> ESPHome-Variante.
+const DOCK_CHIPS = { "ESP32-C3": "esp32c3", "ESP32": "esp32", "ESP32-S3": "esp32s3", "ESP32-C6": "esp32c6" };
+const DOCK_CHIP_NAME = Object.fromEntries(Object.entries(DOCK_CHIPS).map(([n, v]) => [v, n]));
+const DOCK_OHNE = { "ESP32-S2": "hat kein Bluetooth", "ESP32-H2": "hat kein WLAN", "ESP32-P4": "hat kein Funk", "ESP8266": "hat kein Bluetooth",
+  "ESP32-C2": "hat zu wenig Speicher", "ESP32-C5": "wird noch nicht unterstützt", "ESP32-C61": "wird noch nicht unterstützt" };
+const NACHBAU_TEXT = "Nicht der Original-Chip (ESP32-C3 mit Dock-Platine). Läuft als Dock-Nachbau: Bluetooth-Proxy, Bluetooth-Tastatur und Funk von der Remote gehen – IR, 433 MHz, LEDs, Taste und Ladekontakte fehlen.";
 // Anschluesse im Browser: eingebautes USB (Espressif) und die ueblichen USB-Seriell-Chips (CP210x, CH34x/CH9102, FTDI,
 // PL2303) - die Remote haengt an so einem. Vor dem Schreiben wird der Chip geprueft (CHIP), ein falsches Geraet bricht ab.
 const USB_VIDS = [0x303a, 0x10c4, 0x1a86, 0x0403, 0x067b];
@@ -5863,6 +6079,8 @@ const FW_CSS = `
 .hwdiag { margin:8px 0; } .hwdiag summary { cursor:pointer; color:var(--sec); font-size:13px; }
 ol.schritte { margin:6px 0 0 18px; padding:0; font-size:13px; color:var(--secondary-text-color); }
 .fw h3 { margin:18px 0 4px; }
+.fw .msg.warn, .hw .msg.warn { margin:6px 0 0; background:rgba(217,119,6,.13); border:1px solid rgba(217,119,6,.4); font-size:13px; }
+.hw .zeile input { font-size:14px; padding:6px 8px; border-radius:8px; border:1px solid var(--div); background:var(--primary-background-color); color:var(--primary-text-color); }
 `;
 const usbGeht = () => !!(window.isSecureContext && navigator.serial);
 // Offene Ports dieses Tabs. esptool-js disconnect() laesst den Port nach einem Fehler offen (Reader bleibt gesperrt),
@@ -5934,7 +6152,7 @@ const FirmwareTab = {
       <div class="kopf"><ha-icon icon="${g.art === "dock" ? "mdi:dock-window" : g.art === "test" ? "mdi:clipboard-check-outline" : "mdi:remote"}"></ha-icon><b>${esc(g.friendly || g.name)}</b>${wlan}<small>${esc(g.datei)}${g.fw ? ` · Version ${esc(g.fw)}` : ""}</small><span class="grow"></span>${g.veraltet ? '<span class="badge warn">Neue Version</span>' : ""}${this._fwBadges(g)}</div>
       ${extra}
       ${g.alt ? `<div class="haweg klein"><ha-icon icon="mdi:file-alert-outline"></ha-icon><div><b>Datei in alter Form</b>
-        <span>${g.art === "dock" ? "Sie bindet <code>templates/dock-basis.yaml</code> ein – die gibt es nur beim Entwickler." : "Sie holt die Firmware von <code>@master</code> bzw. reicht die Passwörter nicht durch – das Bauen scheitert."}
+        <span>${g.art === "dock" ? "Sie bindet eine Vorlage aus <code>templates/</code> ein – die gibt es nur beim Entwickler." : "Sie holt die Firmware von <code>@master</code> bzw. reicht die Passwörter nicht durch – das Bauen scheitert."}
         Umstellen schreibt sie auf die Firmware von GitHub um (Zweig stabil); die alte bleibt als <code>${esc(g.datei)}.alt</code>.</span>
         <div class="inl"><button class="btn small primary" data-a="fw_umstellen" data-datei="${esc(g.datei)}"><ha-icon icon="mdi:auto-fix"></ha-icon>Auf GitHub-Firmware umstellen</button></div></div></div>` : ""}
       <div class="zeile" style="margin-top:6px">
@@ -5972,6 +6190,7 @@ const FirmwareTab = {
     }
     if (u) {
       teile.push(`<div class="${u.fehler ? "msg err" : ""}" style="margin-top:6px"><b>USB:</b> ${esc(u.text || "")}${u.fehler ? " – " + esc(u.fehler) : ""}
+        ${u.hinweis ? `<div class="msg warn" style="margin-top:6px"><ha-icon icon="mdi:chip"></ha-icon> ${esc(u.hinweis)}</div>` : ""}
         ${u.pct != null && !u.fertig ? `<div class="balken"><i style="width:${u.pct}%"></i></div>` : ""}</div>`);
     }
     const wartend = (this.s.fw.schlange || []).filter((x) => x.status === "wartet" && x.job_id !== j?.job_id);
@@ -6074,15 +6293,13 @@ const FirmwareTab = {
     let port;
     try { port = await navigator.serial.requestPort({ filters: USB_VIDS.map((v) => ({ usbVendorId: v })) }); }
     catch (e) { this.s.msg = { err: true, text: "Kein USB-Gerät gewählt. Steckt es am Computer? Ist es noch in einem anderen Tab (z. B. ESPHome Web) verbunden?" }; return; }
-    const u = fw.usb = { datei: g.datei, text: "Firmware wird gebaut …", pct: null, log: [], fertig: false };
+    const u = fw.usb = { datei: g.datei, text: "Verbinde mit dem Gerät …", pct: null, log: [], fertig: false };
     const log = (t) => { if (t) { u.log.push(String(t).trimEnd()); if (u.log.length > 200) u.log.shift(); } };
     this._render();
     let transport;
     try {
-      const j = await this._fwStarten([g.datei], "");
-      if (j.status !== "fertig") throw new Error("Bauen fehlgeschlagen" + (j.fehler ? ": " + j.fehler : ""));
-      u.text = "Firmware wird geladen …"; this._render();
-      const daten = await this._fwHolen(g.datei);
+      // Erst verbinden und den Chip pruefen (2026-11-01, vorher erst bauen): ein Dock darf auch ein anderer ESP32 sein,
+      // dann wird die Dock-Datei auf diesen Chip umgestellt und dafuer gebaut. Der Chip wartet so lange im Download-Modus.
       u.text = "Verbinde mit dem Gerät …"; this._render();
       const { ESPLoader, Transport } = await import(ESPTOOL_URL);
       await portFrei(port);
@@ -6091,8 +6308,26 @@ const FirmwareTab = {
       const loader = new ESPLoader({ transport, baudrate: 460800, romBaudrate: 115200,
         terminal: { clean() {}, writeLine: log, write: log } });
       const chip = await loader.main();
+      const chipName = String(loader.chip?.CHIP_NAME || chip).toUpperCase();
       log(`Chip: ${chip}`);
-      if (CHIP[g.art] && !String(chip).toUpperCase().startsWith(CHIP[g.art])) throw new Error(`Falsches Gerät: ${chip}, erwartet ${CHIP[g.art]} (${g.art === "dock" ? "Dock" : "Remote"})`);
+      if (g.art === "dock") {
+        if (DOCK_OHNE[chipName]) throw new Error(`${chipName} ${DOCK_OHNE[chipName]} – damit geht kein Dock. Möglich: ESP32-C3 (Original), ESP32, ESP32-S3, ESP32-C6.`);
+        const v = DOCK_CHIPS[chipName];
+        if (!v) throw new Error(`Unbekannter Chip ${chip} – möglich: ESP32-C3 (Original), ESP32, ESP32-S3, ESP32-C6.`);
+        // Original-Datei + C3 bleibt Original; sonst Nachbau mit dem erkannten Chip
+        const soll = !g.nachbau && v === "esp32c3" ? "original" : v;
+        if (soll !== (g.nachbau ? g.chip : "original")) {
+          log(`Dock-Datei wird auf ${chipName} umgestellt`);
+          await this._hass.callWS({ type: "esphomeremote_konfig/docks_chip", datei: g.datei, chip: soll });
+        }
+        if (soll !== "original") u.hinweis = `${chipName} erkannt. ${NACHBAU_TEXT}`;
+        this._render();
+      } else if (CHIP[g.art] && !chipName.startsWith(CHIP[g.art])) throw new Error(`Falsches Gerät: ${chip}, erwartet ${CHIP[g.art]} (Remote)`);
+      u.text = "Firmware wird gebaut …"; this._render();
+      const j = await this._fwStarten([g.datei], "");
+      if (j.status !== "fertig") throw new Error("Bauen fehlgeschlagen" + (j.fehler ? ": " + j.fehler : ""));
+      u.text = "Firmware wird geladen …"; this._render();
+      const daten = await this._fwHolen(g.datei);
       let bin = "";
       for (let i = 0; i < daten.length; i += 0x8000) bin += String.fromCharCode.apply(null, daten.subarray(i, i + 0x8000));
       u.text = "Flashen …"; u.pct = 0; this._render();
@@ -6186,10 +6421,10 @@ const FirmwareTab = {
         <button class="btn small" data-a="fw_reload" title="Neu laden"><ha-icon icon="mdi:refresh"></ha-icon></button>
         <button class="btn small" data-a="fw_allevormerken" title="Alle veralteten Remotes vormerken: jetzt bauen, aufspielen beim nächsten Benutzen" ${updates.some((x) => x.art === "remote" && !x.vorgemerkt) ? "" : "disabled"}><ha-icon icon="mdi:calendar-clock"></ha-icon>Alle vormerken</button>
         <button class="btn primary" data-a="fw_alle" ${updates.length && !beschaeftigt ? "" : "disabled"}><ha-icon icon="mdi:update"></ha-icon>Alle aktualisieren${updates.length ? ` (${updates.length})` : ""}</button></div>
-      <p class="hint">${fw.lokal ? `Eine Quelle für alle: Remotes entstehen aus <code>esphome/templates/remote.yaml</code> und <code>remote-halink.yaml</code> (vor jedem Bauen neu erzeugt), Docks aus <code>esphome/templates/dock-basis.yaml</code>.`
+      <p class="hint">${fw.lokal ? `Eine Quelle für alle: Remotes entstehen aus <code>esphome/templates/remote.yaml</code> und <code>remote-halink.yaml</code> (vor jedem Bauen neu erzeugt), Docks aus <code>esphome/templates/dock-basis.yaml</code> (Kern + Platine, Nachbauten nur <code>dock-kern.yaml</code>).`
           : `Remotes und Docks holen ihre Firmware beim Bauen von GitHub (Zweig <code>stabil</code> = letzter Release) – im ESPHome-Ordner liegt je Gerät nur eine kleine Datei mit Name und Passwörtern aus <code>secrets.yaml</code>.`}
         „Update bereit“ = die Datei ergibt eine andere Firmware als die auf dem Gerät. Ist das WLAN einer Remote aus (Dock-Betrieb), schaltet HA es vorher über das Dock ein.
-        ${usbGeht() ? "" : `<br><b>USB im Browser</b> geht nur in Chrome/Edge am PC und über ${this._hass.config?.external_url ? `<a href="${esc(this._hass.config.external_url)}/fernbedienung" target="_blank" rel="noopener">https</a>` : "https"}.`}</p>
+        ${usbGeht() ? "" : `<br><b>USB im Browser</b> geht nur in Chrome/Edge am PC und über ${this._hass.config?.external_url ? `<a href="${esc(this._hass.config.external_url)}/remote" target="_blank" rel="noopener">https</a>` : "https"}.`}</p>
       ${fw.fehler ? `<div class="msg err">${esc(fw.fehler)}</div>` : ""}
       ${alt.length ? `<div class="neuversion"><ha-icon icon="mdi:gift-outline"></ha-icon><span><b>Neue Version ${esc(fw.version)}</b> – ${alt.length} Gerät${alt.length === 1 ? "" : "e"} haben noch eine ältere Firmware: ${alt.map((g) => `${esc(g.friendly || g.name)} (${esc(g.fw || "ohne Versionsangabe")})`).join(", ")}.
         „Alle aktualisieren“ baut und spielt sie auf – schlafende Remotes kurz anfassen.</span></div>` : fw.version ? `<small class="note">Version ${esc(fw.version)} – alle Geräte aktuell.</small>` : ""}
@@ -6222,13 +6457,25 @@ const FirmwareTab = {
     if (!fw?.geladen) { if (!fw?.laedt) { (this.s.fw ||= { weg: {}, job: null, usb: null }).laedt = true; this._fwLaden(); } return `<h3>Docks</h3><div class="karte">Lade …</div>`; }
     if (fw.fehlerWs) return `<h3>Docks</h3><div class="msg err">${esc(fw.fehlerWs)}</div>`;
     const karten = fw.geraete.filter((g) => g.art === "dock").map((g) => this._fwDockKarte(g)).join("");
+    // Neues Dock (2026-11-01): Name + Chip. Original = ESP32-C3 mit Dock-Platine, sonst Dock-Nachbau (nur Kern).
+    // Beim Flashen per USB erkennt der Konfigurator den Chip ohnehin selbst und stellt die Datei passend um.
+    const nd = fw.neudock;
+    const form = !nd ? "" : `<div class="karte hw"><div class="kopf"><ha-icon icon="mdi:dock-window"></ha-icon><b>Neues Dock</b></div>
+      <div class="zeile"><label>Name<input data-neudock="name" value="${esc(nd.name)}" maxlength="22" placeholder="z. B. Dock Schlafzimmer"></label>
+        <label>Chip<select data-neudock="chip">${[["original", "ESP32-C3 mit Dock-Platine (Original, empfohlen)"], ...Object.entries(DOCK_CHIPS).map(([n, v]) => [v, `${n} – Nachbau ohne Platine`])]
+          .map(([v, n]) => `<option value="${v}" ${nd.chip === v ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+        <button class="btn primary small" data-a="fw_neudock_ok"><ha-icon icon="mdi:check"></ha-icon>Anlegen</button>
+        <button class="btn small ghost" data-a="fw_neudock_weg">Abbrechen</button></div>
+      ${nd.chip !== "original" ? `<div class="msg warn" style="margin-top:6px">${esc(NACHBAU_TEXT)}</div>` : ""}
+      <small class="note">Kein Dock, aber ein ESP32 übrig? Als Nachbau ist er Bluetooth-Proxy für „Home Assistant über Bluetooth“ und Bluetooth-Tastatur zum Fernseher. Beim Flashen per USB erkennt der Konfigurator den Chip selbst. Nicht möglich: ESP32-S2 (kein Bluetooth), ESP32-H2 (kein WLAN).</small></div>`;
     return `<div class="dkopf"><h3>Docks</h3><span class="grow"></span>
         <button class="btn small" data-a="fw_neudock"><ha-icon icon="mdi:plus"></ha-icon>Neues Dock</button></div>
-      ${karten || `<div class="karte">Noch kein Dock. „+ Neues Dock“ legt die Konfiguration an.</div>`}`;
+      ${form}${karten || `<div class="karte">Noch kein Dock. „+ Neues Dock“ legt die Konfiguration an.</div>`}`;
   },
   _fwDockKarte(g) {
     return this._fwKarte(g,
-      `${g.sender ? `<div class="ents">IR-Sender <code>${esc(g.sender)}</code>${g.bt_mac ? ` · Bluetooth-Proxy <code>${esc(g.bt_mac)}</code>` : ""}</div>` : ""}
+      `${g.sender || g.bt_mac ? `<div class="ents">${[g.sender ? `IR-Sender <code>${esc(g.sender)}</code>` : "", g.bt_mac ? `Bluetooth-Proxy <code>${esc(g.bt_mac)}</code>` : ""].filter(Boolean).join(" · ")}</div>` : ""}
+       ${g.nachbau ? `<div class="ents"><span class="badge warn">Nachbau · ${esc(DOCK_CHIP_NAME[g.chip] || g.chip)}</span> ${esc(NACHBAU_TEXT)}</div>` : ""}
        ${!g.geflasht ? `<ol class="schritte"><li>Dock per USB anstecken und „Per USB flashen“ (oder am Home-Assistant-Rechner einstecken).</li>
          <li>Danach verbindet es sich mit dem WLAN – dann „In Home Assistant einbinden“.</li>
          <li>Soll eine Remote über das Dock mit Home Assistant reden: Fernbedienung › Bluetooth › „Home Assistant über Bluetooth (Proxys)“ – dort das Dock anhaken.</li></ol>` : ""}`);
@@ -6383,12 +6630,15 @@ const FirmwareTab = {
       case "fw_sperre":
         await this._hass.callWS({ type: "esphomeremote_konfig/fw_sperren", datei, gesperrt: !g.gesperrt });
         await this._fwLaden(); return true;
-      case "fw_neudock": {
-        const name = prompt("Name des neuen Docks (z. B. „Dock Schlafzimmer“, höchstens 22 Zeichen):", "Dock ");
-        if (!name || !name.trim() || name.trim() === "Dock") return true;
+      case "fw_neudock": fw.neudock = fw.neudock ? null : { name: "Dock ", chip: "original" }; return true;
+      case "fw_neudock_weg": fw.neudock = null; return true;
+      case "fw_neudock_ok": {
+        const nd = fw.neudock;
+        if (!nd?.name?.trim() || nd.name.trim() === "Dock") { this.s.msg = { err: true, text: "Bitte einen Namen eingeben (z. B. „Dock Schlafzimmer“)." }; return true; }
         try {
-          const r = await this._hass.callWS({ type: "esphomeremote_konfig/docks_anlegen", name: name.trim() });
+          const r = await this._hass.callWS({ type: "esphomeremote_konfig/docks_anlegen", name: nd.name.trim(), chip: nd.chip });
           this.s.msg = { text: `${r.datei} angelegt – jetzt per USB flashen.` };
+          fw.neudock = null;
           await this._fwLaden();
         } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
         return true;
@@ -6444,6 +6694,12 @@ const EINST_GRUPPEN = [
       "Helligkeit im abgedunkelten Zustand, bezogen auf die normale Helligkeit."],
   ], "<b>Die Stufen der Remote:</b> <b>Hell</b> → nach „Abdunkeln nach“ <b>abgedunkelt</b> → nach „Display aus nach“ <b>Ruhezustand</b> (Display aus, der Chip läuft weiter, Bluetooth zum Fernseher bleibt verbunden, jede Taste wirkt sofort) → nach „Tiefschlaf nach“ <b>Tiefschlaf</b> (Chip fast ganz aus, Akku hält Wochen; Wecken = Neustart, ca. 4 s bis die Tasten wirken)."],
   ["Anzeige", "mdi:monitor-dashboard", [
+    ["sprache", "Sprache des Displays", [[0, "Wie Home Assistant"], [1, "Deutsch"], [2, "English"]],
+      "Sprache der Texte auf dem Display dieser Remote. „Wie Home Assistant“ folgt der Systemsprache von HA (Deutsch, sonst Englisch). Gilt nur für diese Remote und läuft im Abgleich nicht mit. Deine eigenen Namen bleiben, wie sie sind. Die Remote startet nach dem Umstellen kurz neu."],
+    ["linkshaender", "Linkshänder", null,
+      "Spiegelt Touchpad (Scroll-Streifen links, untere Knöpfe getauscht) und Ziffernblock (OK links). Gilt nur für diese Remote und läuft im Abgleich nicht mit – so können Links- und Rechtshänder dieselbe Belegung teilen. Feineinstellung im Menü-Editor beim Touchpad- bzw. Ziffern-Popup."],
+    ["x_rechts", "X-Knopf rechts", null,
+      "Zurück/X sitzt oben rechts statt links, die ganze Kopfzeile ist gespiegelt und Seiten wechseln andersherum. Unabhängig von „Linkshänder“ – nimm, was dir besser liegt. Die Remote startet nach dem Umstellen kurz neu. Läuft im Abgleich nicht mit."],
     ["show_ble", "Bluetooth-Symbol", null,
       "Balken für Bluetooth zu Fernseher/Streamer. Blau = verbunden (Balken = Empfang), grau = an, aber nicht verbunden, dunkel = Bluetooth aus."], ["show_wifi", "WLAN-Symbol", null,
       "Balken fürs WLAN. Grün = verbunden, grau = verbindet gerade, dunkel = WLAN aus (im Dock-Betrieb der Normalfall)."], ["show_batt", "Akkustand", null,
@@ -7143,6 +7399,14 @@ const EinstTab = {
       <p class="hint">Welche Geräte aus Home Assistant die eingebauten Funktionen von ${esc(devName(this.s.dev))} nutzen. Wirksam nach „Speichern“ – ohne neue Firmware.</p>
       <div class="egrid">${karten}</div></div>`;
   },
+  // Akzentfarbe der Remote (cfg.akzent): bei Tasten (unter dem Remote-Bild) und unter Einstellungen › Anzeige (2026-11-01,
+  // Nutzer: "wo kann ich die Akzentfarbe einstellen ... gesamt irgendwo")
+  _akzentHtml() {
+    return `
+        <div class="lsfarben"><label class="farbe"><input type="color" data-akzent="1" value="${esc((this.cfg?.akzent || "#3B82F6").toLowerCase())}"><span>Akzent</span>${this.cfg?.akzent ? `<button class="icon sm" data-a="akzentweg" title="Zurück zu Blau"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</label>
+          ${["#3B82F6", "#8B5CF6", "#EC4899", "#EF4444", "#F97316", "#EAB308", "#22C55E", "#14B8A6", "#06B6D4"].map((c) => `<button class="akzfeld ${(this.cfg?.akzent || "#3B82F6") === c ? "on" : ""}" data-a="akzentsetz" data-c="${c}" style="background:${c}" title="${c}"></button>`).join("")}</div>
+        <small class="note">Ersetzt das Blau der Remote überall: Markierungen, Regler, Kopflinie, Aktivitäten-Leiste, Überschriften, Bewegungs-Symbol. Blau bleiben nur die Anzeigen, die Bluetooth bedeuten (Balken, HA über Bluetooth, Dock-Weg, Google). Speichern überträgt sie an die Remote.</small>`;
+  },
   _einstHtml() {
     this._einstZeile = null;
     const s = this.s, m = s.meta[s.dev] || {};
@@ -7173,7 +7437,8 @@ const EinstTab = {
       const feinHtml = fein ? `<details class="efein"><summary><ha-icon icon="mdi:tune"></ha-icon>Feineinstellungen</summary>${fein}</details>` : "";
       const wlanHinweis = titel === "Energie" && w.nur_ble !== false
         ? `<p class="ehilfe">WLAN-Optionen erscheinen nur bei der Verbindungsart „Nur WLAN“ – im Dock-Betrieb ist das WLAN ohnehin aus und kommt nur bei Bedarf.</p>` : "";
-      return z || fein ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>${intro ? `<div class="eintro">${intro}</div>` : ""}${z}${wlanHinweis}${feinHtml}</div>` : "";
+      const akz = titel === "Anzeige" ? `<div class="ez"><span>Akzentfarbe <small>(ganze Remote · mit „Speichern“)</small></span></div>${this._akzentHtml()}` : "";
+      return z || fein ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>${intro ? `<div class="eintro">${intro}</div>` : ""}${akz}${z}${wlanHinweis}${feinHtml}</div>` : "";
     }).join("") + this._begruessungHtml(zeile);
     const zeit = m.einst_at ? new Date(m.einst_at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "–";
     const nAnders = Object.keys(std).filter((k) => k in w && std[k] !== w[k]).length;
@@ -7567,7 +7832,7 @@ const FunktionenTab = {
     const kam = F.kameras.map((x) => { const v = k.kameras[x.id]; return `<div class="fkam ${v ? "an" : ""}">
         <label class="sw small"><input type="checkbox" data-fk="kam_an" data-e="${esc(x.id)}" ${v ? "checked" : ""}><span><b>${esc(x.name)}</b><small>${esc(x.id)}</small></span></label>
         ${v ? `<input data-fk="kam_name" data-e="${esc(x.id)}" value="${esc(v.name)}" placeholder="Name auf dem TV">
-          ${k.go2rtc ? `<input data-fk="kam_src" data-e="${esc(x.id)}" value="${esc(v.src)}" placeholder="go2rtc-Name (${esc(x.id.split(".")[1])})">` : ""}
+          ${k.go2rtc && k.weg === "hatv" ? `<input data-fk="kam_src" data-e="${esc(x.id)}" value="${esc(v.src)}" placeholder="go2rtc-Name (${esc(x.id.split(".")[1])})">` : ""}
           <button class="btn small" data-a="fk_kam" data-e="${esc(x.id)}" title="Jetzt auf dem Fernseher zeigen"><ha-icon icon="mdi:television-play"></ha-icon>Zeigen</button>` : ""}</div>`; }).join("");
     const neu = c.neustart.map((g, i) => `<div class="fneu">
         <input data-fk="ns_name" data-i="${i}" value="${esc(g.name)}" placeholder="Name, z. B. Streamer">
@@ -7585,13 +7850,18 @@ const FunktionenTab = {
         ${t.tv && t.streamer ? ez("CEC-Sensor (optional)", wahl(`data-fk="cec"`, F.sensoren, t.cec, "– keiner –"), "Steht er auf true/an, meldet der Sensor den Eingang des Streamers – hilft, wenn der Fernseher die Quelle nicht verlässlich meldet.") : ""}
         ${t.tv ? `<div class="ez"><span class="zt">Jetzt</span><b>${esc(eingang)}</b></div>` : ""}</div>
       <div class="karte"><h3><ha-icon icon="mdi:cctv"></ha-icon>Kamera auf dem Fernseher</h3>
-        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – über die App <b>HA TV Dashboard</b> auf dem Fernseher/Streamer. Aktionen: <code>esphomeremote_konfig.kamera_tv</code> (Kamera, „letzte“ oder „aus“) und <code>kamera_groesse</code> (Klein/Mittel/Groß/„naechste“). Für Popups: <code>binary_sensor.esphomeremote_kamera_tv</code>.</div>
-        ${ez("Fernseher (App)", wahl(`data-fk="notify"`, F.notify.map((x) => ({ id: x, name: x.replace("notify.mobile_app_", "") })), k.notify, "– keiner (Funktion aus) –"), "Benachrichtigungsdienst der App HA TV Dashboard")}
-        ${ez("go2rtc-Adresse (optional)", `<input data-fk="go2rtc" value="${esc(k.go2rtc)}" placeholder="http://…:1984">`, "Mit go2rtc als WebRTC (schnell), leer = HLS von Home Assistant")}
+        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – als Overlay über allem: das laufende Video (YouTube, Netflix …) läuft weiter, der Ton der Kamera ist aus. Aktionen: <code>esphomeremote_konfig.kamera_tv</code> (Kamera, „letzte“ oder „aus“), <code>kamera_groesse</code> und <code>kamera_position</code> (je auch „naechste“). Für Popups: <code>binary_sensor.esphomeremote_kamera_tv</code>.</div>
+        ${ez("Weg", `<select data-fk="weg"><option value="app" ${k.weg !== "hatv" ? "selected" : ""}>ESPHomeRemote Streamer-App (empfohlen)</option><option value="hatv" ${k.weg === "hatv" ? "selected" : ""}>App HA TV Dashboard</option></select>`,
+          k.weg === "hatv" ? "Benachrichtigung an die App HA TV Dashboard" : "Overlay unserer Streamer-App (Wiedergabe › Streamer, ab Version 1.9): WebRTC über Home Assistant (kaum Verzögerung), sonst HLS, sonst Standbilder")}
+        ${k.weg === "hatv" ? `${ez("Fernseher (App)", wahl(`data-fk="notify"`, F.notify.map((x) => ({ id: x, name: x.replace("notify.mobile_app_", "") })), k.notify, "– keiner (Funktion aus) –"), "Benachrichtigungsdienst der App HA TV Dashboard")}
+        ${ez("go2rtc-Adresse (optional)", `<input data-fk="go2rtc" value="${esc(k.go2rtc)}" placeholder="http://…:1984">`, "Mit go2rtc als WebRTC (schnell), leer = HLS von Home Assistant")}`
+          : ez("Streamer", wahl(`data-fk="kstreamer"`, F.streamer || [], k.streamer, (F.streamer || []).length ? "– erster mit ADB –" : "– keiner eingerichtet –"), (F.streamer || []).length ? "" : "Erst unter Wiedergabe einen Streamer mit ADB-Entität einrichten und die App aufspielen.")}
         ${ez("Position", `<select data-fk="position">${FKT_POS.map(([v, l]) => `<option value="${v}" ${k.position === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
-        ${ez("Größe", `<select data-fk="groesse">${["Klein", "Mittel", "Groß"].map((v) => `<option ${k.groesse === v ? "selected" : ""}>${v}</option>`).join("")}</select>`)}
+        ${ez("Größe", `<select data-fk="groesse">${["Klein", "Mittel", "Groß", ...(k.weg === "hatv" ? [] : ["Fast Vollbild"])].map((v) => `<option ${k.groesse === v ? "selected" : ""}>${v}</option>`).join("")}</select>`, k.groesse === "Fast Vollbild" ? "Ganzer Bildschirm mit schmalem Rand" : "")}
+        ${k.weg === "hatv" ? "" : ez("Ausblenden nach", `<select data-fk="sekunden">${[[0, "nie (bis „aus“)"], [15, "15 s"], [30, "30 s"], [60, "1 min"], [120, "2 min"], [300, "5 min"]].map(([v, l]) => `<option value="${v}" ${Number(k.sekunden || 0) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
+        ${k.weg === "hatv" ? "" : ez("Name im Bild", `<label class="sw"><input type="checkbox" data-fk="titel" ${k.titel !== false ? "checked" : ""}></label>`)}
         <div class="fkams">${kam || '<div class="none">Keine Kameras in Home Assistant.</div>'}</div>
-        ${k.notify ? `<div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_kam" data-e="aus"><ha-icon icon="mdi:television-off"></ha-icon>Kamera ausblenden</button></div>` : ""}</div>
+        ${k.notify || k.weg !== "hatv" ? `<div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_kam" data-e="aus"><ha-icon icon="mdi:television-off"></ha-icon>Kamera ausblenden</button></div>` : ""}</div>
       <div class="karte"><h3><ha-icon icon="mdi:restart"></ha-icon>Neustart per ADB</h3>
         <div class="eintro">Hängt ein Android-Gerät (Streamer, Fernseher), startet es die Remote neu – Aktion <code>esphomeremote_konfig.neustart</code> mit dem Namen. Mit Android-TV-Entität über deren ADB-Verbindung, sonst direkt per IP${F.adb_schluessel ? "" : ` <b>(dafür die Integration „Android Debug Bridge“ einmal einrichten – sie legt den Schlüssel an)</b>`}.</div>
         ${neu || '<div class="none">Noch kein Gerät.</div>'}
@@ -7606,7 +7876,10 @@ const FunktionenTab = {
     const f = t.dataset.fk, c = this.s.fkt?.cfg;
     if (!f || !c) return false;
     if (["tv", "streamer", "cec"].includes(f)) await this._fktSetzen({ tv_eingang: { [f]: t.value } });
-    else if (["notify", "go2rtc", "position", "groesse"].includes(f)) await this._fktSetzen({ kamera_tv: { [f]: t.value } });
+    else if (["notify", "go2rtc", "position", "groesse", "weg"].includes(f)) await this._fktSetzen({ kamera_tv: { [f]: t.value } });
+    else if (f === "kstreamer") await this._fktSetzen({ kamera_tv: { streamer: t.value } });
+    else if (f === "sekunden") await this._fktSetzen({ kamera_tv: { sekunden: Number(t.value) } });
+    else if (f === "titel") await this._fktSetzen({ kamera_tv: { titel: t.checked } });
     else if (f === "kam_an") await this._fktSetzen({ kamera_tv: { kameras: { [t.dataset.e]: t.checked ? { name: "", src: "" } : null } } });
     else if (f === "kam_name" || f === "kam_src") {
       const v = { ...(c.kamera_tv.kameras[t.dataset.e] || {}) }; v[f === "kam_name" ? "name" : "src"] = t.value;
@@ -7787,7 +8060,9 @@ const GestenTab = {
       <div class="gliste">
         <div class="karte" style="border:1px solid var(--rand);border-radius:14px;padding:10px 12px;background:var(--card)">
           ${"gesten_an" in w ? `<label class="sw"><input type="checkbox" data-einst="gesten_an" ${w.gesten_an ? "checked" : ""}><span><b>Gesten an</b></span></label>
-          <label class="sw small"><input type="checkbox" data-einst="gesten_dunkel" ${w.gesten_dunkel ? "checked" : ""}><span>Auch bei dunklem Display</span></label>
+          <div class="inl" style="margin-top:6px;font-size:13px;color:var(--sec)" title="Mit Taste: Die Remote misst nur, solange du die Taste hältst – spart Akku, geht auch bei dunklem Display. Die Taste selbst löst dann nichts anderes aus.">Auslösen <select data-gtaste="1">
+            <option value="0">bei jeder Bewegung</option>${Object.entries(KEYNAME).filter(([k]) => Number(k) < 900).map(([k, n]) => `<option value="${k}" ${Number(g.taste) === Number(k) ? "selected" : ""}>nur solange „${esc(n)}“ gehalten wird</option>`).join("")}</select></div>
+          ${g.taste ? "" : `<label class="sw small"><input type="checkbox" data-einst="gesten_dunkel" ${w.gesten_dunkel ? "checked" : ""}><span>Auch bei dunklem Display</span></label>`}
           <div class="inl" style="margin-top:8px;font-size:13px;color:var(--sec)">Empfindlichkeit <select data-einst="gesten_sens">${[[0, "Streng"], [1, "Normal"], [2, "Empfindlich"]].map(([v, l]) => `<option value='${v}' ${w.gesten_sens === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>`
           : `<small class="note">Die Remote braucht dafür die neue Firmware (Werkstatt).</small>`}
         </div>
@@ -7851,6 +8126,12 @@ const GestenTab = {
     return false;
   },
   _gestenChange(t) {
+    if (t.dataset.gtaste) {   // Ausloese-Taste (2026-11-01)
+      const g = (this.cfg.gesten ||= {}), k = Number(t.value);
+      if (k) g.taste = k; else delete g.taste;
+      this._touch();
+      return true;
+    }
     if (t.dataset.gest) {
       const o = clone(this._gestObj() || {});
       if (t.dataset.gest === "neuname") { this.s.gestNeuName = t.value; return false; }
@@ -8002,6 +8283,9 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .rk.on .rkt b { color:var(--acc); }
 .subnav { display:flex; flex-direction:column; gap:1px; padding:0 6px 0 10px; }
 .subnav .ni { padding:7px 10px 7px 12px; font-size:13.5px; gap:11px; } .subnav .ni > ha-icon { --mdc-icon-size:18px; }
+.nsprache { margin-top:auto; display:flex; align-items:center; gap:6px; padding:16px 10px 0; color:var(--sec); --mdc-icon-size:16px; }
+.nsprache select { flex:1; min-width:0; font-size:12px; padding:4px 6px; border-radius:8px; border:1px solid var(--div); background:transparent; color:inherit; }
+.nsprache + .nfuss { margin-top:0; }
 .nfuss { margin-top:auto; padding:18px 10px 0; font-size:10.5px; color:var(--sec); display:flex; flex-direction:column; gap:2px; opacity:.8; }
 
 /* Kopf */
@@ -8313,7 +8597,7 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
 @container huelle (min-width: 761px) and (max-width: 1100px) {
   .app { grid-template-columns:78px minmax(0,1fr); }
   .side { padding:14px 9px; align-items:center; }
-  .brand { padding:2px 0 14px; } .brand .bt, .suche.nav > span, .suche.nav kbd, .ni > span, .rkt, .nfuss { display:none; }
+  .brand { padding:2px 0 14px; } .brand .bt, .suche.nav > span, .suche.nav kbd, .ni > span, .rkt, .nfuss, .nsprache { display:none; }
   .suche.nav { width:46px; height:40px; justify-content:center; padding:0; }
   .nsec { padding:0; margin:12px 0 8px; width:36px; height:1px; background:var(--rand); font-size:0; }
   .ni { width:48px; height:44px; justify-content:center; padding:0; }
@@ -8558,8 +8842,11 @@ const OberflaecheTab = {
       ${this._docks().length ? `<div class="nsec">Docks</div><div class="dliste">${(this._dlisteAlt = this._dockListeHtml())}</div>` : ""}
       <div class="nsec">Zuhause</div>
       ${SEITEN_SYSTEM.map(([k, t, i]) => item(s.bereich === k, k, "", i, t, k === "dock" && s.dock?.dirty ? '<i class="punkt warn"></i>' : k === "werk" && this._fwUpdZahl() ? `<i class="punkt warn" title="${this._fwUpdZahl()} Update(s) bereit"></i>` : "")).join("")}
+      <label class="nsprache" translate="no"><ha-icon icon="mdi:translate"></ha-icon><select data-sprache>${[["auto", I18N.sprache === "de" ? "Automatisch (wie Home Assistant)" : "Automatic (like Home Assistant)"], ["de", "Deutsch"], ["en", "English"]]
+        .map(([v, l]) => `<option value="${v}" ${this._spracheWahl() === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <div class="nfuss"><span>Panel ${esc(PANEL_STAND)}</span><span>Strg K = Suche · Strg S = Speichern</span></div>`;
   },
+  _spracheWahl() { try { return localStorage.getItem("esphomeremote_sprache_" + (this._hass?.user?.id || "")) || "auto"; } catch (e) { return "auto"; } },
   // Docks in der festen Reihenfolge aus HA (docks_einst.ordnung), neue hinten nach Name
   _docks() {
     const fw = this.s.fw;
@@ -9163,6 +9450,7 @@ const OberflaecheTab = {
     A("Sicherung herunterladen", "Alle Remotes als Datei", "mdi:download", () => this._click({ target: this._knopf("bk_down") }), "backup export");
     A("Sicherung einspielen", "Aus Datei wiederherstellen", "mdi:upload", () => this._click({ target: this._knopf("bk_up") }), "backup import restore");
     A("Firmware aktualisieren", "Updates für Remotes und Docks", "mdi:update", geh("fw"), "ota flashen");
+    A("Akzentfarbe", `Farbe statt Blau auf der ganzen Remote · ${rn}`, "mdi:format-color-fill", geh("remote", "einst"), "farbe akzent blau theme design");
     A("Bluetooth-Plätze verwalten", rn, "mdi:bluetooth-connect", geh("remote", "bt"), "koppeln pairing");
     A("Hardware-Test", "Platine prüfen: Tasten, Mikrofon, Display, Touch, IR, Sensoren …", "mdi:clipboard-check-outline", geh("werk"), "hardware platinen test pcb mikrofon tasten");
     const c = this.cfg;
@@ -9375,7 +9663,7 @@ const SYNC_BEREICHE = {
 const SYNC_WEITERE = {
   maus_slots: "Maus je Bluetooth-Platz", voll_slots: "Volle Tastatur je Bluetooth-Platz", maus_tempo: "Zeigertempo",
   maus_dpad: "Steuerkreuz als Maus", maus_dpad_tempo: "Tempo Steuerkreuz", maus_zurueck: "Zurück-Taste im Touchpad",
-  gesten_an: "Gesten an", gesten_dunkel: "Gesten bei dunklem Display", gesten_sens: "Gesten-Empfindlichkeit", begruessung: "Begrüßung zeigen",
+  linkshaender: "Linkshänder", x_rechts: "X-Knopf rechts", gesten_an: "Gesten an", gesten_dunkel: "Gesten bei dunklem Display", gesten_sens: "Gesten-Empfindlichkeit", begruessung: "Begrüßung zeigen",
 };
 
 const SyncTab = {

@@ -20,6 +20,15 @@ struct Layout {
 
 static const char *const MAP_ZIFFERN[] = {
   "1", "2", "3", "\n", "4", "5", "6", "\n", "7", "8", "9", "\n", "<–", "0", "OK", ""};
+// Varianten (2026-11-01, Konfigurator "eingabe", Linkshaender): 7-8-9 oben wie ein Rechner, untere Reihe gespiegelt
+static const char *const MAP_ZIFFERN_S[] = {
+  "1", "2", "3", "\n", "4", "5", "6", "\n", "7", "8", "9", "\n", "OK", "0", "<–", ""};
+static const char *const MAP_ZIFFERN_R[] = {
+  "7", "8", "9", "\n", "4", "5", "6", "\n", "1", "2", "3", "\n", "<–", "0", "OK", ""};
+static const char *const MAP_ZIFFERN_RS[] = {
+  "7", "8", "9", "\n", "4", "5", "6", "\n", "1", "2", "3", "\n", "OK", "0", "<–", ""};
+// bit 0: 7-8-9 oben, bit 1: untere Reihe gespiegelt (OK links)
+inline int &ziffern_art() { static int a = 0; return a; }
 static const uint8_t BR_ZIFFERN[12] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 static const uint8_t RE_ZIFFERN[4] = {3, 3, 3, 3};
 
@@ -46,10 +55,11 @@ static const uint8_t BR_TASTATUR[47] = {
 static const uint8_t RE_TASTATUR[5] = {10, 10, 10, 9, 8};
 
 inline const Layout &layout(int modus, bool gross) {
-  static const Layout ziffern = {MAP_ZIFFERN, BR_ZIFFERN, RE_ZIFFERN, 4, 12, 4};
+  static const Layout ziffern[4] = {{MAP_ZIFFERN, BR_ZIFFERN, RE_ZIFFERN, 4, 12, 4}, {MAP_ZIFFERN_R, BR_ZIFFERN, RE_ZIFFERN, 4, 12, 4},
+                                    {MAP_ZIFFERN_S, BR_ZIFFERN, RE_ZIFFERN, 4, 12, 4}, {MAP_ZIFFERN_RS, BR_ZIFFERN, RE_ZIFFERN, 4, 12, 4}};
   static const Layout klein   = {MAP_KLEIN, BR_TASTATUR, RE_TASTATUR, 5, 47, 15};
   static const Layout grossl  = {MAP_GROSS, BR_TASTATUR, RE_TASTATUR, 5, 47, 15};
-  return modus == 0 ? ziffern : (gross ? grossl : klein);
+  return modus == 0 ? ziffern[ziffern_art() & 3] : (gross ? grossl : klein);
 }
 
 // Naechste Taste bei D-Pad-Druck. richtung: 0 hoch, 1 runter, 2 links, 3 rechts.

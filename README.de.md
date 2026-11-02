@@ -22,6 +22,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/Lizenz-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
 </p>
 
+<p align="center"><img src="docs/bilder/remote-echt.png" alt="Die Remote im Dock mit dem Smart Display, eine zweite Remote mit dem Menü" width="100%"><br>
+<sub>Gerendert aus dem 3D-Modell der Hardware (<a href="https://github.com/LORDSn1per/OpenRemote-Hardware">OpenRemote Rev6</a>, GPL-3.0) – auf den Displays läuft diese Firmware.</sub></p>
+
 <p align="center"><img src="docs/bilder/hero.png" alt="ESPHomeRemote: Fernbedienung mit Touch-Display und der Konfigurator in Home Assistant" width="100%"></p>
 
 <p align="center">
@@ -202,6 +205,9 @@ Sleeptimer, Bildmodus …). Eine Seite mit einem Klick an deine anderen Remotes 
 - **Funkbrücke zu Home Assistant** – Tastenbefehle, Stand (Player, Fernseher, Timer) und Cover gehen per ESP-NOW
   verschlüsselt übers Dock: sofort nach dem Aufwachen, ohne dass die Remote erst eine Verbindung aufbaut.
   Im Konfigurator wählbar: **WLAN**, **Bluetooth**, **Dock + Bluetooth** oder **Dock, sparsam**.
+- **Kein Dock? Jeder ESP32 geht** – ein ESP32, ESP32-S3, ESP32-C6 oder ein nackter ESP32-C3 ersetzt das Dock:
+  Bluetooth-Proxy für die Remote, Bluetooth-Tastatur zum Fernseher und Funkbrücke laufen, IR, 433 MHz, LEDs und
+  Ladekontakte fehlen. Geflasht wird aus dem Konfigurator per USB – der Chip wird automatisch erkannt.
 
 **Konfigurator in Home Assistant** – alles im Browser, am PC und am Handy:
 Übersicht mit Akkuverlauf, **Suche mit Strg+K**, Tabelle aller Tasten, Änderungsliste mit Rückgängig,
@@ -283,10 +289,6 @@ Deinstallieren gehen dort genauso. Auf dem Fernseher zeigt sie unter „ESPHomeR
 - **Fernbedienungen und Docks:** danach im Konfigurator unter *Firmware* steht „Neue Version …“ –
   **Alle aktualisieren** baut und spielt sie auf (schlafende Remotes kurz anfassen).
 - Die Firmware kommt vom Zweig `stabil` (letzter Release).
-- **Alte Dateinamen:** Bis 27.10.2026 hießen die Dateien `open-remote.yaml` / `open-remote-firmware.yaml` und
-  `open-dock.yaml` / `open-dock-firmware.yaml`. Die alten Firmware-Namen funktionieren vorerst weiter; im
-  Konfigurator unter *Firmware* stellt **Umstellen** die Gerätedatei auf die neuen Namen um (die alte bleibt als
-  `.alt` liegen). Von Hand: den `packages:`-Block durch den aus [`esphomeremote.yaml`](esphomeremote.yaml) ersetzen.
 - Was neu ist: [CHANGELOG.md](CHANGELOG.md).
 
 
@@ -371,7 +373,7 @@ Dort stellst du auch den TV-Eingang (für Popups wie „Nur wenn TV-Eingang ist 
 **Entwickler-Fassung (1:1 wie im Einsatz)** – zusätzlich zur einfachen Fassung oben liegt hier alles, womit die
 Remotes tatsächlich gebaut werden:
 - `templates/remote.yaml` (Firmware) und `templates/remote-halink.yaml` (Bluetooth-Schicht „Nur Bluetooth“,
-  HA über BLE/Dock – diese Datei wird geflasht), `templates/dock-basis.yaml` (Dockingstation),
+  HA über BLE/Dock – diese Datei wird geflasht), `templates/dock-basis.yaml` (Dockingstation = `dock-kern.yaml` + `dock-platine.yaml`; ein Dock-Nachbau auf einem anderen ESP32 nutzt nur den Kern),
   `remote-dev-tests.yaml` (Testwerkzeuge, abschaltbar).
 - `tools/remotes.py` erzeugt daraus je Remote `remote-wz-<name>.yaml` und `remote-wz-<name>-halink.yaml`
   (Liste in `tools/remotes.json`, IP-Secret `ip_remote_wz_<name>`). Bauen/Flashen: `tools/esphome_run.mjs`.

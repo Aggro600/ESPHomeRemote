@@ -510,6 +510,37 @@ int DockHid::platz_von_(const uint8_t bda[6]) const {
   return -1;
 }
 
+// Bekanntes Geraet mit anderer Adresse (2026-11-01): in der Bindungsliste die Bindung zu dieser Adresse suchen
+// (gleiche Adresse, aufloesbar ueber ihren IRK oder ihre statische Adresse) und ueber deren Identitaet den Platz.
+// Der Platz lernt dabei Identitaet und IRK, falls sie beim Koppeln fehlten.
+int DockHid::platz_ueber_bindung_(const uint8_t bda[6]) {
+  int n = esp_ble_get_bond_device_num();
+  if (n <= 0) return -1;
+  std::vector<esp_ble_bond_dev_t> liste(n);
+  esp_ble_get_bond_device_list(&n, liste.data());
+  for (int i = 0; i < n; i++) {
+    const auto &b = liste[i];
+    const bool id = b.bond_key.key_mask & ESP_LE_KEY_PID;
+    if (!(memcmp(b.bd_addr, bda, 6) == 0 || (id && aufloesen_(bda, b.bond_key.pid_key.irk)) ||
+          (id && memcmp(b.bond_key.pid_key.static_addr, bda, 6) == 0)))
+      continue;
+    for (int k = 0; k < anzahl_; k++) {
+      Platz &pl = plaetze_[k];
+      if (!pl.belegt) continue;
+      if (memcmp(pl.addr, b.bd_addr, 6) == 0 || (id && memcmp(pl.addr, b.bond_key.pid_key.static_addr, 6) == 0) ||
+          (id && pl.hat_irk && memcmp(pl.irk, b.bond_key.pid_key.irk, 16) == 0)) {
+        if (id && !pl.hat_irk) {
+          memcpy(pl.irk, b.bond_key.pid_key.irk, 16);
+          pl.hat_irk = 1;
+          speichern_();
+        }
+        return k;
+      }
+    }
+  }
+  return -1;
+}
+
 void DockHid::speichern_() {
   pref_.save(&plaetze_);
   global_preferences->sync();
@@ -710,14 +741,19 @@ void DockHid::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_par
       }
       v->sicher = true;
       int p = platz_von_(ac.bd_addr);
-      if (p < 0 && koppel_platz_ >= 0) {
+      const bool neue_adresse = p < 0 && (p = platz_ueber_bindung_(ac.bd_addr)) >= 0;   // bekanntes Geraet, andere Adresse
+      if (neue_adresse) {
+        v->platz = p;
+        ESP_LOGI(TAG, "Platz %d verbunden: %s (neue Adresse %s, ueber die Bindung erkannt)", p + 1, plaetze_[p].name, a);
+      } else if (p < 0 && koppel_platz_ >= 0) {
         neu_gekoppelt_(*v, ac.bd_addr);
       } else if (p >= 0) {
         v->platz = p;
         ESP_LOGI(TAG, "Platz %d verbunden: %s", p + 1, plaetze_[p].name);
       } else {
-        ESP_LOGI(TAG, "%s: alte Bindung ohne Platz - vergessen und getrennt", a);
-        esp_ble_remove_bond_device(v->bda);
+        // 2026-11-01: Bindung NICHT mehr loeschen (Nutzer: TV-Kopplung verschwand immer wieder). Passte die Adresse
+        // keinem Platz, war die Kopplung danach auf beiden Seiten kaputt - jetzt nur trennen.
+        ESP_LOGW(TAG, "%s: Bindung ohne Platz - getrennt (Bindung bleibt)", a);
         esp_ble_gap_disconnect(v->bda);
       }
       geaendert_ = true;

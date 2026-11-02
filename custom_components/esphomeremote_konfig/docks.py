@@ -23,7 +23,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 
-from .firmware import DOCK_BASIS as BASIS, ESPHOME_DIR, Dash, dock_dateien, test_dateien
+from .firmware import DOCK_BASIS as BASIS, DOCK_CHIPS, DOCK_KERN, ESPHOME_DIR, Dash, dock_dateien, test_dateien
 
 DOMAIN = "esphomeremote_konfig"
 _NAME_RE = re.compile(r"^dock-[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -40,7 +40,34 @@ def _slug(friendly: str) -> str:
     return s[:31].rstrip("-")
 
 
-def _anlegen(friendly: str) -> dict:
+def _dock_text(name: str, friendly: str, chip: str, notiz: str) -> str:
+    """Inhalt einer Dock-Datei. chip "original" = Original-Dock (ESP32-C3 + Platine), sonst Nachbau mit diesem Chip
+    (nur der Kern: Proxy, Bluetooth-Tastatur, Funk der Remote - 2026-11-01)."""
+    nachbau = chip != "original"
+    if nachbau and chip not in DOCK_CHIPS:
+        raise ValueError(f"Chip {chip} geht nicht (moeglich: {', '.join(n for n, _ in DOCK_CHIPS.values())})")
+    lokal = os.path.exists(os.path.join(ESPHOME_DIR, BASIS))   # Entwickler: gemeinsame Basis liegt lokal
+    if nachbau:
+        art = f"Dock-Nachbau auf {DOCK_CHIPS[chip][0]} (ohne IR, 433 MHz, LEDs, Ladekontakte)"
+        quelle = DOCK_KERN if lokal else "esphomeremote-dock-kern.yaml"
+    else:
+        art = "Original-Dock (ESP32-C3 + Platine)"
+        quelle = BASIS if lokal else "esphomeremote-dock-firmware.yaml"
+    text = f"# {friendly} - {notiz} ({time.strftime('%Y-%m-%d')}). {art}. Firmware: {quelle}.\n"
+    text += f"substitutions:\n  name: {name}\n  friendly_name: {friendly}\n"
+    if nachbau:
+        text += f"  dock_board: {DOCK_CHIPS[chip][1]}\n  dock_variant: {chip}\n"
+    if lokal:
+        return text + f"\npackages:\n  basis: !include {quelle}\n"
+    # Alle anderen (2026-10-26): Firmware als Paket von GitHub (Zweig "stabil"), Passwoerter aus secrets.yaml -
+    # vorher kam "templates/dock-basis.yaml fehlt"
+    return (text + "  wifi_ssid:         !secret wifi_ssid\n  wifi_password:     !secret wifi_password\n"
+            "  ota_pw:            !secret ota_pw\n  direkt_schluessel: !secret direkt_schluessel\n\n"
+            "packages:\n  basis:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: stabil\n"
+            f"    files: [{quelle}]\n    refresh: 0s\n")
+
+
+def _anlegen(friendly: str, chip: str = "original") -> dict:
     friendly = " ".join(friendly.split())
     if not friendly or len(friendly) > 22:
         raise ValueError("Name: 1 bis 22 Zeichen (er wird auch Name des Notfall-WLANs)")
@@ -52,31 +79,29 @@ def _anlegen(friendly: str) -> dict:
     pfad = os.path.join(ESPHOME_DIR, name + ".yaml")
     if os.path.exists(pfad):
         raise ValueError(f"{name}.yaml gibt es schon")
-    if os.path.exists(os.path.join(ESPHOME_DIR, BASIS)):   # Entwickler: gemeinsame Basis liegt lokal
-        text = (f"# {friendly} - angelegt im Konfigurator ({time.strftime('%Y-%m-%d')}). "
-                f"Firmware: {BASIS} (gemeinsam fuer alle Docks).\n"
-                f"substitutions:\n  name: {name}\n  friendly_name: {friendly}\n\n"
-                f"packages:\n  basis: !include {BASIS}\n")
-    else:
-        # Alle anderen (2026-10-26): Firmware als Paket von GitHub (Zweig "stabil"), Passwoerter aus secrets.yaml -
-        # vorher kam "templates/dock-basis.yaml fehlt"
-        text = (f"# {friendly} - angelegt im Konfigurator ({time.strftime('%Y-%m-%d')}). "
-                f"Firmware von GitHub (esphomeremote-dock-firmware.yaml, Zweig stabil).\n"
-                f"substitutions:\n  name: {name}\n  friendly_name: {friendly}\n"
-                f"  wifi_ssid:         !secret wifi_ssid\n  wifi_password:     !secret wifi_password\n"
-                f"  ota_pw:            !secret ota_pw\n  direkt_schluessel: !secret direkt_schluessel\n\n"
-                f"packages:\n  basis:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: stabil\n"
-                f"    files: [esphomeremote-dock-firmware.yaml]\n    refresh: 0s\n")
     with open(pfad, "w", encoding="utf-8") as f:
-        f.write(text)
+        f.write(_dock_text(name, friendly, chip, "angelegt im Konfigurator"))
     return {"datei": name + ".yaml", "name": name, "friendly": friendly}
 
 
-@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/docks_anlegen", vol.Required("name"): str})
+def _chip_setzen(datei: str, chip: str) -> dict:
+    """Dock-Datei auf einen anderen Chip umstellen (USB-Flashen erkennt den Chip, 2026-11-01). Alte Datei: <datei>.alt"""
+    f = next((x for x in dock_dateien() if x["datei"] == datei), None)
+    if f is None:
+        raise ValueError(f"{datei} ist kein Dock")
+    pfad = Path(ESPHOME_DIR) / datei
+    alt = pfad.read_text(encoding="utf-8")
+    (Path(ESPHOME_DIR) / (datei + ".alt")).write_text(alt, encoding="utf-8")
+    pfad.write_text(_dock_text(f["name"], f["friendly"], chip, "Chip umgestellt im Konfigurator"), encoding="utf-8")
+    return {"datei": datei, "chip": chip}
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/docks_anlegen", vol.Required("name"): str,
+                                  vol.Optional("chip", default="original"): str})
 @websocket_api.async_response
 async def ws_anlegen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     try:
-        r = await hass.async_add_executor_job(_anlegen, msg["name"])
+        r = await hass.async_add_executor_job(_anlegen, msg["name"], msg["chip"])
     except (ValueError, OSError) as err:
         connection.send_error(msg["id"], "anlegen", str(err))
         return
@@ -167,6 +192,19 @@ async def ws_entfernen(hass: HomeAssistant, connection: websocket_api.ActiveConn
     connection.send_result(msg["id"], {"entfernt": weg})
 
 
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote_konfig/docks_chip", vol.Required("datei"): str,
+                                  vol.Required("chip"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_chip(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    try:
+        r = await hass.async_add_executor_job(_chip_setzen, msg["datei"], msg["chip"])
+    except (ValueError, OSError) as err:
+        connection.send_error(msg["id"], "chip", str(err))
+        return
+    connection.send_result(msg["id"], r)
+
+
 def registrieren(hass: HomeAssistant) -> None:
-    for fn in (ws_anlegen, ws_einbinden, ws_entfernen):
+    for fn in (ws_anlegen, ws_einbinden, ws_entfernen, ws_chip):
         websocket_api.async_register_command(hass, fn)

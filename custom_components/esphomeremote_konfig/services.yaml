@@ -162,14 +162,25 @@ kamera_tv:
 
 kamera_groesse:
   name: Kamera-Größe auf dem Fernseher
-  description: Klein, Mittel, Groß oder "naechste" (durchschalten). Eine laufende Kamera übernimmt die neue Größe sofort.
+  description: Klein, Mittel, Groß, Fast Vollbild oder "naechste" (durchschalten). Eine laufende Kamera übernimmt die neue Größe sofort.
   fields:
     groesse:
       name: Größe
       example: naechste
       selector:
         select:
-          options: [Klein, Mittel, Groß, naechste]
+          options: [Klein, Mittel, Groß, Fast Vollbild, naechste]
+
+kamera_position:
+  name: Kamera-Ecke auf dem Fernseher
+  description: Ecke der Kamera (top-left, top-right, bottom-right, bottom-left, center) oder "naechste" (im Uhrzeigersinn). Eine laufende Kamera rückt sofort.
+  fields:
+    position:
+      name: Ecke
+      example: naechste
+      selector:
+        select:
+          options: [top-left, top-right, bottom-right, bottom-left, center, naechste]
 
 neustart:
   name: Gerät neu starten (ADB)

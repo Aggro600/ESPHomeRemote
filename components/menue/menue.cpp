@@ -1,4 +1,5 @@
 #include "menue.h"
+#include "sprache.h"   // Texte auf Englisch, wenn gewaehlt (2026-11-01)
 #include "esphome/components/tasten_konfig/tasten_konfig.h"
 #include "mdi_icons.h"
 #include "esphome/core/hal.h"
@@ -131,8 +132,9 @@ void Menue::laden_() {
   }
   start_ = m["start"] | (seiten_.empty() ? "" : seiten_[0].id.c_str());
   {
-    const int32_t hl = farbe_von(m["hl"] | "");
-    hl_ = g_hl = hl >= 0 ? (uint32_t) hl : C_RAHMEN_F;
+    const int32_t hl = farbe_von(m["hl"] | ""), ak = farbe_von(tk_->wurzel()["akzent"] | "");
+    akzent_ = ak >= 0 ? (uint32_t) ak : C_RAHMEN_F;
+    hl_ = g_hl = hl >= 0 ? (uint32_t) hl : akzent_;
   }
   if (seite_index_(start_) < 0 && !seiten_.empty()) start_ = seiten_[0].id.c_str();
   // Zustaende der Popup-Ausloeser abonnieren (die Kacheln holen ihre Zustaende per HTTP, solange die Seite offen
@@ -715,14 +717,15 @@ void Menue::titel_anim_(int r, uint32_t verz) {
   lv_obj_get_coords(titel_, &t);
   lv_obj_get_coords(zurueck_btn_, &b);   // mit Verschiebung (translate) ins blaue Feld
   lv_obj_get_content_coords(hd, &in);
-  const int ab = b.x2 + 1 + 4;            // rechter Rand des blauen Felds (4 px Rand um den Knopf)
-  // Fenster: vom blauen Feld bis zum rechten Displayrand, ganze Kopfhoehe ueber der Linie; schneidet ab
+  // Fenster: vom blauen Feld bis zum anderen Displayrand, ganze Kopfhoehe ueber der Linie; schneidet ab
+  // (X-Knopf rechts: vom linken Rand bis vor das Feld)
+  const int ab = spiegel_ ? k.x1 : b.x2 + 1 + 4, bis = spiegel_ ? b.x1 - 4 : k.x2 + 1;
   lv_obj_t *f = lv_obj_create(hd);
   lv_obj_remove_style_all(f);
   lv_obj_add_flag(f, LV_OBJ_FLAG_IGNORE_LAYOUT);
   lv_obj_remove_flag(f, (lv_obj_flag_t) (LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
   lv_obj_set_pos(f, ab - in.x1, k.y1 - in.y1);
-  lv_obj_set_size(f, k.x2 + 1 - ab, t.y2 + 1 - k.y1);
+  lv_obj_set_size(f, bis - ab, t.y2 + 1 - k.y1);
   lv_obj_set_user_data(f, this);
   titel_fenster_ = f;
   titel_r_ = r;
@@ -768,6 +771,7 @@ void Menue::titel_anim_(int r, uint32_t verz) {
 }
 
 void Menue::rutschen_(int r) {
+  if (spiegel_) r = -r;   // X-Knopf rechts: neue Seite kommt von links
   titel_anim_(r, 0);
   if (alt_ == nullptr || root_ == nullptr) return;
   rutsch_ = r;   // nur fuer den exec-Rueckruf (Richtung); bauen_ ist schon durch
@@ -1845,7 +1849,7 @@ void Menue::modus_anzeigen_() {
       if (strcmp(s["fn"] | "", "keymode") == 0) km = true;
     if (!km || it.obj == nullptr) continue;
     lv_obj_set_style_outline_width(it.obj, tmodus_ ? 3 : 0, 0);
-    lv_obj_set_style_outline_color(it.obj, lv_color_hex(0x3B82F6), 0);
+    lv_obj_set_style_outline_color(it.obj, lv_color_hex(akzent_), 0);
     lv_obj_set_style_outline_pad(it.obj, -3, 0);
   }
 }

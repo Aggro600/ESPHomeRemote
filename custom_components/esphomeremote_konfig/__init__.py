@@ -29,6 +29,7 @@ from aiohttp import web
 
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
+from .i18n import t as _t
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
@@ -43,9 +44,10 @@ _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "esphomeremote_konfig"
 STORE_VERSION = 1
-PANEL_URL = "fernbedienung"
+PANEL_URL = "remote"
+PANEL_URL_ALT = "fernbedienung"   # bis 2026-11-01 - alte Lesezeichen gehen weiter (ohne Eintrag in der Seitenleiste)
 STATIC_URL = "/esphomeremote_konfig_static"
-PANEL_VERSION = "173"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "184"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -111,6 +113,8 @@ def validate_config(cfg: dict) -> dict:
             out_acts[-1]["nochmal"] = str(a["nochmal"])
         if re.fullmatch(r"[a-z0-9\-]{1,40}", str(a.get("icon") or "")):   # Symbol in der Aktivitaeten-Leiste (2026-10-30)
             out_acts[-1]["icon"] = str(a["icon"])
+        if isinstance(a.get("lpos"), int) and not isinstance(a.get("lpos"), bool) and 0 <= a["lpos"] < 64:   # Platz in der Leiste (2026-11-01)
+            out_acts[-1]["lpos"] = a["lpos"]
     if sum(1 for a in out_acts if a["dock"]) > 4:
         raise vol.Invalid("Hoechstens 4 Aktivitaeten passen in die Leiste")
     out = {"v": 1, "activities": out_acts}
@@ -137,6 +141,17 @@ def validate_config(cfg: dict) -> dict:
               if k in ("rahmen", "gehaeuse", "taste", "power", "symbol", "display", "rot", "gruen", "gelb", "blau") and re.fullmatch(r"#[0-9A-Fa-f]{6}", str(v))}
         if rf:
             out["rfarben"] = rf
+    # Touchpad/Ziffernblock anordnen (2026-11-01): "auto" folgt der Einstellung Linkshaender der Remote
+    if isinstance(cfg.get("eingabe"), dict):
+        e, eo = cfg["eingabe"], {}
+        for k, erlaubt in (("tp_streifen", ("l", "r")), ("tp_reihe", ("n", "s")), ("zf_unten", ("n", "s")), ("zf_reihe", ("789",))):
+            if e.get(k) in erlaubt:
+                eo[k] = e[k]
+        if eo:
+            out["eingabe"] = eo
+    # Akzentfarbe der Remote (2026-11-01): ersetzt das Blau ueberall (ausser den Bluetooth-Anzeigen)
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(cfg.get("akzent") or "")):
+        out["akzent"] = str(cfg["akzent"]).upper()
     if "menu" in cfg:
         out["menu"] = validate_menu(cfg["menu"])
     if isinstance(cfg.get("home"), dict):
@@ -220,6 +235,12 @@ def validate_gesten(g: dict) -> dict:
                       "s": validate_steps(e.get("s") or [], f"Geste {e.get('n')}"), **_gesten_taste(e)})
     if eigen:
         out["eigen"] = eigen
+    try:   # Ausloese-Taste (2026-11-01): Gesten nur, solange diese Taste gehalten wird
+        t = int(g.get("taste") or 0)
+    except (TypeError, ValueError):
+        t = 0
+    if t in KEYCODES and t < 900:
+        out["taste"] = t
     return out
 
 
@@ -560,7 +581,10 @@ def kachel_optionen(it: dict, pid: str) -> dict:
 
 def widget_optionen(it: dict) -> dict:
     """Felder eines Widgets: art, teile (Kombi), we/me (Entitaeten), mz, leer, datum, takt, bild"""
-    o = {"art": it.get("art") if it.get("art") in ("uhr", "wetter", "akku", "medien", "timer", "kamera", "kombi", "licht") else "uhr"}
+    o = {"art": it.get("art") if it.get("art") in ("uhr", "wetter", "akku", "medien", "timer", "kamera", "kombi", "licht",
+                                                    "touchpad", "scroll", "mausknopf") else "uhr"}
+    if o["art"] == "mausknopf":   # Touchpad-Teile (2026-11-01): Mausknopf links/rechts
+        o["knopf"] = "rechts" if it.get("knopf") == "rechts" else "links"
     if o["art"] == "licht":   # Licht-Widget (2026-10-29): Lampen [{e, n}], Gruppe fuer "Alle", Szenen, Unterseite, Teile
         la = []
         for x in (it.get("lichter") or [])[:12]:
@@ -928,6 +952,10 @@ class KonfigData:
             cfg["dmac"] = dmac
         if dip := self.dock_ips():
             cfg["dip"] = dip
+        # Sprache von HA fuer das Display ("Automatisch" auf der Remote), 2026-11-01
+        from .i18n import sprache as ha_sprache
+
+        cfg["sprache"] = ha_sprache(self.hass)
         return device_payload(cfg)
 
     def dock_macs(self) -> dict:
@@ -1036,7 +1064,7 @@ class KonfigData:
             f"sensor.esphomeremote_konfig_{dev_slug(dev)}",
             fnv1a(body),
             {
-                "friendly_name": f"Tasten-Konfiguration {dev}",
+                "friendly_name": f"{_t(self.hass, 'Tasten-Konfiguration')} {dev}",
                 "icon": "mdi:remote",
                 "bytes": len(body),
                 "enabled": bool(e.get("enabled")),
@@ -1186,12 +1214,18 @@ class StatesView(HomeAssistantView):
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    from .i18n import setzen as i18n_setzen
+
+    i18n_setzen(hass)   # Sprache fuer Entitaetsnamen und Meldungen (2026-11-01), vor allen Plattformen
     if DOMAIN in config:
         await _starten(hass, config[DOMAIN]["key"], config[DOMAIN]["devices"])
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
+    from .i18n import setzen as i18n_setzen
+
+    i18n_setzen(hass)   # Sprache fuer Entitaetsnamen und Meldungen (2026-11-01)
     """Einrichtung ueber die Oberflaeche (Schluessel + Geraete aus dem Dialog)."""
     if DOMAIN in hass.data:   # schon per YAML eingerichtet
         return True
@@ -1255,8 +1289,19 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
         hass,
         frontend_url_path=PANEL_URL,
         webcomponent_name="esphomeremote-konfigurator",
-        sidebar_title="Fernbedienung",
+        # Name in der Seitenleiste nach der Sprache von HA (2026-11-01, Nutzer: alles lokalisieren, Adresse /remote)
+        sidebar_title="Fernbedienung" if str(hass.config.language or "").lower().startswith("de") else "Remote",
         sidebar_icon="mdi:remote",
+        module_url=f"{STATIC_URL}/konfigurator.js?v={PANEL_VERSION}",
+        embed_iframe=False,
+        require_admin=False,
+    )
+    await panel_custom.async_register_panel(
+        hass,
+        frontend_url_path=PANEL_URL_ALT,
+        webcomponent_name="esphomeremote-konfigurator",
+        sidebar_title=None,
+        sidebar_icon=None,
         module_url=f"{STATIC_URL}/konfigurator.js?v={PANEL_VERSION}",
         embed_iframe=False,
         require_admin=False,
@@ -1372,6 +1417,10 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
 
     funktionen = hass.data[DOMAIN + "_funktionen"] = Funktionen(hass, kd)
     hass.http.register_view(AnzeigeView(kd, anzeige))
+    # Kamera als Overlay der eigenen Streamer-App (2026-11-01): WebRTC-Angebot, HLS, Standbild ohne HA-Anmeldung
+    from .tvkamera import einrichten as tvkamera_einrichten
+
+    tvkamera_einrichten(hass)
     bruecke = hass.data[DOMAIN + "_bruecke"] = Bruecke(hass, kd)
     licht = hass.data[DOMAIN + "_licht"] = Licht(hass, kd)
 

@@ -8,6 +8,7 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .dock import DOMAIN, NAMEN, IrBasis, Verwalter
+from .i18n import t as _t
 
 
 async def async_setup_platform(hass, config, add, discovery_info=None) -> None:
@@ -20,7 +21,7 @@ class IrButton(IrBasis, ButtonEntity, RestoreEntity):
         self._ir_init(v, g)
         self._n = n
         name, icon = NAMEN.get(n, (n, "mdi:remote"))
-        self._attr_name = f"{g['name']} {name}"
+        self._attr_name = f"{g['name']} {_t(None, name)}"
         self._attr_icon = icon
         self._attr_unique_id = f"ir_{g['id']}_b_{n}"
         self.entity_id = f"button.ir_{g['id']}_{re.sub(r'[^a-z0-9]+', '_', n.lower()).strip('_')}"

@@ -10,6 +10,7 @@ from homeassistant.core import Event, callback
 from homeassistant.exceptions import HomeAssistantError
 
 from .dock import DOMAIN, Verwalter, zustand_unbekannt
+from .i18n import t as _t
 
 
 async def async_setup_platform(hass, config, add, discovery_info=None) -> None:
@@ -34,13 +35,13 @@ class AktBasis:
         self._attr_unique_id = uid
         acts = (v.kd.entry(dev).get("config") or {}).get("activities") or []
         self._akt = acts[i].get("name") if i < len(acts) else f"Aktivität {i + 1}"
-        self._attr_name = f"{_remote_name(dev)} Aktivität {self._akt}"
+        self._attr_name = f"{_remote_name(dev)} {_t(None, 'Aktivität')} {self._akt}"
         self._wunsch: int | None = None   # noch nicht zugestellt (Remote nicht erreichbar)
         self._sensor_id: str | None = None
 
     def umbenennen(self, akt: str) -> None:
         self._akt = akt
-        self._attr_name = f"{_remote_name(self.dev)} Aktivität {akt}"
+        self._attr_name = f"{_remote_name(self.dev)} {_t(None, 'Aktivität')} {akt}"
         if self.hass:
             self.async_write_ha_state()
 

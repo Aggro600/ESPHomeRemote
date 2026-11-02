@@ -137,7 +137,7 @@ inline lv_obj_t *zeile(const char *name, const char *wert, uint32_t farbe, int t
   lv_obj_set_style_pad_ver(b, 6, 0);
   lv_obj_set_style_bg_color(b, lv_color_hex(0x232A35), 0);
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(b, lv_color_hex(0x2563EB), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(b, lv_color_hex(akzent::stufen(akzent::farbe()).f[1]), LV_STATE_PRESSED);
   lv_obj_set_style_radius(b, 11, 0);
   lv_obj_set_style_border_width(b, 2, 0);
   lv_obj_set_style_border_color(b, lv_color_hex(0x232A35), 0);
@@ -190,7 +190,7 @@ inline lv_obj_t *notiz(const std::string &t, uint32_t farbe = 0x8B94A3, const lv
 }
 
 inline void kopf(const char *t) {
-  lv_obj_t *l = notiz(t, 0x3B82F6);
+  lv_obj_t *l = notiz(t, akzent::farbe());
   lv_obj_set_style_pad_top(l, 6, 0);
 }
 
@@ -201,7 +201,7 @@ inline void fokus_zeigen() {
   for (size_t i = 0; i < s.fokus.size(); i++) {
     lv_obj_t *b = s.fokus[i];
     const bool f = (int) i == s.fi;
-    lv_obj_set_style_border_color(b, f ? lv_color_hex(0x3B82F6) : lv_obj_get_style_bg_color(b, LV_PART_MAIN), 0);
+    lv_obj_set_style_border_color(b, f ? lv_color_hex(akzent::farbe()) : lv_obj_get_style_bg_color(b, LV_PART_MAIN), 0);
   }
   lv_obj_scroll_to_view(s.fokus[s.fi], LV_ANIM_ON);
 }
@@ -286,7 +286,7 @@ inline void zeichnen() {
       lv_obj_set_style_radius(p, LV_RADIUS_CIRCLE, 0);
       const bool fertig = i < (int) l.proben.size() && i != l.ersetzen;
       const bool jetzt = l.phase <= 1 && (l.ersetzen >= 0 ? i == l.ersetzen : i == (int) l.proben.size());
-      lv_obj_set_style_bg_color(p, lv_color_hex(fertig ? 0x22C55E : jetzt ? 0x3B82F6 : 0x3A4250), 0);
+      lv_obj_set_style_bg_color(p, lv_color_hex(fertig ? 0x22C55E : jetzt ? akzent::farbe() : 0x3A4250), 0);
       lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
     }
     const int nr = (l.ersetzen >= 0 ? l.ersetzen : (int) l.proben.size()) + 1;
@@ -627,7 +627,7 @@ inline void takt() {
     if (b != s.bereit) {
       s.bereit = b;
       static const char *T[] = {"Ruhig halten ...", "Jetzt die Geste ausführen", "Bewegung läuft ..."};
-      static const uint32_t F[] = {0xFACC15, 0x22C55E, 0x3B82F6};
+      const uint32_t F[] = {0xFACC15, 0x22C55E, akzent::farbe()};
       lv_label_set_text(s.lbl_klein, T[b]);
       lv_obj_set_style_text_color(s.lbl_klein, lv_color_hex(F[b]), 0);
     }

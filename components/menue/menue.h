@@ -54,7 +54,8 @@ enum Typ : uint8_t { T_TEXT, T_PAGE, T_SPECIAL, T_ACTION, T_TOGGLE, T_LIGHT, T_C
 // Medien "leer": "weg" = ohne Wiedergabe keine Zeilen (die Seite rueckt zusammen). Kamera "takt" (s), Uhr "datum" vor|nach|aus.
 // Licht (2026-10-29): "lichter" [{e, n}], "gruppe" (fuer "Alle"), "szenen" [{e, n}], "ziel" (Seite beim Antippen des Kopfs),
 // "lteile" (lampen, hell, temp, farbe, palette, szenen; fehlt = alle, soweit Platz). Bedienung ueber esphomeremote_konfig.licht.
-enum WidgetArt : uint8_t { W_KEIN, W_UHR, W_WETTER, W_AKKU, W_MEDIEN, W_TIMER, W_KAMERA, W_KOMBI, W_LICHT };
+enum WidgetArt : uint8_t { W_KEIN, W_UHR, W_WETTER, W_AKKU, W_MEDIEN, W_TIMER, W_KAMERA, W_KOMBI, W_LICHT,
+                          W_TPAD, W_TSCROLL, W_MKNOPF };   // Touchpad-Teile (2026-11-01): frei im Menue anordnen
 // Rollen der Unter-Widgets (Item::wo)
 enum WRolle : uint8_t { WR_ZEIT, WR_DATUM, WR_W_ICON, WR_W_TEMP, WR_W_TEXT, WR_W_FC, WR_A_WERT, WR_A_ICON, WR_A_BAR, WR_M_TITEL,
                         WR_M_SUB, WR_M_BAR, WR_M_PLAY, WR_M_BILD, WR_T_ZEIT, WR_T_BAR, WR_T_NAME, WR_K_BILD, WR_K_PH,
@@ -184,6 +185,8 @@ class Menue : public Component {
   // Unterseiten-Kacheln oeffnen das richtige Menue (seite_oeffnen)
   void set_nur_anzeige(bool n) { nur_anzeige_ = n; }
   std::function<void(const std::string &seite)> seite_oeffnen;
+  // Touchpad-Teile im Menue (2026-11-01): art 0 Flaeche, 1 Scroll-Streifen, 2 Linksklick, 3 Rechtsklick
+  std::function<void(lv_event_t *e, int art)> maus_ereignis;
   void startseite(const std::string &id);   // Seite id zeigen (leer = nichts)
   const std::string &startseite_id() const { return start_zeigt_; }
   // Menue (nicht Popup) direkt auf Seite id oeffnen (von der Startseite aus): Startseite + Seite im Stapel
@@ -217,6 +220,7 @@ class Menue : public Component {
   void oeffnen(bool merken);
   void anzeigen();               // aktuelle Seite neu aufbauen (Rueckkehr aus einer Spezialseite)
   void einblenden(uint32_t ab);   // Karten von oben nach unten einblenden (Menue oeffnen)
+  void set_spiegel(bool s) { spiegel_ = s; }   // X-Knopf rechts: Seiten wechseln andersherum (2026-11-01)
   // Gemerkte eingebaute Seite wieder oeffnen (Menue-Taste im Merkfenster), wie per Eintrag mit "merken"
   void spezial_oeffnen(const std::string &name);
   bool zurueck();                // false = war schon oben
@@ -350,6 +354,8 @@ class Menue : public Component {
  private:
   const lv_font_t *f_text_{nullptr}, *f_klein_{nullptr}, *f_icon_{nullptr}, *f_gross_{nullptr}, *f_xs_{nullptr}, *f_xl_{nullptr};
   uint32_t hl_{0x3B82F6};   // Hervorhebung (menu.hl): Rahmen der Markierung, Regler, Zurueck-Knopf
+  bool spiegel_{false};   // X-Knopf rechts (2026-11-01): Seitenwechsel andersherum
+  uint32_t akzent_{0x3B82F6};   // Akzentfarbe der Remote (Konfigurator "akzent", 2026-11-01) - Standard fuer hl_ und blaue Teile
 
   bool an_{false};
   std::string start_;
@@ -397,7 +403,8 @@ class Menue : public Component {
   void licht_bauen_(Item &it);
   void licht_zustand_(Item &it);
   void licht_senden_(Item &it, const char *aktion, const std::string &wert);
-  void unterseite_oeffnen_(const std::string &ziel);   // Unterseite (aus einem LVGL-Ereignis heraus: verzoegert)
+  void unterseite_oeffnen_(const std::string &ziel);
+  void maus_bauen_(Item &it);   // Touchpad-Teil (W_TPAD/W_TSCROLL/W_MKNOPF)   // Unterseite (aus einem LVGL-Ereignis heraus: verzoegert)
   int licht_hell_jetzt_(Item &it);                     // Helligkeit der (gewaehlten) Lampen in %, 0 = aus
   bool licht_taste_(Item &it, int dx, int dy);         // Steuerkreuz im Licht-Widget (true = erledigt)
   bool licht_ok_(Item &it);                            // OK auf Palette/Szene im Licht-Widget

@@ -24,9 +24,9 @@ CFG_BEREICHE = ("activities", "home", "menu", "modi", "gesten", "makros", "ir", 
 # Von Anfang an abgewaehlt: Begruessungstext (enthaelt meist den Namen), Debug-Modus (nur zum Entwickeln),
 # Nur Bluetooth (Funkweg je Remote wie ha_link_modus; 2026-10-25: eine Fehlmeldung beim Start einer Remote schaltete
 # sonst bei allen das WLAN wieder ein)
-STANDARD_AUS = ("cfg:begruessung", "einst:ps_log_debug", "einst:nur_ble")
+STANDARD_AUS = ("cfg:begruessung", "einst:ps_log_debug", "einst:nur_ble", "einst:linkshaender", "einst:x_rechts", "einst:sprache")
 # Spaeter dazugekommen: einmal in bestehende Gruppen eintragen (danach kann man es im Konfigurator wieder anwaehlen)
-NACHTRAG_AUS = ("einst:nur_ble",)
+NACHTRAG_AUS = ("einst:nur_ble", "einst:linkshaender", "einst:x_rechts", "einst:sprache")   # linkshaender (2026-11-01): je Person, nicht fuer die ganze Gruppe
 # Mehr gleichzeitig geaenderte Werte in einer Meldung der Remote gelten als Neustart/Zuruecksetzen, nicht als Bedienung
 MAX_GEMELDET = 6
 # Einstellungen, die die Firmware nicht mehr kennt (stehen noch im gemeldeten Stand alter Remotes)

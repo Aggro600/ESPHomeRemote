@@ -61,14 +61,16 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.1.1"
+    version: "2026.11.2.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
+    - esphomeremote-sprache.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
     - esphomeremote-logpuffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
     - esphomeremote-pm.h
     - esphomeremote-strom.h
     - esphomeremote-eingabe.h
     - esphomeremote-einstellungen.h   # Einstellungen fuers Konfigurator-Menue (generiert, 2026-10-04)
+    - esphomeremote-akzent.h   # Akzentfarbe aus dem Konfigurator (2026-11-01)
     - esphomeremote-tasten.h   # Tasten-Konfigurator (2026-10-03)
     - esphomeremote-wlan.h
     - esphomeremote-sd-bilder.h
@@ -418,6 +420,9 @@ esphome:
             ESP_LOGI("tasten", "Start-Aktivitaet: %s", id(akt_an) ? id(tk_cfg).aktivitaet_name(id(activity)).c_str() : "keine");
             id(apply_activity).execute();
             if (id(cur_page) == 0) { tasten::startseite_anwenden(); tasten::dock_anwenden(id(activity)); }
+        - lambda: 'sprache::englisch() = id(sprache_wahl) == 2 || (id(sprache_wahl) == 0 && id(sprache_ha_en));'
+        - script.execute: akzent_anwenden
+        - lambda: 'id(mn)->set_spiegel(id(x_rechts)); touchpad::menue_anbinden();'   # X-Knopf rechts; Touchpad-Teile im Menue
         # Log-Ausfuehrlichkeit aus der Einstellung (Standard INFO).
         - if:
             condition: {lambda: 'return id(ps_log_debug);'}
@@ -1001,7 +1006,7 @@ font:
     id: mdi_menu
     size: 20
     bpp: 4
-    glyphs: ["\U000F001B", "\U000F0020", "\U000F0026", "\U000F0035", "\U000F0045", "\U000F004D", "\U000F0054", "\U000F005D", "\U000F1818", "\U000F0079", "\U000F0084", "\U000F02E3", "\U000F0099", "\U000F009A", "\U000F009C", "\U000F00AC", "\U000F1011", "\U000F00AF", "\U000F00DF", "\U000F0100", "\U000F010B", "\U000F0118", "\U000F0119", "\U000F07AE", "\U000F0769", "\U000F011C", "\U000F012C", "\U000F0140", "\U000F0141", "\U000F0142", "\U000F0143", "\U000F0156", "\U000F0176", "\U000F0493", "\U000F08BB", "\U000F0B82", "\U000F1846", "\U000F1239", "\U000F0AAB", "\U000F081A", "\U000F081B", "\U000F081C", "\U000F12E6", "\U000F0869", "\U000F01D8", "\U000F01D9", "\U000F0210", "\U000F0211", "\U000F0241", "\U000F06D5", "\U000F08DD", "\U000F024A", "\U000F0290", "\U000F0297", "\U000F06D9", "\U000F06DA", "\U000F12D3", "\U000F02AF", "\U000F08D0", "\U000F1A45", "\U000F02DC", "\U000F06A1", "\U000F02E9", "\U000F02FC", "\U000F0306", "\U000F030B", "\U000F0311", "\U000F0314", "\U000F06B5", "\U000F0322", "\U000F032A", "\U000F07D6", "\U000F0335", "\U000F1253", "\U000F06E8", "\U000F033E", "\U000F0FC6", "\U000F035C", "\U000F036C", "\U000F0374", "\U000F0376", "\U000F0381", "\U000F0FCE", "\U000F075A", "\U000F0388", "\U000F0746", "\U000F07E1", "\U000F03D8", "\U000F03E4", "\U000F0405", "\U000F040A", "\U000F040E", "\U000F06BA", "\U000F0415", "\U000F0417", "\U000F0994", "\U000F0425", "\U000F0906", "\U000F042B", "\U000F0438", "\U000F0439", "\U000F044A", "\U000F0454", "\U000F0EC5", "\U000F0456", "\U000F045F", "\U000F1A6B", "\U000F099F", "\U000F09A0", "\U000F049D", "\U000F0A70", "\U000F04AD", "\U000F04AE", "\U000F04B2", "\U000F0717", "\U000F04B9", "\U000F0414", "\U000F17DB", "\U000F04C3", "\U000F0D38", "\U000F04C7", "\U000F04CE", "\U000F04DB", "\U000F04DE", "\U000F12BA", "\U000F04F6", "\U000F0502", "\U000F07F4", "\U000F0508", "\U000F050F", "\U000F0393", "\U000F13AB", "\U000F051B", "\U000F0567", "\U000F057C", "\U000F057E", "\U000F057F", "\U000F0580", "\U000F075E", "\U000F075F", "\U000F0581", "\U000F075D", "\U000F072A", "\U000F0594", "\U000F0595", "\U000F0599", "\U000F05A8", "\U000F05A9", "\U000F11DB", "\U000F111C", "\U000F111E", "\U000F05C3", "\U000F0448", "\U000F0F31", "\U000F0590", "\U000F0591", "\U000F0592", "\U000F0593", "\U000F067E", "\U000F0596", "\U000F0597", "\U000F0598", "\U000F067F", "\U000F059D", "\U000F059E", "\U000F0F37"]   # + Wetter (Widgets, 2026-10-27)
+    glyphs: ["\U000F001B", "\U000F0020", "\U000F0026", "\U000F0035", "\U000F0045", "\U000F004D", "\U000F0054", "\U000F005D", "\U000F1818", "\U000F0079", "\U000F0084", "\U000F02E3", "\U000F0099", "\U000F009A", "\U000F009C", "\U000F00AC", "\U000F1011", "\U000F00AF", "\U000F00DF", "\U000F0100", "\U000F010B", "\U000F0118", "\U000F0119", "\U000F07AE", "\U000F0769", "\U000F011C", "\U000F012C", "\U000F0140", "\U000F0141", "\U000F0142", "\U000F0143", "\U000F0156", "\U000F0176", "\U000F0493", "\U000F08BB", "\U000F0B82", "\U000F1846", "\U000F1239", "\U000F0AAB", "\U000F081A", "\U000F081B", "\U000F081C", "\U000F12E6", "\U000F0869", "\U000F01D8", "\U000F01D9", "\U000F0210", "\U000F0211", "\U000F0241", "\U000F06D5", "\U000F08DD", "\U000F024A", "\U000F0290", "\U000F0297", "\U000F06D9", "\U000F06DA", "\U000F12D3", "\U000F02AF", "\U000F08D0", "\U000F1A45", "\U000F02DC", "\U000F06A1", "\U000F02E9", "\U000F02FC", "\U000F0306", "\U000F030B", "\U000F0311", "\U000F0314", "\U000F06B5", "\U000F0322", "\U000F032A", "\U000F07D6", "\U000F0335", "\U000F1253", "\U000F06E8", "\U000F033E", "\U000F0FC6", "\U000F035C", "\U000F036C", "\U000F0374", "\U000F0376", "\U000F0381", "\U000F0FCE", "\U000F075A", "\U000F0388", "\U000F0746", "\U000F07E1", "\U000F03D8", "\U000F03E4", "\U000F0405", "\U000F040A", "\U000F040E", "\U000F06BA", "\U000F0415", "\U000F0417", "\U000F0994", "\U000F0425", "\U000F0906", "\U000F042B", "\U000F0438", "\U000F0439", "\U000F044A", "\U000F0454", "\U000F0EC5", "\U000F0456", "\U000F045F", "\U000F1A6B", "\U000F099F", "\U000F09A0", "\U000F049D", "\U000F0A70", "\U000F04AD", "\U000F04AE", "\U000F04B2", "\U000F0717", "\U000F04B9", "\U000F0414", "\U000F17DB", "\U000F04C3", "\U000F0D38", "\U000F04C7", "\U000F04CE", "\U000F04DB", "\U000F04DE", "\U000F12BA", "\U000F04F6", "\U000F0502", "\U000F07F4", "\U000F0508", "\U000F050F", "\U000F0393", "\U000F13AB", "\U000F051B", "\U000F0567", "\U000F057C", "\U000F057E", "\U000F057F", "\U000F0580", "\U000F075E", "\U000F075F", "\U000F0581", "\U000F075D", "\U000F072A", "\U000F0594", "\U000F0595", "\U000F0599", "\U000F05A8", "\U000F05A9", "\U000F11DB", "\U000F111C", "\U000F111E", "\U000F05C3", "\U000F0448", "\U000F0F31", "\U000F0590", "\U000F0591", "\U000F0592", "\U000F0593", "\U000F067E", "\U000F0596", "\U000F0597", "\U000F0598", "\U000F067F", "\U000F059D", "\U000F059E", "\U000F0F37", "\U000F01BE", "\U000F0E79", "\U000F1D08", "\U000F1D0B", "\U000F0279", "\U000F037D"]   # + Wetter (Widgets, 2026-10-27), + Touchpad-Teile (2026-11-01)
   # Dock-Anzeige (2026-10-17): grosse Uhr, Wettersymbole, kleine Symbole (Dock, Touchpad)
   - file: 'fonts/Audiowide-Regular.ttf'
     id: a48
@@ -1447,6 +1452,11 @@ globals:
   # Bewegungsgesten (esphomeremote-gesten.h): an, auch bei dunklem Display, Empfindlichkeit 0 streng .. 2 empfindlich
   - {id: gesten_an,      type: bool,      restore_value: true,  initial_value: "false"}
   - {id: gesten_dunkel,  type: bool,      restore_value: true,  initial_value: "true"}
+  - {id: linkshaender,   type: bool,      restore_value: true,  initial_value: "false"}   # Linkshaender (2026-11-01): Touchpad/Ziffern gespiegelt, je Remote
+  - {id: x_rechts,       type: bool,      restore_value: true,  initial_value: "false"}
+  # Sprache des Displays (2026-11-01): 0 = wie Home Assistant, 1 = Deutsch, 2 = Englisch; sprache_ha_en = HA ist nicht Deutsch
+  - {id: sprache_wahl,   type: int,       restore_value: true,  initial_value: "0"}
+  - {id: sprache_ha_en,  type: bool,      restore_value: true,  initial_value: "false"}   # X-Knopf rechts (2026-11-01): Seitenkoepfe gespiegelt, Animationen andersherum
   - {id: gesten_sens,    type: int,       restore_value: true,  initial_value: "1"}
   - {id: home_aus_menue, type: bool,      restore_value: false, initial_value: "false"}
   # Rueckfrage-Seite 25: true = Herunterfahren, false = Neustart
@@ -2913,7 +2923,7 @@ script:
           uint32_t c = 0xF1F3F5;
           if (!id(tv_on) || x == "off" || x == "standby" || x == "unavailable") c = 0xEF4444;
           else if (x == "playing")  c = 0x22C55E;
-          else if (x == "paused")   c = 0x3B82F6;
+          else if (x == "paused")   c = akzent::farbe();
           lv_obj_set_style_text_color(id(m_pp_lbl), lv_color_hex(c), LV_PART_MAIN);
 
   # Titel auf hoechstens 2 Zeilen, Spalte an den Inhalt, schwarzes Banner dahinter
@@ -3751,6 +3761,22 @@ script:
           vorher = a;
 
   # Startseite anordnen: Wiedergabe-Karte mit Cover (216 x 172, von HA passend zugeschnitten), danach die
+  # Akzentfarbe aus dem Konfigurator (2026-11-01, esphomeremote-akzent.h): alle Seiten umfaerben; Anzeigen, deren
+  # Blau "Bluetooth" heisst, bleiben blau.
+  - id: akzent_anwenden
+    then:
+      - lambda: |-
+          if (akzent::ausnahmen().empty())
+            akzent::ausnahmen() = {id(ha_ble_dot), id(dock_weg_ico), id(ble_bar0), id(ble_bar1), id(ble_bar2), id(assi_icon_google), id(assi_lbl)};
+          const std::vector<lv_obj_t *> seiten = {id(page_home)->obj, id(page_akku)->obj, id(page_ble)->obj, id(page_media)->obj,
+            id(page_voice_set)->obj, id(page_bright)->obj, id(page_welcome)->obj, id(page_restart)->obj, id(page_voice)->obj,
+            id(page_power)->obj, id(page_show)->obj, id(page_gesten)->obj, id(page_extras)->obj, id(page_service)->obj,
+            id(page_cam_view)->obj, id(page_cam_live)->obj, id(page_keyboard)->obj, id(page_konfig)->obj, id(page_dock)->obj,
+            id(page_musik)->obj, id(page_maus)->obj, id(page_sd)->obj, id(page_ota)->obj, id(page_clean)->obj,
+            id(page_touch_test)->obj, id(page_button_test)->obj};
+          const std::vector<lv_style_t *> stile = {id(st_screen), id(st_title), id(st_tile), id(st_tile2), id(st_ctrlbtn), id(st_back), id(st_muted)};
+          akzent::anwenden(akzent::aus_text(id(tk_cfg).wurzel()["akzent"] | ""), seiten, stile);
+          sprache::anwenden(seiten);   // feste Texte auf Englisch, wenn gewaehlt (2026-11-01)
   # eigene Anordnung aus dem Konfigurator (tasten::startseite_anwenden) und die Aktivitaetsleiste.
   - id: apply_home_layout
     then:
@@ -3779,12 +3805,12 @@ script:
           const lv_style_selector_t KNB_F = (int) LV_PART_KNOB | (int) LV_STATE_FOCUSED;
           for (lv_obj_t *s : alle) {
             lv_obj_set_style_pad_all(s, 3, LV_PART_MAIN);
-            lv_obj_set_style_bg_color(s, lv_color_hex(0x3B82F6), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(s, lv_color_hex(akzent::farbe()), LV_PART_INDICATOR);
             lv_obj_set_style_bg_color(s, lv_color_hex(0x60A5FA), IND_F);
             // Knopf: normal hellgrau, markiert (D-Pad) reinweiss mit blauem Ring
             lv_obj_set_style_bg_color(s, lv_color_hex(0xC9CED6), LV_PART_KNOB);
             lv_obj_set_style_bg_color(s, lv_color_hex(0xFFFFFF), KNB_F);
-            lv_obj_set_style_border_color(s, lv_color_hex(0x3B82F6), KNB_F);
+            lv_obj_set_style_border_color(s, lv_color_hex(akzent::farbe()), KNB_F);
             lv_obj_set_style_border_width(s, 4, KNB_F);
             // Fokus = graue Schiene statt Rahmen
             lv_obj_set_style_border_width(s, 0, LV_STATE_FOCUSED);
@@ -3869,14 +3895,14 @@ script:
       - lambda: |-
           // Schnelleinstellungen (2026-10-31): Funkweg Remote -> Dock -> Geraet der Aktivitaet und drei Schalter.
           // Farben: blau = steht, rot = gestoert, grau = aus / nicht benutzt, gelb = Notweg.
-          const uint32_t BLAU = 0x3B82F6, ROT = 0xEF4444, GRAU = 0x3A424E, GELB = 0xF59E0B, WEISS = 0xF1F3F5, MATT = 0x5B6472, OFFEN = 0x2B4A7A;
+          const uint32_t BLAU = akzent::farbe(), ROT = 0xEF4444, GRAU = 0x3A424E, GELB = 0xF59E0B, WEISS = 0xF1F3F5, MATT = 0x5B6472, OFFEN = 0x2B4A7A;
           auto farbe = [](lv_obj_t *o, uint32_t c) { lv_obj_set_style_bg_color(o, lv_color_hex(c), LV_PART_MAIN); };
           auto text = [](lv_obj_t *o, uint32_t c) { lv_obj_set_style_text_color(o, lv_color_hex(c), LV_PART_MAIN); };
           // Kachel: 0 aus (grau), 1 an (blau), 2 gestoert (roter Rand), 3 Notweg (gelber Rand)
           auto kachel = [&](lv_obj_t *btn, lv_obj_t *lbl, int art, const std::string &t) {
             lv_label_set_text(lbl, t.c_str());
             text(lbl, art == 0 ? 0x8B94A3 : art == 2 ? 0xFCA5A5 : art == 3 ? 0xFCD34D : WEISS);
-            lv_obj_set_style_bg_color(btn, lv_color_hex(art == 1 ? 0x1E3A8A : art >= 2 ? 0x2A1D1D : 0x232A35), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(art == 1 ? akzent::stufen(akzent::farbe()).f[3] : art >= 2 ? 0x2A1D1D : 0x232A35), LV_PART_MAIN);
             lv_obj_set_style_border_color(btn, lv_color_hex(art == 1 ? BLAU : art == 2 ? ROT : art == 3 ? GELB : 0x232A35), LV_PART_MAIN);
           };
           auto &tk = *id(tk_cfg);
@@ -4047,7 +4073,7 @@ script:
       - lambda: |-
           lv_label_set_text(id(home_kbd_lbl), id(kbd_light_on) ? "AN" : "AUS");
           lv_obj_set_style_text_color(id(home_kbd_lbl), lv_color_hex(id(kbd_light_on) ? 0xF1F3F5 : 0x8B94A3), LV_PART_MAIN);
-          lv_obj_set_style_border_color(id(home_kbd_box), lv_color_hex(id(kbd_light_on) ? 0x3B82F6 : 0x3A424E), LV_PART_MAIN);
+          lv_obj_set_style_border_color(id(home_kbd_box), lv_color_hex(id(kbd_light_on) ? akzent::farbe() : 0x3A424E), LV_PART_MAIN);
   - id: kbd_overlay_light
     then:
       - script.execute: toggle_kbd_light
@@ -5476,7 +5502,7 @@ script:
       - if:
           condition: {lambda: 'return id(home_aus_menue);'}
           then: [{lvgl.page.show: {id: page_home, animation: OUT_BOTTOM, time: 150ms}}]
-          else: [{lvgl.page.show: {id: page_home, animation: MOVE_RIGHT, time: 150ms}}]
+          else: [{lambda: 'tasten::seite_zeigen(id(page_home), LV_SCR_LOAD_ANIM_MOVE_RIGHT);'}]
   # Tastatur-Popup zeigen / weglegen (s. Globals kbd_popup*). Weglegen geht ohne go_home zur
   # Startseite, damit die Menue-Erinnerung nicht angefasst wird.
   - id: kbd_popup_zeigen
@@ -5485,11 +5511,11 @@ script:
           id(kbd_mode) = id(kbd_popup_mode);
           id(kbd_popup) = true;
           popup_oeffnet(41);
-      - lvgl.page.show: {id: page_keyboard, animation: MOVE_LEFT, time: 150ms}
+      - lambda: 'tasten::seite_zeigen(id(page_keyboard), LV_SCR_LOAD_ANIM_MOVE_LEFT);'
   - id: kbd_popup_weg
     then:
       - lambda: 'id(kbd_popup) = false;'
-      - lvgl.page.show: {id: page_home, animation: MOVE_RIGHT, time: 150ms}
+      - lambda: 'tasten::seite_zeigen(id(page_home), LV_SCR_LOAD_ANIM_MOVE_RIGHT);'
   # Menue ganz oben oeffnen, ohne Erinnerung (Menuetaste lang): alle gemerkten Positionen vergessen.
   - id: open_menu_top
     then:
@@ -5590,11 +5616,11 @@ script:
             lv_obj_set_style_border_width(m, 0, LV_PART_ITEMS);
             lv_obj_set_style_shadow_width(m, 0, LV_PART_ITEMS);
             lv_obj_set_style_text_color(m, lv_color_hex(0xF1F3F5), LV_PART_ITEMS);
-            lv_obj_set_style_bg_color(m, lv_color_hex(0x2563EB), (lv_style_selector_t) LV_PART_ITEMS | LV_STATE_PRESSED);
+            lv_obj_set_style_bg_color(m, lv_color_hex(akzent::stufen(akzent::farbe()).f[1]), (lv_style_selector_t) LV_PART_ITEMS | LV_STATE_PRESSED);
             // Vom D-Pad markierte Taste (CHECKED): blauer Rahmen wie im Menue.
             lv_obj_set_style_bg_color(m, lv_color_hex(0x2A3340), (lv_style_selector_t) LV_PART_ITEMS | LV_STATE_CHECKED);
             lv_obj_set_style_border_width(m, 2, (lv_style_selector_t) LV_PART_ITEMS | LV_STATE_CHECKED);
-            lv_obj_set_style_border_color(m, lv_color_hex(0x3B82F6), (lv_style_selector_t) LV_PART_ITEMS | LV_STATE_CHECKED);
+            lv_obj_set_style_border_color(m, lv_color_hex(akzent::farbe()), (lv_style_selector_t) LV_PART_ITEMS | LV_STATE_CHECKED);
             lv_obj_set_style_text_color(m, lv_color_hex(0xF1F3F5), (lv_style_selector_t) LV_PART_ITEMS | LV_STATE_CHECKED);
           }
           for (int i = 0; i < L.anzahl; i++) ctrl[i] = (lv_buttonmatrix_ctrl_t) L.breite[i];
@@ -5707,7 +5733,7 @@ script:
           std::string art = id(bt_result_art);
           uint32_t col = 0x8B94A3;
           if (art == "Einzeln")      col = 0x22C55E;
-          else if (art == "Doppelt") col = 0x3B82F6;
+          else if (art == "Doppelt") col = akzent::farbe();
           else if (art == "Lang")    col = 0xEF9F1A;
           lv_label_set_text(id(bt_result_kind), art.c_str());
           lv_obj_set_style_text_color(id(bt_result_kind), lv_color_hex(col), LV_PART_MAIN);
@@ -5732,7 +5758,9 @@ script:
   - id: nav_back
     then:
       - if:
-          condition: {lambda: "return id(popup_seite) >= 0 && id(popup_seite) == id(cur_page);"}
+          # Unterseite in einem Menue-Popup (2026-11-01, Licht-Popup > Wohnzimmer): Zurueck geht erst eine Seite hoch,
+          # erst auf der Popup-Seite selbst schliesst es - vorher war das ganze Popup zu
+          condition: {lambda: "return id(popup_seite) >= 0 && id(popup_seite) == id(cur_page) && !(id(cur_page) == 98 && id(mn)->zurueck());"}
           then:
             - if:
                 # Knopf "_" (Konfigurator: Popup minimieren, 2026-10-27): weglegen wie die Menuetaste
@@ -5766,7 +5794,7 @@ script:
                 condition: {lambda: 'return id(cur_page) != 98;'}
                 then:
                   - lambda: 'id(mn)->anzeigen();'
-                  - lvgl.page.show: {id: page_konfig, animation: MOVE_RIGHT, time: 150ms}
+                  - lambda: 'tasten::seite_zeigen(id(page_konfig), LV_SCR_LOAD_ANIM_MOVE_RIGHT);'
           else: [{script.execute: nav_back_alt}]
   # Uebrige Seiten: Unterseiten der Wartung (Neustart-Frage, Tasten-/Touch-Test, SD-Karte) zurueck zur
   # Wartung, alles andere zur Startseite.
@@ -5784,7 +5812,7 @@ script:
           if (seite == 6) id(media_left_ms) = 0xFFFFFFFFu;
       - if:
           condition: {lambda: "const int p = id(cur_page); return p == 25 || p == 34 || p == 36 || p == 42;"}
-          then: [{lvgl.page.show: {id: page_service, animation: MOVE_RIGHT, time: 150ms}}]
+          then: [{lambda: 'tasten::seite_zeigen(id(page_service), LV_SCR_LOAD_ANIM_MOVE_RIGHT);'}]
           else:
             # Begruessung (24): nur, wenn das Display beim Druck schon an war - die Taste, mit der man die
             # Remote aufweckt, soll sie nicht gleich wieder wegschalten. millis() > 6000: nach einem Neustart
@@ -7318,7 +7346,7 @@ lvgl:
                   condition: {lambda: 'return !tasten::home_medien_klick();'}
                   then:
                     - lambda: 'id(media_from) = 0; id(media_home_ms) = 0;'
-                    - lvgl.page.show: {id: page_media, animation: MOVE_LEFT, time: 150ms}
+                    - lambda: 'tasten::seite_zeigen(id(page_media), LV_SCR_LOAD_ANIM_MOVE_LEFT);'
             widgets:
               # Reihenfolge ist Zeichenreihenfolge (LVGL): Cover ganz unten,
               # dann Scrim, dann Text, dann der schwebende Kameras-Button
@@ -9752,7 +9780,7 @@ lvgl:
             id: tile_touchtest
             styles: [st_tile, st_fx_r10]
             focused: {bg_color: 0x2A3340}
-            on_click: [{lvgl.page.show: {id: page_touch_test, animation: MOVE_LEFT, time: 150ms}}]
+            on_click: [{lambda: 'tasten::seite_zeigen(id(page_touch_test), LV_SCR_LOAD_ANIM_MOVE_LEFT);'}]
             widgets:
               - label: {text: "Touch-Test", text_font: a15, styles: [st_grow]}
               - label: {text: ">", text_font: a15, text_color: 0x8B94A3}
@@ -9761,7 +9789,7 @@ lvgl:
             id: tile_button_test
             styles: [st_tile, st_fx_r10]
             focused: {bg_color: 0x2A3340}
-            on_click: [{lvgl.page.show: {id: page_button_test, animation: MOVE_LEFT, time: 150ms}}]
+            on_click: [{lambda: 'tasten::seite_zeigen(id(page_button_test), LV_SCR_LOAD_ANIM_MOVE_LEFT);'}]
             widgets:
               - label: {text: "Tasten-Test", text_font: a15, styles: [st_grow]}
               - label: {text: ">", text_font: a15, text_color: 0x8B94A3}
@@ -9806,7 +9834,7 @@ lvgl:
             id: tile_sd
             styles: [st_tile, st_fx_r10]
             focused: {bg_color: 0x2A3340}
-            on_click: [{lvgl.page.show: {id: page_sd, animation: MOVE_LEFT, time: 150ms}}]
+            on_click: [{lambda: 'tasten::seite_zeigen(id(page_sd), LV_SCR_LOAD_ANIM_MOVE_LEFT);'}]
             widgets:
               - label: {text: "SD-Karte", text_font: a15, styles: [st_grow]}
               - label: {text: ">", text_font: a15, text_color: 0x8B94A3}
@@ -9858,7 +9886,7 @@ lvgl:
             focused: {bg_color: 0x2A3340}
             on_click:
               - lambda: 'id(frage_aus) = true;'
-              - lvgl.page.show: {id: page_restart, animation: MOVE_LEFT, time: 150ms}
+              - lambda: 'tasten::seite_zeigen(id(page_restart), LV_SCR_LOAD_ANIM_MOVE_LEFT);'
             widgets:
               - label: {text: "Gerät herunterfahren", text_font: a15, styles: [st_grow]}
               - label: {text: ">", text_font: a15, text_color: 0x8B94A3}
@@ -9869,7 +9897,7 @@ lvgl:
             focused: {bg_color: 0x2A3340}
             on_click:
               - lambda: 'id(frage_aus) = false;'
-              - lvgl.page.show: {id: page_restart, animation: MOVE_LEFT, time: 150ms}
+              - lambda: 'tasten::seite_zeigen(id(page_restart), LV_SCR_LOAD_ANIM_MOVE_LEFT);'
             widgets:
               - label: {text: "Gerät neu starten", text_font: a15, styles: [st_grow]}
               - label: {id: restart_lbl, text: ">", text_font: a15, text_color: 0x8B94A3}
@@ -10056,7 +10084,7 @@ lvgl:
       pad_bottom: 4
       layout: {type: flex, flex_flow: column, flex_align_cross: start, pad_row: 8}
       on_load:
-        - lambda: 'id(cur_page) = 41; id(frow) = 0; id(fcol) = 0; id(kbd_shift) = false; id(kbd_sel) = -1; id(kbd_kopf) = -1; eingabewahl::kbd_einrichten();'
+        - lambda: 'id(cur_page) = 41; id(frow) = 0; id(fcol) = 0; id(kbd_shift) = false; id(kbd_sel) = -1; id(kbd_kopf) = -1; eingabewahl::kbd_einrichten(); eingabewahl::ziffern_einstellen();'
         - script.execute: popup_kopf
         - lvgl.label.update: {id: kbd_title, text: !lambda 'return std::string(id(kbd_mode) == 0 ? "Ziffern" : "Tastatur");'}
         - lambda: 'if (gestenseite::z().eingabe) { id(kbd_shift) = gestenseite::z().text.empty(); gestenseite::kbd_titel(); }'

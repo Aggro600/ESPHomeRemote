@@ -73,7 +73,7 @@ inline void aufbauen(lv_obj_t *kopf, Wahl &w) {
 inline void markieren(Wahl &w, int aktiv) {
   for (int i = 0; i < 3; i++) {
     if (w.kn[i] == nullptr) continue;
-    const uint32_t f = i == aktiv ? 0x3B82F6 : 0x232A35;
+    const uint32_t f = i == aktiv ? akzent::farbe() : 0x232A35;
     lv_obj_set_style_bg_color(w.kn[i], lv_color_hex(f), 0);
     lv_obj_set_style_border_color(w.kn[i], lv_color_hex(f), 0);
     lv_obj_remove_state(w.kn[i], LV_STATE_FOCUSED);
@@ -88,6 +88,13 @@ inline void kbd_einrichten() {
   markieren(w, kbd_mode->value() == 0 ? ZIFFERN : TASTATUR);
   if (gestenseite::namen_eingabe()) lv_obj_add_flag(w.box, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_remove_flag(w.box, LV_OBJ_FLAG_HIDDEN);
+}
+// Ziffernblock-Variante aus der Konfiguration "eingabe" (2026-11-01): zf_reihe 123|789, zf_unten auto|n|s
+inline void ziffern_einstellen() {
+  JsonVariantConst e = tk_cfg->wurzel()["eingabe"];
+  const char *u = e["zf_unten"] | "auto";
+  const bool gespiegelt = !strcmp(u, "auto") ? linkshaender->value() : !strcmp(u, "s");
+  eingabe::ziffern_art() = (!strcmp(e["zf_reihe"] | "123", "789") ? 1 : 0) | (gespiegelt ? 2 : 0);
 }
 inline bool kbd_umschalter_da() { return kbd().box != nullptr && !lv_obj_has_flag(kbd().box, LV_OBJ_FLAG_HIDDEN); }
 
@@ -132,6 +139,7 @@ namespace touchpad {
 
 struct Zustand {
   bool gebaut{false};
+  bool im_menue{false};   // Touchpad-Teile auf einer Menueseite benutzt (2026-11-01): senden auch ausserhalb von Seite 51
   lv_obj_t *titel{nullptr}, *pad{nullptr}, *streifen{nullptr}, *hinweis{nullptr}, *makro_box{nullptr};
   uint32_t druck_ms{0}, letzter_tipp_ms{0};
   int32_t weg{0};
@@ -236,7 +244,7 @@ inline lv_obj_t *knopf(lv_obj_t *p, int x, int y, int w, int h, const char *txt,
   lv_obj_set_pos(b, x, y);
   lv_obj_set_size(b, w, h);
   lv_obj_set_style_bg_color(b, lv_color_hex(0x232A35), 0);
-  lv_obj_set_style_bg_color(b, lv_color_hex(0x3B82F6), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(b, lv_color_hex(akzent::farbe()), LV_STATE_PRESSED);
   lv_obj_set_style_radius(b, 10, 0);
   lv_obj_set_style_shadow_width(b, 0, 0);
   lv_obj_set_style_border_width(b, 2, LV_STATE_FOCUSED);
@@ -258,7 +266,7 @@ inline void makros_zeigen(bool an) {
   lv_obj_set_pos(s.makro_box, 6, 46);
   lv_obj_set_size(s.makro_box, 228, 216);
   lv_obj_set_style_bg_color(s.makro_box, lv_color_hex(0x0E1116), 0);
-  lv_obj_set_style_border_color(s.makro_box, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_color(s.makro_box, lv_color_hex(akzent::farbe()), 0);
   lv_obj_set_style_border_width(s.makro_box, 2, 0);
   lv_obj_set_style_radius(s.makro_box, 12, 0);
   lv_obj_set_style_pad_all(s.makro_box, 6, 0);
@@ -383,7 +391,7 @@ inline void dpad_takt(lv_timer_t *) {
   if (!s.streifen_gedrueckt && fabsf(s.rad_v) > 0.05f) { s.rad += s.rad_v; s.rad_v *= 0.93f; }   // Schwung laeuft aus
   else if (!s.streifen_gedrueckt) s.rad_v = 0;
   if (fabsf(s.rad) >= 1) { rad = (int8_t) std::max(-15, std::min(15, (int) s.rad)); s.rad -= rad; }
-  if (cur_page->value() == 51 && (fabsf(s.rx) >= 1 || fabsf(s.ry) >= 1 || rad)) {
+  if ((cur_page->value() == 51 || s.im_menue) && (fabsf(s.rx) >= 1 || fabsf(s.ry) >= 1 || rad)) {
     const int dx = std::max(-127, std::min(127, (int) s.rx)), dy = std::max(-127, std::min(127, (int) s.ry));
     s.rx -= dx; s.ry -= dy;
     senden(dx, dy, rad);
@@ -405,8 +413,10 @@ inline void dpad_takt(lv_timer_t *) {
   }
   if (s.scroll && jetzt - s.scroll_ms >= 120) { s.scroll_ms = jetzt; senden(0, 0, s.scroll); last_input_ms->value() = jetzt; }
   if (!s.pfeile && !s.scroll && !s.ok_unten && !s.pad_gedrueckt && !s.streifen_gedrueckt && fabsf(s.rad_v) <= 0.05f &&
-      fabsf(s.rx) < 1 && fabsf(s.ry) < 1)
+      fabsf(s.rx) < 1 && fabsf(s.ry) < 1) {
+    s.im_menue = false;
     lv_timer_pause(s.timer);
+  }
 }
 
 inline void timer_an() {
@@ -524,11 +534,11 @@ inline void aufbauen() {
   lv_obj_remove_flag(hd, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_t *x = lv_button_create(hd);
   lv_obj_set_size(x, 46, 30);
-  lv_obj_set_style_bg_color(x, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_bg_color(x, lv_color_hex(akzent::farbe()), 0);
   lv_obj_set_style_radius(x, 10, 0);
   lv_obj_set_style_shadow_width(x, 0, 0);
   lv_obj_set_style_border_width(x, 2, 0);
-  lv_obj_set_style_border_color(x, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_color(x, lv_color_hex(akzent::farbe()), 0);
   lv_obj_set_style_border_color(x, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
   lv_obj_t *xl = lv_label_create(x);
   lv_obj_set_style_text_font(xl, a15->get_lv_font(), 0);
@@ -600,9 +610,42 @@ inline void aufbauen() {
   }, nullptr));
 }
 
+// Anordnung (2026-11-01, Nutzer: "Linkshaender-Modus", frei anpassbar im Konfigurator): Konfiguration "eingabe"
+// tp_streifen (auto|l|r), tp_reihe (auto|n|s = untere Reihe gespiegelt). "auto" folgt der Einstellung Linkshaender.
+inline bool seite(const char *k) {
+  const char *v = tk_cfg->wurzel()["eingabe"][k] | "auto";
+  if (!strcmp(v, "auto")) return linkshaender->value();
+  return !strcmp(v, "l") || !strcmp(v, "s");
+}
+inline void anordnen() {
+  auto &s = z();
+  if (s.pad == nullptr || s.streifen == nullptr || s.kn.size() < 7) return;
+  const bool st_links = seite("tp_streifen"), spiegeln = seite("tp_reihe");
+  lv_obj_set_pos(s.pad, st_links ? 38 : 6, 46);
+  lv_obj_set_pos(s.streifen, st_links ? 6 : 206, 46);
+  // untere Reihe: Linksklick, Rechtsklick, Makros (gespiegelt: Makros, Rechtsklick, Linksklick)
+  static const int X[3] = {6, 83, 161};
+  for (int i = 0; i < 3; i++) lv_obj_set_x(s.kn[s.kn.size() - 3 + i], X[spiegeln ? 2 - i : i]);
+}
+
+// Touchpad-Teile im Menue (2026-11-01, components/menue W_TPAD/W_TSCROLL/W_MKNOPF): gleiche Logik wie die Seite
+inline void menue_anbinden() {
+  mn->maus_ereignis = [](lv_event_t *e, int art) {
+    auto &s = z();
+    s.im_menue = true;
+    if (art == 0) { pad_ereignis(e); return; }
+    if (art == 1) { streifen_ereignis(e); return; }
+    const uint8_t b = art == 2 ? 0x01 : 0x02;
+    const lv_event_code_t c = lv_event_get_code(e);
+    if (c == LV_EVENT_PRESSED) { schnell(); s.knoepfe |= b; senden(0, 0, 0); last_input_ms->value() = millis(); }
+    else if (c == LV_EVENT_RELEASED || c == LV_EVENT_PRESS_LOST) { s.knoepfe &= ~b; senden(0, 0, 0); }
+  };
+}
+
 // on_load der Seite
 inline void geladen() {
   aufbauen();
+  anordnen();
   eingabewahl::markieren(eingabewahl::maus(), eingabewahl::MAUS);
   z().knopfmodus = false;
   z().zurueck_unten = false;
