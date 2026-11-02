@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.2.3 (2026-11-02)
+
+Validation for HACS and Home Assistant (hassfest) in the repo, preparing for the HACS default list. Logo for the Z906 bridge.
+
+<details><summary>Deutsch</summary>
+
+Prüfungen für HACS und Home Assistant (hassfest) im Repo, Vorbereitung für die HACS-Standardliste. Logo für die Z906-Bridge.
+
+</details>
+
 ## 2026.11.2.2 (2026-11-02)
 
 New: **Logitech Z906 on Wi-Fi** as a bonus in the repo (folder z906): ESPHome component for an ESP32 between console and amplifier – volume, levels, input, effect and power state in Home Assistant, the console keeps working. With start-up protection (turning the knob while powering on no longer aborts the start), example configuration and guide.

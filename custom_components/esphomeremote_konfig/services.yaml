@@ -47,7 +47,7 @@ remote_log:
     geraet:
       name: Gerät
       required: true
-      example: remote-wz-nils
+      example: remote-wz-wohnzimmer
       selector:
         text:
     z:
@@ -63,7 +63,7 @@ wlan_kommt:
     geraet:
       name: Gerät
       required: true
-      example: remote-wz-nils
+      example: remote-wz-wohnzimmer
       selector:
         text:
 remote_status:
@@ -73,7 +73,7 @@ remote_status:
     geraet:
       name: Gerät
       required: true
-      example: remote-wz-nils
+      example: remote-wz-wohnzimmer
       selector:
         text:
 timer_verlaengern:
