@@ -1,5 +1,12 @@
 🇬🇧 English · 🇩🇪 [Deutsch](LIESMICH.md)
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo-dunkel.png">
+    <img src="logo.png" alt="Z906 Bridge" width="420">
+  </picture>
+</p>
+
 # Logitech Z906 on Wi-Fi (ESPHome)
 
 An ESP32 sits between the console and the amplifier of a Logitech Z906 and brings the speaker system into

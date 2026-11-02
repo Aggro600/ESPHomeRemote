@@ -1,6 +1,6 @@
 an_remotes:
   name: An alle Fernbedienungen
-  description: Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.<remote>_<dienst>).
+  description: Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.[remote]_[dienst]).
   fields:
     dienst:
       name: Dienst
@@ -47,7 +47,7 @@ remote_log:
     geraet:
       name: Gerät
       required: true
-      example: remote-wz-wohnzimmer
+      example: remote-wz-nils
       selector:
         text:
     z:
@@ -63,7 +63,7 @@ wlan_kommt:
     geraet:
       name: Gerät
       required: true
-      example: remote-wz-wohnzimmer
+      example: remote-wz-nils
       selector:
         text:
 remote_status:
@@ -73,7 +73,7 @@ remote_status:
     geraet:
       name: Gerät
       required: true
-      example: remote-wz-wohnzimmer
+      example: remote-wz-nils
       selector:
         text:
 timer_verlaengern:

@@ -391,6 +391,8 @@ everything the remotes are actually built with:
 
 ## Bonus: Logitech Z906 on Wi-Fi
 
+<img src="z906/icon.png" alt="Z906 Bridge" width="72" align="left">
+
 An ESP32 between the console and the amplifier of a Logitech Z906 brings volume, levels, input, effect and
 power state into Home Assistant – the console keeps working as before. Component, example configuration and
 wiring: [`z906/`](z906/README.md).

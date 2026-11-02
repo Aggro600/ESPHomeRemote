@@ -1,5 +1,12 @@
 🇬🇧 [English](README.md) · 🇩🇪 Deutsch
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo-dunkel.png">
+    <img src="logo.png" alt="Z906 Bridge" width="420">
+  </picture>
+</p>
+
 # Logitech Z906 im WLAN (ESPHome)
 
 Ein ESP32 sitzt zwischen Konsole und Verstärker eines Logitech Z906 und bringt die Anlage in Home Assistant –
