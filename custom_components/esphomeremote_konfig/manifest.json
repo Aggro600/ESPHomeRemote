@@ -2,6 +2,7 @@
   "domain": "esphomeremote_konfig",
   "name": "ESPHomeRemote",
   "after_dependencies": [
+    "assist_pipeline",
     "bluetooth",
     "recorder"
   ],

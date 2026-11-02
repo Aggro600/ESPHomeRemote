@@ -35,7 +35,7 @@
  "services": {
   "an_remotes": {
    "name": "To all remotes",
-   "description": "Calls an ESPHome service on all connected remotes (esphome.<remote>_<service>).",
+   "description": "Calls an ESPHome service on all connected remotes (esphome.[remote]_[service]).",
    "fields": {
     "dienst": {
      "name": "Service",

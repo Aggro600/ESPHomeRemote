@@ -1,6 +1,6 @@
 an_remotes:
   name: An alle Fernbedienungen
-  description: Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.<remote>_<dienst>).
+  description: Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.[remote]_[dienst]).
   fields:
     dienst:
       name: Dienst

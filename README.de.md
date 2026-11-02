@@ -383,6 +383,8 @@ Remotes tatsächlich gebaut werden:
 
 ## Extra: Logitech Z906 im WLAN
 
+<img src="z906/icon.png" alt="Z906 Bridge" width="72" align="left">
+
 Ein ESP32 zwischen Konsole und Verstärker eines Logitech Z906 bringt Lautstärke, Pegel, Eingang, Effekt und
 Ein/Aus-Zustand in Home Assistant – die Konsole funktioniert weiter wie vorher. Komponente, Beispielkonfiguration
 und Verkabelung: [`z906/`](z906/LIESMICH.md).
