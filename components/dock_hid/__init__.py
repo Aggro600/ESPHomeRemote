@@ -58,7 +58,25 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
+# ESP-IDF 5.5.6 und neuer loescht die Schluessel eines gekoppelten Geraets bei jedem Wiederverbinden aus dem Speicher
+# (esp-idf#19286): "Deleting unpaired device", danach ltk_req_neg_reply - und Android entfernt die Kopplung.
+SMP_WRAPS = ("smp_proc_pair_cmd", "smp_check_auth_req", "btm_sec_clear_ble_keys")   # bluedroid_smp_guard.cpp
+
+
+def _idf_betroffen():
+    try:
+        from esphome.components.esp32 import idf_version
+        return idf_version() >= cv.Version(5, 5, 6)
+    except (ImportError, AttributeError, TypeError):
+        return True
+
+
 async def to_code(config):
+    if _idf_betroffen():
+        cg.add_define("USE_DOCK_HID_SMP_KEY_GUARD")
+        for s in SMP_WRAPS:
+            cg.add_build_flag(f"-Wl,--wrap={s}")
+            cg.add_build_flag(f"-Wl,--undefined=__wrap_{s}")
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     ble = await cg.get_variable(config[esp32_ble.CONF_BLE_ID])

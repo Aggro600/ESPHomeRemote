@@ -4,23 +4,27 @@ Vorher persoenliche Pakete (packages/esphomeremote_tv_eingang.yaml, _kamera_tv, 
 mit festen Entitaeten, IPs und Skripten. Jetzt hier, eingestellt im Konfigurator (Seite "Funktionen"), gespeichert in
 kd.data["funktionen"]:
 
-  tv_eingang   Sensor sensor.esphomeremote_tv_eingang: der Eingang, den der Fernseher gerade zeigt (Name wie in seiner
-               Quellenliste, z. B. "HDMI 3 (eARC/ARC)"), oder "aus". Popups vergleichen damit direkt ("ist nicht
+  tv_eingang   Sensor sensor.esphomeremote_tv_input: der Eingang, den der Fernseher gerade zeigt (Name wie in seiner
+               Quellenliste, z. B. "HDMI 3 (eARC/ARC)"), oder "off" (bis 2026-11-03 sensor.esphomeremote_tv_eingang mit "aus"). Popups vergleichen damit direkt ("ist nicht
                HDMI 3 ..."). Optional ein CEC-Sensor des Streamers ("true" = aktive Quelle): dann gilt der Eingang des
                Streamers ("streamer"), auch wenn der Fernseher die Quelle nicht verlaesslich meldet. Attribut
                "streamer": zeigt gerade den Streamer. (Bis 2026-11-01: Werte streamer/anders/aus - Nutzer: "anders"
                versteht keiner, es soll der echte Eingang dastehen.)
   kamera_tv    Kamera als Bild-im-Bild auf dem Fernseher. Weg "app" (Standard seit 2026-11-01): Overlay unserer
                Streamer-App (tv_camera.py, per ADB gesteuert, WebRTC/HLS/Standbild, YouTube & Co. laufen weiter).
-               Weg "hatv": App "HA TV Dashboard" (Benachrichtigung), Video ueber go2rtc (WebRTC) oder HLS. Dienst esphomeremote.camera_tv {kamera: camera.x | "letzte" |
-               "aus"}, Groesse esphomeremote.camera_size {groesse: Klein|Mittel|Groß|naechste}.
-               Zustand: binary_sensor.esphomeremote_kamera_tv (an/aus, Attribut kamera), sensor.esphomeremote_kamera_groesse.
-  neustart     Geraete per ADB neu starten: Dienst esphomeremote.restart {geraet: Name}. Mit Android-TV-
+               Weg "hatv": App "HA TV Dashboard" (Benachrichtigung), Video ueber go2rtc (WebRTC) oder HLS. Dienst esphomeremote.camera_tv {camera: camera.x | last | off},
+               Groesse esphomeremote.camera_size {size: small|medium|large|almost_full|next}, Ecke camera_position.
+               Zustand: binary_sensor.esphomeremote_camera_tv (on/off, Attribut camera), sensor.esphomeremote_camera_size.
+               Bis 2026-11-03 deutsch (kamera/letzte/aus, groesse/Klein/naechste, Entitaeten ..._kamera_tv/_kamera_groesse);
+               die alten Feldnamen und Werte gehen weiter (aliases.py). Gespeichert und an die App geht weiter das deutsche
+               Wort der Groesse (GROESSEN), die App kennt nur das.
+  neustart     Geraete per ADB neu starten: Dienst esphomeremote.restart {device: Name}. Mit Android-TV-
                Entitaet ueber androidtv.adb_command, sonst direkt per IP mit dem ADB-Schluessel von HA.
   version_licht  Lampe, die dreimal blinkt, wenn eine Remote neue Firmware meldet (Ereignis esphome.remote_neue_version).
   dock_wache   Meldung in HA, wenn ein Dock nicht erreichbar ist oder sein Speicher knapp wird.
 """
 from __future__ import annotations
+from .aliases import schema_with_aliases
 from .i18n import t as _t
 
 import asyncio
@@ -35,6 +39,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote"
 GROESSEN = {"Klein": 320, "Mittel": 480, "Groß": 720, "Fast Vollbild": 1800}
+GROESSE_ID = {"small": "Klein", "medium": "Mittel", "large": "Groß", "almost_full": "Fast Vollbild"}
 POSITIONEN = ("top-right", "top-left", "bottom-right", "bottom-left", "center")
 STANDARD = {
     "tv_eingang": {"tv": "", "streamer": "", "cec": "", "erkennung": ""},   # erkennung: nur noch fuer die Umstellung
@@ -45,9 +50,10 @@ STANDARD = {
     "dock_wache": True,
     "dock_block_kb": 6,
 }
-E_EINGANG = "sensor.esphomeremote_tv_eingang"
-E_KAMERA = "binary_sensor.esphomeremote_kamera_tv"
-E_GROESSE = "sensor.esphomeremote_kamera_groesse"
+E_EINGANG = "sensor.esphomeremote_tv_input"
+E_KAMERA = "binary_sensor.esphomeremote_camera_tv"
+E_GROESSE = "sensor.esphomeremote_camera_size"
+E_ALT = ("binary_sensor.esphomeremote_kamera_tv", "sensor.esphomeremote_kamera_groesse", "sensor.esphomeremote_tv_eingang")   # bis 2026-11-03
 
 
 class Funktionen:
@@ -74,10 +80,11 @@ class Funktionen:
     # ------------------------------------------------------------------ Start / Einstellungen
     async def starten(self) -> None:
         h = self.hass
-        h.services.async_register(DOMAIN, "camera_tv", self._dienst_kamera)
-        h.services.async_register(DOMAIN, "camera_size", self._dienst_groesse)
-        h.services.async_register(DOMAIN, "camera_position", self._dienst_position)
-        h.services.async_register(DOMAIN, "restart", self._dienst_neustart)
+        for name, f in (("camera_tv", self._dienst_kamera), ("camera_size", self._dienst_groesse),
+                        ("camera_position", self._dienst_position), ("restart", self._dienst_neustart)):
+            h.services.async_register(DOMAIN, name, f, schema=schema_with_aliases(name))
+        for e in E_ALT:
+            h.states.async_remove(e)
         h.bus.async_listen("esphome.remote_neue_version", self._neue_version)
         self._abos.append(async_track_time_interval(h, self._dock_pruefen, timedelta(seconds=15)))
         self.abonnieren()
@@ -179,7 +186,7 @@ class Funktionen:
                 self.kd.data["funktionen"] = self.cfg
                 self.hass.async_create_task(self.kd.store.async_save(self.kd.data))
         if s is None or s.state in ("off", "standby", "unavailable", "unknown"):
-            wert = "aus"
+            wert = "off"
         else:
             cec = self.hass.states.get(t["cec"]) if t["cec"] else None
             if t["streamer"] and cec is not None and str(cec.state).lower() in ("true", "on", "1"):
@@ -187,7 +194,7 @@ class Funktionen:
             else:
                 wert = str(s.attributes.get("source") or "") or "unbekannt"
         self.hass.states.async_set(E_EINGANG, wert[:250], {"friendly_name": _t(self.hass, "ESPHomeRemote TV Eingang"), "icon": "mdi:video-input-hdmi",
-                                                           "options": liste + ["aus"], "streamer": bool(t["streamer"]) and wert == t["streamer"]})
+                                                           "options": liste + ["off"], "streamer": bool(t["streamer"]) and wert == t["streamer"]})
 
     # ------------------------------------------------------------------ Kamera auf dem Fernseher
     @callback
@@ -199,9 +206,11 @@ class Funktionen:
             return
         name = self._kamera_name(self._letzte) if self._letzte else ""
         self.hass.states.async_set(E_KAMERA, "on" if self._sichtbar else "off",
-                                   {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera auf dem TV"), "icon": "mdi:cctv", "kamera": self._letzte, "name": name})
-        self.hass.states.async_set(E_GROESSE, k["groesse"], {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe"), "icon": "mdi:resize",
-                                                            "options": list(GROESSEN)})
+                                   {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera auf dem TV"), "icon": "mdi:cctv", "camera": self._letzte, "name": name})
+        # Zustand = Groesse in der HA-Sprache (die Remote zeigt ihn so an), Attribut size = Wert fuer camera_size
+        sid = next((i for i, g in GROESSE_ID.items() if g == k["groesse"]), "medium")
+        self.hass.states.async_set(E_GROESSE, _t(self.hass, k["groesse"]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe"),
+                                                                           "icon": "mdi:resize", "size": sid, "options": list(GROESSE_ID)})
 
     def _app_streamer(self):
         """Streamer mit ADB fuer das Overlay der eigenen App (eingestellt oder der erste mit ADB)."""
@@ -237,22 +246,22 @@ class Funktionen:
         return v.get("name") or (s.attributes.get("friendly_name") if s else "") or e
 
     async def _dienst_kamera(self, call) -> None:
-        kam = str(call.data.get("kamera") or "letzte")
+        kam = str(call.data.get("camera") or "last")
         k = self.cfg["kamera_tv"]
         if not self._kamera_bereit():
             _LOGGER.warning("Kamera auf dem TV: kein Fernseher eingestellt (Konfigurator > Funktionen)")
             return
-        if kam == "aus" and k["weg"] == "app":
+        if kam == "off" and k["weg"] == "app":
             await self._app_senden(None)
             self._sichtbar = False
             self._kamera_zustand()
             return
-        if kam == "aus":
+        if kam == "off":
             await self._senden({"title": "Kamera aus", "message": " ", "data": {"notif_type": "stream", "config": {"duration": 0, "width": 120}}})
             self._sichtbar = False
             self._kamera_zustand()
             return
-        if kam == "letzte":
+        if kam == "last":
             kam = self._letzte or next(iter(k["kameras"]), "")
         if not kam.startswith("camera."):
             return
@@ -326,9 +335,9 @@ class Funktionen:
 
     async def _dienst_position(self, call) -> None:
         """Ecke der Kamera (oder "naechste": im Uhrzeigersinn weiter); eine laufende Kamera rueckt sofort."""
-        p = str(call.data.get("position") or "naechste")
+        p = str(call.data.get("position") or "next")
         k = self.cfg["kamera_tv"]
-        if p == "naechste":
+        if p == "next":
             n = ["top-left", "top-right", "bottom-right", "bottom-left"]
             p = n[(n.index(k["position"]) + 1) % 4] if k["position"] in n else "top-right"
         if p not in POSITIONEN:
@@ -336,12 +345,13 @@ class Funktionen:
         k["position"] = p
         await self.kd.store.async_save(self.kd.data)
         if self._sichtbar and self._letzte:
-            await self._dienst_kamera(type("C", (), {"data": {"kamera": self._letzte}})())
+            await self._dienst_kamera(type("C", (), {"data": {"camera": self._letzte}})())
 
     async def _dienst_groesse(self, call) -> None:
-        g = str(call.data.get("groesse") or "naechste")
+        g = str(call.data.get("size") or "next")
+        g = GROESSE_ID.get(g, g)   # intern das deutsche Wort (Konfigurator, App)
         k = self.cfg["kamera_tv"]
-        if g == "naechste":
+        if g == "next":
             n = list(GROESSEN)
             g = n[(n.index(k["groesse"]) + 1) % len(n)] if k["groesse"] in n else "Mittel"
         if g not in GROESSEN:
@@ -350,7 +360,7 @@ class Funktionen:
         await self.kd.store.async_save(self.kd.data)
         self._kamera_zustand()
         if self._sichtbar and self._letzte:   # laufende Kamera gleich in der neuen Groesse
-            await self._dienst_kamera(type("C", (), {"data": {"kamera": self._letzte}})())
+            await self._dienst_kamera(type("C", (), {"data": {"camera": self._letzte}})())
 
     # ------------------------------------------------------------------ Neustart per ADB
     def _adb_schluessel(self):
@@ -361,7 +371,7 @@ class Funktionen:
             return None
 
     async def _dienst_neustart(self, call) -> None:
-        name = str(call.data.get("geraet") or "")
+        name = str(call.data.get("device") or "")
         g = next((x for x in self.cfg["neustart"] if x["name"] == name), None)
         if g is None:
             _LOGGER.warning("Neustart: kein Gerät '%s' (Konfigurator > Funktionen)", name)

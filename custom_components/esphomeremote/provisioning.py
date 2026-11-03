@@ -32,6 +32,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .aliases import schema_with_aliases
 from .firmware import ESPHOME_DIR, Dash, _mit_versuch, _port, dash as _befehl   # eine Verbindung zum Device Builder fuer alles
 
 _LOGGER = logging.getLogger(__name__)
@@ -466,12 +467,12 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
 
     # ---- Dienst: einen ESPHome-Dienst auf allen verbundenen Remotes aufrufen ----
     async def an_remotes(call: ServiceCall) -> None:
-        dienst = call.data["dienst"]
-        daten = call.data.get("daten") or {}
+        dienst = call.data["service"]
+        daten = call.data.get("data") or {}
         await an_alle(hass, kd.devices, dienst, daten)
 
     hass.services.async_register("esphomeremote", "to_remotes", an_remotes,
-                                 schema=vol.Schema({vol.Required("dienst"): str, vol.Optional("daten"): dict}))
+                                 schema=schema_with_aliases("to_remotes", vol.Schema({vol.Required("service"): str, vol.Optional("data"): dict})))
     return ein
 
 

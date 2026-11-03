@@ -49,7 +49,7 @@ STORE_VERSION = 1
 PANEL_URL = "remote"
 PANEL_URL_ALT = "fernbedienung"   # bis 2026-11-01 - alte Lesezeichen gehen weiter (ohne Eintrag in der Seitenleiste)
 STATIC_URL = "/esphomeremote_static"
-PANEL_VERSION = "184"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "188"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -452,7 +452,7 @@ def validate_home(h: dict) -> dict:
     return out
 
 
-ITEM_TYPES = {"text", "page", "special", "action", "toggle", "light", "number", "select", "cover", "sensor", "camera", "setting",
+ITEM_TYPES = {"text", "page", "special", "action", "toggle", "light", "number", "select", "dropdown", "cover", "sensor", "camera", "setting",
               "mtitel", "mtaste", "vpreset", "player", "widget"}
 # Medien-Elemente (2026-10-26, Umbau): jedes Teil frei verschieb- und vergroesserbar, mit eigener Entitaet.
 # mtitel = Titel/Interpret/Zustand, mtaste = Taste (fn), vpreset = Lautstaerke auf wert %. "player" (erste Fassung,
@@ -772,8 +772,11 @@ def validate_menu(m: dict) -> dict:
 
 
 def device_payload(cfg: dict) -> bytes:
-    """Kompakter Text, den die Remote laedt (ohne Leerzeichen)."""
-    return json.dumps(cfg, separators=(",", ":"), ensure_ascii=False).encode()
+    """Kompakter Text, den die Remote laedt (ohne Leerzeichen).
+    Dropdown (2026-11-03) geht als "select" mit "dd": Firmware davor kennt den Typ nicht (zeigte nur den Namen) und
+    blaettert so wenigstens per OK weiter; neue Firmware oeffnet bei "dd" die Aufklappliste."""
+    return json.dumps(cfg, separators=(",", ":"), ensure_ascii=False).replace(
+        '"t":"dropdown"', '"t":"select","dd":true').encode()
 
 
 def ist_dock(hass: HomeAssistant, ce) -> bool:
@@ -812,6 +815,9 @@ class KonfigData:
         umgebaut = self._timer_popup() | self._vol_aufraeumen()
         for d in self.data["devices"].values():   # alter Block "player" -> Medien-Elemente (2026-10-26)
             umgebaut |= player_umbauen((d.get("config", {}).get("menu") or {}).get("pages"))
+        # Englische Feldnamen und Entitaeten (2026-11-03): gespeicherte Belegungen einmal umschreiben (aliases.py)
+        from .aliases import migrate_config
+        umgebaut |= migrate_config(self.data.get("devices")) | migrate_config(self.data.get("werk"))
         if self._neue_einst_seiten() | self._eingabe_je_platz() | umgebaut:
             await self.store.async_save(self.data)
         for dev in self.devices:
@@ -1082,6 +1088,8 @@ class KonfigData:
 
     async def save(self, dev: str, cfg: dict, enabled: bool, user: str | None) -> str:
         clean = validate_config(cfg)
+        from .aliases import migrate_config
+        migrate_config(clean)   # alte Sicherung/Kopie mit deutschen Feldnamen (2026-11-03)
         e = self.entry(dev)
         self.einst_angleichen(dev)   # Datei der Remote aendert sich ohnehin - dabei den Soll-Stand nachziehen
         # vor dem Uebernehmen pruefen (sonst bliebe der zu grosse Stand im Speicher); einst geht mit an die Remote
@@ -1192,6 +1200,8 @@ class StatesView(HomeAssistantView):
                        int(pos) if isinstance(pos, (int, float)) else -1, str(a.get("unit_of_measurement") or "")]
             if e.startswith(("number.", "input_number.")):   # Bereich fuer den Regler: min, max, Schritt
                 eintrag += [a.get("min", 0), a.get("max", 100), a.get("step", 1)]
+            elif e.startswith(("select.", "input_select.")):   # Optionen fuer die Aufklappliste (2026-11-03)
+                eintrag += [[str(o)[:40] for o in (a.get("options") or [])[:30]]]
             elif e.startswith("media_player."):   # Medien-Steuerung (2026-10-26): Titel, Interpret/App, stumm
                 eintrag += [str(a.get("media_title") or "")[:80],
                             str(a.get("media_artist") or a.get("media_series_title") or a.get("app_name") or "")[:60],

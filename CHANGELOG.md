@@ -1,5 +1,27 @@
 # What's new · Was ist neu
 
+## 2026.11.3.1 (2026-11-03)
+
+**Docks: TV pairing no longer gets lost.** ESP-IDF 5.5.6 wiped a paired device's keys from memory on every reconnect, so after the next dropout the TV (seen with Sony) removed the pairing. The dock now keeps the keys. It also no longer asks paired devices for a faster connection interval; the Sony TV dropped the connection every few minutes because of it.
+
+**New menu element: Dropdown** for select and input_select. OK or a tap opens a list with all options, the D-pad picks, OK confirms, Back cancels. Remotes with older firmware show it as a normal selection until they are updated.
+
+**Configurator:** new assistant "D-pad control" for pages and popups (e.g. pan a camera): pick a camera or buttons, it creates the direction entries, stop on release and the toggle button. The key mode is explained more clearly.
+
+**Breaking: service fields and values are English now** (camera: last/off, size: small/medium/large/almost_full/next, light action/value, rules type/step, blaster_send transmitter/carrier/type/repeat, timer_extend minutes, to_remotes service/data, restart device). The old German names keep working and saved layouts are converted automatically. Entities renamed: binary_sensor.esphomeremote_camera_tv, sensor.esphomeremote_camera_size, sensor.esphomeremote_tv_input ("off" instead of "aus") - update automations and dashboards that use them.
+
+<details><summary>Deutsch</summary>
+
+**Docks: Die Kopplung mit dem Fernseher geht nicht mehr verloren.** ESP-IDF 5.5.6 löschte bei jedem Wiederverbinden die Schlüssel eines gekoppelten Geräts aus dem Speicher, nach dem nächsten Abbruch entfernte der Fernseher (gesehen beim Sony) die Kopplung. Das Dock behält die Schlüssel jetzt. Außerdem verlangt es von gekoppelten Geräten keinen schnelleren Verbindungstakt mehr; der Sony-TV trennte deswegen alle paar Minuten.
+
+**Neues Menü-Element: Dropdown** für select und input_select. OK oder Antippen öffnet eine Liste mit allen Optionen, das Steuerkreuz wählt, OK übernimmt, Zurück bricht ab. Remotes mit älterer Firmware zeigen es bis zum Update als normale Auswahl.
+
+**Konfigurator:** neuer Assistent „Steuerkreuz-Steuerung“ für Seiten und Popups (z. B. Kamera schwenken): Kamera oder Tasten wählen, er legt die Richtungs-Einträge, Stopp beim Loslassen und den Umschaltknopf an. Der Tastenmodus ist verständlicher erklärt.
+
+**Achtung: Feldnamen und Werte der Dienste sind jetzt englisch** (camera: last/off, size: small/medium/large/almost_full/next, light action/value, rules type/step, blaster_send transmitter/carrier/type/repeat, timer_extend minutes, to_remotes service/data, restart device). Die alten deutschen Namen funktionieren weiter, gespeicherte Belegungen werden automatisch umgestellt. Umbenannte Entitäten: binary_sensor.esphomeremote_camera_tv, sensor.esphomeremote_camera_size, sensor.esphomeremote_tv_input („off“ statt „aus“) - Automationen und Dashboards, die sie nutzen, bitte anpassen.
+
+</details>
+
 ## 2026.11.2.6 (2026-11-02)
 
 **Updating from before 2026.11.2.4 lost your setup? It comes back with this version.** Layouts, settings and own IR codes stayed under the old name in .storage and are now taken over automatically. If the integration is missing, add ESPHomeRemote once: key and remotes are filled in from the old entry. Delete the old folder custom_components/esphomeremote_konfig.

@@ -39,12 +39,13 @@ const NAV_KEYS = new Set([14, 35, 15, 32, 34, 13]);
 // esphomeremote.rules (regeln.py rechnet den neuen Wert aus dem aktuellen Zustand aus).
 const REGELN_SVC = "esphomeremote.rules";
 const istRegeln = (s) => s?.t === "ha" && s.svc === REGELN_SVC;
-// [art, Text, Domain, Standardschritt, Einheit, Hinweis]
+// [type, Text, Domain, Standardschritt, Einheit, Hinweis] - Felder type/step (bis 2026-11-03 art/schritt mit deutschen
+// Werten; HA schreibt gespeicherte Belegungen beim Start um und nimmt alte Aufrufe weiter an, aliases.py)
 const REGELN_ARTEN = [
-  ["helligkeit", "Helligkeit ändern", "light", 10, "%", "Plus = heller, Minus = dunkler. Ist das Licht aus, schaltet Plus es ein."],
-  ["farbtemperatur", "Farbtemperatur ändern", "light", -400, "K", "Plus = kälter (mehr Kelvin), Minus = wärmer. Nur wenn das Licht an ist."],
-  ["stufe", "Stufe ändern", "fan", 1, "Stufen", "Plus = schneller, Minus = langsamer."],
-  ["drehung", "Drehung an/aus", "fan", 0, "", "Schaltet das Schwenken des Ventilators um."],
+  ["brightness", "Helligkeit ändern", "light", 10, "%", "Plus = heller, Minus = dunkler. Ist das Licht aus, schaltet Plus es ein."],
+  ["color_temp", "Farbtemperatur ändern", "light", -400, "K", "Plus = kälter (mehr Kelvin), Minus = wärmer. Nur wenn das Licht an ist."],
+  ["speed", "Stufe ändern", "fan", 1, "Stufen", "Plus = schneller, Minus = langsamer."],
+  ["oscillation", "Drehung an/aus", "fan", 0, "", "Schaltet das Schwenken des Ventilators um."],
 ];
 const GNAME = { short: "Kurz", double: "Doppelt", long: "Lang", short_offline: "Kurz ohne HA", double_offline: "Doppelt ohne HA", long_offline: "Lang ohne HA" };
 const GESTURES = [
@@ -115,6 +116,15 @@ const INT_FNS = [
   ["popup_open", "Menüseite als Popup öffnen …"],
 ];
 const INT_LABEL = Object.fromEntries(INT_FNS);
+// Steuerkreuz-Assistent: [Feld, Taste, Name, Symbol, Namensmuster der Kamera-Tasten, Spalte, Zeile im Block]
+const DPAD_RICHTUNGEN = [
+  ["hoch", 14, "Hoch", "arrow-up", ["hoch", "up", "oben", "tilt_up"], 2, 0],
+  ["links", 15, "Links", "arrow-left", ["links", "left", "pan_left"], 0, 1],
+  ["rechts", 32, "Rechts", "arrow-right", ["rechts", "right", "pan_right"], 4, 1],
+  ["runter", 35, "Runter", "arrow-down", ["runter", "down", "unten", "tilt_down"], 2, 2],
+  ["zplus", 42, "Zoom +", "magnify-plus", ["zoom_vergrossern", "zoom_in", "zoom_plus"], 4, 0],
+  ["zminus", 22, "Zoom -", "magnify-minus", ["zoom_verkleinern", "zoom_out", "zoom_minus"], 4, 2],
+];
 const MENU_FNS = new Set(["menu_smart", "menu_open", "menu_top"]);
 
 // wie components/key_config/ir_encoders.h (NEC1/NEC5/Onkyo = NECext, Panasonic/Denon = Kaseikyo kommen aus der IR-Datenbank)
@@ -657,15 +667,15 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   // Vorlagen fuer Folgemodi: Kanal + / Kanal - (42 / 22) ueber den Dienst esphomeremote.rules
   _modVorlage(art, e) {
     const mo = this.cfg.modi[this.s.modus];
-    const r = (a, schritt) => [{ t: "ha", svc: "esphomeremote.rules", entity: e, data: { art: a, schritt: String(schritt) } }];
+    const r = (a, schritt) => [{ t: "ha", svc: "esphomeremote.rules", entity: e, data: { type: a, step: String(schritt) } }];
     if (art === "licht") {
       // kurz: heller/dunkler (20 %), lang (wiederholt): Kanal + waermer, Kanal - kaelter (Wunsch 2026-10-15)
-      mo.keys["42"] = { short: r("helligkeit", 20), long: r("farbtemperatur", -400), lrepeat: 500 };
-      mo.keys["22"] = { short: r("helligkeit", -20), long: r("farbtemperatur", 400), lrepeat: 500 };
+      mo.keys["42"] = { short: r("brightness", 20), long: r("color_temp", -400), lrepeat: 500 };
+      mo.keys["22"] = { short: r("brightness", -20), long: r("color_temp", 400), lrepeat: 500 };
     } else {
       // kurz: Stufe hoch/runter, lang: Drehung umschalten
-      mo.keys["42"] = { short: r("stufe", 1), long: r("drehung", 0) };
-      mo.keys["22"] = { short: r("stufe", -1), long: r("drehung", 0) };
+      mo.keys["42"] = { short: r("speed", 1), long: r("oscillation", 0) };
+      mo.keys["22"] = { short: r("speed", -1), long: r("oscillation", 0) };
     }
     this._touch();
     this.s.msg = { text: `Vorlage gesetzt: Kanal + / Kanal − steuern ${this._hass.states[e]?.attributes.friendly_name || e}. Kurz und lang lassen sich unten an den Tasten anpassen.` };
@@ -684,9 +694,9 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         const st = s.entity && this._hass.states[s.entity];
         const name = st ? st.attributes.friendly_name || s.entity : s.entity || "";
         if (istRegeln(s)) {
-          const a = REGELN_ARTEN.find(([x]) => x === s.data?.art);
-          const n = Number(s.data?.schritt) || 0;
-          return `${name ? name + ": " : ""}${a ? a[1] : "regeln"}${a && a[0] !== "drehung" ? ` ${n > 0 ? "+" : ""}${n} ${a[4]}` : ""}`;
+          const a = REGELN_ARTEN.find(([x]) => x === s.data?.type);
+          const n = Number(s.data?.step) || 0;
+          return `${name ? name + ": " : ""}${a ? a[1] : "regeln"}${a && a[0] !== "oscillation" ? ` ${n > 0 ? "+" : ""}${n} ${a[4]}` : ""}`;
         }
         const [, svc] = s.svc.split(".");
         return `${name ? name + ": " : ""}${SVC_DE[svc] || s.svc}`;
@@ -1020,6 +1030,82 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     }
     return { t: "ha", svc: "media_player.select_source", entity: e, data: { source: pkg } };
   }
+  // ---- Steuerkreuz-Assistent (2026-11-03, Nutzer: Tastenmodus "fuer Dumme offensichtlicher machen"): legt die
+  // Richtungs-Eintraege (nur solange gedrueckt, Stopp beim Loslassen, Taste zugeordnet) und den Umschaltknopf an.
+  _dpadStart(seite) {
+    const r = Object.fromEntries(DPAD_RICHTUNGEN.map(([k]) => [k, ""]));
+    this.s.modal = { type: "dpad", seite, kam: "", r, stopp: "", speed: 8 };
+  }
+  _dpadVorschlag(kam) {
+    // Tasten-Entitaeten der Kamera finden: gleiches Geraet, sonst gleicher Name ("camera.garten" -> "button.garten_ptz_links")
+    const E = this._hass.entities || {}, H = this._hass.states, dev = E[kam]?.device_id;
+    const basis = kam.split(".")[1] || "";
+    const kand = Object.keys(H).filter((e) => /^(button|script|input_button|scene)\./.test(e)
+      && ((dev && E[e]?.device_id === dev) || e.split(".")[1].startsWith(basis + "_")));
+    const finde = (muster) => kand.find((e) => muster.some((x) => new RegExp(`(^|_)${x}$`).test(e.split(".")[1]))) || "";
+    const m = this.s.modal;
+    for (const [k, , , , muster] of DPAD_RICHTUNGEN) m.r[k] = finde(muster);
+    m.stopp = finde(["stopp", "stop", "ptz_stopp", "ptz_stop"]);
+  }
+  _dpadSchritt(e, speed) {
+    const E = this._hass.entities || {}, d = e.split(".")[0];
+    if (d === "button" && E[e]?.platform === "reolink" && !/stop/.test(e)) return { t: "ha", svc: "reolink.ptz_move", entity: e, data: { speed: String(speed) } };
+    const svc = { button: "button.press", input_button: "input_button.press", script: "script.turn_on", scene: "scene.turn_on" }[d] || "homeassistant.turn_on";
+    return { t: "ha", svc, entity: e, data: {} };
+  }
+  _dpadHtml() {
+    const m = this.s.modal, H = this._hass.states;
+    const pg = this.menu.pages.find((p) => p.id === m.seite);
+    const kams = Object.keys(H).filter((e) => e.startsWith("camera.")).sort();
+    const ents = Object.keys(H).filter((e) => /^(button|script|input_button|scene)\./.test(e)).sort();
+    const nm = (e) => H[e]?.attributes?.friendly_name || e;
+    const feld = (k, v) => `<input data-dp="${k}" list="dp_ents" value="${esc(v)}" placeholder="leer = nicht anlegen" autocomplete="off">`;
+    const belegt = (pg?.items || []).filter((it) => it.key && DPAD_RICHTUNGEN.some(([k, key]) => key === it.key && m.r[k])).length;
+    const hatKnopf = (pg?.items || []).some((it) => (it.steps || []).some((st) => st.fn === "keymode"));
+    return `<div class="modal" data-a="modalbg"><div class="dlg appwiz dpadwiz">
+      <div class="dh"><h2><ha-icon icon="mdi:gamepad-variant"></ha-icon> Mit dem Steuerkreuz steuern</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      <p>Zum Beispiel eine Kamera schwenken: Solange du eine Pfeiltaste der Remote <b>gedrückt hältst</b>, bewegt sie sich, beim <b>Loslassen</b> hält sie an.</p>
+      <ol class="aw_schritte">
+        <li><b>Kamera</b> <select data-dp="kam"><option value="">– selbst eintragen –</option>${kams.map((e) => `<option value="${esc(e)}" ${e === m.kam ? "selected" : ""}>${esc(nm(e))}</option>`).join("")}</select>
+          <br><small class="note">Füllt die Felder unten mit den Schwenk-Tasten dieser Kamera (z. B. Reolink: button.…_ptz_links). Prüf sie kurz.</small></li>
+        <li><b>Was tun die Tasten?</b> <small class="note">Taste, Skript oder Szene aus Home Assistant – leer lassen, was du nicht brauchst.</small>
+          <div class="dp_tab">${DPAD_RICHTUNGEN.map(([k, key, name, icon]) => `<label><ha-icon icon="mdi:${icon}"></ha-icon><span>${esc(name)}<small>Taste ${esc(KEYNAME[key])}</small></span>${feld(k, m.r[k])}</label>`).join("")}
+          <label><ha-icon icon="mdi:stop"></ha-icon><span>Stopp<small>beim Loslassen</small></span>${feld("stopp", m.stopp)}</label></div>
+          <datalist id="dp_ents">${ents.map((e) => `<option value="${esc(e)}">${esc(nm(e))}</option>`).join("")}</datalist></li>
+        <li><b>Geschwindigkeit</b> <input type="number" data-dp="speed" min="1" max="64" value="${m.speed}" style="width:70px"> <small class="note">nur Reolink-Schwenktasten</small></li></ol>
+      <div class="dp_so"><b>So geht es dann auf der Remote:</b>
+        <ol><li>Seite „${esc(pg?.title || m.seite)}“ öffnen (bzw. das Popup geht auf).</li>
+          <li>Den Knopf <b>„Steuerkreuz“</b> drücken – er wird blau umrandet.</li>
+          <li>Jetzt bewegen die <b>Pfeiltasten</b> die Kamera statt der Auswahl auf dem Display.</li>
+          <li><b>Zurück</b> drücken = fertig, die Pfeiltasten wählen wieder auf dem Display aus.</li></ol></div>
+      ${belegt ? `<p class="hint">${belegt} Eintrag/Einträge auf dieser Seite haben schon eine dieser Tasten – sie verlieren die Taste (die Einträge bleiben).</p>` : ""}
+      ${hatKnopf ? `<small class="note">Die Seite hat schon einen Knopf „Tastenmodus an/aus“ – es kommt kein zweiter dazu.</small>` : ""}
+      <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><span class="grow"></span>
+        <button class="btn primary" data-a="mdpad_ok" ${DPAD_RICHTUNGEN.some(([k]) => m.r[k]) ? "" : "disabled"}><ha-icon icon="mdi:check"></ha-icon>Anlegen</button></div>
+    </div></div>`;
+  }
+  _dpadAnlegen() {
+    const m = this.s.modal, pg = this.menu.pages.find((p) => p.id === m.seite);
+    if (!pg) return;
+    pg.items = pg.items || [];
+    const keys = new Set(DPAD_RICHTUNGEN.filter(([k]) => m.r[k]).map(([, key]) => key));
+    for (const it of pg.items) if (keys.has(it.key)) delete it.key;
+    let y = pg.items.length ? Math.max(...pg.items.map((it) => (it.y || 0) + (it.h || 1))) : 0;
+    const stopp = m.stopp ? this._dpadSchritt(m.stopp, m.speed) : null;
+    if (!pg.items.some((it) => (it.steps || []).some((st) => st.fn === "keymode")))
+      pg.items.push({ t: "action", label: I18N.sprache === "de" ? "Steuerkreuz" : "D-pad", icon: "gamepad-variant", x: 0, y: y++, w: 6, h: 1, steps: [{ t: "int", fn: "keymode" }] });
+    for (const [k, key, name, icon, , dx, dy] of DPAD_RICHTUNGEN) {
+      if (!m.r[k]) continue;
+      const it = { t: "action", w: 2, h: 1, x: dx, y: y + dy, key, steps: [this._dpadSchritt(m.r[k], m.speed)] };
+      if (k.startsWith("z")) it.label = name; else it.icon = icon;
+      if (stopp) { it.hold = true; it.release = [{ ...stopp, data: { ...stopp.data } }]; }
+      pg.items.push(it);
+    }
+    if (stopp) pg.items.push({ t: "action", label: I18N.sprache === "de" ? "Stopp" : "Stop", x: 2, y: y + 1, w: 2, h: 1, steps: [stopp] });
+    this._touch();
+    this.s.msg = { text: "Steuerkreuz-Steuerung angelegt – wirkt nach dem Speichern. Auf der Remote: „Steuerkreuz“ drücken, dann die Pfeiltasten." };
+    this.s.modal = null;
+  }
   _appWizHtml() {
     const m = this.s.modal, G = this._appGeraete(), H = this._hass.states, j = this._appJetzt();
     const name = m.nameHand ? m.name : (j.name || m.name || "");
@@ -1126,7 +1212,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   }
   // Neue Aktion einer Art (Tastenbelegung)
   _neuerSchritt(v, g) {
-    if (v === "regeln") return { t: "ha", svc: REGELN_SVC, entity: "", data: { art: "helligkeit", schritt: "10" } };
+    if (v === "regeln") return { t: "ha", svc: REGELN_SVC, entity: "", data: { type: "brightness", step: "10" } };
     return { ble: { t: "ble", kind: "consumer", code: 0xCD, dev: -1 }, ha: { t: "ha", svc: "script.turn_on", entity: "", data: {} },
       int: { t: "int", fn: g === "long" && this.s.key === 45 ? "voice_ptt" : "menu_smart" }, ir: { t: "ir", proto: "NEC", addr: 0, cmd: 0 }, rf: { t: "rf", raw: [], wdh: 5 },
       wait: { t: "wait", ms: 300 }, modus: { t: "modus", id: this.cfg.modi?.[0]?.id || "" } }[v];
@@ -1173,11 +1259,11 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       const ent = st.entity ? this._hass.states[st.entity] : null;
       const dom = st.entity ? st.entity.split(".")[0] : "";
       const arten = REGELN_ARTEN.filter(([, , d]) => !dom || d === dom);
-      const art = REGELN_ARTEN.find(([a]) => a === st.data?.art) || arten[0];
+      const art = REGELN_ARTEN.find(([a]) => a === st.data?.type) || arten[0];
       body = `<button class="entity" data-a="pick" ${id}>${ent ? `<ha-icon icon="${esc(ent.attributes.icon || "mdi:shape")}"></ha-icon><span><b>${esc(ent.attributes.friendly_name || st.entity)}</b><small>${esc(st.entity)}</small></span>`
         : `<ha-icon icon="mdi:magnify"></ha-icon><span><b>Licht oder Ventilator wählen …</b></span>`}</button>
         <div class="inl"><select data-f="rg_art" ${id}>${arten.map(([a, l]) => `<option value="${a}" ${art?.[0] === a ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
-        ${art && art[0] !== "drehung" ? `<input type="number" data-f="rg_schritt" ${id} value="${esc(st.data?.schritt ?? art[3])}" style="width:6em"><span>${art[4]}</span>` : ""}</div>
+        ${art && art[0] !== "oscillation" ? `<input type="number" data-f="rg_schritt" ${id} value="${esc(st.data?.step ?? art[3])}" style="width:6em"><span>${art[4]}</span>` : ""}</div>
         <small class="note">${art?.[5] || ""}</small>`;
     } else if (st.t === "ha") {
       const ent = st.entity ? this._hass.states[st.entity] : null;
@@ -1241,6 +1327,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (m.type === "jetzt") return this._jetztModal();
     if (m.type === "addart") return this._addArtModal();
     if (m.type === "appwiz") return this._appWizHtml();
+    if (m.type === "dpad") return this._dpadHtml();
     if (m.type === "uebertragen") return this._uebertragenModal();
     if (m.type === "btset") return this._btModal();
     if (m.type === "pick") {
@@ -1743,7 +1830,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         st.entity = e;
         if (st.svc === REGELN_SVC) {   // Schrittweise regeln: Dienst bleibt, Art passend zum Geraet
           const arten = REGELN_ARTEN.filter(([, , dom]) => dom === d);
-          if (arten.length && !arten.some(([a]) => a === st.data?.art)) st.data = { art: arten[0][0], schritt: String(arten[0][3]) };
+          if (arten.length && !arten.some(([a]) => a === st.data?.type)) st.data = { type: arten[0][0], step: String(arten[0][3]) };
           this._commit(kc); s.modal = null; break;
         }
         const svcs = Object.keys(this._hass.services[d] || {});
@@ -1898,6 +1985,14 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (t.dataset.anz) return this._anzChange(t);
     if (t.dataset.fk) return this._fkChange(t);
     if (t.dataset.ut && this.s.modal?.type === "uebertragen") { this.s.modal.ziele[t.dataset.ut] = t.checked; return this._render(); }
+    if (t.dataset.dp && this.s.modal?.type === "dpad") {   // Steuerkreuz-Assistent
+      const m = this.s.modal, k = t.dataset.dp, v = t.value.trim();
+      if (k === "kam") { m.kam = v; if (v) this._dpadVorschlag(v); }
+      else if (k === "speed") m.speed = Math.max(1, Math.min(64, Number(v) || 8));
+      else if (k === "stopp") m.stopp = v;
+      else m.r[k] = v;
+      return this._render();
+    }
     if (t.dataset.aw && this.s.modal?.type === "appwiz") {   // App-Assistent
       if (t.dataset.aw === "geraet") { this.s.modal.geraet = t.value; return this._render(); }
       this.s.modal.name = t.value; this.s.modal.nameHand = true; return;
@@ -1920,10 +2015,10 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     let st = kc[g][i];
     const v = t.value;
     switch (f) {
-      case "rg_art": { const a = REGELN_ARTEN.find(([x]) => x === v); st.data = { art: v, schritt: String(a ? a[3] : 0) }; break; }
-      case "rg_schritt": st.data = { ...(st.data || {}), schritt: String(Number(v) || 0) }; break;
+      case "rg_art": { const a = REGELN_ARTEN.find(([x]) => x === v); st.data = { type: v, step: String(a ? a[3] : 0) }; break; }
+      case "rg_schritt": st.data = { ...(st.data || {}), step: String(Number(v) || 0) }; break;
       case "t":
-        if (v === "regeln") { st = { t: "ha", svc: REGELN_SVC, entity: "", data: { art: "helligkeit", schritt: "10" } }; kc[g][i] = st; s.modal = { type: "pick", g, i, domain: "", q: "", domains: ["light", "fan"] }; break; }
+        if (v === "regeln") { st = { t: "ha", svc: REGELN_SVC, entity: "", data: { type: "brightness", step: "10" } }; kc[g][i] = st; s.modal = { type: "pick", g, i, domain: "", q: "", domains: ["light", "fan"] }; break; }
         st = this._neuerSchritt(v, g);
         kc[g][i] = st;
         if (v === "ha") s.modal = { type: "pick", g, i, domain: "", q: "" };
@@ -1983,7 +2078,8 @@ const M_TYPES = [
   ["toggle", "Schalter", "mdi:toggle-switch-outline"],
   ["light", "Licht (mit Regler)", "mdi:lightbulb-outline"],
   ["number", "Zahl / Lautstärke (mit Regler)", "mdi:volume-high"],
-  ["select", "Auswahl (OK = nächste, ◀ ▶ blättern)", "mdi:form-dropdown"],
+  ["select", "Auswahl (OK = nächste, ◀ ▶ blättern)", "mdi:form-select"],
+  ["dropdown", "Dropdown (OK öffnet die Liste)", "mdi:form-dropdown"],
   ["cover", "Rollo", "mdi:window-shutter"],
   ["sensor", "Anzeige (Zustand)", "mdi:eye-outline"],
   ["text", "Überschrift / Text", "mdi:format-title"],
@@ -2043,7 +2139,7 @@ const M_INHALT_HINWEIS = {
   touchpad: "Zeigt das eingebaute Touchpad (Maus für PC/Tablet) statt der Einträge. Es öffnet sich über einen Auslöser (unten).",
 };
 const M_DOMAINS = { toggle: ["switch", "input_boolean", "light", "fan", "automation", "script", "media_player", "climate", "siren", "lock"],
-  light: ["light"], mtitel: ["media_player"], mtaste: ["media_player"], vpreset: ["media_player"], number: ["number", "input_number", "media_player"], select: ["select", "input_select"], cover: ["cover"], sensor: ["sensor", "binary_sensor", "input_select", "input_number", "input_text", "climate", "media_player", "weather", "person", "device_tracker", "lock", "cover", "light", "switch", "input_boolean"] };
+  light: ["light"], mtitel: ["media_player"], mtaste: ["media_player"], vpreset: ["media_player"], number: ["number", "input_number", "media_player"], select: ["select", "input_select"], dropdown: ["select", "input_select"], cover: ["cover"], sensor: ["sensor", "binary_sensor", "input_select", "input_number", "input_text", "climate", "media_player", "weather", "person", "device_tracker", "lock", "cover", "light", "switch", "input_boolean"] };
 
 // Aussehen eines Eintrags (bg/fg/align/size) als CSS fuer die Vorschau - wie gestalten_() in der Firmware
 const M_FARBEN = [["", "Standard"], ["#16a34a", "Grün"], ["#dc2626", "Rot"], ["#2563eb", "Blau"], ["#ea580c", "Orange"],
@@ -2188,7 +2284,7 @@ const MenuEditor = {
       return `${st.state}${st.attributes.unit_of_measurement ? " " + st.attributes.unit_of_measurement : ""}`;
     }
     if (it.t === "cover") return st.attributes.current_position != null ? `${st.attributes.current_position} %` : st.state === "open" ? "offen" : st.state === "closed" ? "zu" : st.state;
-    if (it.t === "select") return st.state;
+    if (it.t === "select" || it.t === "dropdown") return st.state;
     if (it.t === "sensor") return `${st.state}${st.attributes.unit_of_measurement ? " " + st.attributes.unit_of_measurement : ""}`;
     return st.state === "on" ? "an" : st.state === "off" ? "aus" : st.state;
   },
@@ -2496,7 +2592,7 @@ const MenuEditor = {
       add({ t: "sensor", entity: t, label: "Abgelaufen", lay: "g", icon: "timer-outline", bg: "#7c2d12" }, 0, 0, 6, 2);
       add({ t: "action", label: "Dauer", sub: { e: t, a: "dauer" } }, 0, 2, 6, 1);
       add({ t: "action", label: "Abgelaufen um", sub: { e: t, a: "abgelaufen_um" } }, 0, 3, 6, 1);
-      add({ t: "action", label: "+5 min", icon: "plus", align: "c", steps: [{ t: "ha", svc: "esphomeremote.timer_extend", data: { minuten: "5" } }, { t: "int", fn: "popup_close" }] }, 0, 4, 3, 1);
+      add({ t: "action", label: "+5 min", icon: "plus", align: "c", steps: [{ t: "ha", svc: "esphomeremote.timer_extend", data: { minutes: "5" } }, { t: "int", fn: "popup_close" }] }, 0, 4, 3, 1);
       add({ t: "action", label: "Nochmal", icon: "timer-outline", align: "c", steps: [{ t: "ha", svc: "esphomeremote.timer_restart", data: {} }, { t: "int", fn: "popup_close" }] }, 3, 4, 3, 1);
       add({ t: "action", label: "OK", align: "c", size: "l", bg: "#16a34a", fg: "#ffffff", steps: [{ t: "int", fn: "popup_close" }] }, 0, 5, 6, 2);
     } else if (m.art === "frage") {
@@ -2615,6 +2711,7 @@ const MenuEditor = {
       <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
         <button class="btn small" data-a="maddsub" title="Neue Seite anlegen und hier verlinken"><ha-icon icon="mdi:file-tree"></ha-icon>Unterseite</button>
         <button class="btn small" data-a="mappadd" title="App am Fernseher/Streamer öffnen – der Konfigurator erkennt sie und legt einen Eintrag an, der sie öffnet"><ha-icon icon="mdi:apps"></ha-icon>App …</button>
+        <button class="btn small" data-a="mdpad" title="Pfeiltasten der Remote steuern etwas, solange du sie hältst – z. B. Kamera schwenken. Legt alle Einträge und den Umschaltknopf an."><ha-icon icon="mdi:gamepad-variant"></ha-icon>Steuerkreuz-Steuerung …</button>
         ${this.s.order.length > 1 ? `<button class="btn small ghost" data-a="mueber" title="Diese Seite samt Unterseiten an andere Remotes übertragen und dort speichern"><ha-icon icon="mdi:upload-multiple"></ha-icon>An andere Remotes …</button>` : ""}
         ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
         <button class="btn small ghost" data-a="mclippage" title="Seite samt Unterseiten kopieren – einfügen bei jeder Remote unter „Seiten“"><ha-icon icon="mdi:content-copy"></ha-icon>Seite in Zwischenablage</button>
@@ -3152,7 +3249,7 @@ const MenuEditor = {
       body += `<label>Bildquelle<select data-mi="src">${M_KAMERAS.map(([k, l]) => `<option value="${k}" ${kamSrc(it.src) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <small class="note">Zeigt das Foto, das HA beim Klingeln an die Remote schickt (216×112 px – passt in Breite 6, Höhe 3).</small>`;
     }
-    if (["toggle", "light", "number", "select", "cover", "sensor", ...M_MEDIEN].includes(it.t)) {
+    if (["toggle", "light", "number", "select", "dropdown", "cover", "sensor", ...M_MEDIEN].includes(it.t)) {
       const ent = it.entity && this._hass.states[it.entity];
       body += `<label>Entität</label><button class="entity" data-a="mpick">${ent ? `<ha-icon icon="${esc(ent.attributes.icon || "mdi:shape")}"></ha-icon><span><b>${esc(ent.attributes.friendly_name || it.entity)}</b><small>${esc(it.entity)} · ${esc(ent.state)}</small></span>` : '<ha-icon icon="mdi:magnify"></ha-icon><span><b>Entität wählen …</b></span>'}</button>`;
     }
@@ -3169,7 +3266,7 @@ const MenuEditor = {
       body += `<label class="sw small"><input type="checkbox" data-mi="okmute" ${it.ok === "mute" ? "checked" : ""}><span>OK / Antippen schaltet stumm (sonst Gerät an/aus)</span></label>
         <label class="inl2">◀ ▶ ändern um <select data-mi="st"><option value="">Schritt des Geräts</option>${[1, 2, 3, 5, 10].map((n) => `<option value="${n}" ${it.st === n ? "selected" : ""}>${n} %</option>`).join("")}</select></label>`;
     }
-    const canSteps = ["action", "toggle", "light", "number", "select", "cover", "sensor", "mtaste", "vpreset"].includes(it.t);
+    const canSteps = ["action", "toggle", "light", "number", "select", "cover", "sensor", "mtaste", "vpreset"].includes(it.t);   // dropdown: OK oeffnet die Liste
     const steps = it.steps || [];
     const anz = (n, leer) => (n ? `${n} Aktion${n > 1 ? "en" : ""}` : leer);
     const stdTipp = { toggle: "umschalten", light: "an/aus", number: "Media Player an/aus, Zahl nichts", select: "nächste Option", cover: "auf/zu", sensor: "nichts" }[it.t];
@@ -3189,7 +3286,11 @@ const MenuEditor = {
         ${it.hold ? `<div class="ph">Beim Loslassen<span class="grow"></span><button class="btn small" data-a="add" data-g="release"><ha-icon icon="mdi:plus"></ha-icon>Aktion</button></div>
         ${rel.map((st, j) => this._stepHtml("release", j, st, rel.length)).join("") || '<div class="none">nichts</div>'}` : ""}
         <label class="inl2">Im Tastenmodus folgt dieser Eintrag der Taste <select data-mi="key">${TASTEN.map(([k, l]) => `<option value="${k}" ${(it.key || 0) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-        <small class="note">Tastenmodus: ein Knopf auf der Seite mit der Funktion „Tastenmodus an/aus“. Ist er an (blau umrandet), drücken die Hardware-Tasten die zugeordneten Einträge, Zurück beendet den Tastenmodus.</small>
+        <div class="dp_so"><b>So funktioniert „Taste folgen“:</b> Normal wählen die Pfeiltasten auf dem Display aus. Damit sie stattdessen diesen Eintrag drücken,
+          braucht die Seite einen Knopf mit der Funktion „Tastenmodus an/aus“: Knopf drücken (blau umrandet) → die Tasten lösen ihre Einträge aus → Zurück beendet es.
+          ${(this.mpage?.items || []).some((x) => (x.steps || []).some((st) => st.fn === "keymode")) ? `<br><ha-icon icon="mdi:check" style="color:#22c55e"></ha-icon> Diese Seite hat den Knopf schon.`
+            : `<br><ha-icon icon="mdi:alert" style="color:#f59e0b"></ha-icon> Diese Seite hat noch keinen solchen Knopf.`}
+          <br>Einfacher: <button class="btn small" data-a="mdpad"><ha-icon icon="mdi:gamepad-variant"></ha-icon>Steuerkreuz-Steuerung …</button> legt alles auf einmal an.</div>
         <label class="inl2">Danach Folgemodus <select data-mi="modus"><option value="">keiner</option>${(this.cfg.modi || []).map((mo) => `<option value="${esc(mo.id)}" ${it.modus === mo.id ? "selected" : ""}>${esc(mo.name)}</option>`).join("")}</select></label>
         <small class="note">Nach dem Bedienen dieses Eintrags gelten für ein paar Sekunden die Tasten des Folgemodus (z. B. Ventilator: Kanal +/− ändert die Stufe). Anlegen unter „Tasten“ → Folgemodi.</small>
       `, haltInfo !== "aus") : "";
@@ -3252,6 +3353,8 @@ const MenuEditor = {
     switch (a) {
       case "mode": this._seiteMerken(t.dataset.m); s.mode = t.dataset.m; s.mitem = null; this._weiterleiten(); return true;
       case "mappadd": s.modal = { type: "appwiz", ziel: "popup", seite: p.id }; this._appWizStart(); return true;   // App-Assistent
+      case "mdpad": this._dpadStart(p.id); return true;   // Steuerkreuz-Assistent
+      case "mdpad_ok": this._dpadAnlegen(); return true;
       case "mueber": s.modal = { type: "uebertragen", art: "seite", id: p.id, ziele: {} }; return true;
       case "mkamadd": {
         const e = Object.keys(this._hass.states).find((x) => x.startsWith("camera."));
@@ -3581,7 +3684,7 @@ const MenuEditor = {
         if (it.t === "vpreset") { it.wert = it.wert ?? 25; delete it.steps; }
         if (it.t === "mtitel") { it.h = Math.max(it.h || 1, 2); delete it.steps; delete it.icon; }
         if (it.t === "widget") { it.art = it.art || "uhr"; it.w = 6; it.h = it.h >= 2 ? it.h : 3; delete it.steps; delete it.icon; }
-        if (["toggle", "light", "number", "select", "cover", "sensor", ...M_MEDIEN].includes(it.t) && !it.entity) { this.s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", ment: true, domains: M_DOMAINS[it.t] }; }
+        if (["toggle", "light", "number", "select", "dropdown", "cover", "sensor", ...M_MEDIEN].includes(it.t) && !it.entity) { this.s.modal = { type: "pick", g: "item", i: -1, domain: "", q: "", ment: true, domains: M_DOMAINS[it.t] }; }
       } else if (k === "fn") it.fn = t.value;
       else if (k === "wert") it.wert = Math.max(0, Math.min(100, Number(t.value) || 0));
       else if (k === "okmute") { if (t.checked) it.ok = "mute"; else delete it.ok; }
@@ -4226,6 +4329,7 @@ ha-icon { --mdc-icon-size:20px; }
 .step { border:1px solid var(--div); border-radius:10px; margin-bottom:8px; overflow:hidden; }
 .step .sh { min-width:0; } .step .sh select { min-width:0; flex:1 1 60px; }   /* schmale Fenster: Knoepfe rechts nicht abschneiden */
 .step .sh .icon { flex:none; } .step .sh .grow { flex:0 1 auto; }
+.inl2 { max-width:100%; min-width:0; flex-wrap:wrap; } .inl2 select { max-width:100%; min-width:0; }   /* schmale Editoren: Auswahl nicht abschneiden */
 .sh { display:flex; align-items:center; gap:6px; padding:4px 4px 4px 10px; background:rgba(127,127,127,.08); }
 .sh select { border:0; background:transparent; font-weight:500; }
 .sb { padding:10px; display:flex; flex-direction:column; gap:8px; }
@@ -5707,7 +5811,7 @@ const LernEditor = {
         const ok = [], fehler = [];
         for (const d of this._rfDocks(st)) {
           try {
-            if (d.includes(".")) await this._hass.callService("esphomeremote", "blaster_senden", { sender: d, code: st.raw.join(","), art: "rf", wiederholen: st.wdh || 5 });
+            if (d.includes(".")) await this._hass.callService("esphomeremote", "blaster_send", { transmitter: d, code: st.raw.join(","), type: "rf", repeat: st.wdh || 5 });
             else await this._esphome(`${d}_rf_roh`, { code: st.raw.join(","), wiederholen: st.wdh || 5 });
             ok.push(this._dockLabel(d));
           }
@@ -6923,7 +7027,10 @@ const APP_NAMEN = { "com.netflix.ninja": "Netflix", "com.disney.disneyplus": "Di
   "com.google.android.apps.youtube.music": "YouTube Music", "tv.twitch.android.app": "Twitch" };
 const ANZ_TEILE = [["datum", "Datum"], ["uhr", "Uhrzeit"], ["wetter", "Wetter"], ["raum", "Raumklima"], ["termine", "Termine"], ["laden", "Ladestand"]];
 const EINST_CSS = `
-.appwiz { max-width:520px; } .appwiz .aw_schritte { display:flex; flex-direction:column; gap:12px; padding-left:20px; margin:8px 0; }
+.appwiz { max-width:520px; } .dpadwiz { max-width:600px; }
+.dp_tab { display:grid; gap:6px; margin-top:6px; } .dp_tab label { display:grid; grid-template-columns:24px 120px 1fr; align-items:center; gap:8px; }
+.dp_tab label span { display:flex; flex-direction:column; } .dp_tab label small { color:var(--sec); font-size:11px; } .dp_tab input { min-width:0 !important; width:100%; }
+.dp_so { margin:8px 0; padding:10px 12px; border-radius:10px; border:1px solid var(--rand); background:var(--flaeche); font-size:13px; } .dp_so ol { margin:6px 0 0; padding-left:20px; } .appwiz .aw_schritte { display:flex; flex-direction:column; gap:12px; padding-left:20px; margin:8px 0; }
 .appwiz .aw_schritte li > b { display:inline-block; min-width:60px; } .appwiz .aw_schritte select, .appwiz .aw_schritte input { width:auto; min-width:220px; }
 .appwiz .aw_live { display:flex; gap:10px; align-items:center; margin-top:8px; padding:12px; border-radius:12px; border:1px solid var(--rand); background:var(--flaeche); }
 .appwiz .aw_live span { display:flex; flex-direction:column; } .appwiz .aw_live small { color:var(--sec); }
@@ -7861,13 +7968,13 @@ const FunktionenTab = {
       <p class="hint">Funktionen für das ganze Zuhause, die die Remotes nutzen. Nichts davon braucht eigene Skripte oder Pakete in Home Assistant – in Tasten, Menüs und Popups wählst du sie als Home-Assistant-Aktion (<code>esphomeremote.…</code>) bzw. als Entität.</p>
       <div class="egrid">
       <div class="karte"><h3><ha-icon icon="mdi:video-input-hdmi"></ha-icon>TV-Eingang</h3>
-        <div class="eintro">Ein Sensor mit dem Eingang, den der Fernseher gerade zeigt – so wie er ihn nennt, z. B. <b>HDMI 3</b>, oder <b>aus</b>. Damit gehen Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“. Entität: <code>sensor.esphomeremote_tv_eingang</code>.</div>
+        <div class="eintro">Ein Sensor mit dem Eingang, den der Fernseher gerade zeigt – so wie er ihn nennt, z. B. <b>HDMI 3</b>, oder <b>off</b>. Damit gehen Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“. Entität: <code>sensor.esphomeremote_tv_input</code>.</div>
         ${ez("Fernseher", wahl(`data-fk="tv"`, F.media, t.tv, "– keiner (Sensor aus) –"))}
         ${t.tv ? ez("Streamer hängt an", `<select data-fk="streamer"><option value="">– kein Streamer –</option>${[...new Set([...quellen, t.streamer].filter(Boolean))].map((q) => `<option value="${esc(q)}" ${q === t.streamer ? "selected" : ""}>${esc(q)}</option>`).join("")}</select>`, "Eingang des Streamers – nur nötig für den CEC-Sensor darunter.") : ""}
         ${t.tv && t.streamer ? ez("CEC-Sensor (optional)", wahl(`data-fk="cec"`, F.sensoren, t.cec, "– keiner –"), "Steht er auf true/an, meldet der Sensor den Eingang des Streamers – hilft, wenn der Fernseher die Quelle nicht verlässlich meldet.") : ""}
         ${t.tv ? `<div class="ez"><span class="zt">Jetzt</span><b>${esc(eingang)}</b></div>` : ""}</div>
       <div class="karte"><h3><ha-icon icon="mdi:cctv"></ha-icon>Kamera auf dem Fernseher</h3>
-        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – als Overlay über allem: das laufende Video (YouTube, Netflix …) läuft weiter, der Ton der Kamera ist aus. Aktionen: <code>esphomeremote.camera_tv</code> (Kamera, „letzte“ oder „aus“), <code>kamera_groesse</code> und <code>kamera_position</code> (je auch „naechste“). Für Popups: <code>binary_sensor.esphomeremote_kamera_tv</code>.</div>
+        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – als Overlay über allem: das laufende Video (YouTube, Netflix …) läuft weiter, der Ton der Kamera ist aus. Aktionen: <code>esphomeremote.camera_tv</code> mit <code>camera:</code> (Kamera, <code>last</code> oder <code>off</code>), <code>camera_size</code> mit <code>size:</code> (<code>small</code>, <code>medium</code>, <code>large</code>, <code>almost_full</code>) und <code>camera_position</code> mit <code>position:</code> (je auch <code>next</code>). Für Popups: <code>binary_sensor.esphomeremote_camera_tv</code>.</div>
         ${ez("Weg", `<select data-fk="weg"><option value="app" ${k.weg !== "hatv" ? "selected" : ""}>ESPHomeRemote Streamer-App (empfohlen)</option><option value="hatv" ${k.weg === "hatv" ? "selected" : ""}>App HA TV Dashboard</option></select>`,
           k.weg === "hatv" ? "Benachrichtigung an die App HA TV Dashboard" : "Overlay unserer Streamer-App (Wiedergabe › Streamer, ab Version 1.9): WebRTC über Home Assistant (kaum Verzögerung), sonst HLS, sonst Standbilder")}
         ${k.weg === "hatv" ? `${ez("Fernseher (App)", wahl(`data-fk="notify"`, F.notify.map((x) => ({ id: x, name: x.replace("notify.mobile_app_", "") })), k.notify, "– keiner (Funktion aus) –"), "Benachrichtigungsdienst der App HA TV Dashboard")}
@@ -7918,10 +8025,10 @@ const FunktionenTab = {
     else if (a === "fk_neustart") {
       const g = c.neustart[Number(t.dataset.i)];
       if (!g || !confirm(`„${g.name}“ jetzt neu starten?`)) return true;
-      await this._hass.callService("esphomeremote", "neustart", { geraet: g.name }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
+      await this._hass.callService("esphomeremote", "restart", { device: g.name }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
       this.s.msg = { text: `Neustart an „${g.name}“ geschickt.` };
     } else if (a === "fk_kam") {
-      await this._hass.callService("esphomeremote", "kamera_tv", { kamera: t.dataset.e }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
+      await this._hass.callService("esphomeremote", "camera_tv", { camera: t.dataset.e }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
     }
     return true;
   },

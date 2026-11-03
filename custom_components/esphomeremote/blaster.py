@@ -19,6 +19,8 @@ import struct
 
 import voluptuous as vol
 
+from .aliases import schema_with_aliases
+
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
@@ -114,11 +116,11 @@ def _zeiten(text) -> list[int]:
 
 
 SCHEMA = vol.Schema({
-    vol.Required("sender"): cv.entity_id,
+    vol.Required("transmitter"): cv.entity_id,
     vol.Required("code"): vol.Any(str, [vol.Coerce(int)]),
-    vol.Optional("traeger", default=38000): vol.Coerce(int),
-    vol.Optional("art", default="ir"): vol.In(["ir", "rf"]),
-    vol.Optional("wiederholen", default=1): vol.All(vol.Coerce(int), vol.Range(1, 30)),
+    vol.Optional("carrier", default=38000): vol.Coerce(int),
+    vol.Optional("type", default="ir"): vol.In(["ir", "rf"]),
+    vol.Optional("repeat", default=1): vol.All(vol.Coerce(int), vol.Range(1, 30)),
 }, extra=vol.ALLOW_EXTRA)
 
 
@@ -129,6 +131,6 @@ def registrieren(hass: HomeAssistant) -> None:
             zeiten = _zeiten(d["code"])
         except (TypeError, ValueError) as err:
             raise ServiceValidationError(f"Code nicht lesbar: {err}") from err
-        await senden(hass, d["sender"], zeiten, d["traeger"], d["art"], d["wiederholen"], call.context)
+        await senden(hass, d["transmitter"], zeiten, d["carrier"], d["type"], d["repeat"], call.context)
 
-    hass.services.async_register(DOMAIN, "blaster_send", dienst, schema=SCHEMA)
+    hass.services.async_register(DOMAIN, "blaster_send", dienst, schema=schema_with_aliases("blaster_send", SCHEMA))

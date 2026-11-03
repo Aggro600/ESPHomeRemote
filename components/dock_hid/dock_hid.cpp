@@ -1,4 +1,10 @@
 #include "dock_hid.h"
+
+#ifdef USE_DOCK_HID_SMP_KEY_GUARD
+extern "C" void dock_hid_kopplung_vorbei();   // bluedroid_smp_guard.cpp
+#else
+static inline void dock_hid_kopplung_vorbei() {}
+#endif
 #include "esphome/components/bluetooth_connection/bluetooth_connection_bluedroid.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -728,6 +734,7 @@ void DockHid::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_par
       break;
     }
     case ESP_GAP_BLE_AUTH_CMPL_EVT: {
+      dock_hid_kopplung_vorbei();   // Kopplung oder Verschluesselung abgeschlossen (Schluessel-Schutz)
       const auto &ac = param->ble_security.auth_cmpl;
       std::lock_guard<std::mutex> l(mtx_);
       Verb *v = nullptr;
@@ -740,6 +747,9 @@ void DockHid::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_par
         break;
       }
       v->sicher = true;
+      // Keine eigene Takt-Anfrage mehr (2026-11-03): mit ihr (15-30 ms, ab 2026-11-02 nach der Verschluesselung) trennte
+      // der Sony-TV (MediaTek-Bluetooth) alle 1-6 Minuten mit 0x22, 8 Abbrueche in 25 min; ohne sie keiner in 45 min.
+      // Jedes Geraet nimmt jetzt seinen eigenen Takt (der Sony waehlt 22,5 ms).
       int p = platz_von_(ac.bd_addr);
       const bool neue_adresse = p < 0 && (p = platz_ueber_bindung_(ac.bd_addr)) >= 0;   // bekanntes Geraet, andere Adresse
       if (neue_adresse) {
@@ -813,16 +823,6 @@ void DockHid::gatts_(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble
       werbung_ist_ = 0;   // verbindbare Werbung endet mit der Verbindung
       werbung_busy_ = false;
       if (wieder_bis_ != 0) wieder_bis_ = (millis() + 5000) | 1;   // nach dem Wiederverbinden noch kurz ohne Suche
-      // Takt 15-30 ms (Touchpad flott genug), der Host entscheidet. Vorher ab 11,25 ms: zusammen mit dem Proxy-Scan
-      // (50 ms Fenster) lief der Controller beim Start in den Interrupt-Watchdog (r_lld_scan_try_sched, 2026-10-22).
-      esp_ble_conn_update_params_t cp = {};
-      memcpy(cp.bda, c.remote_bda, 6);
-      // (2026-10-23 mit 30-50 ms getestet: "Rejected: Resources" fuer Proxy-Verbindungen blieb - zurueck auf 15-30 ms)
-      cp.min_int = 0x0C;
-      cp.max_int = 0x18;
-      cp.latency = 0;
-      cp.timeout = 400;
-      esp_ble_gap_update_conn_params(&cp);
       char a[18];
       mac_text(c.remote_bda, a);
       ESP_LOGI(TAG, "Verbunden: %s (conn %u)", a, c.conn_id);
@@ -830,6 +830,10 @@ void DockHid::gatts_(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble
       break;
     }
     case ESP_GATTS_DISCONNECT_EVT: {
+      dock_hid_kopplung_vorbei();
+      // Erst nach 3 s wieder werben (2026-11-03): verband sich der Sony-TV gleich nach einem Funkabbruch neu, scheiterte die
+      // Verschluesselung, solange der Bluetooth-Stack die alte Verbindung noch abraeumte - und Android loescht dann die Kopplung.
+      if (param->disconnect.conn_id != 0xFFFF && (pause_bis_ == 0 || (int32_t) (millis() - pause_bis_) >= 0)) pause_bis_ = (millis() + 3000) | 1;
       std::lock_guard<std::mutex> l(mtx_);
       for (auto &v : verb_) {
         if (v.aktiv && v.conn_id == param->disconnect.conn_id) {
