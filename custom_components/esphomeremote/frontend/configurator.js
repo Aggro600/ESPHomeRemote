@@ -2083,7 +2083,7 @@ const M_TYPES = [
   ["cover", "Rollo", "mdi:window-shutter"],
   ["sensor", "Anzeige (Zustand)", "mdi:eye-outline"],
   ["text", "Überschrift / Text", "mdi:format-title"],
-  ["camera", "Kamerabild (Klingel)", "mdi:cctv"],
+  ["camera", "Klingelbild (Foto beim Klingeln)", "mdi:doorbell-video"],
   ["setting", "Einstellung der Remote", "mdi:cog-outline"],
   ["mtitel", "Medien: Titel & Interpret", "mdi:music-box-outline"],
   ["mtaste", "Medien: Taste (⏯ ⏮ ⏭ Stumm …)", "mdi:play-pause"],
@@ -2630,6 +2630,7 @@ const MenuEditor = {
         <option value="" ${p.pknopf !== "min" ? "selected" : ""}>X – schließen (kommt nicht wieder)</option>
         <option value="min" ${p.pknopf === "min" ? "selected" : ""}>_ – minimieren (die Menütaste holt es zurück)</option></select></label></div>
       <small class="note">Die <b>Menütaste</b> minimiert ein offenes Popup immer – ein zweiter Druck holt es zurück, solange die Zeit „Menü-Position merken für“ (Einstellungen) läuft. Der Knopf oben links (und die Zurück-Taste) macht, was hier eingestellt ist. Geschlossen kommt es erst beim nächsten Auslöser wieder${p.inhalt === "tastatur" ? " – die Tastatur also, wenn sie am Fernseher neu aufgeht (spätestens nach 30 min)" : ""}.</small>
+      ${p.inhalt ? "" : `<label class="sw small"><input type="checkbox" data-ppg="zu" ${pp.zu ? "checked" : ""}><span><b>Nach einem Knopfdruck schließen</b> – drückst du einen Knopf, Schalter oder eine Auswahl, geht das Popup danach zu (wie bei der HDMI-Auswahl). Aus: es bleibt offen, z. B. zum Schwenken der Kamera. Unterseiten, Regler und das Steuerkreuz im Tastenmodus schließen es nie.</span></label>`}
       ${p.inhalt ? "" : `<label class="sw small"><input type="checkbox" data-ppg="excl" ${pp.excl ? "checked" : ""}><span>Vorrang – solange es offen ist, warten andere Popups und gehen erst danach auf</span></label>`}
       <small class="note">Ein Auslöser greift beim <b>Wechsel</b> auf den Wert (z. B. Skript → on, Schalter → on, App → com.netflix.ninja). Ein Knopf mit „Popup schließen“ schließt es nach einer Auswahl.</small>
     </div>`;
@@ -2639,6 +2640,9 @@ const MenuEditor = {
   _mKlingelBlock(p) {
     const d = this.s.klingel;
     if (!d?.klingel) return "";
+    // Nur, wenn die Seite ein Klingelbild hat (2026-11-03, Nutzer: "sehr aufdringlich" bei jeder neuen Seite) - dazu
+    // wie jedes andere Element "Klingelbild" hinzufuegen, dann erscheinen hier Klingel und Einstellungen
+    if (!(p.items || []).some((it) => it.t === "camera" && (!it.src || kamSrc(it.src).startsWith("klingel:")))) return "";
     const kam = (p.items || []).find((it) => it.t === "camera" && kamSrc(it.src).startsWith("klingel:"));
     const kid = kam ? kamSrc(kam.src).slice(8) : "", ki = d.klingel.findIndex((k) => k.id === kid), k = d.klingel[ki];
     const st = this._hass.states, name = (e) => st[e]?.attributes.friendly_name || e;
@@ -3639,6 +3643,7 @@ const MenuEditor = {
       else if (k === "timeout") p.popup.timeout = Math.max(0, Number(t.value) || 0);
       else if (k === "wake") p.popup.wake = t.checked;
       else if (k === "excl") { if (t.checked) p.popup.excl = true; else delete p.popup.excl; }
+      else if (k === "zu") { if (t.checked) p.popup.zu = true; else delete p.popup.zu; }
       else if (k === "inhalt") { if (t.value) p.inhalt = t.value; else delete p.inhalt; }
       this._touch(); return true;
     }
@@ -4890,7 +4895,7 @@ const NeuEditor = {
     } else if (m.schritt === 2) {
       const web = "serial" in navigator && window.isSecureContext;
       const extern = this._hass.config?.external_url;
-      if (web && m.manifest && !this._ewt) this._ewt = import("https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module").catch(() => null);
+      if (web && m.manifest && !this._ewt) this._ewt = import(new URL("esp-web-tools/install-button.js", import.meta.url).href).catch(() => null);   // mitgeliefert (10.4.0), nicht mehr vom CDN
       body = `<p>Remote per <b>USB-Kabel</b> anschließen. Zwei Wege:</p>
         <section class="neuweg"><h3><ha-icon icon="mdi:laptop"></ha-icon>USB an diesem Computer</h3>
         ${web ? `<esp-web-install-button manifest="${esc(m.manifest)}"><button slot="activate" class="btn primary"><ha-icon icon="mdi:usb"></ha-icon>Verbinden &amp; flashen</button>

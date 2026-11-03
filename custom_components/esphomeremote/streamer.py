@@ -247,7 +247,7 @@ class Streamer:
     async def app_einrichten(self) -> dict:
         """Mitgelieferte App aufspielen (auch als Update), Dienste freigeben, Webhook eintragen."""
         quelle = APP_DIR / "esphomeremote-streamer.apk"
-        if not quelle.exists():
+        if not await self.hass.async_add_executor_job(quelle.exists):
             raise vol.Invalid("App fehlt in der Integration")
         ziel = Path(self.hass.config.path("www")) / ".esphomeremote-streamer.apk"
         def kopieren():
@@ -264,7 +264,7 @@ class Streamer:
             # Die Antwort teilen sich alle ADB-Befehle der Entitaet (z. B. die CEC-Abfrage alle 30 s) - entscheidend ist,
             # welche Version danach installiert ist
             ist = await self.app_status()
-            if ist["code"] != app_mitgeliefert().get("code"):
+            if ist["code"] != (await self.hass.async_add_executor_job(app_mitgeliefert)).get("code"):
                 raise vol.Invalid(f"Installieren ging nicht: {r.strip()[:200] or 'keine Antwort'}")
         # Dienste freigeben: Bedienungshilfe an die vorhandenen anhaengen (andere Apps behalten ihre), Benachrichtigungen
         acc = (await self.adb("settings get secure enabled_accessibility_services")).strip()

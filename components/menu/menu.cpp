@@ -1820,6 +1820,7 @@ void Menue::klick_cb_(lv_event_t *e) {
   // Licht-Widget: Tippen auf die Karte markiert nur - geschaltet wird ueber den Knopf (OK-Taste schaltet weiter)
   if (self->items_[i].typ == T_WIDGET && self->items_[i].wart == W_LICHT) return;
   self->ausloesen_(self->items_[i]);
+  if (i < (int) self->items_.size()) self->nach_aktion_(self->items_[i]);
 }
 
 void Menue::halt_cb_(lv_event_t *e) {
@@ -2887,6 +2888,7 @@ void Menue::dd_waehlen_(int i) {
   zustand_cache_[PStr(e.c_str())].state = opt.c_str();   // gleich anzeigen, HA bestaetigt mit der naechsten Abfrage
   aktualisieren_(e);
   abf_ab_ = millis() + 900;
+  for (auto &x : items_) if ((x.j["entity"] | "") == e) { nach_aktion_(x); break; }   // Popup "zu": nach der Wahl
 }
 
 bool Menue::dd_taste_(int k, bool gedrueckt) {
@@ -2917,7 +2919,32 @@ void Menue::dd_bg_cb_(lv_event_t *e) {
 
 void Menue::ok() {
   if (fokus_ == FOKUS_ZURUECK) { if (zurueck_taste) zurueck_taste(); return; }
-  if (fokus_ >= 0 && fokus_ < (int) items_.size()) ausloesen_(items_[fokus_]);
+  if (fokus_ >= 0 && fokus_ < (int) items_.size()) {
+    ausloesen_(items_[fokus_]);
+    if (fokus_ >= 0 && fokus_ < (int) items_.size()) nach_aktion_(items_[fokus_]);
+  }
+}
+
+// Popup-Option "zu" (Konfigurator "Nach einem Knopfdruck schliessen", 2026-11-03): nach Knopf, Schalter, Licht, Auswahl
+// oder Anzeige mit Aktion geht das Popup kurz danach zu. Nie bei Unterseiten, Reglern, Widgets, Einstellungen, Halte-
+// Knoepfen, offener Aufklappliste (erst nach der Wahl) und Knoepfen, die selbst Popups/Tastenmodus steuern.
+void Menue::nach_aktion_(const Item &it) {
+  if (!popup_ || tmodus_ || dd_box_ != nullptr || it.gesperrt) return;
+  if (!(seite_j_()["popup"]["zu"] | false)) return;
+  switch (it.typ) {
+    case T_ACTION: case T_TOGGLE: case T_LIGHT: case T_COVER: case T_AUSWAHL: case T_SENSOR: case T_PLAYER: break;
+    default: return;
+  }
+  if (it.j["hold"] | false) return;
+  if (it.typ == T_SENSOR && it.j["steps"].size() == 0) return;   // reine Anzeige
+  for (JsonObjectConst st : it.j["steps"].as<JsonArrayConst>()) {
+    const char *fn = st["fn"] | "";
+    if (!strcmp(fn, "keymode") || !strncmp(fn, "popup_", 6) || !strncmp(fn, "menu", 4)) return;
+  }
+  const std::string id = popup_id_;
+  set_timeout("popup_zu_nach", 500, [this, id]() {
+    if (popup_ && popup_id_ == id && dd_box_ == nullptr && !tmodus_ && popup_zu) popup_zu(id);
+  });
 }
 
 }  // namespace menue

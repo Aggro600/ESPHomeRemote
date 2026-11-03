@@ -95,8 +95,10 @@ class Bilder:
         from homeassistant.components.camera import async_get_image
         try:
             img = await async_get_image(self.hass, kamera, timeout=10)
-            os.makedirs(self.www, exist_ok=True)
-            await self.hass.async_add_executor_job(_einpassen, img.content, groesse, os.path.join(self.www, datei))
+            def schreiben() -> None:   # Ordner anlegen und Bild schreiben im Executor (nie in der Ereignisschleife)
+                os.makedirs(self.www, exist_ok=True)
+                _einpassen(img.content, groesse, os.path.join(self.www, datei))
+            await self.hass.async_add_executor_job(schreiben)
             return True
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Kamerabild %s: %s", kamera, err)

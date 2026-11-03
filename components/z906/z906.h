@@ -95,14 +95,16 @@ class Z906 : public Component {
   void von_konsole_(uint8_t b);
   // Interference filter (2026-10-07): while console/amp boot, both lines carry garbage, in which valid commands
   // occur by chance (capture: 22 speaker test, 10 headphones, 02/03/06 input...). The ESP turned that into clean
-  // bytes - with a direct cable it would only be noise. Only protocol bytes pass; after an invalid byte the
-  // direction is muted for 300 ms.
+  // bytes - with a direct cable it would only be noise. Only protocol bytes pass; while booting an invalid byte mutes
+  // the direction for 300 ms, in normal operation only that byte is dropped (2026-11-03, see stoerung_).
   uint32_t stoer_bis_[2]{0, 0};
   uint32_t gefiltert_[2]{0, 0};
   int k_pos_{-1};          // console sends an AA message itself: position in it (-1 = none)
   int k_len_{0};
   uint32_t k_frame_t0_{0};
   bool gueltig_(int richtung, uint8_t b) const;
+  bool stoerung_(int richtung, uint8_t b, uint32_t jetzt);   // Stoerfilter, true = weitergeben
+  uint32_t stoer_log_ms_{0};
   // Wake guard (2026-11-01): between the console's wake byte (30) and its power-on (11), a level command reaching
   // the amp makes the console abort the start and fall back to standby (reproduced: knob turned right after
   // switching on, or a level command from HA). Level steps from the console are dropped in this window (lost on

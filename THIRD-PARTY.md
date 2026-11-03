@@ -14,3 +14,7 @@
 - **IR databases** (downloaded on demand into Home Assistant, not part of this repository):
   [Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB) and the
   [Logitech Harmony IR archive](https://github.com/pickysysadmin/logitech-harmony-ir-archive) (CC0).
+- **esp-web-tools 10.4.0** (custom_components/esphomeremote/frontend/esp-web-tools/, USB flashing in the
+  configurator) — Apache License 2.0. https://github.com/esphome/esp-web-tools
+- **esptool-js 0.5.4** (custom_components/esphomeremote/frontend/esptool-0.5.4.js) — Apache License 2.0.
+  https://github.com/espressif/esptool-js
