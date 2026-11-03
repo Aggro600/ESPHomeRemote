@@ -446,6 +446,13 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
     if port:
         ok = await _mit_versuch(hass, j, name, "bauen und installieren", "firmware/install",
                                 {"configuration": datei, "port": ziel, "force_local": False, "bootloader": False})
+        # Geraet fragt noch nach dem OTA-Passwort (Firmware vor der Umstellung auf ota: encryption, 2026-11-03):
+        # zwei Schritte nacheinander - erst der Uebergang (beantwortet das Passwort einmal), dann die eigentliche Datei
+        if (not ok and port == "OTA" and not g.get("ota_uebergang")
+                and re.search(r"requests password|Authentication invalid", "\n".join(list(j["log"])[-80:]) + j["fehler"])):
+            ok = await _ota_uebergang(hass, j, g, port, info)
+            j["ergebnisse"][datei] = "ok" if ok else (j["fehler"] or "Fehler")
+            return ok
     else:
         ok = await _mit_versuch(hass, j, name, "bauen", "firmware/compile", {"configuration": datei})
     j["ergebnisse"][datei] = "ok" if ok else (j["fehler"] or "Fehler")
@@ -473,6 +480,46 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
         d.setdefault("versionen", {})[datei] = v
         await st.async_save(d)
     return ok
+
+
+UEBERGANG_OTA = """# Automatisch erzeugt (Integration ESPHomeRemote, OTA-Umstellung) - wird nach dem Update geloescht.
+# Das Geraet fragt beim Update noch nach dem Passwort: diese Huelle beantwortet es einmal (allow_plaintext_upload),
+# die aufgespielte Firmware hat dann nur noch die Verschluesselung ueber den API-Schluessel.
+packages:
+  geraet: !include {datei}
+ota:
+  - platform: esphome
+    password: !secret ota_pw
+    encryption:
+      allow_plaintext_upload: true
+"""
+
+
+async def _ota_uebergang(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) -> bool:
+    """Zwei Updates hintereinander (2026-11-03, Nutzer: "erst das eine, das zweite erst, wenn das erste fertig ist"):
+    1. Huelle <datei>-ota-uebergang.yaml mit Passwort fuer die alte Firmware, 2. die eigentliche Datei ohne Passwort.
+    Schritt 2 laeuft nur, wenn Schritt 1 geklappt hat; die Huelle wird in jedem Fall wieder entfernt."""
+    datei, name = g["datei"], g.get("friendly") or g["datei"]
+    huelle = Path(datei).stem + "-ota-uebergang.yaml"
+    pfad = ESPHOME_DIR / huelle
+    _log(j, f"{name}: fragt noch nach dem OTA-Passwort - Umstellung in zwei Schritten (1/2: Uebergang)")
+    await hass.async_add_executor_job(pfad.write_text, UEBERGANG_OTA.format(datei=datei), "utf-8")
+    try:
+        j["fehler"] = ""
+        ok = await _geraet(hass, j, {**g, "datei": huelle, "ota_uebergang": True}, port, info)
+        j["ergebnisse"].pop(huelle, None)
+        if not ok:
+            _log(j, f"{name}: Uebergang fehlgeschlagen - Schritt 2 entfaellt")
+            return False
+        _log(j, f"{name}: Schritt 1 fertig - warte auf den Neustart, dann 2/2: eigentliche Firmware")
+        await asyncio.sleep(25)
+        j["fehler"] = ""
+        return await _geraet(hass, j, {**g, "ota_uebergang": True}, port, info)
+    finally:
+        def weg() -> None:
+            pfad.unlink(missing_ok=True)
+            (ESPHOME_DIR / ".esphome" / "storage" / f"{huelle}.json").unlink(missing_ok=True)
+        await hass.async_add_executor_job(weg)
 
 
 # Warteschlange (2026-10-30, Nutzer: nicht warten muessen, bis ein Auftrag fertig ist): Auftraege laufen nacheinander -

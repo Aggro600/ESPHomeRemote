@@ -65,7 +65,7 @@ static Typ typ_von(const char *t) {
   if (!strcmp(t, "camera")) return T_KAMERA;
   if (!strcmp(t, "setting")) return T_EINST;
   if (!strcmp(t, "number")) return T_ZAHL;
-  if (!strcmp(t, "select")) return T_AUSWAHL;
+  if (!strcmp(t, "select") || !strcmp(t, "dropdown")) return T_AUSWAHL;
   if (!strcmp(t, "mtitel") || !strcmp(t, "mtaste") || !strcmp(t, "vpreset")) return T_PLAYER;
   if (!strcmp(t, "widget")) return T_WIDGET;
   return T_TEXT;
@@ -534,6 +534,11 @@ void Menue::abfrage_auswerten_() {
             else { snprintf(t, sizeof(t), "%d", w); z.attr[PStr(N[k - 5])] = t; }
           }
           z.attr[PStr("name")] = a[11] | "";
+        } else if ((strncmp(key, "select.", 7) == 0 || strncmp(key, "input_select.", 13) == 0) && a[4].is<JsonArrayConst>()) {
+          // Optionen fuer die Aufklappliste (2026-11-03), eine je Zeile
+          std::string o;
+          for (JsonVariantConst v : a[4].as<JsonArrayConst>()) { if (!o.empty()) o += '\n'; o += v | ""; }
+          z.attr[PStr("options")] = o.c_str();
         } else if (a.size() >= 7) { z.mn = a[4] | 0.0f; z.mx = a[5] | 100.0f; z.schritt = a[6] | 1.0f; }
       }
       for (auto &it : items_) zustand_(it);
@@ -864,6 +869,7 @@ void Menue::verlassen() {
 // ------------------------------------------------------------------ Aufbau
 
 void Menue::leeren_() {
+  dd_zu_();
   if (halt_ >= 0) halten_(halt_, false);   // nie eine Bewegung "haengen" lassen
   tmodus_ = false;
   if (fokus_ == FOKUS_ZURUECK) fokus_setzen_(-1);
@@ -1863,6 +1869,7 @@ void Menue::tastenmodus(int an) {
 }
 
 bool Menue::taste(int k, bool gedrueckt) {
+  if (dd_box_ != nullptr && dd_taste_(k, gedrueckt)) return true;   // Aufklappliste offen
   if (items_.empty()) return false;
   // Seiten-Option "vol" (2026-10-26): Lauter/Leiser/Stumm bedienen diesen Player (z. B. den AV-Receiver), Schritt "vst" %.
   // Halten wiederholt (erst nach 450 ms, dann alle 250 ms - jeder Schritt ist ein Aufruf an HA).
@@ -2091,6 +2098,7 @@ void Menue::ausloesen_(Item &it, int richtung) {
     case T_AUSWAHL: {
       if (eigene && richtung == 0) { tk_->schritte(steps); return; }
       if (e.empty()) return;
+      if (richtung == 0 && ((it.j["dd"] | false) || !strcmp(it.j["t"] | "", "dropdown"))) { dd_auf_(it); return; }   // HA schickt "select" + "dd"
       const bool inp = e.rfind("input_select.", 0) == 0;
       const char *svc = richtung < 0 ? (inp ? "input_select.select_previous" : "select.select_previous")
                                      : (inp ? "input_select.select_next" : "select.select_next");
@@ -2764,6 +2772,147 @@ void Menue::seg_cb_(lv_event_t *e) {
   auto &z = self->zustand_cache_[PStr(ent.c_str())];
   auto m = z.attr.find(PStr("is_volume_muted"));
   if (m != z.attr.end() && m->second == "true") self->player_stumm_(ent);
+}
+
+// ------------------------------------------------------------------ Aufklappliste (t "dropdown", 2026-11-03)
+// Ueber allem (lv_layer_top): abgedunkelter Hintergrund, mittig die Optionen. Steuerkreuz Hoch/Runter (auch Links/
+// Rechts) waehlt, OK uebernimmt (select_option), Zurueck oder Tippen daneben schliesst ohne Aenderung.
+
+void Menue::dd_auf_(Item &it) {
+  dd_zu_();
+  const std::string e = it.j["entity"] | "";
+  dd_opts_.clear();
+  auto zi = zustand_cache_.find(PStr(e.c_str()));
+  if (zi != zustand_cache_.end()) {
+    auto o = zi->second.attr.find(PStr("options"));
+    if (o != zi->second.attr.end()) {
+      const char *p = o->second.c_str();
+      while (*p) {
+        const char *n = strchr(p, '\n');
+        dd_opts_.emplace_back(p, n ? (size_t) (n - p) : strlen(p));
+        if (!n) break;
+        p = n + 1;
+      }
+    }
+  }
+  if (dd_opts_.empty()) {
+    ESP_LOGW(TAG, "Aufklappliste %s: noch keine Optionen von HA", e.c_str());
+    abf_ab_ = millis();   // gleich nachfragen
+    return;
+  }
+  dd_ent_ = e;
+  dd_sel_ = 0;
+  const std::string jetzt = zi->second.state.c_str();
+  for (size_t i = 0; i < dd_opts_.size(); i++) if (dd_opts_[i] == jetzt) dd_sel_ = (int) i;
+
+  lv_obj_t *bg = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(bg);
+  lv_obj_set_size(bg, lv_pct(100), lv_pct(100));
+  lv_obj_set_style_bg_color(bg, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(bg, LV_OPA_60, 0);
+  lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(bg, Menue::dd_bg_cb_, LV_EVENT_CLICKED, this);
+
+  lv_obj_t *p = lv_obj_create(bg);
+  lv_obj_set_width(p, lv_pct(90));
+  lv_obj_set_height(p, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(p, lv_pct(85), 0);
+  lv_obj_center(p);
+  lv_obj_set_style_bg_color(p, lv_color_hex(0x11151B), 0);
+  lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(p, lv_color_hex(hl_), 0);
+  lv_obj_set_style_border_width(p, 2, 0);
+  lv_obj_set_style_radius(p, 12, 0);
+  lv_obj_set_style_pad_all(p, 6, 0);
+  lv_obj_set_style_pad_row(p, 4, 0);
+  lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scrollbar_mode(p, LV_SCROLLBAR_MODE_AUTO);
+
+  const char *titel = it.j["label"] | "";
+  if (*titel) {
+    lv_obj_t *t = lv_label_create(p);
+    lv_label_set_text(t, titel);
+    lv_obj_set_style_text_color(t, lv_color_hex(C_GRAU), 0);
+    if (f_klein_) lv_obj_set_style_text_font(t, f_klein_, 0);
+    lv_obj_set_style_pad_left(t, 6, 0);
+  }
+  dd_zeilen_.clear();
+  for (size_t i = 0; i < dd_opts_.size(); i++) {
+    lv_obj_t *z = lv_obj_create(p);
+    lv_obj_remove_style_all(z);
+    lv_obj_set_size(z, lv_pct(100), 36);
+    lv_obj_set_style_radius(z, 8, 0);
+    lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(z, 2, 0);
+    lv_obj_add_flag(z, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_user_data(z, (void *) (intptr_t) i);
+    lv_obj_add_event_cb(z, Menue::dd_opt_cb_, LV_EVENT_CLICKED, this);
+    lv_obj_t *l = lv_label_create(z);
+    const bool aktiv = dd_opts_[i] == jetzt;
+    lv_label_set_text(l, dd_opts_[i].c_str());   // aktuelle Option gruen
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(l, lv_pct(100));
+    lv_obj_set_style_text_color(l, lv_color_hex(aktiv ? C_AN : C_TEXT), 0);
+    if (f_text_) lv_obj_set_style_text_font(l, f_text_, 0);
+    lv_obj_set_style_pad_hor(z, 10, 0);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
+    dd_zeilen_.push_back(z);
+  }
+  dd_box_ = bg;
+  dd_markieren_();
+}
+
+void Menue::dd_markieren_() {
+  for (size_t i = 0; i < dd_zeilen_.size(); i++) {
+    const bool s = (int) i == dd_sel_;
+    lv_obj_set_style_bg_color(dd_zeilen_[i], lv_color_hex(s ? C_FOKUS : C_KARTE), 0);
+    lv_obj_set_style_border_color(dd_zeilen_[i], lv_color_hex(s ? hl_ : C_KARTE), 0);
+  }
+  if (dd_sel_ >= 0 && dd_sel_ < (int) dd_zeilen_.size()) lv_obj_scroll_to_view(dd_zeilen_[dd_sel_], LV_ANIM_ON);
+}
+
+void Menue::dd_zu_() {
+  if (dd_box_ != nullptr) lv_obj_delete(dd_box_);
+  dd_box_ = nullptr;
+  dd_zeilen_.clear();
+}
+
+void Menue::dd_waehlen_(int i) {
+  if (i < 0 || i >= (int) dd_opts_.size() || dd_ent_.empty()) { dd_zu_(); return; }
+  const std::string opt = dd_opts_[i], e = dd_ent_;
+  dd_zu_();
+  const bool inp = e.rfind("input_select.", 0) == 0;
+  tk_->ha_aufruf(inp ? "input_select.select_option" : "select.select_option", {{"entity_id", e}, {"option", opt}});
+  zustand_cache_[PStr(e.c_str())].state = opt.c_str();   // gleich anzeigen, HA bestaetigt mit der naechsten Abfrage
+  aktualisieren_(e);
+  abf_ab_ = millis() + 900;
+}
+
+bool Menue::dd_taste_(int k, bool gedrueckt) {
+  switch (k) {
+    case 14: case 15: case 35: case 32: case 34: case 13: case 41: break;
+    default: return false;   // andere Tasten (Lautstaerke ...) wie sonst
+  }
+  if (!gedrueckt) return true;
+  const int n = (int) dd_opts_.size();
+  if (k == 14 || k == 15) { dd_sel_ = (dd_sel_ + n - 1) % n; dd_markieren_(); }
+  else if (k == 35 || k == 32) { dd_sel_ = (dd_sel_ + 1) % n; dd_markieren_(); }
+  else if (k == 34) dd_waehlen_(dd_sel_);
+  else dd_zu_();
+  return true;
+}
+
+void Menue::dd_opt_cb_(lv_event_t *e) {
+  auto *self = (Menue *) lv_event_get_user_data(e);
+  const int i = (int) (intptr_t) lv_obj_get_user_data((lv_obj_t *) lv_event_get_current_target(e));
+  lv_event_stop_bubbling(e);
+  self->dd_waehlen_(i);
+}
+
+void Menue::dd_bg_cb_(lv_event_t *e) {
+  auto *self = (Menue *) lv_event_get_user_data(e);
+  if (lv_event_get_target(e) == lv_event_get_current_target(e)) self->dd_zu_();   // daneben getippt
 }
 
 void Menue::ok() {

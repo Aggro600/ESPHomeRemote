@@ -1,8 +1,9 @@
 """Licht-Widget der Remote (2026-10-29): Zustaende je Lampe fuer die Remote und ein Dienst, der die Bedienung des
 Widgets in passende light-Aufrufe uebersetzt (Farben als Liste gehen ueber die ESPHome-Aktion nicht, nur Texte).
 
-Dienst esphomeremote.light: entity_id "light.a,light.b", aktion an|aus|toggle|hell|kelvin|farbe|szene, wert
-- hell: Prozent (0 = aus); kelvin: Farbtemperatur; farbe: "Farbton,Saettigung"; szene: scene.*/script.*
+Dienst esphomeremote.light: entity_id "light.a,light.b", action on|off|toggle|brightness|kelvin|color|scene, value
+- brightness: Prozent (0 = aus); kelvin: Farbtemperatur; color: "Farbton,Saettigung"; scene: scene.*/script.*
+Alte Namen (aktion/wert, an/aus/hell/farbe/szene) gehen weiter (aliases.py, 2026-11-03).
 Je Lampe nur, was sie kann: Farbtemperatur an Lampen ohne Weisston wird zur Farbe, Farbe an reinen Weisslampen entfaellt.
 """
 from __future__ import annotations
@@ -13,6 +14,8 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.util import color as color_util
+
+from .aliases import schema_with_aliases
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote"
@@ -44,35 +47,35 @@ def licht_eintrag(st) -> list:
             str(a.get("friendly_name") or st.entity_id)[:24]]
 
 
-SCHEMA = vol.Schema({vol.Required("entity_id"): str, vol.Required("aktion"): str, vol.Optional("wert", default=""): str},
+SCHEMA = vol.Schema({vol.Required("entity_id"): str, vol.Required("action"): str, vol.Optional("value", default=""): str},
                     extra=vol.ALLOW_EXTRA)
 
 
 def registrieren(hass: HomeAssistant) -> None:
     async def dienst(call: ServiceCall) -> None:
         ids = [e.strip() for e in call.data["entity_id"].split(",") if e.strip().startswith(("light.", "scene.", "script."))]
-        akt, wert = call.data["aktion"], call.data.get("wert", "")
+        akt, wert = call.data["action"], call.data.get("value", "")
         lichter = [e for e in ids if e.startswith("light.")]
         an = lambda daten, es: hass.services.async_call("light", "turn_on", {"entity_id": es, **daten}, blocking=False)  # noqa: E731
-        if akt == "szene":
+        if akt == "scene":
             if wert.startswith(("scene.", "script.")):
                 await hass.services.async_call(wert.split(".")[0], "turn_on", {"entity_id": wert}, blocking=False)
             return
         if not lichter:
             return
-        if akt == "aus" or (akt == "hell" and wert.strip() in ("0", "")):
+        if akt == "off" or (akt == "brightness" and wert.strip() in ("0", "")):
             await hass.services.async_call("light", "turn_off", {"entity_id": lichter}, blocking=False)
             return
         if akt == "toggle":
             irgendwas = any((s := hass.states.get(e)) is not None and s.state == "on" for e in lichter)
             await hass.services.async_call("light", "turn_off" if irgendwas else "turn_on", {"entity_id": lichter}, blocking=False)
             return
-        if akt == "an":
+        if akt == "on":
             await an({}, lichter)
             return
         f = {e: faehig(s) for e in lichter if (s := hass.states.get(e)) is not None}
         try:
-            if akt == "hell":
+            if akt == "brightness":
                 pct = max(1, min(100, int(float(wert))))
                 dimm = [e for e in lichter if f.get(e, 0) & 1]
                 if dimm:
@@ -87,7 +90,7 @@ def registrieren(hass: HomeAssistant) -> None:
                     await an({"color_temp_kelvin": k}, ct)
                 if farbig:
                     await an({"hs_color": list(color_util.color_temperature_to_hs(k))}, farbig)
-            elif akt == "farbe":
+            elif akt == "color":
                 h, _, s = wert.partition(",")
                 hs = [max(0.0, min(360.0, float(h))), max(0.0, min(100.0, float(s or 100)))]
                 if farbig := [e for e in lichter if f.get(e, 0) & 4]:
@@ -95,4 +98,4 @@ def registrieren(hass: HomeAssistant) -> None:
         except (TypeError, ValueError) as err:
             _LOGGER.warning("licht: %s %s %s: %s", ids, akt, wert, err)
 
-    hass.services.async_register(DOMAIN, "light", dienst, schema=SCHEMA)
+    hass.services.async_register(DOMAIN, "light", dienst, schema=schema_with_aliases("light", SCHEMA))

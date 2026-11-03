@@ -48,7 +48,7 @@ esphome:
   friendly_name: Remote WZ Remotename
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.2.6"
+    version: "2026.11.3.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
@@ -833,7 +833,11 @@ api:
 
 ota:
   - platform: esphome
-    password: !secret ota_pw
+    # OTA ueber den festen API-Schluessel verschluesselt statt mit Passwort (2026-11-03, ESPHome-Empfehlung ab 2026.9,
+    # spart Flash/RAM). Geraete, die noch nach dem Passwort fragen, stellt das Firmware-Update der Integration in zwei
+    # Schritten um (firmware.py _ota_uebergang). Oeffentliche Fassung: tools/publish.py setzt wieder password: ${ota_pw}
+    # ein - dort kommt der API-Schluessel erst zur Laufzeit von HA, und damit geht ota: encryption nicht.
+    encryption: {}
     # Waehrend eines OTA-Updates niemals schlafen legen und das WLAN nicht
     # abschalten, egal was Tiefschlaf/WLAN-Aus sagen.
     on_begin:

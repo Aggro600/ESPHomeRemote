@@ -37,11 +37,11 @@
       "name": "To all remotes",
       "description": "Calls an ESPHome service on all connected remotes (esphome.[remote]_[service]).",
       "fields": {
-        "dienst": {
+        "service": {
           "name": "Service",
           "description": "Part after the device name, e.g. refresh_cover, doorbell_image, remote_show_keyboard"
         },
-        "daten": {
+        "data": {
           "name": "Data"
         }
       }
@@ -53,10 +53,10 @@
         "entity_id": {
           "name": "Entity"
         },
-        "art": {
+        "type": {
           "name": "Type"
         },
-        "schritt": {
+        "step": {
           "name": "Step",
           "description": "Brightness in %, colour temperature in Kelvin, fan in steps (negative = down/warmer)"
         }
@@ -96,7 +96,7 @@
       "name": "Extend timer",
       "description": "Restarts the last finished timer (from the remotes' selection) with this duration – for the “+5 min” button in the timer popup.",
       "fields": {
-        "minuten": {
+        "minutes": {
           "name": "Minutes"
         }
       }
@@ -109,20 +109,20 @@
       "name": "Send via another IR/RF transmitter",
       "description": "Sends a raw code via an IR transmitter of another integration (infrared entity) or a Broadlink (IR or 433 MHz) – like a dock. The remotes call this for transmitters chosen instead of a dock in the configurator.",
       "fields": {
-        "sender": {
+        "transmitter": {
           "name": "Transmitter"
         },
         "code": {
           "name": "Code",
           "description": "Times in microseconds, + on / - off, comma-separated"
         },
-        "traeger": {
+        "carrier": {
           "name": "Carrier frequency"
         },
-        "art": {
+        "type": {
           "name": "Type"
         },
-        "wiederholen": {
+        "repeat": {
           "name": "Repeat"
         }
       }
@@ -135,13 +135,13 @@
           "name": "Lights",
           "description": "Comma-separated, e.g. light.living_room,light.floor_lamp"
         },
-        "aktion": {
+        "action": {
           "name": "Action",
-          "description": "an, aus, toggle, hell, kelvin, farbe or szene"
+          "description": "on, off, toggle, brightness, kelvin, color or scene"
         },
-        "wert": {
+        "value": {
           "name": "Value",
-          "description": "hell: percent, kelvin: e.g. 2700, farbe: hue,saturation (e.g. 30,100), szene: scene.xyz"
+          "description": "brightness: percent, kelvin: e.g. 2700, color: hue,saturation (e.g. 30,100), scene: scene.xyz"
         }
       }
     },
@@ -149,24 +149,24 @@
       "name": "Camera on the TV",
       "description": "Shows a camera as picture-in-picture on the TV (Configurator > Features), or hides it.",
       "fields": {
-        "kamera": {
+        "camera": {
           "name": "Camera",
-          "description": "camera.xyz, \"letzte\" (last shown) or \"aus\" (off)"
+          "description": "camera.xyz, \"last\" (last shown) or \"off\""
         }
       }
     },
     "camera_size": {
       "name": "Camera size on the TV",
-      "description": "Klein, Mittel, Groß, Fast Vollbild (small, medium, large, almost full screen) or \"naechste\" (cycle). A running camera takes the new size immediately.",
+      "description": "small, medium, large, almost_full or \"next\" (cycle). A running camera takes the new size immediately.",
       "fields": {
-        "groesse": {
+        "size": {
           "name": "Size"
         }
       }
     },
     "camera_position": {
       "name": "Camera corner on the TV",
-      "description": "Corner of the camera (top-left, top-right, bottom-right, bottom-left, center) or \"naechste\" (clockwise). A running camera moves immediately.",
+      "description": "Corner of the camera (top-left, top-right, bottom-right, bottom-left, center) or \"next\" (clockwise). A running camera moves immediately.",
       "fields": {
         "position": {
           "name": "Corner"
@@ -177,7 +177,7 @@
       "name": "Restart device (ADB)",
       "description": "Restarts an Android device that is entered in the configurator under Features.",
       "fields": {
-        "geraet": {
+        "device": {
           "name": "Device",
           "description": "Name as in the configurator (e.g. Streamer)"
         }

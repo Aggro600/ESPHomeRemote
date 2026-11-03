@@ -1160,8 +1160,8 @@ void TastenKonfig::ir_(JsonObjectConst s) {
           d["code"] = zeiten_text(t);
           d["traeger"] = std::to_string(f);
           if (ist_blaster(dock)) {   // fremder Sender (infrared.* / remote.*, 2026-10-28): nur ueber HA
-            d["sender"] = dock;
-            ha_senden("esphomeremote.blaster_send", std::move(d));
+            // Feldnamen englisch seit 2026-11-03 (die Dock-Aktion _ir_roh behaelt code/traeger)
+            ha_senden("esphomeremote.blaster_send", {{"transmitter", dock}, {"code", d["code"]}, {"carrier", d["traeger"]}});
           } else {
             ha_senden("esphome." + dock + "_ir_roh", std::move(d));
           }
@@ -1260,10 +1260,8 @@ void TastenKonfig::rf_(JsonObjectConst s) {
       std::map<std::string, std::string> d;
       d["code"] = zeiten_text(t);
       d["wiederholen"] = std::to_string(wdh);
-      if (ist_blaster(dock)) {
-        d["sender"] = dock;
-        d["art"] = "rf";
-        ha_senden("esphomeremote.blaster_send", std::move(d));
+      if (ist_blaster(dock)) {   // Feldnamen englisch seit 2026-11-03 (die Dock-Aktion _rf_roh behaelt code/wiederholen)
+        ha_senden("esphomeremote.blaster_send", {{"transmitter", dock}, {"code", d["code"]}, {"type", "rf"}, {"repeat", d["wiederholen"]}});
       } else {
         ha_senden("esphome." + dock + "_rf_roh", std::move(d));
       }

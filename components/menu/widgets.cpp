@@ -667,7 +667,7 @@ void Menue::widget_ausloesen_(Item &it, int richtung) {
     const int jetzt = it.wo[WR_L_HELL] != nullptr ? (int) lv_slider_get_value(it.wo[WR_L_HELL]) : licht_hell_jetzt_(it);
     const int v = std::max(1, std::min(100, jetzt + richtung * 10));
     if (it.wo[WR_L_HELL] != nullptr) lv_slider_set_value(it.wo[WR_L_HELL], v, LV_ANIM_ON);
-    licht_senden_(it, "hell", std::to_string(v));
+    licht_senden_(it, "brightness", std::to_string(v));
     licht_zustand_(it);
     return;
   }
@@ -1109,12 +1109,12 @@ void Menue::licht_fokus_zeigen_(Item &it, bool an) {
 bool Menue::licht_ok_(Item &it) {
   if (it.lteil == 5 && it.wo[WR_L_PAL] != nullptr) {
     const PalEintrag &p = PALETTE[std::max(0, std::min<int>(it.lsel, sizeof(PALETTE) / sizeof(PALETTE[0]) - 1))];
-    licht_senden_(it, p.kelvin ? "kelvin" : "farbe", p.kelvin ? std::to_string(p.wert) : std::to_string(p.wert) + ",100");
+    licht_senden_(it, p.kelvin ? "kelvin" : "color", p.kelvin ? std::to_string(p.wert) : std::to_string(p.wert) + ",100");
     return true;
   }
   if (it.lteil == 6 && it.wo[WR_L_SZENEN] != nullptr) {
     const char *s = it.j["szenen"][(int) it.lsel]["e"] | "";
-    if (*s) tk_->ha_aufruf("esphomeremote.light", {{"entity_id", s}, {"aktion", "szene"}, {"wert", s}});
+    if (*s) tk_->ha_aufruf("esphomeremote.light", {{"entity_id", s}, {"action", "scene"}, {"value", s}});
     abf_ab_ = millis() + 1200;
     return true;
   }
@@ -1158,7 +1158,7 @@ bool Menue::licht_taste_(Item &it, int dx, int dy) {
       break;
     case 4:
       if (it.wo[WR_L_FARBE] && !lv_obj_has_state(it.wo[WR_L_FARBE], LV_STATE_DISABLED))
-        licht_senden_(it, "farbe", std::to_string(wert(it.wo[WR_L_FARBE], 20, true)) + ",100");
+        licht_senden_(it, "color", std::to_string(wert(it.wo[WR_L_FARBE], 20, true)) + ",100");
       break;
     case 5: case 6: {
       lv_obj_t *row = it.wo[it.lteil == 5 ? WR_L_PAL : WR_L_SZENEN];
@@ -1170,7 +1170,7 @@ bool Menue::licht_taste_(Item &it, int dx, int dy) {
       const int jetzt = it.wo[WR_L_HELL] != nullptr ? (int) lv_slider_get_value(it.wo[WR_L_HELL]) : licht_hell_jetzt_(it);
       const int v = std::max(1, std::min(100, jetzt + r * 10));
       if (it.wo[WR_L_HELL] != nullptr) lv_slider_set_value(it.wo[WR_L_HELL], v, LV_ANIM_ON);
-      licht_senden_(it, "hell", std::to_string(v));
+      licht_senden_(it, "brightness", std::to_string(v));
       licht_zustand_(it);
     }
   }
@@ -1194,7 +1194,7 @@ int Menue::licht_hell_jetzt_(Item &it) {
 void Menue::licht_senden_(Item &it, const char *aktion, const std::string &wert) {
   const std::string ziele = licht_ziele_(it, true);
   if (ziele.empty() || tk_ == nullptr) return;
-  tk_->ha_aufruf("esphomeremote.light", {{"entity_id", ziele}, {"aktion", aktion}, {"wert", wert}});
+  tk_->ha_aufruf("esphomeremote.light", {{"entity_id", ziele}, {"action", aktion}, {"value", wert}});
   // Gleich zeigen, was passieren wird (die Abfrage bestaetigt es kurz danach)
   JsonArrayConst la = it.j["lichter"];
   bool irgendwas = false;
@@ -1208,14 +1208,14 @@ void Menue::licht_senden_(Item &it, const char *aktion, const std::string &wert)
     EntZustand &z = zustand_cache_[PStr(la[i]["e"] | "")];
     if (z.state == "unavailable") continue;
     if (!strcmp(aktion, "toggle")) z.state = irgendwas ? "off" : "on";
-    else if (!strcmp(aktion, "hell")) { z.state = "on"; z.bri = atoi(wert.c_str()) * 255 / 100; }
+    else if (!strcmp(aktion, "brightness")) { z.state = "on"; z.bri = atoi(wert.c_str()) * 255 / 100; }
     else z.state = "on";
   }
   const char *g = it.j["gruppe"] | "";
   if (*g && it.lwahl < 0) {
     EntZustand &z = zustand_cache_[PStr(g)];
     if (!strcmp(aktion, "toggle")) z.state = irgendwas ? "off" : "on";
-    else { z.state = "on"; if (!strcmp(aktion, "hell")) z.bri = atoi(wert.c_str()) * 255 / 100; }
+    else { z.state = "on"; if (!strcmp(aktion, "brightness")) z.bri = atoi(wert.c_str()) * 255 / 100; }
   }
   licht_zustand_(it);
   abf_ab_ = millis() + 800;
@@ -1235,9 +1235,9 @@ void Menue::licht_cb_(lv_event_t *e) {
     if (c != LV_EVENT_RELEASED && millis() - it.lsend_ms < 350) return;
     it.lsend_ms = millis();
     const int w = lv_slider_get_value(o);
-    if (code == LC_HELL) self->licht_senden_(it, "hell", std::to_string(w));
+    if (code == LC_HELL) self->licht_senden_(it, "brightness", std::to_string(w));
     else if (code == LC_TEMP) self->licht_senden_(it, "kelvin", std::to_string(w));
-    else self->licht_senden_(it, "farbe", std::to_string(w) + ",100");
+    else self->licht_senden_(it, "color", std::to_string(w) + ",100");
     return;
   }
   if (c != LV_EVENT_CLICKED) return;
@@ -1252,10 +1252,10 @@ void Menue::licht_cb_(lv_event_t *e) {
   } else if (code >= LC_PAL && code < LC_SZENE) {
     if (lv_obj_has_state(o, LV_STATE_DISABLED)) return;
     const PalEintrag &p = PALETTE[code - LC_PAL];
-    self->licht_senden_(it, p.kelvin ? "kelvin" : "farbe", p.kelvin ? std::to_string(p.wert) : std::to_string(p.wert) + ",100");
+    self->licht_senden_(it, p.kelvin ? "kelvin" : "color", p.kelvin ? std::to_string(p.wert) : std::to_string(p.wert) + ",100");
   } else if (code >= LC_SZENE) {
     const char *s = it.j["szenen"][code - LC_SZENE]["e"] | "";
-    if (*s) self->tk_->ha_aufruf("esphomeremote.light", {{"entity_id", s}, {"aktion", "szene"}, {"wert", s}});
+    if (*s) self->tk_->ha_aufruf("esphomeremote.light", {{"entity_id", s}, {"action", "scene"}, {"value", s}});
     self->abf_ab_ = millis() + 1200;
   }
 }

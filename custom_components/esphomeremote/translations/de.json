@@ -35,13 +35,13 @@
   "services": {
     "to_remotes": {
       "name": "An alle Fernbedienungen",
-      "description": "Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.[remote]_[dienst]).",
+      "description": "Ruft einen ESPHome-Dienst auf allen verbundenen Fernbedienungen auf (esphome.[remote]_[service]).",
       "fields": {
-        "dienst": {
+        "service": {
           "name": "Dienst",
           "description": "Teil hinter dem Geraetenamen, z. B. refresh_cover, doorbell_image, remote_show_keyboard"
         },
-        "daten": {
+        "data": {
           "name": "Daten"
         }
       }
@@ -53,10 +53,10 @@
         "entity_id": {
           "name": "Entität"
         },
-        "art": {
+        "type": {
           "name": "Art"
         },
-        "schritt": {
+        "step": {
           "name": "Schritt",
           "description": "Helligkeit in %, Farbtemperatur in Kelvin, Lüfter in Stufen (negativ = runter/wärmer)"
         }
@@ -96,7 +96,7 @@
       "name": "Timer verlängern",
       "description": "Startet den zuletzt abgelaufenen Timer (aus der Auswahl der Remotes) neu mit dieser Dauer - für den Knopf „+5 min“ im Timer-Popup.",
       "fields": {
-        "minuten": {
+        "minutes": {
           "name": "Minuten"
         }
       }
@@ -109,20 +109,20 @@
       "name": "Über fremden IR-/RF-Sender senden",
       "description": "Schickt einen Rohcode über einen IR-Sender einer anderen Integration (infrared-Entität) oder einen Broadlink (IR oder 433 MHz) - so wie ein Dock. Die Remotes rufen das für Sender auf, die im Konfigurator statt eines Docks gewählt sind.",
       "fields": {
-        "sender": {
+        "transmitter": {
           "name": "Sender"
         },
         "code": {
           "name": "Code",
           "description": "Zeiten in Mikrosekunden, + an / - aus, mit Komma getrennt"
         },
-        "traeger": {
+        "carrier": {
           "name": "Trägerfrequenz"
         },
-        "art": {
+        "type": {
           "name": "Art"
         },
-        "wiederholen": {
+        "repeat": {
           "name": "Wiederholen"
         }
       }
@@ -135,13 +135,13 @@
           "name": "Lampen",
           "description": "Komma-getrennt, z. B. light.wohnzimmer,light.stehlampe"
         },
-        "aktion": {
+        "action": {
           "name": "Aktion",
-          "description": "an, aus, toggle, hell, kelvin, farbe oder szene"
+          "description": "on, off, toggle, brightness, kelvin, color oder scene"
         },
-        "wert": {
+        "value": {
           "name": "Wert",
-          "description": "hell: Prozent, kelvin: z. B. 2700, farbe: Farbton,Sättigung (z. B. 30,100), szene: scene.xyz"
+          "description": "brightness: Prozent, kelvin: z. B. 2700, color: Farbton,Sättigung (z. B. 30,100), scene: scene.xyz"
         }
       }
     },
@@ -149,24 +149,24 @@
       "name": "Kamera auf dem Fernseher",
       "description": "Zeigt eine Kamera als Bild im Bild auf dem Fernseher (Konfigurator > Funktionen), oder blendet sie aus.",
       "fields": {
-        "kamera": {
+        "camera": {
           "name": "Kamera",
-          "description": "camera.xyz, \"letzte\" (zuletzt gezeigte) oder \"aus\""
+          "description": "camera.xyz, \"last\" (zuletzt gezeigte) oder \"off\""
         }
       }
     },
     "camera_size": {
       "name": "Kamera-Größe auf dem Fernseher",
-      "description": "Klein, Mittel, Groß, Fast Vollbild oder \"naechste\" (durchschalten). Eine laufende Kamera übernimmt die neue Größe sofort.",
+      "description": "small, medium, large, almost_full (fast Vollbild) oder \"next\" (durchschalten). Eine laufende Kamera übernimmt die neue Größe sofort.",
       "fields": {
-        "groesse": {
+        "size": {
           "name": "Größe"
         }
       }
     },
     "camera_position": {
       "name": "Kamera-Ecke auf dem Fernseher",
-      "description": "Ecke der Kamera (top-left, top-right, bottom-right, bottom-left, center) oder \"naechste\" (im Uhrzeigersinn). Eine laufende Kamera rückt sofort.",
+      "description": "Ecke der Kamera (top-left, top-right, bottom-right, bottom-left, center) oder \"next\" (im Uhrzeigersinn). Eine laufende Kamera rückt sofort.",
       "fields": {
         "position": {
           "name": "Ecke"
@@ -177,7 +177,7 @@
       "name": "Gerät neu starten (ADB)",
       "description": "Startet ein Android-Gerät neu, das im Konfigurator unter Funktionen eingetragen ist.",
       "fields": {
-        "geraet": {
+        "device": {
           "name": "Gerät",
           "description": "Name wie im Konfigurator (z. B. Streamer)"
         }

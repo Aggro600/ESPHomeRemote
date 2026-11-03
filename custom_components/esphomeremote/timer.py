@@ -24,6 +24,7 @@ from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
+from .aliases import schema_with_aliases
 from .mirror import als_liste
 from .i18n import t as _t
 
@@ -124,12 +125,12 @@ def einrichten(hass: HomeAssistant, kd) -> TimerWache:
     w.starten()
 
     async def verlaengern(call: ServiceCall) -> None:
-        await w.verlaengern(int(call.data.get("minuten", 5)))
+        await w.verlaengern(int(call.data.get("minutes", 5)))
 
     async def neu(call: ServiceCall) -> None:
         await w.neu_starten()
 
     hass.services.async_register(DOMAIN, "timer_extend", verlaengern,
-                                 schema=vol.Schema({vol.Optional("minuten", default=5): vol.Coerce(int)}))
+                                 schema=schema_with_aliases("timer_extend", vol.Schema({vol.Optional("minutes", default=5): vol.Coerce(int)})))
     hass.services.async_register(DOMAIN, "timer_restart", neu)
     return w

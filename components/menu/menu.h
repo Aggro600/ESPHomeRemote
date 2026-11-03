@@ -69,6 +69,8 @@ enum PlayerTeil : uint8_t { P_KEIN, P_INFO, P_MUTE, P_PREV, P_PLAY, P_NEXT, P_PR
                             P_VOLDN, P_SHUFFLE, P_REPEAT, P_POWER };
 // T_ZAHL (t: "number", 2026-10-07): number / input_number (value with slider) or media_player (volume 0..100, OK = on/off)
 // T_AUSWAHL (t: "select", 2026-10-07): select / input_select - OK = next option, D-pad left/right = previous/next
+// t "dropdown" (2026-11-03): ebenfalls T_AUSWAHL, aber OK/Antippen oeffnet eine Aufklappliste mit allen Optionen
+// (aus der Zustandsabfrage, Attribut "options"): Hoch/Runter waehlen, OK uebernimmt, Zurueck schliesst.
 
 // Einstellung der Remote (t: "setting", src: Widget-ID einer eingebauten Einstellungsseite, 2026-10-04):
 // typ 'b' = Knopf (Klick weiterreichen), 's' = Regler, 'i' = nur Anzeige, 'g' = Linien-Grafik (obj = lv_line).
@@ -319,6 +321,19 @@ class Menue : public Component {
   void ausloesen_(Item &it, int richtung = 0);
   void fokus_setzen_(int idx);
   static void klick_cb_(lv_event_t *e);
+  // Aufklappliste (t "dropdown", 2026-11-03), liegt auf lv_layer_top()
+  void dd_auf_(Item &it);
+  void dd_zu_();
+  void dd_markieren_();
+  void dd_waehlen_(int i);
+  bool dd_taste_(int k, bool gedrueckt);
+  static void dd_opt_cb_(lv_event_t *e);
+  static void dd_bg_cb_(lv_event_t *e);
+  lv_obj_t *dd_box_{nullptr};
+  std::vector<lv_obj_t *> dd_zeilen_;
+  std::vector<std::string> dd_opts_;
+  std::string dd_ent_;
+  int dd_sel_{0};
   static void regler_cb_(lv_event_t *e);
   static void halt_cb_(lv_event_t *e);
   void halten_(int idx, bool an);     // Halte-Knopf druecken (an) / loslassen
