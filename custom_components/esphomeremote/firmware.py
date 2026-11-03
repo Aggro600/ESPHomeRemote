@@ -228,7 +228,7 @@ def entwickler() -> bool:
 async def remotes_erzeugen() -> str:
     """tools/remotes.py: remote-wz-<x>.yaml und -halink.yaml aus templates/remote*.yaml neu schreiben."""
     skript = ESPHOME_DIR / "tools" / "remotes.py"
-    if not skript.exists():
+    if not await asyncio.get_running_loop().run_in_executor(None, skript.exists):
         return ""
     p = await asyncio.create_subprocess_exec("python3", str(skript), stdout=asyncio.subprocess.PIPE,
                                              stderr=asyncio.subprocess.STDOUT)

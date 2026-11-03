@@ -1,0 +1,2 @@
+esp-web-tools 10.4.0 (https://github.com/esphome/esp-web-tools), Apache-2.0, dist/web aus dem npm-Paket.
+Vorher zur Laufzeit von unpkg.com geladen; seit 2026-11-03 mitgeliefert (HACS-Pruefung: offline/eingeschraenkte Installationen).

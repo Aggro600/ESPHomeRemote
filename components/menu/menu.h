@@ -322,6 +322,8 @@ class Menue : public Component {
   void fokus_setzen_(int idx);
   static void klick_cb_(lv_event_t *e);
   // Aufklappliste (t "dropdown", 2026-11-03), liegt auf lv_layer_top()
+  // Popup-Option "zu" (2026-11-03): nach einem Knopfdruck schliessen
+  void nach_aktion_(const Item &it);
   void dd_auf_(Item &it);
   void dd_zu_();
   void dd_markieren_();

@@ -186,7 +186,7 @@ class Quelle:
         self.job = {"phase": "laden", "pct": 0, "text": "Frage GitHub nach dem neuesten Stand …"}
         tmp = self.db.dir / (self.info["zip"] + ".tmp")
         try:
-            self.db.dir.mkdir(parents=True, exist_ok=True)
+            await self.db.hass.async_add_executor_job(lambda: self.db.dir.mkdir(parents=True, exist_ok=True))
             stand = await self.db.github_stand(self.key)
             url = f"https://codeload.github.com/{self.info['repo']}/zip/{stand['sha'] if stand else 'refs/heads/main'}"
             sess = async_get_clientsession(self.db.hass)
@@ -194,7 +194,9 @@ class Quelle:
                 r.raise_for_status()
                 gesamt = int(r.headers.get("Content-Length") or 0)
                 n = 0
-                with open(tmp, "wb") as f:   # noqa: ASYNC230 - kleine Bloecke, Datei lokal
+                # Oeffnen, Schreiben und Schliessen im Executor (2026-11-03, HACS-Pruefung: open() blockierte)
+                f = await self.db.hass.async_add_executor_job(open, tmp, "wb")
+                try:
                     async for block in r.content.iter_chunked(1024 * 1024):
                         n += len(block)
                         if n > MAX_ZIP:
@@ -202,6 +204,8 @@ class Quelle:
                         await self.db.hass.async_add_executor_job(f.write, block)
                         self.job.update(pct=int(n * 100 / gesamt) if gesamt else -1,
                                         text=f"Lädt {n / 1048576:.0f} MB" + (f" von {gesamt / 1048576:.0f} MB" if gesamt else ""))
+                finally:
+                    await self.db.hass.async_add_executor_job(f.close)
             self.job = {"phase": "index", "pct": -1, "text": "Baue Suchindex …"}
             await self.db.hass.async_add_executor_job(self._index_bauen, tmp, stand or {})
             self.db.einst.get("neu", {}).pop(self.key, None)
@@ -210,7 +214,7 @@ class Quelle:
         except Exception as err:   # noqa: BLE001 - Fehler an die Oberflaeche
             _LOGGER.warning("IR-Datenbank %s: %s", self.key, err)
             self.job = {"phase": "fehler", "pct": 0, "text": f"Fehler: {err}"}
-            tmp.unlink(missing_ok=True)
+            await self.db.hass.async_add_executor_job(lambda: tmp.unlink(missing_ok=True))
 
     def _index_bauen(self, tmp: Path, stand: dict) -> None:
         if self.key == "flipper":
@@ -386,8 +390,11 @@ class IrDb:
         async_track_time_interval(self.hass, self._pruefen_takt, PRUEF_TAKT)
 
     async def einst_speichern(self) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
-        await self.hass.async_add_executor_job(self.einst_path.write_text, json.dumps(self.einst))
+        daten = json.dumps(self.einst)
+        def schreiben() -> None:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            self.einst_path.write_text(daten)
+        await self.hass.async_add_executor_job(schreiben)
 
     def status(self) -> dict:
         qs = {k: q.status() for k, q in self.quellen.items()}

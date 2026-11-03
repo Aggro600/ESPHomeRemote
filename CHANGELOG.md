@@ -1,5 +1,23 @@
 # What's new · Was ist neu
 
+## 2026.11.3.2 (2026-11-03)
+
+**Popups: new option "Close after a button press".** When on, pressing a button, switch, light or selection closes the popup shortly afterwards (a dropdown only after an entry was picked). Sub pages, sliders, hold buttons and the D-pad in key mode never close it. Off keeps the popup open as before. Needs the new remote firmware.
+
+**Doorbell picture is a normal element now.** The doorbell settings no longer appear on every popup page; add "Doorbell picture" like any other element and its settings (doorbell, trigger, camera, wait time) show up on that page.
+
+**Home Assistant:** file access no longer blocks the event loop (doorbell pictures, IR database download, streamer app), and esp-web-tools 10.4.0 for USB flashing ships with the integration instead of being loaded from a CDN.
+
+<details><summary>Deutsch</summary>
+
+**Popups: neue Option „Nach einem Knopfdruck schließen“.** Ist sie an, geht das Popup nach einem Knopf, Schalter, Licht oder einer Auswahl kurz danach zu (beim Dropdown erst nach der Wahl). Unterseiten, Regler, Halte-Knöpfe und das Steuerkreuz im Tastenmodus schließen es nie. Aus: das Popup bleibt offen wie bisher. Braucht die neue Firmware der Remote.
+
+**Das Klingelbild ist jetzt ein normales Element.** Die Klingel-Einstellungen erscheinen nicht mehr auf jeder Popup-Seite; „Klingelbild“ wie jedes andere Element hinzufügen, dann stehen Klingel, Auslöser, Kamera und Wartezeit bei dieser Seite.
+
+**Home Assistant:** Dateizugriffe blockieren die Ereignisschleife nicht mehr (Klingelbilder, Download der IR-Datenbank, Streamer-App), und esp-web-tools 10.4.0 für das Flashen per USB liegt jetzt in der Integration, statt von einem CDN geladen zu werden.
+
+</details>
+
 ## 2026.11.3.1 (2026-11-03)
 
 **Docks: TV pairing no longer gets lost.** ESP-IDF 5.5.6 wiped a paired device's keys from memory on every reconnect, so after the next dropout the TV (seen with Sony) removed the pairing. The dock now keeps the keys. It also no longer asks paired devices for a faster connection interval; the Sony TV dropped the connection every few minutes because of it.

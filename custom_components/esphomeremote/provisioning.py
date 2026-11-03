@@ -96,7 +96,7 @@ class Einrichtung:
         """Frisch angelegt: warten, bis der Device Builder beide Dateien eingelesen hat. Er erzeugt dabei die Quellen
         im gemeinsamen Build-Ordner (<dev>.yaml und -halink.yaml haben denselben Geraetenamen) - ein Bau, der
         gleichzeitig laeuft, verliert Dateien ("No such file or directory", 2026-10-18 nachgestellt)."""
-        dateien = {f"{dev}.yaml", flash_datei(dev)}
+        dateien = {f"{dev}.yaml", await self.hass.async_add_executor_job(flash_datei, dev)}
         ende = time.monotonic() + 120
         gemeldet = False
         while time.monotonic() < ende:
@@ -124,7 +124,7 @@ class Einrichtung:
         else:
             j.update(phase=art, running=True, exit=None, msg="", fehler="", schritt="", progress=None)
             j["log"].clear()
-        datei = flash_datei(dev)
+        datei = await self.hass.async_add_executor_job(flash_datei, dev)
         name = dev.replace("remote-wz-", "Remote ").title()
         try:
             if art == "compile":
@@ -167,8 +167,9 @@ class Einrichtung:
                 pass
         try:
             d = await _befehl(self.hass, "devices/list")
+            fd = await self.hass.async_add_executor_job(flash_datei, dev)
             for x in d.get("configured", []):
-                if x.get("configuration") in (f"{dev}.yaml", flash_datei(dev)) and x.get("ip"):
+                if x.get("configuration") in (f"{dev}.yaml", fd) and x.get("ip"):
                     kandidaten.append(x["ip"])
         except Exception:  # noqa: BLE001
             pass
@@ -308,7 +309,8 @@ class FirmwareView(HomeAssistantView):
         if dev is None:
             return web.Response(status=403)
         hass = self.ein.hass
-        r = await _befehl(hass, "firmware/download_token", {"configuration": flash_datei(dev), "file": "firmware.factory.bin"})
+        r = await _befehl(hass, "firmware/download_token", {"configuration": await hass.async_add_executor_job(flash_datei, dev),
+                                                            "file": "firmware.factory.bin"})
         p = await _port(hass)
         s = async_get_clientsession(hass)
         async with s.get(f"http://127.0.0.1:{p}/api/firmware/download", params={"token": r["token"]}) as fr:
@@ -323,7 +325,7 @@ async def bau_aufraeumen(hass: HomeAssistant, dateien: list[str]) -> None:
     try:
         async with Dash(hass) as d:
             for datei in dateien:
-                if (ESPHOME_DIR / datei).exists():
+                if await hass.async_add_executor_job((ESPHOME_DIR / datei).exists):
                     await d.befehl("firmware/clean", {"configuration": datei})
             await asyncio.sleep(2)
     except Exception as err:  # noqa: BLE001 - Aufraeumen ist nur nett, kein Muss
@@ -369,7 +371,9 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
     @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_neu(hass, connection, msg):
-        if not (ESPHOME_DIR / "tools" / "remotes.py").exists() or not (ESPHOME_DIR / "templates" / "remote.yaml").exists():
+        entwickler_da = await hass.async_add_executor_job(
+            lambda: (ESPHOME_DIR / "tools" / "remotes.py").exists() and (ESPHOME_DIR / "templates" / "remote.yaml").exists())
+        if not entwickler_da:
             # Ohne Entwickler-Einrichtung (2026-10-26): Datei mit der Firmware als GitHub-Paket (wie esphomeremote.yaml)
             try:
                 dev = await hass.async_add_executor_job(neu_als_paket, msg["name"])

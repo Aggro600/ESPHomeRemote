@@ -3131,5 +3131,8 @@
 "Einfacher:": "Easier:",
 "legt alles auf einmal an.": "creates everything at once.",
 "Die Seite hat schon einen Knopf „Tastenmodus an/aus“ – es kommt kein zweiter dazu.": "The page already has a “Key mode on/off” button – no second one is added.",
-"Dropdown (OK öffnet die Liste)": "Dropdown (OK opens the list)"
+"Dropdown (OK öffnet die Liste)": "Dropdown (OK opens the list)",
+"Klingelbild (Foto beim Klingeln)": "Doorbell picture (photo when it rings)",
+"Nach einem Knopfdruck schließen": "Close after a button press",
+"– drückst du einen Knopf, Schalter oder eine Auswahl, geht das Popup danach zu (wie bei der HDMI-Auswahl). Aus: es bleibt offen, z. B. zum Schwenken der Kamera. Unterseiten, Regler und das Steuerkreuz im Tastenmodus schließen es nie.": "– pressing a button, switch or selection closes the popup afterwards (like the HDMI choice). Off: it stays open, e.g. to pan the camera. Sub pages, sliders and the D-pad in key mode never close it."
 }
