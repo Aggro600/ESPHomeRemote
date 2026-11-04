@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.4.7 (2026-11-04)
+
+**README readable in HACS.** HACS shows the README of the release, could not load relative images and printed the logo's <picture> block as text. The logo is a plain image now (on a dark card, readable in light and dark mode), and all images and links use absolute URLs. No functional changes; the firmware is unchanged.
+
+<details><summary>Deutsch</summary>
+
+**README in HACS lesbar.** HACS zeigt das README des Releases, konnte relative Bilder nicht laden und hat den <picture>-Block des Logos als Text ausgegeben. Das Logo ist jetzt ein normales Bild (auf dunkler Karte, in hellem und dunklem Design lesbar), alle Bilder und Links haben feste Adressen. Keine Funktionsänderung, die Firmware ist unverändert.
+
+</details>
+
 ## 2026.11.4.6 (2026-11-04)
 
 **Logitech Z906 on Wi-Fi moved out.** The Z906 bridge is not part of the remote and now lives only in its own repository [Aggro600/ESPHomeZ906](https://github.com/Aggro600/ESPHomeZ906) (also in HACS: "Logitech Z906"). The folders z906/ and components/z906/ and the README section are gone from this repository. The IR template "Logitech Z906" for the docks stays. The remote firmware itself is unchanged.
