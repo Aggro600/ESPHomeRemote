@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.4.6 (2026-11-04)
+
+**Logitech Z906 on Wi-Fi moved out.** The Z906 bridge is not part of the remote and now lives only in its own repository [Aggro600/ESPHomeZ906](https://github.com/Aggro600/ESPHomeZ906) (also in HACS: "Logitech Z906"). The folders z906/ and components/z906/ and the README section are gone from this repository. The IR template "Logitech Z906" for the docks stays. The remote firmware itself is unchanged.
+
+<details><summary>Deutsch</summary>
+
+**Logitech Z906 im WLAN ausgezogen.** Die Z906-Bridge gehört nicht zur Remote und liegt jetzt nur noch im eigenen Repository [Aggro600/ESPHomeZ906](https://github.com/Aggro600/ESPHomeZ906) (auch in HACS: „Logitech Z906“). Die Ordner z906/ und components/z906/ und der Abschnitt im README sind hier entfernt. Die IR-Vorlage „Logitech Z906“ für die Docks bleibt. Die Firmware der Remote ist unverändert.
+
+</details>
+
 ## 2026.11.4.5 (2026-11-04)
 
 **HACS review: real entities instead of bare states.** Everything the integration used to publish with plain states is now a sensor or binary sensor with a unique ID: the key configuration per remote (sensor.esphomeremote_config_… and the old …_konfig_… for old firmware), TV input, camera on TV, camera size, timer finished and the mirror sensors of the links. The entity IDs stay the same, so the firmware keeps working; the entities can now be renamed, hidden and assigned to areas and survive a restart.
