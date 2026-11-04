@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.4.2 (2026-11-04)
+
+**Configurator:** a remote no longer shows "1 setting pending" forever. A setting the firmware dropped in October (number keyboard, always on since then) could still be stored for a remote; the remote never reports it back. Such settings are now removed on start and ignored when restoring old backups. The firmware itself is unchanged.
+
+<details><summary>Deutsch</summary>
+
+**Konfigurator:** eine Remote zeigt nicht mehr dauerhaft „1 Einstellung unterwegs“. Eine Einstellung, die die Firmware im Oktober abgeschafft hat (Ziffern-Tastatur, seitdem immer an), konnte für eine Remote noch gespeichert sein; die Remote meldet sie nie zurück. Solche Einstellungen werden jetzt beim Start entfernt und beim Einspielen alter Sicherungen ignoriert. Die Firmware selbst ist unverändert.
+
+</details>
+
 ## 2026.11.4.1 (2026-11-04)
 
 **Update the remotes' firmware with this version.** Doorbell, camera and cover pictures no longer lie in /config/www (Home Assistant serves that folder to anyone at /local/ without login). They are now in /config/.esphomeremote_images and the remotes fetch them with the integration key; existing pictures are moved on start. Remotes with older firmware show no doorbell, camera or cover pictures until they are updated.
