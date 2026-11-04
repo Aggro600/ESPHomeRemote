@@ -1,9 +1,9 @@
-<p align="center"><b>🇬🇧 English</b> · 🇩🇪 <a href="README.de.md">Deutsch</a></p>
+<p align="center"><b>🇬🇧 English</b> · 🇩🇪 <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/README.de.md">Deutsch</a></p>
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/bilder/logo-dunkel.png">
-    <img src="docs/bilder/logo.png" alt="ESPHomeRemote" width="520">
+    <img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/logo.png" alt="ESPHomeRemote" width="520">
   </picture>
 </p>
 
@@ -19,18 +19,18 @@
   <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration"><img src="https://img.shields.io/badge/HACS-default-41BDF5?style=for-the-badge" alt="HACS"></a>
   <img src="https://img.shields.io/badge/ESPHome-native-1a1a1a?style=for-the-badge&logo=esphome&logoColor=white" alt="ESPHome">
   <img src="https://img.shields.io/badge/Home%20Assistant-integrated-41BDF5?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
+  <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
 </p>
 
-<p align="center"><img src="docs/bilder/remote-echt.png" alt="The remote in its dock showing the smart display, a second remote showing the menu" width="100%"><br>
+<p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/remote-echt.png" alt="The remote in its dock showing the smart display, a second remote showing the menu" width="100%"><br>
 <sub>Rendered from the 3D model of the hardware (<a href="https://github.com/LORDSn1per/OpenRemote-Hardware">OpenRemote Rev6</a>, GPL-3.0) – the screens show this firmware.</sub></p>
 
-<p align="center"><img src="docs/bilder/hero.png" alt="ESPHomeRemote: remote with touch display and the configurator in Home Assistant" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/hero.png" alt="ESPHomeRemote: remote with touch display and the configurator in Home Assistant" width="100%"></p>
 
 <p align="center">
   <a href="#quick-start"><b>▶ Get started in 30 minutes</b></a> &nbsp;·&nbsp;
   <a href="https://aggro600.github.io/ESPHomeRemote/showcase/"><b>🧊 See it in 3D</b></a> &nbsp;·&nbsp;
-  <a href="CHANGELOG.md"><b>✨ What's new</b></a>
+  <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md"><b>✨ What's new</b></a>
 </p>
 
 > **Language:** the configurator and the texts on the remote are currently in **German**. This guide gives the
@@ -68,7 +68,7 @@ the dock does the rest.
 
 ## One remote for everything
 
-<p align="center"><img src="docs/bilder/geraete-reihe.png" alt="Display of the remote: menu, lights, TV, quick settings, smart display" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/geraete-reihe.png" alt="Display of the remote: menu, lights, TV, quick settings, smart display" width="100%"></p>
 
 - **TVs, streamers, tablets and PCs via Bluetooth** – four devices, switched by *activities* like a Harmony,
   as keys, **mouse (touchpad)** or **keyboard**.
@@ -81,15 +81,15 @@ the dock does the rest.
 
 ## Configure everything in your browser
 
-<p align="center"><img src="docs/bilder/konfig-uebersicht.png" alt="Configurator: overview of all remotes and docks" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-uebersicht.png" alt="Configurator: overview of all remotes and docks" width="100%"></p>
 
 The **Fernbedienung** (remote) page in your Home Assistant sidebar shows every remote and dock at a glance –
 battery with 24 h history, connection, firmware and hints with a button to fix them.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/bilder/konfig-tasten.png" alt="Keys"></td>
-<td width="50%"><img src="docs/bilder/konfig-startseite.png" alt="Home screen editor"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-tasten.png" alt="Keys"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-startseite.png" alt="Home screen editor"></td>
 </tr>
 <tr>
 <td valign="top"><b>Every key, your way</b> – tap a key on the virtual remote and add actions for short, double and
@@ -101,7 +101,7 @@ grid, with a live preview that looks exactly like the display.</td>
 
 ## A smart display in the dock
 
-<p align="center"><img src="docs/bilder/konfig-smartdisplay.png" alt="Smart display settings" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-smartdisplay.png" alt="Smart display settings" width="100%"></p>
 
 Put the remote in its dock and it becomes a bedside or coffee-table display: **time, weather, room climate,
 appointments and battery** – you pick the parts and their order. When music plays it switches to a
@@ -110,7 +110,7 @@ remote, music ⇄ clock, ⏮ ⏯ ⏭ – or *Heute aus* (off until you take it o
 
 ## Opening apps, made easy
 
-<p align="center"><img src="docs/bilder/konfig-app.png" alt="App assistant" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-app.png" alt="App assistant" width="100%"></p>
 
 Want a key that opens Netflix? Open the app on your TV once – the assistant **recognises it**, suggests the
 name and creates the command. Test it with one click. Works right where you need it: in the key editor and in
@@ -120,8 +120,8 @@ every menu or popup.
 
 <table>
 <tr>
-<td width="34%" align="center"><img src="docs/bilder/geraet-schnell.png" alt="Quick settings with radio path" width="300"></td>
-<td width="66%"><img src="docs/bilder/konfig-remote.png" alt="Remote overview"></td>
+<td width="34%" align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/geraet-schnell.png" alt="Quick settings with radio path" width="300"></td>
+<td width="66%"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-remote.png" alt="Remote overview"></td>
 </tr>
 <tr>
 <td valign="top"><b>Quick settings</b> show the live radio path: remote → dock → device, each link blue when
@@ -134,8 +134,8 @@ it works, red when it doesn't. Separate switches for dock mode, Bluetooth and Wi
 
 <table>
 <tr>
-<td width="50%"><img src="docs/bilder/konfig-dock.png" alt="Dock overview"></td>
-<td width="50%"><img src="docs/bilder/konfig-licht.png" alt="Dock LED following the room light"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-dock.png" alt="Dock overview"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-licht.png" alt="Dock LED following the room light"></td>
 </tr>
 <tr>
 <td valign="top"><b>The hub</b> (ESP32-C3) – keeps up to four Bluetooth devices connected, is an <b>IR blaster</b>
@@ -149,8 +149,8 @@ sensor. Drag the curve; it learns while you adjust.</td>
 
 <table>
 <tr>
-<td width="50%"><img src="docs/bilder/konfig-menue.png" alt="Menu editor"></td>
-<td width="50%"><img src="docs/bilder/konfig-tabelle.png" alt="Table of all keys"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-menue.png" alt="Menu editor"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-tabelle.png" alt="Table of all keys"></td>
 </tr>
 <tr>
 <td valign="top"><b>Menu editor</b> – pages, sub-pages and popups that open by themselves (doorbell, sleep
@@ -158,16 +158,16 @@ timer, picture mode …). Send a page to your other remotes with one click.</td>
 <td valign="top"><b>Table view</b> – all activities and follow-up modes side by side.</td>
 </tr>
 <tr>
-<td><img src="docs/bilder/konfig-gesten.png" alt="Gestures"></td>
-<td><img src="docs/bilder/konfig-suche.png" alt="Search"></td>
+<td><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-gesten.png" alt="Gestures"></td>
+<td><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-suche.png" alt="Search"></td>
 </tr>
 <tr>
 <td valign="top"><b>Gestures</b> – built-in and your own, recognised however you hold the remote.</td>
 <td valign="top"><b>Search (Ctrl+K)</b> – finds every key, setting and menu page.</td>
 </tr>
 <tr>
-<td align="center"><img src="docs/bilder/handy-uebersicht.png" alt="On the phone" width="45%"> <img src="docs/bilder/handy-tasten.png" alt="Keys on the phone" width="45%"></td>
-<td><img src="docs/bilder/kreisgeste.png" alt="Custom gesture: circle"></td>
+<td align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/handy-uebersicht.png" alt="On the phone" width="45%"> <img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/handy-tasten.png" alt="Keys on the phone" width="45%"></td>
+<td><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/kreisgeste.png" alt="Custom gesture: circle"></td>
 </tr>
 <tr>
 <td valign="top"><b>On your phone</b> – the full configurator, made for small screens.</td>
@@ -281,7 +281,7 @@ ota:
 
 **Step 4 – Flash the remote**
 1. In the ESPHome add-on: **"+ New device"** → **"Skip"** (or "Create empty").
-2. Copy the contents of [`esphomeremote.yaml`](esphomeremote.yaml) into the editor – no changes needed
+2. Copy the contents of [`esphomeremote.yaml`](https://github.com/Aggro600/ESPHomeRemote/blob/master/esphomeremote.yaml) into the editor – no changes needed
    (the remote finds Home Assistant's address by itself).
 3. **Save** → **Install** → *"Plug into this computer"* → connect the remote via USB-C and select it.
    The first build takes about 10 minutes.
@@ -299,7 +299,7 @@ For title, cover art and the keyboard popup from an Android TV streamer: enable 
 debugging on the streamer, add the **Android Debug Bridge** integration with its IP in Home Assistant, then in
 the configurator *Wiedergabe (playback) → Streamer anlegen (add streamer)* → **Einrichten (set up)**. The app ships
 with the integration; updating and uninstalling work the same way. On the TV, "ESPHomeRemote Streamer" shows
-whether everything is running. Details: [streamer-app/README.md](streamer-app/README.md).
+whether everything is running. Details: [streamer-app/README.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/streamer-app/README.md).
 
 ### Updates
 
@@ -308,7 +308,7 @@ whether everything is running. Details: [streamer-app/README.md](streamer-app/RE
 - **Remotes and docks:** afterwards the configurator shows "Neue Version …" (new version) under *Firmware* –
   **Alle aktualisieren** (update all) builds and flashes them (touch sleeping remotes briefly).
 - The firmware comes from the `stabil` branch (latest release).
-- What's new: [CHANGELOG.md](CHANGELOG.md).
+- What's new: [CHANGELOG.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md).
 
 
 ## The configurator
@@ -408,4 +408,4 @@ everything the remotes are actually built with:
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Third-party assets: [THIRD-PARTY.md](THIRD-PARTY.md).
+MIT, see [LICENSE](https://github.com/Aggro600/ESPHomeRemote/blob/master/LICENSE). Third-party assets: [THIRD-PARTY.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/THIRD-PARTY.md).
