@@ -2,7 +2,7 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/bilder/logo-dunkel.png">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/logo-dunkel.png">
     <img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/logo.png" alt="ESPHomeRemote" width="520">
   </picture>
 </p>
