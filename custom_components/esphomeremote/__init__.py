@@ -822,10 +822,21 @@ class KonfigData:
         # Englische Feldnamen und Entitaeten (2026-11-03): gespeicherte Belegungen einmal umschreiben (aliases.py)
         from .aliases import migrate_config
         umgebaut |= migrate_config(self.data.get("devices")) | migrate_config(self.data.get("werk"))
+        umgebaut |= self._veraltete_einst()
         if self._neue_einst_seiten() | self._eingabe_je_platz() | umgebaut:
             await self.store.async_save(self.data)
         for dev in self.devices:
             self.announce(dev)
+
+    def _veraltete_einst(self) -> bool:
+        """Einstellungen, die die Firmware nicht mehr kennt (sync.VERALTET), aus dem Soll entfernen (2026-11-04): die
+        Remote meldet sie nie zurueck, sonst stand im Konfigurator dauerhaft "1 Einstellung unterwegs"."""
+        from .sync import VERALTET
+        weg = False
+        for d in self.data["devices"].values():
+            for k in VERALTET:
+                weg |= (d.get("einst") or {}).pop(k, None) is not None
+        return weg
 
     def _vol_aufraeumen(self) -> bool:
         """Einmalig (2026-10-26): Lautstaerke-Tasten einer Seite ("vol"), die die Umwandlung des alten Medien-Blocks
@@ -1000,7 +1011,10 @@ class KonfigData:
         e = self.entry(dev)
         ist, soll, bis = e.get("einst_ist") or {}, e.get("einst") or {}, e.get("einst_ist_rev", -1)
         out, offen = dict(ist), []
+        from .sync import VERALTET
         for k, (v, r) in soll.items():
+            if k in VERALTET:
+                continue
             if r > bis or k not in ist:
                 if ist.get(k) != v:
                     offen.append(k)
@@ -1020,6 +1034,7 @@ class KonfigData:
                 soll[k] = [ist[k], r]
 
     async def einst_setzen(self, dev: str, werte: dict) -> int:
+        from .sync import VERALTET
         e = self.entry(dev)
         self.einst_angleichen(dev)
         aktuell, _ = self.einst_werte(dev)
@@ -1028,6 +1043,8 @@ class KonfigData:
         for k, v in werte.items():
             if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", str(k)) or not isinstance(v, (bool, int)):
                 raise vol.Invalid(f"Einstellung {k}: ungültig")
+            if k in VERALTET:   # z. B. aus einer alten Sicherung
+                continue
             ak = aktuell.get(k)
             # 1 ist nicht True: ein Auswahlfeld (Sprache 0/1/2) kam frueher als Ja/Nein von der Remote (2026-11-02)
             if ak == v and isinstance(ak, bool) == isinstance(v, bool) and k in soll:
