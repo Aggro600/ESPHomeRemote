@@ -1,10 +1,7 @@
 <p align="center"><b>🇬🇧 English</b> · 🇩🇪 <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/README.de.md">Deutsch</a></p>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/logo-dunkel.png">
-    <img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/logo.png" alt="ESPHomeRemote" width="520">
-  </picture>
+  <img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/logo-karte.png" alt="ESPHomeRemote" width="560">
 </p>
 
 <h3 align="center">The remote your smart home deserves.</h3>
