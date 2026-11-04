@@ -27,6 +27,7 @@ from homeassistant.util import dt as dt_util
 from .aliases import schema_with_aliases
 from .mirror import als_liste
 from .i18n import t as _t
+from .zustaende import holen as zustaende
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote"
@@ -65,8 +66,8 @@ class TimerWache:
 
     @callback
     def starten(self) -> None:
-        if self.hass.states.get(SENSOR) is None:
-            self.hass.states.async_set(SENSOR, "–", {"status": "aus", "friendly_name": _t(self.hass, "Timer abgelaufen"), "icon": "mdi:timer-alert-outline"})
+        if zustaende(self.hass).wert(SENSOR) is None:
+            zustaende(self.hass).setzen(SENSOR, "–", {"status": "aus", "friendly_name": _t(self.hass, "Timer abgelaufen"), "icon": "mdi:timer-alert-outline"})
         self.hass.bus.async_listen("timer.finished", self._abgelaufen)
         self.hass.bus.async_listen("timer.started", self._gestartet)
         self.hass.bus.async_listen("timer.restarted", self._gestartet)
@@ -87,7 +88,7 @@ class TimerWache:
         except ValueError:
             pass
         self.letzter, self.dauer = e, dauer
-        self.hass.states.async_set(SENSOR, name, {
+        zustaende(self.hass).setzen(SENSOR, name, {
             "status": "abgelaufen", "entity_id": e, "dauer": _dauer_text(dauer), "gestartet_um": start,
             "abgelaufen_um": jetzt.strftime("%H:%M Uhr"), "friendly_name": _t(self.hass, "Timer abgelaufen"), "icon": "mdi:timer-alert-outline"})
         _LOGGER.info("Timer %s abgelaufen - Popup an die Remotes", e)
@@ -102,9 +103,9 @@ class TimerWache:
 
     @callback
     def _ausschalten(self, _now) -> None:
-        st = self.hass.states.get(SENSOR)
-        if st is not None and st.attributes.get("status") == "abgelaufen":
-            self.hass.states.async_set(SENSOR, st.state, {**st.attributes, "status": "aus"})
+        w = zustaende(self.hass).wert(SENSOR)
+        if w is not None and w[1].get("status") == "abgelaufen":
+            zustaende(self.hass).setzen(SENSOR, w[0], {**w[1], "status": "aus"})
         self._aus = None
 
     async def verlaengern(self, minuten: int) -> None:

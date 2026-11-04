@@ -958,8 +958,9 @@ class KonfigData:
         self.data["extra"] = [d for d in self.data.get("extra", []) if d != dev]
         self.data["devices"].pop(dev, None)
         await self.store.async_save(self.data)
-        self.hass.states.async_remove(f"sensor.esphomeremote_config_{dev_slug(dev)}")
-        self.hass.states.async_remove(old_sensor(dev_slug(dev)))
+        from .zustaende import holen as zustaende
+        zustaende(self.hass).entfernen(f"sensor.esphomeremote_config_{dev_slug(dev)}")
+        zustaende(self.hass).entfernen(old_sensor(dev_slug(dev)))
         self.spiegel.weg(dev_slug(dev))
 
     def entry(self, dev: str) -> dict:
@@ -1101,8 +1102,10 @@ class KonfigData:
             "saved_at": e.get("saved_at"),
             "basis": self.basis(),
         }
-        self.hass.states.async_set(f"sensor.esphomeremote_config_{dev_slug(dev)}", fnv1a(body), attrs)
-        self.hass.states.async_set(old_sensor(dev_slug(dev)), fnv1a(body), attrs)   # alte Firmware liest diesen Namen
+        from .zustaende import holen as zustaende
+        z = zustaende(self.hass)
+        z.setzen(f"sensor.esphomeremote_config_{dev_slug(dev)}", fnv1a(body), attrs)
+        z.setzen(old_sensor(dev_slug(dev)), fnv1a(body), {**attrs, "friendly_name": attrs["friendly_name"] + " (alt)"})   # alte Firmware liest diesen Namen
         if ds is not None:
             ds.konfig_neu(dev)   # andere Popup-Ausloeser (2026-10-24)
             ds._planen(dev, 1)   # neuer Soll-Stand -> auch an die Docks (Remote ohne eigene HA-Verbindung)
@@ -1290,6 +1293,8 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
 
 
 async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
+    from .zustaende import holen as zustaende
+    zustaende(hass)   # Plattformen der eigenen Zustands-Entitaeten (sensor/binary_sensor) frueh laden
     kd = KonfigData(hass, key, devices)
     await kd.load()
     hass.data[DOMAIN] = kd

@@ -7,10 +7,12 @@ ESP-NOW ans Dock; das Dock ruft damit diese Aktion auf (dock_direkt typ 3 -> cal
                                          b: Bluetooth 0/1, k: Aktivitaet, h: Tasten-Konfiguration, t: Tiefschlaf-Status,
                                          n: letzter Neustart, d: Dock (Name)}
 
-Die Werte landen in den normalen ESPHome-Entitaeten der Remote (Attribut quelle: dock) - Dashboards, Automationen
-und der Konfigurator sehen sie wie gewohnt. Geschrieben wird nur, solange die Entitaet "unavailable"/"unknown" ist
-oder schon vom Dock kam: steht die eigene Verbindung, gelten deren Werte. Der letzte Stand je Remote liegt ausserdem in
-DockStatus.stand (Konfigurator: ws dockstatus_get).
+Die Werte landen in eigenen Entitaeten der Integration (zustaende.py, mit unique_id):
+<domain>.esphomeremote_<remote>_<wert>, z. B. sensor.esphomeremote_remote_wz_wohnzimmer_akkustand (Attribut quelle: dock,
+dock: Name). Bis 2026-11-04 schrieb die Integration sie in die ESPHome-Entitaeten der Remote, solange diese nicht
+verfuegbar waren - die gehoeren aber ESPHome (HACS-Pruefung). Konfigurator und Integration nehmen den Dock-Wert,
+solange die ESPHome-Entitaet nicht verfuegbar ist (zustaende.remote_wert). Der letzte Stand je Remote liegt ausserdem
+in DockStatus.stand (Konfigurator: ws dockstatus_get).
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.components import websocket_api
+
+from .i18n import t as _t
 
 _LOGGER = logging.getLogger(__name__)
 # Protokoll der Remotes ueber das Dock (2026-10-24): eigener Logger, damit es sich in configuration.yaml (logger:)
@@ -50,6 +54,18 @@ WERTE = {
     "t": ("sensor", "tiefschlaf_status", str),
     "n": ("sensor", "letzter_neustart", str),
     "w": ("sensor", "wlan_zustand", str),   # 2026-10-29: aus | immer | Grund|Restsekunden
+}
+# Name, Symbol, Einheit, device_class der eigenen Entitaet je Wert
+ART = {
+    "a": ("Akkustand", "mdi:battery", "%", "battery"),
+    "v": ("Akkuspannung", "mdi:flash-triangle-outline", "V", "voltage"),
+    "l": ("Ladekabel", "mdi:power-plug", None, "plug"),
+    "b": ("Bluetooth verbunden", "mdi:bluetooth", None, "connectivity"),
+    "k": ("Aktivität", "mdi:play-circle-outline", None, None),
+    "h": ("Tasten-Konfiguration", "mdi:remote", None, None),
+    "t": ("Tiefschlaf-Status", "mdi:sleep", None, None),
+    "n": ("Letzter Neustart", "mdi:restart", None, None),
+    "w": ("WLAN-Zustand", "mdi:wifi", None, None),
 }
 FREI = ("unavailable", "unknown")
 
@@ -95,20 +111,20 @@ class DockStatus:
         werte = {k: str(v) for k, v in daten.items() if k in WERTE}
         self.stand[geraet] = {"werte": werte, "zeit": time.time(), "dock": str(daten.get("d") or "")}
         n = 0
+        from .zustaende import holen as zustaende
+        z = zustaende(self.hass)
         for k, roh in werte.items():
             dom, endung, umw = WERTE[k]
-            eid = f"{dom}.{slug}_{endung}"
-            st = self.hass.states.get(eid)
-            if st is None or (st.state not in FREI and st.attributes.get("quelle") != "dock"):
-                continue   # eigene Verbindung steht - deren Wert gilt
             try:
                 wert = umw(roh)
             except (TypeError, ValueError):
                 continue
-            attr = {**st.attributes, "quelle": "dock"}
+            name, icon, einheit, klasse = ART[k]
+            attr = {"friendly_name": f"{geraet} {_t(self.hass, name)} ({_t(self.hass, 'über Dock')})", "icon": icon,
+                    "quelle": "dock", "_einheit": einheit, "_klasse": klasse}
             if daten.get("d"):
                 attr["dock"] = str(daten["d"])
-            self.hass.states.async_set(eid, wert, attr)
+            z.setzen(f"{dom}.esphomeremote_{slug}_{endung}", wert, attr)   # eigene Entitaet, nie die von ESPHome
             n += 1
         _LOGGER.debug("Status %s ueber Dock %s: %d Werte gesetzt", geraet, daten.get("d"), n)
         return n

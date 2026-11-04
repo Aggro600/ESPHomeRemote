@@ -294,7 +294,7 @@ class Verwalter:
                     self.add[p](ents)
             # Verwaiste Registry-Eintraege (geloeschte Geraete/Aktivitaeten aus frueheren Laeufen)
             for e in list(reg.entities.values()):
-                if e.platform == DOMAIN and e.unique_id not in soll:
+                if e.platform == DOMAIN and e.unique_id not in soll and not str(e.unique_id).startswith("zustand:"):
                     reg.async_remove(e.entity_id)
 
 

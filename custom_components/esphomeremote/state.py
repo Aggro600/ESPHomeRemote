@@ -95,11 +95,12 @@ def _stand(hass: HomeAssistant, slug: str, ausl: list[tuple[str, str]] | None = 
         except (TypeError, ValueError, AttributeError):
             pass
     ta = tm.attributes if tm else {}
-    kh = hass.states.get(f"sensor.esphomeremote_config_{slug}")
+    from .zustaende import holen as zustaende
+    kh = zustaende(hass).wert(f"sensor.esphomeremote_config_{slug}")   # (Hash, Attribute) - auch wenn die Entitaet aus ist
     return {
         # Soll-Stand der Tasten-Konfiguration (2026-10-23, Umbau "Dock als Zentrale"): die Remote holt ihn ohne eigene
         # HA-Verbindung ueber das Dock (HTTP typ 6-9), die Einstellungen stecken mit darin
-        "kh": kh.state if kh is not None and len(kh.state) == 8 else "",
+        "kh": kh[0] if kh is not None and len(str(kh[0])) == 8 else "",
         "mp_state": j.state if j else "off",
         "mp_title": str(a.get("media_title") or "")[:120],
         "mp_artist": str(a.get("media_artist") or "")[:80],

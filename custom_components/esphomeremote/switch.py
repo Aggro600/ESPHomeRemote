@@ -55,8 +55,9 @@ class AktBasis:
         return self._sensor_id
 
     def _laufend(self) -> int | None:
+        from .zustaende import remote_wert
         s = self._sensor
-        st = self.hass.states.get(s) if s else None
+        st = remote_wert(self.hass, s) if s else None   # schlaeft die Remote: zuletzt uebers Dock gemeldet
         if zustand_unbekannt(st):
             return None
         try:
@@ -73,7 +74,7 @@ class AktBasis:
 
         @callback
         def passt(d) -> bool:
-            return d["entity_id"].startswith(f"sensor.{self.slug}_aktivit")
+            return d["entity_id"].startswith((f"sensor.{self.slug}_aktivit", f"sensor.esphomeremote_{self.slug}_aktivit"))
 
         # Der Sensor ist beim Start evtl. noch nicht da: nach dem Namensmuster filtern statt fester ID
         self.async_on_remove(self.hass.bus.async_listen("state_changed", neu, event_filter=passt))
