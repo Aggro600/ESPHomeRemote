@@ -1,5 +1,19 @@
 # What's new · Was ist neu
 
+## 2026.11.4.4 (2026-11-04)
+
+**Home screen editor with the full page tools of the menu editor.** The page header (title, "Arrange automatically", status bar, activity bar) now sits above the preview like in the menu editor, so it stays visible while an entry is selected; before, "Arrange automatically" could not be found then. New there: Subpage, App …, Paste, Page to clipboard, Replace entity and Show on the remote.
+
+**Copy layout to "No activity".** "Copy layout" in the keys editor now works both ways: "Copy here" or "Copy from here to …" one or more activities, including "No activity" of every remote. Copying a single key offers "No activity" too. The firmware itself is unchanged.
+
+<details><summary>Deutsch</summary>
+
+**Startseiten-Editor mit allen Seiten-Werkzeugen des Menü-Editors.** Der Seitenkopf (Titel, „Automatisch anordnen“, Statusleiste, Aktivitäten-Leiste) steht jetzt wie im Menü-Editor über der Vorschau und bleibt sichtbar, wenn ein Eintrag gewählt ist; vorher war „Automatisch anordnen“ dann nicht zu finden. Neu dort: Unterseite, App …, Einfügen, Seite in Zwischenablage, Entität ersetzen und Auf der Remote zeigen.
+
+**Layout nach „Keine Aktivität“ kopieren.** „Layout kopieren“ im Tasten-Editor geht jetzt in beide Richtungen: „Hierher holen“ oder „Von hier kopieren nach …“ in eine oder mehrere Aktivitäten, auch „Keine Aktivität“ jeder Remote. Auch eine einzelne Taste lässt sich nach „Keine Aktivität“ übertragen. Die Firmware selbst ist unverändert.
+
+</details>
+
 ## 2026.11.4.3 (2026-11-04)
 
 **HACS review: no more writes to ESPHome's config entries.** With the developer setup (tools/remotes.json) the integration used to point the ESPHome entries of these remotes to the Bluetooth bridge (127.0.0.1:<port>) by itself at every start. It now only checks them: if an entry points elsewhere, a repair issue names host and port. Set them via ESPHome → Reconfigure, or press "Point ESPHome entries to the bridge" in the configurator (Firmware, asks first). Normal installs are not affected. The firmware itself is unchanged.
