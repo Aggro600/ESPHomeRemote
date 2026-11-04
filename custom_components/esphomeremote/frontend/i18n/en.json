@@ -2502,6 +2502,86 @@
 [
 "(\\d+) Gerät verbunden",
 "$1 device connected"
+],
+[
+"^Alles nach (.+) kopieren$",
+"Copy everything to $1"
+],
+[
+"^(.+) und (.+) getauscht\\.$",
+"$1 and $2 swapped."
+],
+[
+"In der Aktivität „(.+?)“ öffnet keine Taste das Menü der Remote\\.\\nTrotzdem speichern\\?",
+"In the activity “$1” no key opens the remote's menu.\nSave anyway?"
+],
+[
+"\\. Kurz und lang lassen sich unten an den Tasten anpassen\\.",
+". Short and long can be changed below at the keys."
+],
+[
+"^auf (.+) \\((.+)\\) in „(.*)“$",
+"on $1 ($2) in “$3”"
+],
+[
+"Belegung und Einstellungen von (.+?) als Werkseinstellung merken\\?\\n\\nDie bisherige Werkseinstellung wird ersetzt\\. Sie bleibt auf deinem Home Assistant\\.",
+"Save the layout and settings of $1 as factory settings?\n\nThe previous factory settings will be replaced. They stay on your Home Assistant."
+],
+[
+"^(.+?): (.+) durch die (.+) ersetzen\\?\\n\\nBis zum Speichern holt „Verwerfen“ den alten Stand zurück\\.",
+"$1: replace $2 with the $3?\n\nUntil you save, “Discard” brings back the old state."
+],
+[
+"WLAN von (.+?) angefordert \\((.+?)\\) – sie schaltet es ein, sobald sie das Dock das nächste Mal fragt \\(ist das Display an, sofort; sonst eine Taste drücken\\)\\.",
+"Wi-Fi of $1 requested ($2) – it switches it on the next time it asks the dock (right away if the display is on; otherwise press a key)."
+],
+[
+"^WLAN von (.+?) ist (.+) an\\.$",
+"Wi-Fi of $1 is on for $2."
+],
+[
+"^Sicherung eingespielt: (.+?)\\. Die Remotes holen sich den Stand gleich bzw\\. beim Aufwachen\\.$",
+"Backup restored: $1. The remotes fetch it right away or when they wake up."
+],
+[
+"^(.+?) wirklich entfernen\\?\\n\\nWeg sind danach: Belegung und Menü, die YAML-Datei im ESPHome-Add-on, die feste IP und der ESPHome-Eintrag in Home Assistant\\. Die Remote selbst behält ihre Firmware, bis sie neu geflasht wird\\.",
+"Really remove $1?\n\nThis deletes: layout and menu, the YAML file in the ESPHome add-on, the fixed IP and the ESPHome entry in Home Assistant. The remote itself keeps its firmware until it is flashed again."
+],
+[
+"^(.+?) wirklich löschen\\?\\n\\nWeg sind danach: der ESPHome-Eintrag in Home Assistant und der Build-Ordner im ESPHome-Add-on\\. Die Datei (.+?) kommt nach esphome/archive/geloescht/ \\(wiederherstellbar\\)\\. Das Dock selbst behält seine Firmware\\.",
+"Really delete $1?\n\nThis deletes: the ESPHome entry in Home Assistant and the build folder in the ESPHome add-on. The file $2 moves to esphome/archive/geloescht/ (can be restored). The dock itself keeps its firmware."
+],
+[
+"Alles Angehakte von (.+?) an (.+?) übertragen\\?\\n\\nDie bisherige Belegung und die angehakten Einstellungen dort werden ersetzt\\. Der Name bleibt\\.",
+"Transfer everything checked from $1 to $2?\n\nThe layout and the checked settings there will be replaced. The name stays."
+],
+[
+"^(.+?) von (.+?) nach (.+?) übernehmen\\?\\n\\nDer Bereich auf (.+?) wird ersetzt\\.",
+"Take over $1 from $2 to $3?\n\nThis area on $4 will be replaced."
+],
+[
+"^Von (.+?) nach (.+?) übernommen – noch nicht gespeichert\\.",
+"Taken over from $1 to $2 – not saved yet."
+],
+[
+"„(.+?)“ mit (\\d+) Codes löschen\\?\\nTasten, die diese Codes benutzen, behalten sie\\.",
+"Delete “$1” with $2 codes?\nKeys that use these codes keep them."
+],
+[
+"^(.+?) aus Home Assistant entfernen\\?\\nBereits belegte Tasten und Meine Codes bleiben erhalten\\.",
+"Remove $1 from Home Assistant?\nKeys already assigned and My codes are kept."
+],
+[
+"(\\d+) Änderungen\\b",
+"$1 changes"
+],
+[
+"(\\d+) Änderung\\b",
+"$1 change"
+],
+[
+"^Komplett kopieren nach (.+)$",
+"Copy everything to $1"
 ]
 ],
 "aktiv": "active",
@@ -3134,5 +3214,14 @@
 "Dropdown (OK öffnet die Liste)": "Dropdown (OK opens the list)",
 "Klingelbild (Foto beim Klingeln)": "Doorbell picture (photo when it rings)",
 "Nach einem Knopfdruck schließen": "Close after a button press",
-"– drückst du einen Knopf, Schalter oder eine Auswahl, geht das Popup danach zu (wie bei der HDMI-Auswahl). Aus: es bleibt offen, z. B. zum Schwenken der Kamera. Unterseiten, Regler und das Steuerkreuz im Tastenmodus schließen es nie.": "– pressing a button, switch or selection closes the popup afterwards (like the HDMI choice). Off: it stays open, e.g. to pan the camera. Sub pages, sliders and the D-pad in key mode never close it."
+"– drückst du einen Knopf, Schalter oder eine Auswahl, geht das Popup danach zu (wie bei der HDMI-Auswahl). Aus: es bleibt offen, z. B. zum Schwenken der Kamera. Unterseiten, Regler und das Steuerkreuz im Tastenmodus schließen es nie.": "– pressing a button, switch or selection closes the popup afterwards (like the HDMI choice). Off: it stays open, e.g. to pan the camera. Sub pages, sliders and the D-pad in key mode never close it.",
+". Das Bauen dauert beim ersten Mal etwa 10 Minuten.": ". The first build takes about 10 minutes.",
+". Alles bleibt in Home Assistant – die SD-Karte der Remote wird nicht gebraucht.": ". Everything stays in Home Assistant – the remote's SD card is not needed.",
+". Schläft die Remote, wirkt es beim nächsten Verbinden.": ". If the remote is asleep, it takes effect the next time it connects.",
+". Antippen zeigt Remote und Stelle.": ". Tap to show remote and place.",
+"hält sie an.": "it stops.",
+"ist": "is",
+"Startseite löschen": "Delete home screen",
+"Über die Android-TV-Entität der Integration „Android Debug Bridge“ (ADB-Befehl reboot).": "Through the Android TV entity of the “Android Debug Bridge” integration (ADB command reboot).",
+"– Entität wählen –": "– choose entity –"
 }

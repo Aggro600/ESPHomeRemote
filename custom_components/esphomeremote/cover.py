@@ -60,18 +60,23 @@ def _varianten(daten: bytes) -> dict[str, bytes]:
 
 def _schreiben(www: str, slug: str, bilder: dict[str, bytes]) -> None:
     os.makedirs(www, exist_ok=True)
+    from .bilddateien import merken
     for k, d in bilder.items():
-        ziel = os.path.join(www, f"esphomeremote_cover_{slug}_{k}.jpg")
+        name = f"esphomeremote_cover_{slug}_{k}.jpg"
+        ziel = os.path.join(www, name)
         with open(ziel + ".tmp", "wb") as f:
             f.write(d)
         os.replace(ziel + ".tmp", ziel)
+        merken(name, int(os.stat(ziel).st_mtime))
 
 
 class Cover:
     def __init__(self, hass: HomeAssistant, kd) -> None:
         self.hass = hass
         self.kd = kd
-        self.www = hass.config.path("www")
+        from .bilddateien import ordner
+        self.www = ordner(hass)   # Cover der Remotes (2026-11-04: nicht mehr in /config/www)
+        self._www_oeffentlich = hass.config.path("www")   # nur die mitgelieferten Grafiken fuer HA (Media Player)
         self._abo = None
         self._stand: dict[str, str] = {}             # slug -> zuletzt verarbeitete Bild-URL
         self._cache: tuple[str, float, dict] | None = None   # (url, zeit, varianten) - mehrere Remotes, ein Player
@@ -81,7 +86,7 @@ class Cover:
     @callback
     def starten(self) -> None:
         if not self.slugs:
-            self.hass.async_add_executor_job(bilder_bereitstellen, self.www)
+            self.hass.async_add_executor_job(bilder_bereitstellen, self._www_oeffentlich)
         if self._abo:
             self._abo()
         slugs = self.slugs = [d.replace("-", "_") for d in self.kd.devices]

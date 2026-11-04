@@ -329,6 +329,7 @@ def _sender(hass: HomeAssistant) -> list[dict]:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/dock_get"})
+@websocket_api.require_admin
 @callback
 def ws_dock_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     v: Verwalter = hass.data[DOMAIN + "_dock"]
@@ -353,6 +354,7 @@ def ws_dock_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/dock_save", vol.Required("dock"): dict})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_dock_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     v: Verwalter = hass.data[DOMAIN + "_dock"]
@@ -366,6 +368,7 @@ async def ws_dock_save(hass: HomeAssistant, connection: websocket_api.ActiveConn
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/dock_senden",
                                   vol.Required("sender"): str, vol.Required("schritt"): dict})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_dock_senden(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Testen aus dem Panel: einen IR-Schritt sofort ueber den gewaehlten Sender schicken."""

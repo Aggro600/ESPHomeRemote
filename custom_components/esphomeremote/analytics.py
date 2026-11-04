@@ -157,6 +157,7 @@ def _zahl(v) -> bool:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/akku_auswertung",
                                   vol.Required("device"): str, vol.Optional("tage", default=3): vol.All(int, vol.Range(1, 20))})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_akku_auswertung(hass, connection, msg) -> None:
     from homeassistant.components.recorder import get_instance, history

@@ -112,6 +112,7 @@ async def einrichten(hass: HomeAssistant) -> None:
 
     @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/bekannte_fehler",
                                       vol.Optional("pruefen", default=False): bool})
+    @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_fehler(hass, connection, msg):
         if msg["pruefen"]:

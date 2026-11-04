@@ -336,6 +336,7 @@ def _antwort(hass) -> dict:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/streamer_app", vol.Required("streamer"): str,
                                   vol.Required("aktion"): vol.In(["status", "einrichten", "entfernen"])})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_streamer_app(hass, connection, msg) -> None:
     """Streamer-App: status | einrichten (installieren/aktualisieren + freigeben + eintragen) | entfernen."""
@@ -361,12 +362,14 @@ async def ws_streamer_app(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/streamer_get"})
+@websocket_api.require_admin
 @callback
 def ws_streamer_get(hass, connection, msg) -> None:
     connection.send_result(msg["id"], _antwort(hass))
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/streamer_save", vol.Required("streamer"): list})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_streamer_save(hass, connection, msg) -> None:
     s: Streamers = hass.data[DOMAIN + "_streamer"]
@@ -388,6 +391,7 @@ async def ws_streamer_save(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/streamer_eintragen", vol.Required("streamer"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_streamer_eintragen(hass, connection, msg) -> None:
     st = hass.data[DOMAIN + "_streamer"].alle.get(msg["streamer"])

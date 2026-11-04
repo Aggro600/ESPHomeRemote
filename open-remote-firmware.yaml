@@ -61,7 +61,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.3.2"
+    version: "2026.11.4.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
@@ -846,6 +846,7 @@ api:
 
 ota:
   - platform: esphome
+    id: ota_esphome   # eigene YAML kann ihn mit "id: !extend ota_esphome" anpassen (2026-11-04)
     password: "${ota_pw}"
     # Waehrend eines OTA-Updates niemals schlafen legen und das WLAN nicht
     # abschalten, egal was Tiefschlaf/WLAN-Aus sagen.
@@ -3095,7 +3096,7 @@ script:
                   - lambda: |-
                       id(live_busy) = true;
                       id(live_req_ms) = millis();
-                  - online_image.set_url: {id: cam_fast_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_live.jpg";'}
+                  - online_image.set_url: {id: cam_fast_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_live.jpg?k=" + id(tk_cfg).schluessel();'}
             - delay: 100ms
       - lambda: |-
           if (id(cur_page) == 38) lv_label_set_text(id(cf_state), "Beendet - Neu starten drücken");
@@ -3112,7 +3113,7 @@ script:
       - if:
           condition: {lambda: "return id(cur_page) == 37;"}
           then:
-            - online_image.set_url: {id: cam_live_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cam.jpg";'}
+            - online_image.set_url: {id: cam_live_image, url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cam.jpg?k=" + id(tk_cfg).schluessel();'}
 
   - id: apply_low_bat
     then:
@@ -3298,7 +3299,7 @@ script:
             - lambda: 'id(cover_mp_offen) = false; id(cover_title) = id(adb_title).state;'
             - online_image.set_url:
                 id: mp_cover_image
-                url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_voll.jpg");'
+                url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_player_ganz.jpg?k=" + id(tk_cfg).schluessel()) : (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_player_voll.jpg?k=" + id(tk_cfg).schluessel());'
             - lvgl.widget.show: media_cover
       # Musik-Ansicht mit Cover im Hintergrund (2026-10-31): dasselbe Bild wie die Media-Seite
       - if:
@@ -3307,14 +3308,14 @@ script:
             - lambda: 'id(cover_mp_offen) = false; id(cover_title) = id(adb_title).state;'
             - online_image.set_url:
                 id: mp_cover_image
-                url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_voll.jpg";'
+                url: !lambda 'return std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_player_voll.jpg?k=" + id(tk_cfg).schluessel();'
       - if:
           condition: {lambda: 'return !id(disp_off) && id(cur_page) == 0 && id(cover_home_offen);'}
           then:
             - lambda: 'id(cover_home_offen) = false; id(cover_title) = id(adb_title).state;'
             - online_image.set_url:
                 id: home_cover_image
-                url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_voll.jpg");'
+                url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_home_ganz.jpg?k=" + id(tk_cfg).schluessel()) : (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_home_voll.jpg?k=" + id(tk_cfg).schluessel());'
 
   - id: wake_backlight
     mode: restart
@@ -9461,7 +9462,7 @@ lvgl:
               # Andere Datei sofort laden (liegt in HA schon fertig); laedt danach auch die Startseite.
               - if:
                   condition: {lambda: "return !id(cover_title).empty();"}
-                  then: [{online_image.set_url: {id: mp_cover_image, url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_player_voll.jpg");'}}]
+                  then: [{online_image.set_url: {id: mp_cover_image, url: !lambda 'return id(cover_ganz_player) ? (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_player_ganz.jpg?k=" + id(tk_cfg).schluessel()) : (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_player_voll.jpg?k=" + id(tk_cfg).schluessel());'}}]
             widgets:
               - label: {text: "Cover Player", text_font: a13, styles: [st_grow]}
               - label: {id: cover_player_lbl, text: "GANZ", text_font: a13, text_color: 0xF1F3F5}
@@ -9478,7 +9479,7 @@ lvgl:
                   text: !lambda 'return id(cover_ganz_home) ? std::string("GANZ") : std::string("VOLL");'
               - if:
                   condition: {lambda: "return !id(cover_title).empty();"}
-                  then: [{online_image.set_url: {id: home_cover_image, url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_ganz.jpg") : (std::string("http://") + id(tk_cfg).host() + "/local/esphomeremote_cover_${ha_name}_home_voll.jpg");'}}]
+                  then: [{online_image.set_url: {id: home_cover_image, url: !lambda 'return id(cover_ganz_home) ? (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_home_ganz.jpg?k=" + id(tk_cfg).schluessel()) : (std::string("http://") + id(tk_cfg).host() + "/api/esphomeremote/datei/esphomeremote_cover_${ha_name}_home_voll.jpg?k=" + id(tk_cfg).schluessel());'}}]
             widgets:
               - label: {text: "Cover Startseite", text_font: a13, styles: [st_grow]}
               - label: {id: cover_home_lbl, text: "GANZ", text_font: a13, text_color: 0xF1F3F5}

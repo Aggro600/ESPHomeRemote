@@ -1676,11 +1676,13 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         // gespeicherter Stand aus HA (nicht ungespeicherte Aenderungen im Browser). Version 2 (2026-10-26): je Remote auch
         // die Einstellungen, dazu die gemeinsamen Bereiche (Wiedergabe, Streamer, Klingel, Licht, Anzeige, Docks, Abgleich)
         const r = await this._hass.callWS({ type: "esphomeremote/sicherung" });
-        const daten = { format: "esphomeremote", version: 3, exportiert: new Date().toISOString(), remotes: r.remotes, global: r.global };
+        const daten = { format: "esphomeremote", version: 4, exported: new Date().toISOString(),
+          remotes: Object.fromEntries(Object.entries(r.remotes).map(([k, x]) => [k, { config: x.config, enabled: x.enabled, settings: x.einst }])),
+          shared: Object.fromEntries(Object.entries(r.global).map(([k, v]) => [BK_EN[k] || k, k === "ircodes" ? irEn(v) : v])) };
         const blob = new Blob([JSON.stringify(daten, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `fernbedienung-sicherung-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+        a.download = `esphomeremote-backup-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
         s.msg = { text: `Sicherung heruntergeladen (${r.order.length} Remotes mit Einstellungen, ${Object.keys(r.global).length} gemeinsame Bereiche${Object.values(s.dirty).some(Boolean) ? " – ungespeicherte Änderungen sind NICHT enthalten" : ""}).` };
@@ -1710,7 +1712,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
           const datei = f.files[0];
           if (!datei) return;
           try {
-            const d = JSON.parse(bkMigrieren(await datei.text()));
+            const d = bkAusV4(JSON.parse(bkMigrieren(await datei.text())));
             if (d.format !== "esphomeremote" || !d.remotes) throw new Error("keine Fernbedienungs-Sicherung");
             const quellen = Object.keys(d.remotes);
             // Vorschlag: gleicher Name, sonst gleiche Position
@@ -2169,6 +2171,22 @@ const BK_NAMEN = { jetzt: "Wiedergabe („Jetzt läuft“)", streamer: "Streamer
   funktionen: "Funktionen (Kamera, TV-Eingang, Neustart)", docks_einst: "Dock-Einstellungen", einst_standard: "Standard-Einstellungen",
   werk: "Werkseinstellung", reihenfolge: "Reihenfolge der Remotes", gesperrt: "Gesperrte Firmware" };
 
+// Sicherungsdatei englisch (Version 4, 2026-11-04, Tester: "die JSON-Formate haben noch deutsche Keys"): Huelle und Namen
+// der gemeinsamen Bereiche. Innen (Konfigurator, HA) heissen sie weiter wie bisher - BK_EN uebersetzt beim Herunterladen,
+// beim Einspielen zurueck. Version 3 (deutsch) laesst sich weiter einspielen.
+const BK_EN = { jetzt: "now_playing", streamer: "streamer", klingel: "doorbell", licht: "light_curves", anzeige: "smart_display",
+  dock: "dock_devices", dockscan: "dock_scan", sync: "sync_group", ircodes: "ir_codes", funktionen: "functions",
+  docks_einst: "dock_settings", einst_standard: "default_settings", werk: "factory_settings", reihenfolge: "remote_order",
+  gesperrt: "locked_firmware" };
+const BK_DE = Object.fromEntries(Object.entries(BK_EN).map(([k, v]) => [v, k]));
+// Eigene IR-Codes in Dateien englisch: geraete -> devices, quelle -> source, zeit -> time (innen deutsch, irdb.py)
+const irEn = (e) => ({ devices: (e?.geraete || []).map((g) => ({ name: g.name, codes: (g.codes || []).map(({ quelle, zeit, ...c }) =>
+  ({ ...c, ...(quelle != null ? { source: quelle } : {}), ...(zeit != null ? { time: zeit } : {}) })) })) });
+const irDe = (e) => e?.geraete ? e : ({ geraete: (e?.devices || []).map((g) => ({ name: g.name, codes: (g.codes || []).map(({ source, time, ...c }) =>
+  ({ ...c, ...(source != null ? { quelle: source } : {}), ...(time != null ? { zeit: time } : {}) })) })) });
+const bkAusV4 = (d) => d.version >= 4 ? { ...d, exportiert: d.exported,
+  remotes: Object.fromEntries(Object.entries(d.remotes || {}).map(([k, r]) => [k, { config: r.config, enabled: r.enabled, einst: r.settings }])),
+  global: Object.fromEntries(Object.entries(d.shared || {}).map(([k, v]) => [BK_DE[k] || k, k === "ir_codes" ? irDe(v) : v])) } : d;
 // Sicherungen von vor der Umbenennung (bis 2026.11.2.3): Domain, Dienste und Sensoren auf die neuen Namen
 const BK_DIENSTE = { an_remotes: "to_remotes", blaster_senden: "blaster_send", einst_melden: "settings_report", kamera_groesse: "camera_size",
   kamera_position: "camera_position", kamera_tv: "camera_tv", licht: "light", neustart: "restart", regeln: "rules",
@@ -2289,6 +2307,19 @@ const MenuEditor = {
     return st.state === "on" ? "an" : st.state === "off" ? "aus" : st.state;
   },
 
+  // Klingelbild-Vorschau (2026-11-04): die Bilder liegen nicht mehr oeffentlich unter /local/, sondern hinter
+  // /api/esphomeremote/vorschau/ (HA-Anmeldung) - fuer <img> mit signierter Adresse (auth/sign_path, 1 h gueltig)
+  _vorschauUrl(name) {
+    const c = (this._vorschauSig ||= {}), x = c[name];
+    if (x && x.bis > Date.now()) return x.url;
+    if (!x?.laeuft) {
+      c[name] = { ...(x || {}), laeuft: true };
+      this._hass.callWS({ type: "auth/sign_path", path: `/api/esphomeremote/vorschau/${name}`, expires: 3600 })
+        .then((r) => { c[name] = { url: r.path, bis: Date.now() + 3500 * 1000 }; this._render(); })
+        .catch(() => { c[name] = { url: "", bis: Date.now() + 60000 }; });
+    }
+    return x?.url || "";
+  },
   // -------------------------------------------------------------- Ansicht
   _menuHtml() {
     const s = this.s, m = this.menu, p = this.mpage;
@@ -2748,7 +2779,8 @@ const MenuEditor = {
       else if (it.t === "setting" && M_EINST_K[it.src]?.[1] === "i" && !it.label) inner = `<span class="tx wrap">Hinweis der Remote (Text je nach Einstellung, Höhe automatisch)</span>`;
       else if (it.t === "camera") {   // 2026-10-25: zuletzt aufgenommenes Klingelbild (wie auf der Remote)
         const q = kamSrc(it.src), datei = q.startsWith("klingel:") ? `esphomeremote_doorbell_${q.slice(8)}.jpg` : "";
-        inner = datei ? `<img class="kambild" src="/local/${datei}?v=${this._kamV ||= Date.now()}" alt="" onerror="this.remove()"><i class="kamname">${esc(kamName(it.src))}</i>`
+        const url = datei ? this._vorschauUrl(datei) : "";
+        inner = url ? `<img class="kambild" src="${url}&v=${this._kamV ||= Date.now()}" alt="" onerror="this.remove()"><i class="kamname">${esc(kamName(it.src))}</i>`
           : `<ha-icon icon="mdi:cctv"></ha-icon><i>${esc(kamName(it.src))}</i>`;
       }
       else if (M_MEDIEN.includes(it.t)) inner = this._mMedienVorschau(it, l);
@@ -3519,6 +3551,7 @@ const MenuEditor = {
         if (pp) { const j = pp.items.findIndex((it) => it.t === "page" && it.target === p.id); pp.items.splice(j + 1, 0, { ...clone(pp.items[j]), target: id, label: p.title + " (Kopie)" }); }
         s.mpage = id; s.mitem = null; this._touch(); return true;
       }
+      case "mhdel": s.mpage = t.dataset.id; s.mitem = null; return this._mClick("mdelpage", t, ev);
       case "mdelpage": {
         if (m.pages.length <= 1) { alert("Die letzte Seite kann nicht gelöscht werden."); return false; }
         const refs = m.pages.filter((pg) => (pg.items || []).some((it) => it.t === "page" && it.target === p.id));
@@ -3527,6 +3560,7 @@ const MenuEditor = {
         m.pages = m.pages.filter((pg) => pg !== p);
         if (m.start === p.id) m.start = (m.pages.find((pg) => !pg.startseite) || m.pages[0]).id;
         for (const a of this.cfg.activities || []) if (a.home === p.id) delete a.home;
+        if (this.cfg.ohne?.home === p.id) delete this.cfg.ohne.home;   // "Keine Aktivitaet" zeigte sonst eine geloeschte Seite
         s.mpage = p.startseite ? null : m.start; s.mitem = null; this._touch(); return true;
       }
       case "mlink": {
@@ -4495,14 +4529,15 @@ const HomeEditor = {
       return `<label class="hzu"><span><ha-icon icon="${aktIcon(a.name || "")}"></ha-icon>${esc(a.name || "Aktivität " + (i + 1))}</span>
         <select data-hakt="${i}"><option value="">Standard (eingebaut)</option>${starts.map((pg) => `<option value="${esc(pg.id)}" ${pg.id === id ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}
           <option value="__neu">+ Neue aus Vorlage</option><option value="__leer">+ Neue leere Seite</option></select></label>`;
-    }).join("") + (() => {   // "Keine Aktivitaet" (2026-10-29): leer = wie die zuletzt gelaufene
+    }).join("") + (() => {   // "Keine Aktivitaet" (2026-10-29): leer = eingebaute Startseite (bis 2026-11-03: wie die zuletzt gelaufene)
       const id = starts.some((pg) => pg.id === this.cfg.ohne?.home) ? this.cfg.ohne.home : "";
       return `<label class="hzu"><span><ha-icon icon="mdi:power-off"></ha-icon>Keine Aktivität</span>
-        <select data-hakt="ohne"><option value="">Wie zuletzt gelaufene Aktivität</option>${starts.map((pg) => `<option value="${esc(pg.id)}" ${pg.id === id ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}
+        <select data-hakt="ohne"><option value="">Standard (eingebaut)</option>${starts.map((pg) => `<option value="${esc(pg.id)}" ${pg.id === id ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}
           <option value="__neu">+ Neue aus Vorlage</option><option value="__leer">+ Neue leere Seite</option></select></label>`;
     })();
+    // Loeschen direkt in der Liste (2026-11-04, Tester: "keine Moeglichkeit, eine Startseite wieder zu loeschen")
     const zeile = (on, a, id, icon, titel, unter) => `<div class="pgr"><span class="tog0"></span><button class="pg ${on ? "on" : ""}" data-a="${a}" ${id ? `data-id="${esc(id)}"` : ""}>
-        <ha-icon class="pic" icon="${icon}"></ha-icon><span><b>${esc(titel)}</b><small>${esc(unter)}</small></span></button></div>`;
+        <ha-icon class="pic" icon="${icon}"></ha-icon><span><b>${esc(titel)}</b><small>${esc(unter)}</small></span></button>${id ? `<button class="icon sm" data-a="mhdel" data-id="${esc(id)}" title="Startseite löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>` : ""}</div>`;
     const std = fuer("");
     return `<h3>Aktivitäten</h3><div class="hzus">${zuordnung || '<div class="none">Keine Aktivitäten.</div>'}</div>
       <div class="pgsep">Seiten<span class="grow"></span><button class="btn small" data-a="hneuseite" title="Neue Startseite aus der Vorlage (Uhr, Wetter, Medien, Menü/Apps)"><ha-icon icon="mdi:plus"></ha-icon>Startseite</button></div>
@@ -4616,7 +4651,7 @@ const HomeEditor = {
         ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
         <button class="btn small ghost" data-a="mers" title="Eine Entität überall durch eine andere ersetzen (z. B. anderer Media Player)"><ha-icon icon="mdi:find-replace"></ha-icon>Entität ersetzen</button>
         <button class="btn small ghost" data-a="mcopypage"><ha-icon icon="mdi:content-duplicate"></ha-icon>Seite kopieren</button>
-        <button class="btn small ghost" data-a="mdelpage"><ha-icon icon="mdi:delete-outline"></ha-icon>Seite löschen</button></div>
+        <button class="btn small ghost" data-a="mdelpage"><ha-icon icon="mdi:delete-outline"></ha-icon>Startseite löschen</button></div>
     </div>`;
   },
   _hAktHtml() {
@@ -7965,8 +8000,7 @@ const FunktionenTab = {
           <button class="btn small" data-a="fk_kam" data-e="${esc(x.id)}" title="Jetzt auf dem Fernseher zeigen"><ha-icon icon="mdi:television-play"></ha-icon>Zeigen</button>` : ""}</div>`; }).join("");
     const neu = c.neustart.map((g, i) => `<div class="fneu">
         <input data-fk="ns_name" data-i="${i}" value="${esc(g.name)}" placeholder="Name, z. B. Streamer">
-        ${wahl(`data-fk="ns_entity" data-i="${i}" title="Android-TV-Entität (ADB-Integration)"`, F.media, g.entity, "– per IP –")}
-        ${g.entity ? "" : `<input data-fk="ns_ip" data-i="${i}" value="${esc(g.ip)}" placeholder="IP-Adresse">`}
+        ${wahl(`data-fk="ns_entity" data-i="${i}" title="Android-TV-Entität (Integration Android Debug Bridge)"`, F.media, g.entity, "– Entität wählen –")}
         <button class="btn small" data-a="fk_neustart" data-i="${i}" title="Jetzt neu starten"><ha-icon icon="mdi:restart"></ha-icon>Neu starten</button>
         <button class="icon sm" data-a="fk_ns_weg" data-i="${i}" title="Entfernen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`).join("");
     return `<div class="einst fkt">
@@ -7992,7 +8026,7 @@ const FunktionenTab = {
         <div class="fkams">${kam || '<div class="none">Keine Kameras in Home Assistant.</div>'}</div>
         ${k.notify || k.weg !== "hatv" ? `<div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_kam" data-e="aus"><ha-icon icon="mdi:television-off"></ha-icon>Kamera ausblenden</button></div>` : ""}</div>
       <div class="karte"><h3><ha-icon icon="mdi:restart"></ha-icon>Neustart per ADB</h3>
-        <div class="eintro">Hängt ein Android-Gerät (Streamer, Fernseher), startet es die Remote neu – Aktion <code>esphomeremote.restart</code> mit dem Namen. Mit Android-TV-Entität über deren ADB-Verbindung, sonst direkt per IP${F.adb_schluessel ? "" : ` <b>(dafür die Integration „Android Debug Bridge“ einmal einrichten – sie legt den Schlüssel an)</b>`}.</div>
+        <div class="eintro">Hängt ein Android-Gerät (Streamer, Fernseher), startet es die Remote neu – Aktion <code>esphomeremote.restart</code> mit dem Namen. Über die Android-TV-Entität der Integration „Android Debug Bridge“ (ADB-Befehl reboot).</div>
         ${neu || '<div class="none">Noch kein Gerät.</div>'}
         <div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_ns_neu"><ha-icon icon="mdi:plus"></ha-icon>Gerät</button></div></div>
       <div class="karte"><h3><ha-icon icon="mdi:bell-ring-outline"></ha-icon>Hinweise</h3>
@@ -10712,7 +10746,7 @@ const IrCodesTab = {
         return true;
       }
       case "ic_export": {
-        const blob = new Blob([JSON.stringify({ art: "esphomeremote-ircodes", version: 1, ...e }, null, 1)], { type: "application/json" });
+        const blob = new Blob([JSON.stringify({ type: "esphomeremote-ircodes", version: 2, ...irEn(e) }, null, 1)], { type: "application/json" });
         const l = document.createElement("a");
         l.href = URL.createObjectURL(blob); l.download = `ir-codes-${new Date().toISOString().slice(0, 10)}.json`; l.click();
         setTimeout(() => URL.revokeObjectURL(l.href), 2000);
