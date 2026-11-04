@@ -207,6 +207,10 @@ function i18nKnoten(root) {
 }
 // Dialoge der Seite gehen ebenfalls durch das Woerterbuch (Modul-Namen ueberdecken die globalen)
 const confirm = (m) => window.confirm(tr(m));
+// Wert einer ESPHome-Entitaet der Remote; schlaeft sie (nicht verfuegbar), der zuletzt uebers Dock gemeldete aus der
+// eigenen Entitaet <domain>.esphomeremote_<remote>_<wert> (2026-11-04, dockstatus.py - vorher stand er in der ESPHome-Entitaet)
+const dockId = (id) => { const [d, o] = String(id).split("."); return `${d}.esphomeremote_${o}`; };
+const remZ = (S, id) => { const s = S?.[id]; if (s && !["unavailable", "unknown"].includes(s.state)) return s; const [d, o] = String(id).split("."); return S?.[`${d}.esphomeremote_${o}`] || s; };
 // ESPHome-Eintrag der Remote zeigt nicht auf ihren Brücken-Port (2026-11-04: wird nur noch per Knopf umgestellt)
 const brueckeFalsch = (g) => !!(g.bruecke?.eintrag && (g.bruecke.eintrag.host !== "127.0.0.1" || g.bruecke.eintrag.port !== g.bruecke.port));
 const prompt = (m, v) => window.prompt(tr(m), v);
@@ -734,7 +738,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   // ----------------------------------------------------------------- Status
   _remoteState(d = this.s.dev) {
     const slug = this.s.meta[d]?.slug;
-    const st = slug && this._hass.states[`sensor.${slug}_tasten_konfiguration`];
+    const st = slug && remZ(this._hass.states, `sensor.${slug}_tasten_konfiguration`);
     return st ? st.state : null;
   }
   // Uebertragungs-Sensor der Remote ("Tasten-Konfiguration Übertragung")
@@ -7492,10 +7496,11 @@ const EinstTab = {
       const slug = this.s.meta[dev]?.slug, ida = `sensor.${slug}_akkustand`, idl = `binary_sensor.${slug}_ladekabel`;
       const [d, h] = await Promise.all([this._hass.callWS({ type: "esphomeremote/akku_auswertung", device: dev, tage }),
         this._hass.callWS({ type: "history/history_during_period", start_time: new Date(Date.now() - tage * 864e5).toISOString(),
-          entity_ids: [ida, idl], minimal_response: true, no_attributes: true, significant_changes_only: false }).catch(() => ({}))]);
+          entity_ids: [ida, idl, dockId(ida), dockId(idl)], minimal_response: true, no_attributes: true, significant_changes_only: false }).catch(() => ({}))]);
       const zeit = (x) => (x.lu ?? x.lc) * 1000;
-      const hist = { a: (h[ida] || []).map((x) => [zeit(x), parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v)),
-        l: (h[idl] || []).map((x) => [zeit(x), x.s === "on"]).filter(([t]) => Number.isFinite(t)) };
+      const reihe = (id) => [...(h[id] || []), ...(h[dockId(id)] || []).filter((x) => !["unavailable", "unknown"].includes(x.s))].sort((x, y) => zeit(x) - zeit(y));
+      const hist = { a: reihe(ida).map((x) => [zeit(x), parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v)),
+        l: reihe(idl).map((x) => [zeit(x), x.s === "on"]).filter(([t]) => Number.isFinite(t)) };
       this.s.akku = { dev, tage, d, hist };
     }
     catch (e) { this.s.akku = { dev, tage, fehler: e.message || String(e) }; }
@@ -7704,9 +7709,9 @@ const EinstTab = {
   // Uebersicht einer Remote (2026-10-31, wie bei den Docks): Karte, Funkwege, Firmware, Akku (vorher eigene Seite)
   _remUeberHtml() {
     const s = this.s, d = s.dev, L = this._live(d), w = s.meta[d]?.einst || {}, S = this._hass.states;
-    const wz = String(S[`sensor.${L.slug}_wlan_zustand`]?.state || "").split("|");
+    const wzS = remZ(S, `sensor.${L.slug}_wlan_zustand`), wz = String(wzS?.state || "").split("|");
     const wlanT = !wz[0] || ["unknown", "unavailable"].includes(wz[0]) ? "–" : wz[0] === "aus" ? "aus" : wz[0] === "immer" ? "immer an (Nur WLAN)"
-      : `an – ${wz[0]}${wz[1] ? ` (noch ${Math.max(0, Math.round(Number(wz[1]) / 60))} min, Stand ${fmtZeit(S[`sensor.${L.slug}_wlan_zustand`].last_updated)})` : ""}`;
+      : `an – ${wz[0]}${wz[1] ? ` (noch ${Math.max(0, Math.round(Number(wz[1]) / 60))} min, Stand ${fmtZeit(wzS.last_updated)})` : ""}`;
     const zeile = (icon, name, wert, hilfe = "") => `<div class="ez"><span class="zi"><ha-icon icon="${icon}"></ha-icon><span class="zt">${name}${hilfe ? `<small class="vtext">${hilfe}</small>` : ""}</span></span><b>${esc(wert)}</b></div>`;
     const g = this._fwSicher() ? (s.fw.geraete || []).find((x) => x.name === d) : null;
     return `<div class="rueber">
@@ -8943,7 +8948,7 @@ const OberflaecheTab = {
   // ------------------------------------------------------------- Live-Stand
   _live(d) {
     const m = this.s.meta[d] || {}, slug = m.slug, S = this._hass?.states || {};
-    const st = (id) => S[id];
+    const st = (id) => remZ(S, id);
     const num = (id) => { const v = parseFloat(st(id)?.state); return Number.isFinite(v) ? v : null; };
     // Firmware-Liste nur, solange sie frisch ist (2026-10-30: sie wird nur auf der Firmware-Seite geladen - danach zeigte
     // die Leiste noch Stunden spaeter "online", obwohl die Remote schlief, oder umgekehrt)
@@ -9130,7 +9135,7 @@ const OberflaecheTab = {
   _wlanInfo(d) {
     const slug = d.replace(/-/g, "_"), H = this._hass.states;
     const an = H[`binary_sensor.${slug}_wlan_aktiv`]?.state === "on";
-    const z = H[`sensor.${slug}_wlan_zustand`];
+    const z = remZ(H, `sensor.${slug}_wlan_zustand`);
     let grund = "", rest = 0;
     if (z && !["unknown", "unavailable"].includes(z.state)) {
       const [g, r] = z.state.split("|");
@@ -9558,8 +9563,8 @@ const OberflaecheTab = {
     try {
       const id = (d) => `sensor.${s.meta[d].slug}_akkustand`;
       const r = await this._hass.callWS({ type: "history/history_during_period", start_time: new Date(Date.now() - 864e5).toISOString(),
-        entity_ids: s.order.map(id), minimal_response: true, no_attributes: true, significant_changes_only: false });
-      for (const d of s.order) daten[d] = (r[id(d)] || []).map((x) => [(x.lu ?? x.lc) * 1000, parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
+        entity_ids: [...s.order.map(id), ...s.order.map((d) => dockId(id(d)))], minimal_response: true, no_attributes: true, significant_changes_only: false });
+      for (const d of s.order) daten[d] = [...(r[id(d)] || []), ...(r[dockId(id(d))] || [])].sort((x, y) => (x.lu ?? x.lc) - (y.lu ?? y.lc)).map((x) => [(x.lu ?? x.lc) * 1000, parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
     } catch (e) { /* ohne Verlauf */ }
     s.verlauf = { zeit: Date.now(), daten };
     this._verlaufHolt = false;

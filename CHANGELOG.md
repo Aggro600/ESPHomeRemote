@@ -1,5 +1,19 @@
 # What's new · Was ist neu
 
+## 2026.11.4.5 (2026-11-04)
+
+**HACS review: real entities instead of bare states.** Everything the integration used to publish with plain states is now a sensor or binary sensor with a unique ID: the key configuration per remote (sensor.esphomeremote_config_… and the old …_konfig_… for old firmware), TV input, camera on TV, camera size, timer finished and the mirror sensors of the links. The entity IDs stay the same, so the firmware keeps working; the entities can now be renamed, hidden and assigned to areas and survive a restart.
+
+**Values relayed by the dock get their own entities.** When a remote has no own connection, the dock forwards battery, charging cable, activity and more. These no longer overwrite the remote's ESPHome entities but go to sensor./binary_sensor.esphomeremote_<remote>_<value> (attribute dock). The configurator and the activity switches use them while the ESPHome entity is unavailable; battery history combines both. Automations that relied on the ESPHome entities showing dock values while the remote sleeps should use the new entities. The firmware itself is unchanged.
+
+<details><summary>Deutsch</summary>
+
+**HACS-Prüfung: echte Entitäten statt bloßer Zustände.** Alles, was die Integration bisher als einfachen Zustand gesetzt hat, ist jetzt ein Sensor bzw. Binärsensor mit eindeutiger ID: Tasten-Konfiguration je Remote (sensor.esphomeremote_config_… und das alte …_konfig_… für alte Firmware), TV-Eingang, Kamera auf dem TV, Kamera-Größe, Timer abgelaufen und die Spiegel-Sensoren der Verknüpfungen. Die Entitäts-IDs bleiben gleich, die Firmware arbeitet unverändert; die Entitäten lassen sich jetzt umbenennen, ausblenden und Bereichen zuordnen und überstehen einen Neustart.
+
+**Werte über das Dock bekommen eigene Entitäten.** Hat eine Remote keine eigene Verbindung, leitet das Dock Akku, Ladekabel, Aktivität und mehr weiter. Diese Werte überschreiben nicht mehr die ESPHome-Entitäten der Remote, sondern stehen in sensor./binary_sensor.esphomeremote_<remote>_<wert> (Attribut dock). Konfigurator und Aktivitäts-Schalter nehmen sie, solange die ESPHome-Entität nicht verfügbar ist; der Akku-Verlauf legt beide zusammen. Automationen, die sich darauf verlassen haben, dass die ESPHome-Entitäten im Schlaf Dock-Werte zeigen, sollten die neuen Entitäten nutzen. Die Firmware selbst ist unverändert.
+
+</details>
+
 ## 2026.11.4.4 (2026-11-04)
 
 **Home screen editor with the full page tools of the menu editor.** The page header (title, "Arrange automatically", status bar, activity bar) now sits above the preview like in the menu editor, so it stays visible while an entry is selected; before, "Arrange automatically" could not be found then. New there: Subpage, App …, Paste, Page to clipboard, Replace entity and Show on the remote.

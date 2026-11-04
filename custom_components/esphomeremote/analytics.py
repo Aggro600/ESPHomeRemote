@@ -168,7 +168,13 @@ async def ws_akku_auswertung(hass, connection, msg) -> None:
     start = ende - timedelta(days=msg["tage"])
     roh = await get_instance(hass).async_add_executor_job(
         lambda: history.get_significant_states(hass, start, ende, list(ids.values()), None, True, False, False, True))
-    reihen = {k: _reihe(roh.get(e)) for k, e in ids.items()}
+    # Werte, die die Remote ohne eigene Verbindung uebers Dock gemeldet hat, stehen seit 2026-11-04 in eigenen
+    # Entitaeten (dockstatus.py) - mit denen von ESPHome zu einer Reihe zusammenlegen
+    dock = {k: "{}.esphomeremote_{}".format(*e.split(".", 1)) for k, e in ids.items()}
+    roh2 = await get_instance(hass).async_add_executor_job(
+        lambda: history.get_significant_states(hass, start, ende, list(dock.values()), None, True, False, False, True))
+    reihen = {k: sorted(_reihe(roh.get(e)) + [x for x in _reihe(roh2.get(dock[k])) if x[1] not in ("unavailable", "unknown")])
+              for k, e in ids.items()}
     erg = auswerten(reihen, ende.timestamp())
     erg["tage"] = msg["tage"]
     erg["seit"] = start.isoformat()

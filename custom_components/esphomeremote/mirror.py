@@ -5,7 +5,7 @@ Deshalb spiegelt die Integration die gewaehlte Entitaet auf einen festen Namen j
 
     sensor.esphomeremote_spiegel_<remote>_<rolle>   (Zustand + alle Attribute der gewaehlten Entitaet)
 
-Kein Registry-Eintrag, kein Recorder (wie sensor.esphomeremote_config_<remote>). Aktionen (einschalten, Ansage,
+Echte Sensor-Entitaet mit unique_id (zustaende.py, seit 2026-11-04). Aktionen (einschalten, Ansage,
 ADB-Text, Multiroom-Tasten) schickt die Remote direkt an die gewaehlte Entitaet - die Namen stehen in ihrer
 Konfiguration (tasten_konfig: ent("tv") ...). Ohne Auswahl: Spiegel "unavailable", die Funktion ist aus.
 """
@@ -18,6 +18,8 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
+
+from .zustaende import holen as zustaende
 
 # rolle: (Domaenen, gespiegelt?, Beschreibung)
 ROLLEN = {
@@ -112,7 +114,7 @@ class Spiegel:
         attr = dict(st.attributes) if st else {}
         attr["friendly_name"] = f"Spiegel {slug} {rolle}"
         attr["gespiegelt_von"] = e
-        self.hass.states.async_set(spiegel_id(slug, rolle), st.state if st else "unavailable", attr)
+        zustaende(self.hass).setzen(spiegel_id(slug, rolle), st.state if st else "unavailable", attr)
 
     @callback
     def weg(self, slug: str, entfernen: bool = True) -> None:
@@ -121,5 +123,5 @@ class Spiegel:
         if entfernen:
             for rolle, (_, gespiegelt, _) in ROLLEN.items():
                 if gespiegelt:
-                    self.hass.states.async_remove(spiegel_id(slug, rolle))
+                    zustaende(self.hass).entfernen(spiegel_id(slug, rolle))
             self._ziele.pop(slug, None)

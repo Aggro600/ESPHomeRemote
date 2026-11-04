@@ -26,6 +26,7 @@ kd.data["funktionen"]:
 from __future__ import annotations
 from .aliases import schema_with_aliases
 from .i18n import t as _t
+from .zustaende import holen as zustaende
 
 import asyncio
 import logging
@@ -173,7 +174,7 @@ class Funktionen:
     def _eingang_setzen(self) -> None:
         t = self.cfg["tv_eingang"]
         if not t["tv"]:
-            self.hass.states.async_remove(E_EINGANG)
+            zustaende(self.hass).aus(E_EINGANG)
             return
         s = self.hass.states.get(t["tv"])
         liste = [str(x) for x in (s.attributes.get("source_list") or [])] if s is not None else []
@@ -194,7 +195,7 @@ class Funktionen:
                 wert = t["streamer"]
             else:
                 wert = str(s.attributes.get("source") or "") or "unbekannt"
-        self.hass.states.async_set(E_EINGANG, wert[:250], {"friendly_name": _t(self.hass, "ESPHomeRemote TV Eingang"), "icon": "mdi:video-input-hdmi",
+        zustaende(self.hass).setzen(E_EINGANG, wert[:250], {"friendly_name": _t(self.hass, "ESPHomeRemote TV Eingang"), "icon": "mdi:video-input-hdmi",
                                                            "options": liste + ["off"], "streamer": bool(t["streamer"]) and wert == t["streamer"]})
 
     # ------------------------------------------------------------------ Kamera auf dem Fernseher
@@ -203,14 +204,14 @@ class Funktionen:
         k = self.cfg["kamera_tv"]
         if not self._kamera_bereit():
             for e in (E_KAMERA, E_GROESSE):
-                self.hass.states.async_remove(e)
+                zustaende(self.hass).aus(e)
             return
         name = self._kamera_name(self._letzte) if self._letzte else ""
-        self.hass.states.async_set(E_KAMERA, "on" if self._sichtbar else "off",
+        zustaende(self.hass).setzen(E_KAMERA, "on" if self._sichtbar else "off",
                                    {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera auf dem TV"), "icon": "mdi:cctv", "camera": self._letzte, "name": name})
         # Zustand = Groesse in der HA-Sprache (die Remote zeigt ihn so an), Attribut size = Wert fuer camera_size
         sid = next((i for i, g in GROESSE_ID.items() if g == k["groesse"]), "medium")
-        self.hass.states.async_set(E_GROESSE, _t(self.hass, k["groesse"]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe"),
+        zustaende(self.hass).setzen(E_GROESSE, _t(self.hass, k["groesse"]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe"),
                                                                            "icon": "mdi:resize", "size": sid, "options": list(GROESSE_ID)})
 
     def _app_streamer(self):

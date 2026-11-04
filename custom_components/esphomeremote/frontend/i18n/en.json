@@ -3240,5 +3240,11 @@
 "Hierher holen": "Copy here",
 "Layout von „": "Layout of “",
 "Die Belegung von": "The layout of",
-"Ersetzt alle Tasten von": "Replaces all keys of"
+"Ersetzt alle Tasten von": "Replaces all keys of",
+"Akkuspannung": "Battery voltage",
+"Bluetooth verbunden": "Bluetooth connected",
+"Tiefschlaf-Status": "Deep sleep status",
+"Letzter Neustart": "Last restart",
+"WLAN-Zustand": "Wi-Fi state",
+"über Dock": "via dock"
 }
