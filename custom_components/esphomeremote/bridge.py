@@ -4,7 +4,10 @@ Vorher stand je Remote ein Eintrag von Hand in packages/esphome_ble_link.yaml (N
   - Remotes und Bluetooth-Namen aus esphome/tools/remotes.json ("Remote <Name>" = device_name der BLE-Tastatur)
   - WLAN-Adresse = feste IP aus esphome/secrets.yaml (ip_remote_wz_<kennung>)
   - Port je Remote fest vergeben und gespeichert (data["bruecke"]), ab 16053; OTA-Port 3232 hat hoechstens eine Remote
-  - HAs ESPHome-Eintrag der Remote zeigt auf 127.0.0.1:<port> (wird bei Bedarf umgestellt)
+  - HAs ESPHome-Eintrag der Remote muss auf 127.0.0.1:<port> zeigen. Seit der HACS-Pruefung (2026-11-04) schreibt die
+    Integration ESPHome-Eintraege nicht mehr von selbst um: zeigt einer woandershin, meldet ein Reparatur-Hinweis
+    (bridge_address) Adresse und Port; umgestellt wird nur per Knopf im Konfigurator (WS esphomeremote/bruecke,
+    eintraege=True, nur Admins, nach Rueckfrage)
 Neu abgeglichen beim Start und nach Einrichten/Entfernen einer Remote (von Hand: WS esphomeremote/bruecke,
 dort auch "ota" = welche Remote Updates ueber Bluetooth bekommt)
 """
@@ -15,7 +18,8 @@ import json
 import logging
 import re
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 
 from .firmware import ESPHOME_DIR
 
@@ -88,24 +92,51 @@ class Bruecke:
             self.stand = rs
             return rs
         await mod.async_links_setzen(self.hass, "konfig", liste)
-        for r in rs:
-            await self._eintrag(f"remote-wz-{r['slug']}", r["port"])
         self.stand = rs
+        self.pruefen()
         return rs
 
-    async def _eintrag(self, dev: str, port: int) -> None:
-        for e in self.hass.config_entries.async_entries("esphome"):
-            if e.data.get("device_name") != dev:
+    def _eintrag(self, slug: str):
+        dev = f"remote-wz-{slug}"
+        return next((e for e in self.hass.config_entries.async_entries("esphome") if e.data.get("device_name") == dev), None)
+
+    @callback
+    def pruefen(self) -> None:
+        """Nur pruefen, ob die ESPHome-Eintraege der Remotes auf die Bruecke zeigen - nie selbst umschreiben.
+        Zeigt einer woandershin, nennt ein Reparatur-Hinweis Adresse und Port (auch nach jeder Aenderung des Eintrags)."""
+        for r in self.stand:
+            e = self._eintrag(r["slug"])
+            r["eintrag"] = None if e is None else {"host": e.data.get("host"), "port": e.data.get("port")}
+            if e is None:
                 continue
-            if e.data.get("host") == "127.0.0.1" and e.data.get("port") == port:
-                return
-            _LOGGER.info("Bruecke: ESPHome-Eintrag %s -> 127.0.0.1:%s (vorher %s:%s)", dev, port, e.data.get("host"), e.data.get("port"))
-            self.hass.config_entries.async_update_entry(e, data={**e.data, "host": "127.0.0.1", "port": port})
+            iid = f"bridge_address_{e.entry_id}"
+            if e.data.get("host") == "127.0.0.1" and e.data.get("port") == r["port"]:
+                ir.async_delete_issue(self.hass, "esphomeremote", iid)
+            else:
+                ir.async_create_issue(self.hass, "esphomeremote", iid, is_fixable=False, severity=ir.IssueSeverity.WARNING,
+                                      translation_key="bridge_address",
+                                      translation_placeholders={"name": e.title or f"Remote {r['name']}",
+                                                                "host": "127.0.0.1", "port": str(r["port"]),
+                                                                "now": f"{e.data.get('host')}:{e.data.get('port')}"})
+
+    async def eintraege_umstellen(self) -> list[str]:
+        """Nur auf ausdruecklichen Wunsch (Knopf im Konfigurator, nach Rueckfrage): Eintraege auf die Bruecke stellen."""
+        umgestellt = []
+        for r in self.stand:
+            e = self._eintrag(r["slug"])
+            if e is None or (e.data.get("host") == "127.0.0.1" and e.data.get("port") == r["port"]):
+                continue
+            _LOGGER.info("Bruecke: ESPHome-Eintrag %s -> 127.0.0.1:%s (vorher %s:%s, vom Nutzer bestaetigt)",
+                         e.title, r["port"], e.data.get("host"), e.data.get("port"))
+            self.hass.config_entries.async_update_entry(e, data={**e.data, "host": "127.0.0.1", "port": r["port"]})
             self.hass.config_entries.async_schedule_reload(e.entry_id)
-            return
+            umgestellt.append(f"remote-wz-{r['slug']}")
+        self.pruefen()
+        return umgestellt
 
     def info(self) -> dict:
         """{remote-wz-<slug>: {ip, port, ota, aktiv}} fuer den Firmware-Bereich."""
         links = self.mod.async_links(self.hass) if self.mod else {}
         return {f"remote-wz-{r['slug']}": {"ip": r["ip"], "port": r.get("port"), "ota": r.get("ota"),
-                                            "aktiv": f"Remote {r['name']}" in links} for r in self.stand}
+                                            "aktiv": f"Remote {r['name']}" in links, "eintrag": r.get("eintrag")}
+                for r in self.stand}

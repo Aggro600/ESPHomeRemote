@@ -3223,5 +3223,13 @@
 "ist": "is",
 "Startseite löschen": "Delete home screen",
 "Über die Android-TV-Entität der Integration „Android Debug Bridge“ (ADB-Befehl reboot).": "Through the Android TV entity of the “Android Debug Bridge” integration (ADB command reboot).",
-"– Entität wählen –": "– choose entity –"
+"– Entität wählen –": "– choose entity –",
+"Home Assistant verbindet sich danach über die Brücke mit diesen Remotes.": "Home Assistant then connects to these remotes through the bridge.",
+"Diese ESPHome-Einträge auf die Bluetooth-Brücke stellen?": "Point these ESPHome entries to the Bluetooth bridge?",
+"ESPHome-Einträge zeigen nicht auf die Bluetooth-Brücke.": "ESPHome entries do not point to the Bluetooth bridge.",
+"Die Integration stellt sie nicht von selbst um.": "The integration does not change them by itself.",
+"ESPHome-Einträge auf die Brücke stellen": "Point ESPHome entries to the bridge",
+"ESPHome-Eintrag zeigt auf": "ESPHome entry points to",
+"ESPHome-Einträge umgestellt.": "ESPHome entries changed.",
+"Brücke:": "Bridge:"
 }

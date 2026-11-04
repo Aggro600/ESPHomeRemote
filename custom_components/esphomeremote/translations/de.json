@@ -188,6 +188,10 @@
     "allow_actions": {
       "title": "{name} darf keine Home-Assistant-Aktionen ausführen",
       "description": "Tasten, Menü-Einträge und Dock-Befehle von {name} rufen Home-Assistant-Aktionen auf. Öffne Einstellungen → Geräte & Dienste → ESPHome → {name} → Konfigurieren und schalte „Erlaube dem Gerät, Home Assistant-Aktionen durchzuführen“ ein."
+    },
+    "bridge_address": {
+      "title": "{name} zeigt nicht auf die Bluetooth-Brücke",
+      "description": "Der ESPHome-Eintrag von {name} verbindet sich mit {now}. Im Entwickler-Aufbau (tools/remotes.json) erreicht Home Assistant diese Remote über die Bluetooth-Brücke unter {host}, Port {port}. Entweder im Konfigurator → Firmware „ESPHome-Einträge auf die Brücke stellen“ drücken oder Einstellungen → Geräte & Dienste → ESPHome → {name} → ⋮ → Neu konfigurieren öffnen und Host {host} und Port {port} eintragen. Soll die Remote bei ihrer eigenen Adresse bleiben, nimm sie aus tools/remotes.json heraus."
     }
   }
 }

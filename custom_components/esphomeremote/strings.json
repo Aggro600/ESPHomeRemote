@@ -188,6 +188,10 @@
     "allow_actions": {
       "title": "{name} may not perform Home Assistant actions",
       "description": "Keys, menu entries and dock commands of {name} call Home Assistant actions. Open Settings → Devices & services → ESPHome → {name} → Configure and turn on \"Allow the device to perform Home Assistant actions\"."
+    },
+    "bridge_address": {
+      "title": "{name} does not point to the Bluetooth bridge",
+      "description": "The ESPHome entry of {name} connects to {now}. With the developer setup (tools/remotes.json) Home Assistant reaches this remote through the Bluetooth bridge at {host}, port {port}. Either open the ESPHome configurator → Firmware and press \"Point ESPHome entries to the bridge\", or open Settings → Devices & services → ESPHome → {name} → ⋮ → Reconfigure and enter host {host} and port {port}. If you want this remote to stay on its own address, remove it from tools/remotes.json."
     }
   }
 }
