@@ -73,10 +73,8 @@ def _gehalten(hass: HomeAssistant, entity: str, attr: str, gehalten: dict | None
 
 
 def _bild_ts(name: str) -> int:
-    try:
-        return int(os.stat(f"/config/www/{name}").st_mtime)
-    except OSError:
-        return 0
+    from .bilddateien import gemerkt   # Zeitstempel aus dem Speicher (2026-11-04: kein os.stat in der Ereignisschleife)
+    return gemerkt(name)
 
 
 def _stand(hass: HomeAssistant, slug: str, ausl: list[tuple[str, str]] | None = None,
@@ -342,6 +340,7 @@ class DockStand:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/test_zeigen", vol.Required("device"): str,
                                   vol.Required("seite"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_test_zeigen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Konfigurator "Auf der Remote zeigen": direkt (eigene HA-Verbindung) und ueber das Dock."""

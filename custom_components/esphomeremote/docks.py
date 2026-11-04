@@ -98,6 +98,7 @@ def _chip_setzen(datei: str, chip: str) -> dict:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/docks_anlegen", vol.Required("name"): str,
                                   vol.Optional("chip", default="original"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_anlegen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     try:
@@ -109,6 +110,7 @@ async def ws_anlegen(hass: HomeAssistant, connection: websocket_api.ActiveConnec
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/docks_einbinden", vol.Required("datei"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_einbinden(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Dock in die ESPHome-Integration aufnehmen (Adresse aus dem Device Builder, Schluessel aus der Konfiguration)."""

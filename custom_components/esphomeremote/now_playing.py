@@ -390,6 +390,7 @@ from homeassistant.components import websocket_api  # noqa: E402
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/jetzt_get"})
+@websocket_api.require_admin
 @callback
 def ws_jetzt_get(hass, connection, msg) -> None:
     v = hass.data[DOMAIN + "_dock"]
@@ -400,6 +401,7 @@ def ws_jetzt_get(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/jetzt_save", vol.Required("jetzt"): list})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_jetzt_save(hass, connection, msg) -> None:
     v = hass.data[DOMAIN + "_dock"]

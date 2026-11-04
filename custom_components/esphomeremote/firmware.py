@@ -654,6 +654,7 @@ async def liste(hass: HomeAssistant) -> dict:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_liste"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_liste(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     connection.send_result(msg["id"], await liste(hass))
@@ -662,6 +663,7 @@ async def ws_liste(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_installieren",
                                   vol.Required("dateien"): [str], vol.Required("port"): str,
                                   vol.Optional("wlan_nachher", default=0): vol.All(int, vol.Range(min=0, max=480))})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_installieren(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     port = msg["port"]
@@ -822,6 +824,7 @@ async def _ereignis_verbunden(hass: HomeAssistant, event) -> None:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_test_wiederholen",
                                   vol.Required("datei"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_test_wiederholen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     f = next((x for x in await hass.async_add_executor_job(test_dateien) if x["datei"] == msg["datei"]), None)
@@ -836,6 +839,7 @@ async def ws_test_wiederholen(hass: HomeAssistant, connection: websocket_api.Act
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_vormerken",
                                   vol.Required("datei"): str, vol.Required("an"): bool})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_vormerken(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     if msg["datei"] not in {g["datei"] for g in await hass.async_add_executor_job(remote_dateien)}:
@@ -856,6 +860,7 @@ async def ws_vormerken(hass: HomeAssistant, connection: websocket_api.ActiveConn
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_abbrechen", vol.Required("job_id"): str})
+@websocket_api.require_admin
 @callback
 def ws_abbrechen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Wartenden Auftrag aus der Warteschlange nehmen (laufende laufen zu Ende)."""
@@ -868,12 +873,14 @@ def ws_abbrechen(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_schlange"})
+@websocket_api.require_admin
 @callback
 def ws_schlange(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     connection.send_result(msg["id"], {"jobs": _schlange_liste()})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_job", vol.Required("job_id"): str})
+@websocket_api.require_admin
 @callback
 def ws_job(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     j = _jobs.get(msg["job_id"])
@@ -885,6 +892,7 @@ def ws_job(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_sperren",
                                   vol.Required("datei"): str, vol.Required("gesperrt"): bool})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_sperren(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     st, sp = await _speicher(hass)

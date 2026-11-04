@@ -5,8 +5,8 @@
 set -e
 cd "$(dirname "$0")"
 SDK=${SDK:-/tmp/android-sdk}
-BT=$SDK/android-15            # build-tools 35.0.1
-JAR=$SDK/android-35/android.jar
+BT=${BT:-$SDK/android-15}            # build-tools 35 (CI: $ANDROID_HOME/build-tools/35.0.0)
+JAR=${JAR:-$SDK/android-35/android.jar}   # CI: $ANDROID_HOME/platforms/android-35/android.jar
 VERSION=${VERSION:-1}
 rm -rf build && mkdir -p build/classes build/dex build/res
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -classpath "$JAR" -d build/classes $(find src -name '*.java') 2>&1 | grep -v "^warning\|bootstrap\|^Note:\|^1 warning" || true

@@ -499,6 +499,7 @@ EIGEN = vol.Schema({vol.Required("geraete"): [vol.Schema({vol.Required("name"): 
 # ------------------------------------------------------------------ Websocket
 def registrieren(hass: HomeAssistant, db: IrDb) -> None:
     @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/irdb_status"})
+    @websocket_api.require_admin
     @callback
     def ws_status(hass, connection, msg):
         connection.send_result(msg["id"], db.status())
@@ -545,6 +546,7 @@ def registrieren(hass: HomeAssistant, db: IrDb) -> None:
          vol.Optional("limit", default=60): vol.All(int, vol.Range(1, 200)),
          vol.Optional("quelle"): vol.In([*QUELLEN, "eigen"])}
     )
+    @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_suchen(hass, connection, msg):
         # im Executor: die Suche laeuft ueber den ganzen Index (bis ~280 000 Geraete)
@@ -554,6 +556,7 @@ def registrieren(hass: HomeAssistant, db: IrDb) -> None:
     @websocket_api.websocket_command(
         {vol.Required("type"): "esphomeremote/irdb_geraet", vol.Required("geraet"): GERAET}
     )
+    @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_geraet(hass, connection, msg):
         try:
@@ -562,6 +565,7 @@ def registrieren(hass: HomeAssistant, db: IrDb) -> None:
             connection.send_error(msg["id"], "irdb", str(err))
 
     @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/ircodes_get"})
+    @websocket_api.require_admin
     @callback
     def ws_eigen_get(hass, connection, msg):
         connection.send_result(msg["id"], db.eigen)

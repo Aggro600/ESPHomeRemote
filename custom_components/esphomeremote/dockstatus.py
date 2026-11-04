@@ -116,6 +116,7 @@ class DockStatus:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/remote_log_get",
                                   vol.Optional("device"): str})
+@websocket_api.require_admin
 @callback
 def ws_remote_log_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     ds: DockStatus = hass.data[DOMAIN + "_dockstatus"]
@@ -124,6 +125,7 @@ def ws_remote_log_get(hass: HomeAssistant, connection: websocket_api.ActiveConne
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/dockstatus_get"})
+@websocket_api.require_admin
 @callback
 def ws_dockstatus_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     ds: DockStatus = hass.data[DOMAIN + "_dockstatus"]

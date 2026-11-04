@@ -194,6 +194,7 @@ class DockScan:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/dockscan_get"})
+@websocket_api.require_admin
 @callback
 def ws_dockscan_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     ds: DockScan = hass.data[DOMAIN + "_dockscan"]
@@ -201,6 +202,7 @@ def ws_dockscan_get(hass: HomeAssistant, connection: websocket_api.ActiveConnect
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/dockscan_save", vol.Required("cfg"): dict})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_dockscan_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     ds: DockScan = hass.data[DOMAIN + "_dockscan"]

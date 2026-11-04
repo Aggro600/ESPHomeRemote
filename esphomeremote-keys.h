@@ -161,7 +161,7 @@ inline void laden(const std::string &id) {
   geladen_ts() = stempel()[id];
   fertig() = false;
   ESP_LOGI("klingel", "Klingelbild '%s' laden", id.c_str());
-  db_haus_image->set_url("http://" + tk_cfg->host() + "/local/esphomeremote_doorbell_" + id + ".jpg?v=" + std::to_string(geladen_ts()));
+  db_haus_image->set_url("http://" + tk_cfg->host() + "/api/esphomeremote/datei/esphomeremote_doorbell_" + id + ".jpg?k=" + tk_cfg->schluessel() + "&v=" + std::to_string(geladen_ts()));
   db_haus_image->update();
 }
 inline const void *bild(const std::string &q) {
@@ -193,7 +193,7 @@ inline void aktivitaet_setzen(int a) {
   // Eigene Startseite je Aktivitaet (2026-10-27) VOR apply_activity: das baut die Leiste (dock_anwenden) und startet
   // die Aufbau-Animation schon auf der fertigen Anordnung. Danach nochmal anwenden faerbte das Feld sofort fertig
   // und schob die Leiste unter der laufenden Animation weg (Nutzer 2026-10-28: "Animation verkackt").
-  if (cur_page->value() == 0 && (alt != a || (!war_an && tk_cfg->hat_ohne()))) startseite_anwenden();
+  if (cur_page->value() == 0 && (alt != a || !war_an)) startseite_anwenden();   // auch ohne "ohne"-Block (2026-11-04)
   apply_activity->execute();
   if (start) tk_cfg->aktivitaet_ereignis(a, true);
   mn->ereignis("aktivitaet", tk_cfg->aktivitaet_name(a));   // Popup-Ausloeser (z. B. "TV auf HDMI umschalten?")
@@ -204,7 +204,7 @@ inline void aktivitaet_aus() {
   tk_cfg->aktivitaet_ereignis(activity->value(), false);
   akt_an->value() = false;
   // "Keine Aktivitaet" (2026-10-29): eigene Startseite und Schritte "Beim Starten"
-  if (cur_page->value() == 0 && tk_cfg->hat_ohne()) startseite_anwenden();
+  if (cur_page->value() == 0) startseite_anwenden();   // eingebaute bzw. eigene Startseite (2026-11-04)
   apply_activity->execute();
   if (tk_cfg->hat_ohne()) tk_cfg->aktivitaet_ereignis(tasten_konfig::TastenKonfig::OHNE, true);
 }
@@ -900,8 +900,9 @@ inline void startseite_anwenden() {
     JsonArrayConst akt = t->wurzel()["activities"];
     const int a = activity->value();
     if (a >= 0 && a < (int) akt.size()) seite = akt[a]["home"] | "";
-    // "Keine Aktivitaet" (2026-10-29): eigene Startseite, sonst die der zuletzt gelaufenen
-    if (!akt_an->value() && t->hat_ohne() && *(t->wurzel()["ohne"]["home"] | "")) seite = t->wurzel()["ohne"]["home"] | "";
+    // "Keine Aktivitaet": eigene Startseite, sonst die eingebaute (2026-11-04, Tester: man sah die Startseite der
+    // ersten Aktivitaet, obwohl unten keine gewaehlt war - bis dahin galt die der zuletzt gelaufenen)
+    if (!akt_an->value()) seite = t->hat_ohne() ? std::string(t->wurzel()["ohne"]["home"] | "") : std::string();
     if (!seite.empty() && mn_home->hat_seite(seite)) {
       int x, y, w, h;
       bool st_an = true, dock_an = true;

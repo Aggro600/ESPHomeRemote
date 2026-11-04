@@ -85,6 +85,7 @@ class Funktionen:
             h.services.async_register(DOMAIN, name, f, schema=schema_with_aliases(name))
         for e in E_ALT:
             h.states.async_remove(e)
+        self._neustart_umstellen()
         h.bus.async_listen("esphome.remote_neue_version", self._neue_version)
         self._abos.append(async_track_time_interval(h, self._dock_pruefen, timedelta(seconds=15)))
         self.abonnieren()
@@ -152,7 +153,7 @@ class Funktionen:
         return {"cfg": self.cfg, "media": liste("media_player"), "kameras": liste("camera"), "lichter": liste("light"),
                 "sensoren": [x for x in liste("sensor") + liste("binary_sensor")], "notify": [f"notify.{s}" for s in notify],
                 "eingang": (st.get(E_EINGANG).state if st.get(E_EINGANG) else None),
-                "tv_quelle": self._tv_text(), "adb_schluessel": self._adb_schluessel() is not None,
+                "tv_quelle": self._tv_text(),
                 "streamer": [{"id": s["id"], "name": s["name"]} for s in (self.kd.data.get("streamer") or []) if s.get("adb")]}
 
     # ------------------------------------------------------------------ TV-Eingang
@@ -363,12 +364,24 @@ class Funktionen:
             await self._dienst_kamera(type("C", (), {"data": {"camera": self._letzte}})())
 
     # ------------------------------------------------------------------ Neustart per ADB
-    def _adb_schluessel(self):
-        try:
-            p = self.hass.config.path(".storage/androidtv_adbkey")
-            return open(p).read(), open(p + ".pub").read()
-        except OSError:
-            return None
+    def _neustart_umstellen(self) -> None:
+        """Eintraege mit IP statt Entitaet (bis 2026-11-03) auf die Android-TV-Entitaet mit dieser Adresse umstellen."""
+        from homeassistant.helpers import entity_registry as er
+        reg = er.async_get(self.hass)
+        geaendert = False
+        for g in self.cfg["neustart"]:
+            if g.get("entity") or not g.get("ip"):
+                continue
+            for ce in self.hass.config_entries.async_entries("androidtv"):
+                if str(ce.data.get("host") or "") != g["ip"]:
+                    continue
+                e = next((x.entity_id for x in er.async_entries_for_config_entry(reg, ce.entry_id)
+                          if x.entity_id.startswith("media_player.")), None)
+                if e:
+                    _LOGGER.info("Neustart '%s': %s statt IP %s", g["name"], e, g["ip"])
+                    g["entity"], g["ip"], geaendert = e, "", True
+        if geaendert:
+            self.hass.async_create_task(self.kd.store.async_save(self.kd.data))
 
     async def _dienst_neustart(self, call) -> None:
         name = str(call.data.get("device") or "")
@@ -376,29 +389,12 @@ class Funktionen:
         if g is None:
             _LOGGER.warning("Neustart: kein Gerät '%s' (Konfigurator > Funktionen)", name)
             return
+        # Nur ueber die Android-TV-Entitaet (2026-11-04, HACS-Pruefung: der direkte Weg per IP las den privaten
+        # ADB-Schluessel der Integration Android Debug Bridge aus .storage)
         if g["entity"]:
             await self.hass.services.async_call("androidtv", "adb_command", {"entity_id": g["entity"], "command": "reboot"}, blocking=False)
-            return
-        if g["ip"]:
-            await self.hass.async_add_executor_job(self._adb_reboot, g["ip"])
-
-    def _adb_reboot(self, ip: str) -> None:
-        k = self._adb_schluessel()
-        if k is None:
-            _LOGGER.warning("Neustart %s: kein ADB-Schlüssel (Integration Android Debug Bridge einmal einrichten)", ip)
-            return
-        try:
-            from adb_shell.adb_device import AdbDeviceTcp
-            from adb_shell.auth.sign_pythonrsa import PythonRSASigner
-            d = AdbDeviceTcp(ip, 5555, default_transport_timeout_s=10)
-            d.connect(rsa_keys=[PythonRSASigner(k[1], k[0])], auth_timeout_s=10)
-            try:
-                d.shell("reboot", timeout_s=3, read_timeout_s=3)
-            except Exception:  # noqa: BLE001 - das Geraet startet, die Antwort bleibt aus
-                pass
-            d.close()
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Neustart %s ging nicht: %s", ip, err)
+        else:
+            _LOGGER.warning("Neustart '%s': keine Android-TV-Entität eingetragen (Konfigurator > Funktionen)", name)
 
     # ------------------------------------------------------------------ Neue Firmware: Lampe blinkt
     async def _neue_version(self, _ev) -> None:

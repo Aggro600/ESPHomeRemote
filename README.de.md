@@ -261,6 +261,19 @@ direkt_schluessel: "…"             # 32 Hex-Zeichen, z. B. von  openssl rand -
 esphomeremote_key: "…"      # die kopierte Zeile aus Schritt 2
 ```
 
+*Eigener fester API-Schlüssel statt OTA-Passwort:* Die Firmware schützt Updates mit `ota_pw`, weil Home Assistant den
+API-Schlüssel erst beim Einbinden vergibt. Setzt du selbst einen festen Schlüssel, warnt ESPHome, das Passwort
+„verschwende Flash und RAM“. Dann das hier in die YAML deines Geräts, und `ota_pw` brauchst du nicht mehr:
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+ota:
+  - id: !extend ota_esphome
+    password: !remove
+    encryption: {}
+```
+
 **Schritt 4 – Fernbedienung aufspielen**
 1. Im ESPHome-Add-on **„+ Neues Gerät“** → **„Überspringen“** (bzw. „Leer anlegen“).
 2. Den Inhalt von [`esphomeremote.yaml`](esphomeremote.yaml) in den Editor kopieren – anpassen musst du nichts

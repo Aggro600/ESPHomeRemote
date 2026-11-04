@@ -183,5 +183,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "allow_actions": {
+      "title": "{name} may not perform Home Assistant actions",
+      "description": "Keys, menu entries and dock commands of {name} call Home Assistant actions. Open Settings → Devices & services → ESPHome → {name} → Configure and turn on \"Allow the device to perform Home Assistant actions\"."
+    }
   }
 }

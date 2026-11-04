@@ -49,7 +49,7 @@ STORE_VERSION = 1
 PANEL_URL = "remote"
 PANEL_URL_ALT = "fernbedienung"   # bis 2026-11-01 - alte Lesezeichen gehen weiter (ohne Eintrag in der Seitenleiste)
 STATIC_URL = "/esphomeremote_static"
-PANEL_VERSION = "190"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "191"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -315,8 +315,10 @@ def validate_steps(steps, wo: str) -> list:
         if not isinstance(s, dict) or s.get("t") not in STEP_TYPES:
             raise vol.Invalid(f"{wo}: unbekannter Schritt {s}")
         if s["t"] == "ha":
-            if "." not in str(s.get("svc", "")):
-                raise vol.Invalid(f"{wo}: Dienst fehlt")
+            # Nur "domain.dienst" (2026-11-04): Speichern koennen ohnehin nur Admins (require_admin), die Remote fuehrt
+            # den Schritt ueber die HA-Aktionen ihres ESPHome-Eintrags aus
+            if not re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+", str(s.get("svc", ""))):
+                raise vol.Invalid(f"{wo}: Dienst fehlt oder ungueltig")
             d = s.get("data") or {}
             if not isinstance(d, dict):
                 raise vol.Invalid(f"{wo}: Daten muessen ein Objekt sein")
@@ -1233,9 +1235,9 @@ class StatesView(HomeAssistantView):
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    from .i18n import setzen as i18n_setzen
+    from .i18n import laden as i18n_laden
 
-    i18n_setzen(hass)   # Sprache fuer Entitaetsnamen und Meldungen (2026-11-01), vor allen Plattformen
+    await i18n_laden(hass)   # Sprache fuer Entitaetsnamen und Meldungen (2026-11-01), vor allen Plattformen, im Executor
     if DOMAIN in config:
         from .migration import take_over
 
@@ -1245,9 +1247,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
-    from .i18n import setzen as i18n_setzen
+    from .i18n import laden as i18n_laden
 
-    i18n_setzen(hass)   # Sprache fuer Entitaetsnamen und Meldungen (2026-11-01)
+    await i18n_laden(hass)   # Sprache fuer Entitaetsnamen und Meldungen (2026-11-01), im Executor
     """Einrichtung ueber die Oberflaeche (Schluessel + Geraete aus dem Dialog)."""
     if DOMAIN in hass.data:   # schon per YAML eingerichtet
         return True
@@ -1278,13 +1280,21 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     # Neues/entferntes Dock: Remotes bekommen die Funk-Adressen (dmac) mit der naechsten Konfiguration
     @callback
     def _freigaben() -> None:
-        """Remotes und Docks muessen HA-Aktionen ausfuehren duerfen (Tasten, Menue, HA-Befehle ueber das Dock).
-        Beim Einbinden ueber den Konfigurator blieb die Option aus (Gast, 2026-10-19) - hier immer nachziehen."""
+        """Remotes und Docks brauchen in ihrem ESPHome-Eintrag "Aktionen von Home Assistant ausfuehren" (Tasten, Menue,
+        HA-Befehle ueber das Dock). Bis 2026-11-03 schaltete die Integration das selbst ein; seit der HACS-Pruefung
+        (2026-11-04) entscheidet der Nutzer - fehlt die Freigabe, meldet ein Reparatur-Hinweis, wo er sie setzt."""
+        from homeassistant.helpers import issue_registry as ir
         for e in hass.config_entries.async_entries("esphome"):
             name = str(e.data.get("device_name") or "")
-            if (ist_dock(hass, e) or name in kd.devices) and not e.options.get("allow_service_calls"):
-                _LOGGER.info("%s: erlaube HA-Aktionen", name)
-                hass.config_entries.async_update_entry(e, options={**e.options, "allow_service_calls": True})
+            if not (ist_dock(hass, e) or name in kd.devices):
+                continue
+            iid = f"allow_actions_{e.entry_id}"
+            if e.options.get("allow_service_calls"):
+                ir.async_delete_issue(hass, DOMAIN, iid)
+            else:
+                ir.async_create_issue(hass, DOMAIN, iid, is_fixable=False, severity=ir.IssueSeverity.WARNING,
+                                      translation_key="allow_actions",
+                                      translation_placeholders={"name": e.title or name})
 
     @callback
     def _eintrag_geaendert(_aenderung, eintrag) -> None:
@@ -1307,6 +1317,13 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     hass.http.register_view(CfgView(kd))
     hass.http.register_view(StatesView(kd, WetterCache(hass)))
     hass.http.register_view(BildView(kd, schluessel_ok))   # Widget-Bilder (Kamera, Cover), 2026-10-27
+    # Klingel-, Kamera- und Coverbilder nicht mehr oeffentlich unter /local/ (2026-11-04, HACS-Pruefung)
+    from .bilddateien import DateiView, VorschauView, www_umziehen, zeiten_laden
+    hass.http.register_view(DateiView(kd, schluessel_ok))
+    hass.http.register_view(VorschauView())
+    if (n := await hass.async_add_executor_job(www_umziehen, hass)):
+        _LOGGER.info("%d Bilder aus /config/www in %s verschoben (nicht mehr oeffentlich)", n, ".esphomeremote_images")
+    await hass.async_add_executor_job(zeiten_laden, hass)
     await hass.http.async_register_static_paths(
         [StaticPathConfig(STATIC_URL, str(Path(__file__).parent / "frontend"), False)]
     )
@@ -1319,7 +1336,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
         sidebar_icon="mdi:remote",
         module_url=f"{STATIC_URL}/configurator.js?v={PANEL_VERSION}",
         embed_iframe=False,
-        require_admin=False,
+        require_admin=True,   # 2026-11-04 (HACS-Pruefung): Konfigurator und alle Schreibbefehle nur fuer Admins
     )
     await panel_custom.async_register_panel(
         hass,
@@ -1329,7 +1346,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
         sidebar_icon=None,
         module_url=f"{STATIC_URL}/configurator.js?v={PANEL_VERSION}",
         embed_iframe=False,
-        require_admin=False,
+        require_admin=True,   # 2026-11-04 (HACS-Pruefung): Konfigurator und alle Schreibbefehle nur fuer Admins
     )
 
     websocket_api.async_register_command(hass, ws_get)
@@ -1533,6 +1550,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/licht_get"})
+@websocket_api.require_admin
 @callback
 def ws_licht_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     connection.send_result(msg["id"], hass.data[DOMAIN + "_licht"].stand())
@@ -1553,6 +1571,7 @@ async def ws_licht_set(hass: HomeAssistant, connection: websocket_api.ActiveConn
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/geste_anlernen", vol.Required("device"): str,
                                   vol.Required("gid"): str, vol.Required("name"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_geste_anlernen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Anlernen an der Remote starten: dreimal ausfuehren, je mit OK bestaetigen. Ergebnis kommt als
@@ -1577,6 +1596,7 @@ async def ws_geste_anlernen(hass: HomeAssistant, connection: websocket_api.Activ
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/funktionen_get"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_funktionen_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     connection.send_result(msg["id"], hass.data[DOMAIN + "_funktionen"].stand())
@@ -1593,6 +1613,7 @@ async def ws_funktionen_set(hass: HomeAssistant, connection: websocket_api.Activ
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/anzeige_get"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_anzeige_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     a = hass.data[DOMAIN + "_anzeige"]
@@ -1627,6 +1648,7 @@ async def ws_bruecke(hass: HomeAssistant, connection: websocket_api.ActiveConnec
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/get"})
+@websocket_api.require_admin
 @callback
 def ws_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     kd: KonfigData = hass.data[DOMAIN]
@@ -1653,6 +1675,7 @@ def ws_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/einst_set", vol.Required("device"): str,
                                   vol.Optional("werte"): dict, vol.Optional("von"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_einst_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Einstellungen setzen (sofort an die Remote); von = alle Werte einer anderen Remote uebernehmen."""
@@ -1673,6 +1696,7 @@ async def ws_einst_set(hass: HomeAssistant, connection: websocket_api.ActiveConn
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/einst_standard", vol.Required("device"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_einst_standard(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Einstellungen dieser Remote als Standard fuer neue Remotes merken."""
@@ -1688,6 +1712,7 @@ async def ws_einst_standard(hass: HomeAssistant, connection: websocket_api.Activ
 # ---- Werkseinstellung (2026-10-27, Nutzerwunsch): Belegung + Einstellungen einer Remote als Datensatz merken
 # (kd.data["werk"], nur in .storage - nicht im oeffentlichen Repo). Laden im Konfigurator: alles, nur Menue, nur Tasten.
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/werk_speichern", vol.Required("device"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_werk_speichern(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     kd: KonfigData = hass.data[DOMAIN]
@@ -1703,6 +1728,7 @@ async def ws_werk_speichern(hass: HomeAssistant, connection: websocket_api.Activ
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/werk_get"})
+@websocket_api.require_admin
 @callback
 def ws_werk_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     kd: KonfigData = hass.data[DOMAIN]
@@ -1714,6 +1740,7 @@ def ws_werk_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/default"})
+@websocket_api.require_admin
 @callback
 def ws_default(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     connection.send_result(msg["id"], {"config": default_config()})
@@ -1727,6 +1754,7 @@ def ws_default(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
         vol.Optional("enabled", default=True): bool,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     kd: KonfigData = hass.data[DOMAIN]
@@ -1751,6 +1779,7 @@ def reihenfolge(kd) -> list[str]:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/reihenfolge_save", vol.Required("order"): [str]})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_reihenfolge_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     kd: KonfigData = hass.data[DOMAIN]
@@ -1772,6 +1801,7 @@ _FARBE = vol.Match(r"^#[0-9a-fA-F]{6}$")
                                   vol.Optional("ordnung"): [vol.Match(r"^[a-z0-9-]{1,40}$")],
                                   vol.Optional("dock"): vol.Match(r"^[a-z0-9-]{1,40}$"),
                                   vol.Optional("farben"): vol.Any(None, {vol.Optional(k): _FARBE for k in ("gehaeuse", "led")})})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_docks_einst_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     kd: KonfigData = hass.data[DOMAIN]
@@ -1791,6 +1821,7 @@ async def ws_docks_einst_save(hass: HomeAssistant, connection: websocket_api.Act
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/wlan_an", vol.Required("device"): str,
                                   vol.Optional("sekunden", default=180): vol.All(int, vol.Range(min=0, max=28800)),
                                   vol.Optional("grund", default="Konfigurator"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_wlan_an(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """WLAN der Remote fuer ein paar Minuten einschalten (2026-10-26, Konfigurator Bluetooth-Plaetze): ueber den
@@ -1846,6 +1877,7 @@ SICHERUNG_GLOBAL = ("jetzt", "streamer", "klingel", "licht", "anzeige", "dock", 
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sicherung"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_sicherung(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Gespeicherter Stand: je Remote Belegung, An/Aus und Soll-Einstellungen; dazu die gemeinsamen Bereiche."""
@@ -1870,6 +1902,7 @@ async def ws_sicherung(hass: HomeAssistant, connection: websocket_api.ActiveConn
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sicherung_global", vol.Required("werte"): dict})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_sicherung_global(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Gemeinsame Bereiche aus einer Sicherung, die keinen eigenen Speicherweg im Konfigurator haben (2026-11-03)."""
@@ -1902,6 +1935,7 @@ async def ws_sicherung_global(hass: HomeAssistant, connection: websocket_api.Act
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/einspielen", vol.Required("device"): str,
                                   vol.Optional("config"): dict, vol.Optional("enabled", default=True): bool,
                                   vol.Optional("einst"): dict, vol.Optional("abgleich", default=False): bool})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_einspielen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Eine Remote aus der Sicherung: Belegung und/oder Einstellungen. abgleich=False: die Abgleich-Gruppe bekommt
@@ -1939,6 +1973,7 @@ def _sync_stand(kd: KonfigData) -> dict:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sync_get"})
+@websocket_api.require_admin
 @callback
 def ws_sync_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     connection.send_result(msg["id"], _sync_stand(hass.data[DOMAIN]))
@@ -1946,6 +1981,7 @@ def ws_sync_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sync_set", vol.Optional("an"): bool,
                                   vol.Optional("geraete"): [str], vol.Optional("aus"): [str]})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_sync_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Abgleich ein/aus, Remotes der Gruppe, abgewaehlte Bereiche/Einstellungen. Gleicht selbst noch nichts an."""
@@ -1962,6 +1998,7 @@ async def ws_sync_set(hass: HomeAssistant, connection: websocket_api.ActiveConne
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sync_jetzt", vol.Required("von"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_sync_jetzt(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Alles Gewaehlte von einer Remote an die anderen der Gruppe."""
@@ -1974,6 +2011,7 @@ async def ws_sync_jetzt(hass: HomeAssistant, connection: websocket_api.ActiveCon
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/bt_proxies"})
+@websocket_api.require_admin
 @callback
 def ws_bt_proxies(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Bluetooth-Empfaenger in HA (ESPHome-Proxys u. a.): Adresse, Name, verbindungsfaehig."""

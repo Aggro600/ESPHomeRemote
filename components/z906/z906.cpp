@@ -103,6 +103,16 @@ void Z906::task_schleife_() {
 // ---------------------------------------------------------------- Capture
 
 void Z906::mitschnitt_byte_(int r, uint8_t b) {
+  // Data flood (2026-11-03: the amp restarted and sent zero bytes for seconds - logging every byte stalled the
+  // forwarding until the task watchdog fired): capture at most 400 bytes per second, the rest is only counted
+  const uint32_t jetzt = millis();
+  if (jetzt - flut_t0_ >= 1000) {
+    if (flut_ueber_) ESP_LOGW(TAG, "Capture: %u bytes in 1 s not logged (data flood)", (unsigned) flut_ueber_);
+    flut_t0_ = jetzt;
+    flut_n_ = 0;
+    flut_ueber_ = 0;
+  }
+  if (++flut_n_ > 400) { flut_ueber_++; return; }
   if (zeile_n_[r] > (int) sizeof(zeile_[r]) - 8) mitschnitt_flush_(r, true);
   zeile_n_[r] += snprintf(zeile_[r] + zeile_n_[r], sizeof(zeile_[r]) - zeile_n_[r], " %02X", b);
   zeile_t_[r] = millis();
@@ -150,28 +160,6 @@ bool Z906::gueltig_(int r, uint8_t b) const {
   return r == 1 && ((b >= 0x17 && b <= 0x1F) || b == 0x20 || b == 0x21);
 }
 
-// true = Byte weitergeben. Beim Hochfahren (Verstaerker nicht an, Weckfenster, 4 s nach dem Einschalten) sperrt ein
-// ungueltiges Byte die Richtung 300 ms - dort kommt nur Muell. Im laufenden Betrieb faellt nur das einzelne
-// ungueltige Byte weg (2026-11-03): die 300-ms-Sperre verschluckte bei hoher Lautstaerke (mehr Stoerungen auf den
-// Leitungen) echte Pegel-Schritte und Echos, die Konsole bekam keine Antwort, startete neu und der Verstaerker ging aus.
-bool Z906::stoerung_(int r, uint8_t b, uint32_t jetzt) {
-  const bool hochfahren = power_.load() != 1 || weckfenster_(jetzt) || (weck_an_ != 0 && jetzt - weck_an_ < 4000);
-  if (!gueltig_(r, b)) {
-    gefiltert_[r]++;
-    if (hochfahren) stoer_bis_[r] = jetzt + 300;
-    else if (jetzt - stoer_log_ms_ > 5000) {
-      stoer_log_ms_ = jetzt;
-      ESP_LOGW(TAG, "Stoerung im Betrieb (%s): Byte %02X verworfen", r == 0 ? "Konsole" : "Verstaerker", b);
-    }
-    return false;
-  }
-  if (hochfahren && (int32_t) (jetzt - stoer_bis_[r]) < 0) {
-    gefiltert_[r]++;
-    return false;
-  }
-  return true;
-}
-
 void Z906::von_konsole_(uint8_t b) {
   const uint32_t jetzt = millis();
   if (k_pos_ >= 0) {   // inside an AA message from the console: pass through unchanged
@@ -183,7 +171,11 @@ void Z906::von_konsole_(uint8_t b) {
     if (k_pos_ >= 3 && k_pos_ >= 3 + k_len_) k_pos_ = -1;
     return;
   }
-  if (!stoerung_(0, b, jetzt)) return;
+  if (!gueltig_(0, b)) stoer_bis_[0] = jetzt + 300;
+  if ((int32_t) (jetzt - stoer_bis_[0]) < 0) {   // interference: drop
+    gefiltert_[0]++;
+    return;
+  }
   if (b == 0xAA) {
     k_pos_ = 0;
     k_frame_t0_ = jetzt;
@@ -232,7 +224,11 @@ void Z906::weckfenster_pruefen_(uint32_t jetzt) {
 void Z906::vom_verstaerker_(uint8_t b) {
   if (mb_pos_ < 0) {
     const uint32_t jetzt = millis();
-    if (!stoerung_(1, b, jetzt)) return;
+    if (!gueltig_(1, b)) stoer_bis_[1] = jetzt + 300;
+    if ((int32_t) (jetzt - stoer_bis_[1]) < 0) {   // interference (amp booting): drop
+      gefiltert_[1]++;
+      return;
+    }
     if (b == 0xAA) {   // start of a multi-byte message
       mb_pos_ = 0;
       mb_[mb_pos_++] = b;

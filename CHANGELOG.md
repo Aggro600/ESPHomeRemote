@@ -1,5 +1,41 @@
 # What's new · Was ist neu
 
+## 2026.11.4.1 (2026-11-04)
+
+**Update the remotes' firmware with this version.** Doorbell, camera and cover pictures no longer lie in /config/www (Home Assistant serves that folder to anyone at /local/ without login). They are now in /config/.esphomeremote_images and the remotes fetch them with the integration key; existing pictures are moved on start. Remotes with older firmware show no doorbell, camera or cover pictures until they are updated.
+
+**Security and Home Assistant guidelines (HACS review):**
+- The configurator and all commands that change something are admin-only now.
+- The integration no longer switches on "Allow the device to perform Home Assistant actions" in ESPHome by itself. If it is off for a remote or dock, a repair notice says where to turn it on.
+- Restart via ADB only through the Android TV entity (Android Debug Bridge integration); entries with only an IP are switched to the matching entity automatically. The integration no longer reads that integration's ADB key.
+- The translation file is loaded once in the background instead of in the event loop.
+- The Streamer app is built from its source in streamer-app/ by a GitHub workflow.
+
+**No activity** now shows the built-in home screen (or the one chosen for "No activity"), no longer the one of the last activity. Needs the new remote firmware.
+
+**Configurator:** home screens can be deleted straight from the list; backups use English keys (version 4, file esphomeremote-backup-…json, older backups can still be restored); IR code export with English keys; missing English translations added.
+
+**Own fixed API key:** the README shows how to replace the OTA password with encryption (id: !extend ota_esphome).
+
+<details><summary>Deutsch</summary>
+
+**Die Firmware der Remotes mit dieser Version aktualisieren.** Klingel-, Kamera- und Coverbilder liegen nicht mehr in /config/www (den Ordner liefert Home Assistant ohne Anmeldung unter /local/ an jeden aus). Sie liegen jetzt in /config/.esphomeremote_images, die Remotes holen sie mit dem Schlüssel der Integration; vorhandene Bilder werden beim Start verschoben. Remotes mit älterer Firmware zeigen bis zum Update keine Klingel-, Kamera- und Coverbilder.
+
+**Sicherheit und Home-Assistant-Regeln (HACS-Prüfung):**
+- Konfigurator und alle Befehle, die etwas ändern, nur noch für Admins.
+- Die Integration schaltet „Erlaube dem Gerät, Home Assistant-Aktionen durchzuführen“ in ESPHome nicht mehr selbst ein. Ist es bei einer Remote oder einem Dock aus, zeigt ein Reparatur-Hinweis, wo man es einschaltet.
+- Neustart per ADB nur noch über die Android-TV-Entität (Integration Android Debug Bridge); Einträge mit nur einer IP werden automatisch auf die passende Entität umgestellt. Die Integration liest den ADB-Schlüssel dieser Integration nicht mehr.
+- Die Übersetzung wird einmal im Hintergrund geladen statt in der Ereignisschleife.
+- Die Streamer-App baut ein GitHub-Workflow aus ihrem Quellcode in streamer-app/.
+
+**Keine Aktivität** zeigt jetzt die eingebaute Startseite (oder die für „Keine Aktivität“ gewählte), nicht mehr die der letzten Aktivität. Braucht die neue Firmware der Remote.
+
+**Konfigurator:** Startseiten lassen sich direkt in der Liste löschen; Sicherungen mit englischen Schlüsseln (Version 4, Datei esphomeremote-backup-…json, ältere lassen sich weiter einspielen); Export der IR-Codes mit englischen Schlüsseln; fehlende englische Übersetzungen ergänzt.
+
+**Eigener fester API-Schlüssel:** das README zeigt, wie man das OTA-Passwort durch Verschlüsselung ersetzt (id: !extend ota_esphome).
+
+</details>
+
 ## 2026.11.3.2 (2026-11-03)
 
 **Popups: new option "Close after a button press".** When on, pressing a button, switch, light or selection closes the popup shortly afterwards (a dropdown only after an entry was picked). Sub pages, sliders, hold buttons and the D-pad in key mode never close it. Off keeps the popup open as before. Needs the new remote firmware.

@@ -183,5 +183,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "allow_actions": {
+      "title": "{name} darf keine Home-Assistant-Aktionen ausführen",
+      "description": "Tasten, Menü-Einträge und Dock-Befehle von {name} rufen Home-Assistant-Aktionen auf. Öffne Einstellungen → Geräte & Dienste → ESPHome → {name} → Konfigurieren und schalte „Erlaube dem Gerät, Home Assistant-Aktionen durchzuführen“ ein."
+    }
   }
 }

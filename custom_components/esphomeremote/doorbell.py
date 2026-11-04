@@ -7,7 +7,7 @@
   Die Remote hat EINEN Bildspeicher und laedt das Bild der Klingel, deren Popup gerade aufgeht.
 - Kamerabild und Live-Bild: die Remote meldet esphome.remote_cam_snapshot bzw. esphome.remote_live_start mit der
   gewuenschten Kamera. Erlaubt ist jede Kamera, die im Konfigurator bei einer Remote eingetragen ist (cfg.kameras).
-Bilder liegen in /config/www (= /local/...), dort holt die Remote sie per HTTP.
+Bilder liegen in /config/.esphomeremote_images (bilddateien.py), die Remote holt sie mit Schluessel per HTTP.
 """
 
 from __future__ import annotations
@@ -83,7 +83,8 @@ class Bilder:
     def __init__(self, hass: HomeAssistant, kd) -> None:
         self.hass = hass
         self.kd = kd
-        self.www = hass.config.path("www")
+        from .bilddateien import ordner
+        self.www = ordner(hass)   # nicht mehr /config/www (oeffentlich unter /local/, 2026-11-04)
         self._abo = None
         self._live: asyncio.Task | None = None
 
@@ -98,6 +99,8 @@ class Bilder:
             def schreiben() -> None:   # Ordner anlegen und Bild schreiben im Executor (nie in der Ereignisschleife)
                 os.makedirs(self.www, exist_ok=True)
                 _einpassen(img.content, groesse, os.path.join(self.www, datei))
+                from .bilddateien import merken
+                merken(datei, int(os.stat(os.path.join(self.www, datei)).st_mtime))
             await self.hass.async_add_executor_job(schreiben)
             return True
         except Exception as err:  # noqa: BLE001
@@ -218,12 +221,14 @@ def einrichten(hass: HomeAssistant, kd) -> Bilder:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/klingel_get"})
+@websocket_api.require_admin
 @callback
 def ws_klingel_get(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"klingel": hass.data[DOMAIN + "_bilder"].klingeln})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/klingel_save", vol.Required("klingel"): list})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_klingel_save(hass, connection, msg) -> None:
     b: Bilder = hass.data[DOMAIN + "_bilder"]
@@ -239,6 +244,7 @@ async def ws_klingel_save(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/klingel_test", vol.Optional("platz"): int,
                                   vol.Optional("kid"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_klingel_test(hass, connection, msg) -> None:
     b: Bilder = hass.data[DOMAIN + "_bilder"]

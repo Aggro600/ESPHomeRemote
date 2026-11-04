@@ -265,6 +265,19 @@ direkt_schluessel: "…"             # 32 hex characters, e.g. from  openssl ran
 esphomeremote_key: "…"      # the line you copied in step 2
 ```
 
+*Own fixed API key instead of the OTA password:* the firmware protects updates with `ota_pw`, because Home Assistant
+hands out the API key only when the device is added. If you set a fixed key yourself, ESPHome warns that the password
+"wastes flash and RAM". Then add this to your device YAML, and `ota_pw` is no longer needed:
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+ota:
+  - id: !extend ota_esphome
+    password: !remove
+    encryption: {}
+```
+
 **Step 4 – Flash the remote**
 1. In the ESPHome add-on: **"+ New device"** → **"Skip"** (or "Create empty").
 2. Copy the contents of [`esphomeremote.yaml`](esphomeremote.yaml) into the editor – no changes needed
