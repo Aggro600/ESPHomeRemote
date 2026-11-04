@@ -557,6 +557,19 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (!Object.getOwnPropertyDescriptor(o, "name")) Object.defineProperty(o, "name", { value: "Keine Aktivität", enumerable: false, writable: true });
     return o;
   }
+  // Aktivitaeten einer Remote samt "Keine Aktivitaet" (j = Index oder "ohne") - fuer Layout/Taste kopieren
+  _aktZiele(d) {
+    const c = this.s.cfg[d];
+    return [...(c.activities || []).map((a, i) => [i, a]), ["ohne", { name: "Keine Aktivität" }]];
+  }
+  _aktVon(d, j) {
+    const c = this.s.cfg[d];
+    if (j !== "ohne") return c.activities[Number(j)];
+    const o = (c.ohne ||= {});
+    o.keys ||= {};
+    if (!Object.getOwnPropertyDescriptor(o, "name")) Object.defineProperty(o, "name", { value: "Keine Aktivität", enumerable: false, writable: true });
+    return o;
+  }
   modusName(id) { return (this.cfg.modi || []).find((m) => m.id === id)?.name || id || "–"; }
   keyCfg(k = this.s.key) { return this.activity.keys[String(k)] || {}; }
   _commit(kc) {
@@ -1373,25 +1386,31 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       </div></div>`;
     }
     if (m.type === "copyact") {
-      const opts = [];
-      for (const d of this.s.order) this.s.cfg[d].activities.forEach((a, i) => {
-        if (d === this.s.dev && i === this.s.act) return;
-        opts.push(`<label class="opt"><input type="radio" name="src" value="${esc(d)}|${i}" ${m.src === `${d}|${i}` ? "checked" : ""}><span><b>${esc(a.name)}</b><small>${esc(devName(d))}</small></span></label>`);
-      });
-      opts.push(`<label class="opt"><input type="radio" name="src" value="default" ${m.src === "default" ? "checked" : ""}><span><b>Werkseinstellung</b><small>Belegung, wie sie fest in der Firmware steckt</small></span></label>`);
+      // 2026-11-04 (Nutzer: Tastenlayout nach "Keine Aktivitaet" kopieren): beide Richtungen, "Keine Aktivitaet" als
+      // Quelle und Ziel. "nach" = die Belegung dieser Aktivitaet in mehrere andere schreiben.
+      const nach = m.richtung === "nach", opts = [];
+      for (const d of this.s.order) for (const [j, a] of this._aktZiele(d)) {
+        if (d === this.s.dev && this.s.modus == null && String(j) === String(this.s.act === -1 ? "ohne" : this.s.act)) continue;
+        opts.push(nach
+          ? `<label class="opt"><input type="checkbox" name="dst" value="${esc(d)}|${j}" ${d === this.s.dev && j === "ohne" ? "checked" : ""}><span><b>${esc(a.name)}</b><small>${esc(devName(d))}</small></span></label>`
+          : `<label class="opt"><input type="radio" name="src" value="${esc(d)}|${j}" ${m.src === `${d}|${j}` ? "checked" : ""}><span><b>${esc(a.name)}</b><small>${esc(devName(d))}</small></span></label>`);
+      }
+      if (!nach && this.s.act !== -1) opts.push(`<label class="opt"><input type="radio" name="src" value="default" ${m.src === "default" ? "checked" : ""}><span><b>Werkseinstellung</b><small>Belegung, wie sie fest in der Firmware steckt</small></span></label>`);
       return `<div class="modal" data-a="modalbg"><div class="dlg">
         <div class="dh"><h2>Layout kopieren</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
-        <p>Ersetzt alle Tasten der Aktivität <b>„${esc(this.activity.name)}“</b> durch die Belegung von:</p>
+        <div class="seg sm"><button class="${nach ? "" : "on"}" data-a="copyact_r" data-v="von">Hierher holen</button><button class="${nach ? "on" : ""}" data-a="copyact_r" data-v="nach">Von hier kopieren nach …</button></div>
+        <p>${nach ? `Die Belegung von <b>„${esc(this.activity.name)}“</b> ersetzt alle Tasten der gewählten Aktivitäten:` : `Ersetzt alle Tasten von <b>„${esc(this.activity.name)}“</b> durch die Belegung von:`}</p>
         <div class="opts">${opts.join("")}</div>
+        ${nach || this.s.act === -1 ? `<small class="note">„Keine Aktivität“ gilt, solange keine Aktivität läuft. Belegte Tasten ersetzen dort die der zuletzt gelaufenen Aktivität.</small>` : ""}
         <div class="dfoot"><button class="btn ghost" data-a="modalx">Abbrechen</button><button class="btn primary" data-a="docopyact">Kopieren</button></div>
       </div></div>`;
     }
     if (m.type === "copykey") {
       const opts = [];
-      for (const d of this.s.order) this.s.cfg[d].activities.forEach((a, i) => {
-        if (d === this.s.dev && i === this.s.act) return;
-        opts.push(`<label class="opt"><input type="checkbox" name="dst" value="${esc(d)}|${i}" ${d === this.s.dev ? "checked" : ""}><span><b>${esc(a.name)}</b><small>${esc(devName(d))}</small></span></label>`);
-      });
+      for (const d of this.s.order) for (const [j, a] of this._aktZiele(d)) {
+        if (d === this.s.dev && this.s.modus == null && String(j) === String(this.s.act === -1 ? "ohne" : this.s.act)) continue;
+        opts.push(`<label class="opt"><input type="checkbox" name="dst" value="${esc(d)}|${j}" ${d === this.s.dev && j !== "ohne" ? "checked" : ""}><span><b>${esc(a.name)}</b><small>${esc(devName(d))}</small></span></label>`);
+      }
       return `<div class="modal" data-a="modalbg"><div class="dlg">
         <div class="dh"><h2>„${esc(KEYNAME[this.s.key])}“ übertragen</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
         <p>Kurz, doppelt und lang dieser Taste in folgende Aktivitäten übernehmen:</p>
@@ -1848,12 +1867,27 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       case "modalbg": if (ev.target !== t) return; s.modal = null; break;
       case "modalx": s.modal = null; break;
       case "copyact": s.modal = { type: "copyact", src: null }; break;
+      case "copyact_r": s.modal.richtung = t.dataset.v; break;
       case "docopyact": {
+        if (s.modal.richtung === "nach") {
+          const dsts = [...this.shadowRoot.querySelectorAll('input[name="dst"]:checked')].map((x) => x.value);
+          if (!dsts.length) return;
+          const namen = [];
+          for (const v of dsts) {
+            const [d, j] = v.split("|"), z = this._aktVon(d, j);
+            z.keys = clone(this.activity.keys || {});
+            namen.push(z.name + (d === this.s.dev ? "" : ` (${devName(d)})`));
+            this._touch(d);
+          }
+          s.modal = null;
+          s.msg = { text: `Layout von „${this.activity.name}“ nach ${namen.map((n) => `„${n}“`).join(", ")} kopiert – noch nicht gespeichert.` };
+          break;
+        }
         const v = this.shadowRoot.querySelector('input[name="src"]:checked')?.value;
         if (!v) return;
         let keys;
         if (v === "default") keys = (await this._hass.callWS({ type: "esphomeremote/default" })).config.activities[s.act]?.keys || {};
-        else { const [d, j] = v.split("|"); keys = this.s.cfg[d].activities[Number(j)].keys; }
+        else { const [d, j] = v.split("|"); keys = this._aktVon(d, j).keys || {}; }
         this.activity.keys = clone(keys);
         this._touch();
         s.modal = null;
@@ -1866,7 +1900,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         const dsts = [...this.shadowRoot.querySelectorAll('input[name="dst"]:checked')].map((x) => x.value);
         for (const v of dsts) {
           const [d, j] = v.split("|");
-          const keys = this.s.cfg[d].activities[Number(j)].keys;
+          const keys = this._aktVon(d, j).keys;
           if (Object.keys(kc).length) keys[String(s.key)] = clone(kc); else delete keys[String(s.key)];
           this._touch(d);
         }
@@ -3583,6 +3617,11 @@ const MenuEditor = {
         p.items = p.items || [];
         const at = s.mitem != null ? s.mitem + 1 : p.items.length;
         p.items.splice(at, 0, { t: "page", target: id, label: title, w: 6, h: 1 });
+        if (p.startseite) {   // Startseiten-Editor zeigt nur Startseiten - die Unterseite bearbeitet man im Menue
+          s.mitem = at; this._touch();
+          s.msg = { text: `Unterseite „${title}“ angelegt und auf „${p.title}“ verlinkt – Inhalt im Menü-Editor bearbeiten.` };
+          return true;
+        }
         s.mpage = id; s.mitem = null; s.msel = []; this._touch();
         s.msg = { text: `Unterseite „${title}“ angelegt und auf „${p.title}“ verlinkt – du bist jetzt drin. Zurück über den Pfad oben.` };
         return true;
@@ -4503,7 +4542,7 @@ const HomeEditor = {
     const links = this._hSeitenHtml(p);
     if (p) return `<div class="mmain ${s.mitem != null ? "editing" : ""}">
         <div class="mpages">${links}</div>
-        <div class="mprev">${this._hLive(p)}${this._mList(p)}</div>
+        <div class="mprev">${this._hPageHead(p)}${this._hLive(p)}${this._mList(p)}</div>
         <div class="editor">${this.mitem ? this._mItemEditor() : this._hSeitenEinst(p)}</div>
       </div>`;
     return `<div class="mmain hstdmain"><div class="mpages">${links}</div><div class="hstdw"><div class="mbar">
@@ -4577,10 +4616,10 @@ const HomeEditor = {
   },
   // Einstellungen rechts im Hauptfenster (2026-10-30, vorher gequetscht links): Seite, Aktivitaeten-Leiste, Statusleiste
   _hSeitenEinst(p) {
-    return `<div class="hseinst">${p ? `<h3><ha-icon icon="mdi:home-variant-outline"></ha-icon>Diese Startseite</h3>${this._hPageHead(p)}` : ""}
+    return `<div class="hseinst">
       ${this._hLeisteHtml()}${this._hStatusHtml()}
       ${p ? '<small class="note">Eintrag in der Vorschau oder Liste antippen, um ihn zu bearbeiten.</small>' : ""}
-      ${this.s.order.length > 1 ? `<button class="btn small ghost" data-a="hueber" ${p ? `data-p="${esc(p.id)}"` : ""} title="${p ? "Diese Startseite an andere Remotes übertragen (gleiche Aktivität bekommt sie als Startseite)" : "Aufbau der eingebauten Startseite an andere Remotes übertragen"}"><ha-icon icon="mdi:upload-multiple"></ha-icon>An andere Remotes …</button>` : ""}</div>`;
+      ${!p && this.s.order.length > 1 ? `<button class="btn small ghost" data-a="hueber" title="Aufbau der eingebauten Startseite an andere Remotes übertragen"><ha-icon icon="mdi:upload-multiple"></ha-icon>An andere Remotes …</button>` : ""}</div>`;
   },
   // Statusleiste (2026-10-30): die Symbol-Schalter der Remote (Einstellungen > Anzeige) auch hier - gehen sofort an die Remote
   _hStatusHtml() {
@@ -4639,6 +4678,10 @@ const HomeEditor = {
     return this._leisteReihe().map((i) => [this.cfg.activities[i], i])
       .map(([a, i]) => `<span class="${i === an ? "an" : ""}" data-ai="${i}" title="Ziehen = Reihenfolge in der Leiste">${l.sym && a.icon ? `<ha-icon icon="mdi:${esc(a.icon)}"></ha-icon>` : ""}${l.sym === "nur" && a.icon ? "" : `<small>${esc(a.name)}</small>`}</span>`).join("");
   },
+  // Seitenkopf der eigenen Startseite (2026-11-04, Nutzer: "denselben Editor mit dem Umfang wie im Menue"): steht wie im
+  // Menue-Editor ueber der Vorschau, damit er auch mit gewaehltem Eintrag sichtbar bleibt (vorher rechts statt des
+  // Eintrags-Editors - "Automatisch anordnen" war dann nicht zu finden). Ohne Markierung/Zurueck-Optionen und
+  // Steuerkreuz-Steuerung: auf der Startseite steuern die Tasten das Geraet, nichts ist markiert.
   _hPageHead(p) {
     return `<div class="phd">
       <div class="inl"><input data-mp="title" value="${esc(p.title || "")}" placeholder="Titel (nur hier im Konfigurator)"></div>
@@ -4650,8 +4693,13 @@ const HomeEditor = {
         <label class="inl2">Aktivitäten-Leiste <select data-hps="leiste">${[["", "unten"], ["oben", "oben"], ["aus", "aus"]].map(([v, l]) => `<option value="${v}" ${(p.leiste || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <small>${(() => { const f = hFenster(p), z = (f.u - f.o) / 40; return Number.isInteger(z) ? `${z} Zeilen ohne Scrollen` : `${Math.floor(z)} Zeilen ohne Scrollen (+${f.u - f.o - Math.floor(z) * 40} px)`; })()}</small></div>
       <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
+        <button class="btn small" data-a="maddsub" title="Neue Menüseite anlegen und hier als Kachel verlinken"><ha-icon icon="mdi:file-tree"></ha-icon>Unterseite</button>
+        <button class="btn small" data-a="mappadd" title="App am Fernseher/Streamer öffnen – der Konfigurator erkennt sie und legt einen Eintrag an, der sie öffnet"><ha-icon icon="mdi:apps"></ha-icon>App …</button>
+        ${this.s.order.length > 1 ? `<button class="btn small ghost" data-a="hueber" data-p="${esc(p.id)}" title="Diese Startseite an andere Remotes übertragen (gleiche Aktivität bekommt sie als Startseite)"><ha-icon icon="mdi:upload-multiple"></ha-icon>An andere Remotes …</button>` : ""}
         ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
+        <button class="btn small ghost" data-a="mclippage" title="Seite samt Unterseiten kopieren – einfügen bei jeder Remote unter „Seiten“"><ha-icon icon="mdi:content-copy"></ha-icon>Seite in Zwischenablage</button>
         <button class="btn small ghost" data-a="mers" title="Eine Entität überall durch eine andere ersetzen (z. B. anderer Media Player)"><ha-icon icon="mdi:find-replace"></ha-icon>Entität ersetzen</button>
+        <button class="btn small" data-a="mtest" title="Diese Seite jetzt auf ${esc(devName(this.s.dev))} anzeigen (als Popup)"><ha-icon icon="mdi:cellphone-play"></ha-icon>Auf der Remote zeigen</button>
         <button class="btn small ghost" data-a="mcopypage"><ha-icon icon="mdi:content-duplicate"></ha-icon>Seite kopieren</button>
         <button class="btn small ghost" data-a="mdelpage"><ha-icon icon="mdi:delete-outline"></ha-icon>Startseite löschen</button></div>
     </div>`;

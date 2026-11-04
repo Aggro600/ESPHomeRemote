@@ -3231,5 +3231,14 @@
 "ESPHome-Einträge auf die Brücke stellen": "Point ESPHome entries to the bridge",
 "ESPHome-Eintrag zeigt auf": "ESPHome entry points to",
 "ESPHome-Einträge umgestellt.": "ESPHome entries changed.",
-"Brücke:": "Bridge:"
+"Brücke:": "Bridge:",
+"„Keine Aktivität“ gilt, solange keine Aktivität läuft. Belegte Tasten ersetzen dort die der zuletzt gelaufenen Aktivität.": "“No activity” applies while no activity is running. Keys set there replace those of the last activity.",
+"Neue Menüseite anlegen und hier als Kachel verlinken": "Create a new menu page and link it here as a tile",
+"ersetzt alle Tasten der gewählten Aktivitäten:": "replaces all keys of the selected activities:",
+"“ verlinkt – Inhalt im Menü-Editor bearbeiten.": "” – edit its content in the menu editor.",
+"Von hier kopieren nach …": "Copy from here to …",
+"Hierher holen": "Copy here",
+"Layout von „": "Layout of “",
+"Die Belegung von": "The layout of",
+"Ersetzt alle Tasten von": "Replaces all keys of"
 }
