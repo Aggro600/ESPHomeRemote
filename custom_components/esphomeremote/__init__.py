@@ -1324,6 +1324,8 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     async def _freigaben_spaeter() -> None:
         await asyncio.sleep(2)   # nicht mitten im Einrichten des Eintrags
         _freigaben()
+        if (b := hass.data.get(DOMAIN + "_bruecke")) is not None:
+            b.pruefen()   # Adresse der Remote im ESPHome-Eintrag (Reparatur-Hinweis bridge_address)
 
     _freigaben()
 
@@ -1650,7 +1652,8 @@ async def ws_anzeige_set(hass: HomeAssistant, connection: websocket_api.ActiveCo
     connection.send_result(msg["id"], {**a.stand(), "vorschau": await a.daten()})
 
 
-@websocket_api.websocket_command({vol.Required("type"): "esphomeremote/bruecke", vol.Optional("ota"): str})
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote/bruecke", vol.Optional("ota"): str,
+                                  vol.Optional("eintraege", default=False): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_bruecke(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
@@ -1661,6 +1664,8 @@ async def ws_bruecke(hass: HomeAssistant, connection: websocket_api.ActiveConnec
             p["ota"] = slug == msg["ota"]
         await b.kd.store.async_save(b.kd.data)
     await b.abgleichen()
+    if msg["eintraege"]:   # nur nach Rueckfrage im Konfigurator
+        await b.eintraege_umstellen()
     connection.send_result(msg["id"], b.info())
 
 

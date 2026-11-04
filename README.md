@@ -397,6 +397,9 @@ everything the remotes are actually built with:
   `remote-dev-tests.yaml` (test tools, can be turned off).
 - `tools/remotes.py` generates `remote-wz-<name>.yaml` and `remote-wz-<name>-halink.yaml` per remote
   (list in `tools/remotes.json`, IP secret `ip_remote_wz_<name>`). Build/flash: `tools/esphome_run.mjs`.
+  For these remotes the integration runs a Bluetooth bridge at `127.0.0.1:<port>` (from 16053). It does not change
+  ESPHome's config entries itself: if an entry points elsewhere, a repair issue names host and port; set them via
+  ESPHome → Reconfigure, or with "Point ESPHome entries to the bridge" in the configurator (Firmware, asks first).
 - `components/ha_tunnel`, `components/network` (Bluetooth layer), `components/dock_direkt`, `dock_hid`,
   `bluetooth_connection` (dock), `custom_components/esphomeremote/ble_link.py` (HA counterpart of the
   Bluetooth layer), `home-assistant/packages/` (YAML alternative to the integration), `docs/development/` (architecture, radio

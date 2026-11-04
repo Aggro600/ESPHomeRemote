@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.4.3 (2026-11-04)
+
+**HACS review: no more writes to ESPHome's config entries.** With the developer setup (tools/remotes.json) the integration used to point the ESPHome entries of these remotes to the Bluetooth bridge (127.0.0.1:<port>) by itself at every start. It now only checks them: if an entry points elsewhere, a repair issue names host and port. Set them via ESPHome → Reconfigure, or press "Point ESPHome entries to the bridge" in the configurator (Firmware, asks first). Normal installs are not affected. The firmware itself is unchanged.
+
+<details><summary>Deutsch</summary>
+
+**HACS-Prüfung: keine Änderungen mehr an ESPHome-Einträgen.** Im Entwickler-Aufbau (tools/remotes.json) hat die Integration die ESPHome-Einträge dieser Remotes bei jedem Start selbst auf die Bluetooth-Brücke (127.0.0.1:<Port>) gestellt. Jetzt prüft sie nur noch: zeigt ein Eintrag woandershin, nennt ein Reparatur-Hinweis Host und Port. Eintragen über ESPHome → Neu konfigurieren oder im Konfigurator (Firmware) mit „ESPHome-Einträge auf die Brücke stellen“ (fragt vorher). Normale Installationen betrifft das nicht. Die Firmware selbst ist unverändert.
+
+</details>
+
 ## 2026.11.4.2 (2026-11-04)
 
 **Configurator:** a remote no longer shows "1 setting pending" forever. A setting the firmware dropped in October (number keyboard, always on since then) could still be stored for a remote; the remote never reports it back. Such settings are now removed on start and ignored when restoring old backups. The firmware itself is unchanged.

@@ -207,6 +207,8 @@ function i18nKnoten(root) {
 }
 // Dialoge der Seite gehen ebenfalls durch das Woerterbuch (Modul-Namen ueberdecken die globalen)
 const confirm = (m) => window.confirm(tr(m));
+// ESPHome-Eintrag der Remote zeigt nicht auf ihren Brücken-Port (2026-11-04: wird nur noch per Knopf umgestellt)
+const brueckeFalsch = (g) => !!(g.bruecke?.eintrag && (g.bruecke.eintrag.host !== "127.0.0.1" || g.bruecke.eintrag.port !== g.bruecke.port));
 const prompt = (m, v) => window.prompt(tr(m), v);
 const alert = (m) => window.alert(tr(m));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6596,7 +6598,9 @@ const FirmwareTab = {
       ${sammel}
       <div class="dkopf"><h3>Fernbedienungen</h3><span class="grow"></span>
         <button class="btn small" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
-      ${rem.map((g) => this._fwKarte(g, g.bruecke ? `<div class="ents">Feste IP <code>${esc(g.bruecke.ip || "per Router")}</code> · Bluetooth-Brücke in HA <code>127.0.0.1:${g.bruecke.port}</code>${g.bruecke.ota ? " · Updates auch über Bluetooth" : ""}${g.bruecke.aktiv ? "" : ` <span class="badge warn">Brücke läuft nicht</span>`}</div>` : "")).join("") || `<div class="karte">Keine.</div>`}
+      ${rem.map((g) => this._fwKarte(g, g.bruecke ? `<div class="ents">Feste IP <code>${esc(g.bruecke.ip || "per Router")}</code> · Bluetooth-Brücke in HA <code>127.0.0.1:${g.bruecke.port}</code>${g.bruecke.ota ? " · Updates auch über Bluetooth" : ""}${g.bruecke.aktiv ? "" : ` <span class="badge warn">Brücke läuft nicht</span>`}${brueckeFalsch(g) ? ` <span class="badge warn">ESPHome-Eintrag zeigt auf ${esc(g.bruecke.eintrag.host)}:${esc(String(g.bruecke.eintrag.port))}</span>` : ""}</div>` : "")).join("") || `<div class="karte">Keine.</div>`}
+      ${rem.some(brueckeFalsch) ? `<div class="msg"><b>ESPHome-Einträge zeigen nicht auf die Bluetooth-Brücke.</b> Die Integration stellt sie nicht von selbst um.
+        <div class="row" style="margin-top:6px"><button class="btn small" data-a="fw_bruecke_eintraege" ${beschaeftigt ? "disabled" : ""}><ha-icon icon="mdi:swap-horizontal"></ha-icon>ESPHome-Einträge auf die Brücke stellen</button></div></div>` : ""}
       ${this._fwDockHtml()}
       ${this._fwStreamerHtml()}
       ${inWerk ? "" : this._fwTestHtml()}
@@ -6723,6 +6727,15 @@ const FirmwareTab = {
     const g = fw?.geraete?.find((x) => x.datei === datei);
     switch (a) {
       case "fw_reload": await this._fwLaden(); return true;
+      case "fw_bruecke_eintraege": {
+        const liste = fw.geraete.filter(brueckeFalsch);
+        if (!confirm(`Diese ESPHome-Einträge auf die Bluetooth-Brücke stellen?\n\n${liste.map((x) => `• ${x.friendly || x.name}: ${x.bruecke.eintrag.host}:${x.bruecke.eintrag.port} → 127.0.0.1:${x.bruecke.port}`).join("\n")}\n\nHome Assistant verbindet sich danach über die Brücke mit diesen Remotes.`)) return true;
+        try {
+          await this._hass.callWS({ type: "esphomeremote/bruecke", eintraege: true });
+          this.s.msg = { text: "ESPHome-Einträge umgestellt." };
+        } catch (e) { this.s.msg = { err: true, text: "Brücke: " + (e.message || e.code) }; }
+        await this._fwLaden(); return true;
+      }
       case "fw_aufraeumen":
         try {
           const r = await this._hass.callWS({ type: "esphomeremote/fw_aufraeumen" });
