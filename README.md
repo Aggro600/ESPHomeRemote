@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://github.com/Aggro600/ESPHomeRemote/releases"><img src="https://img.shields.io/github/v/release/Aggro600/ESPHomeRemote?style=for-the-badge&color=03a9f4&label=release" alt="Latest release"></a>
-  <a href="https://hacs.xyz"><img src="https://img.shields.io/badge/HACS-custom%20repository-41BDF5?style=for-the-badge" alt="HACS"></a>
+  <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration"><img src="https://img.shields.io/badge/HACS-default-41BDF5?style=for-the-badge" alt="HACS"></a>
   <img src="https://img.shields.io/badge/ESPHome-native-1a1a1a?style=for-the-badge&logo=esphome&logoColor=white" alt="ESPHome">
   <img src="https://img.shields.io/badge/Home%20Assistant-integrated-41BDF5?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
@@ -247,13 +247,14 @@ In Home Assistant: *Settings → Add-ons → Add-on Store →* install and start
 
 **Step 2 – Install the configurator (via HACS)**
 1. If you don't have it yet: install **HACS** (https://hacs.xyz – once, 5 minutes).
-2. Open **HACS** in Home Assistant → **⋮** at the top right → **"Custom repositories"**.
-3. Paste `https://github.com/Aggro600/ESPHomeRemote` – type **"Integration"** → **Add**.
-4. Search HACS for **"ESPHomeRemote"** → **Download**.
-5. **Restart** Home Assistant (*Settings → System → ⏻ at the top right → Restart*).
-6. *Settings → Devices & services →* **"+ Add integration"** → **"ESPHomeRemote"**.
+2. Open **HACS** in Home Assistant, search for **"ESPHomeRemote"** → **Download**
+   (or click [Open in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration)).
+   *Not found?* Older HACS versions or a stale list: **⋮** at the top right → **"Custom repositories"** →
+   paste `https://github.com/Aggro600/ESPHomeRemote`, type **"Integration"** → **Add**, then search again.
+3. **Restart** Home Assistant (*Settings → System → ⏻ at the top right → Restart*).
+4. *Settings → Devices & services →* **"+ Add integration"** → **"ESPHomeRemote"**.
    Keep the remote's name as it is (`esphomeremote`) → **Submit**.
-7. A line like `esphomeremote_key: "…"` appears – **copy** it, you'll need it in a moment.
+5. A line like `esphomeremote_key: "…"` appears – **copy** it, you'll need it in a moment.
 
 **Step 3 – Enter passwords**
 In the ESPHome add-on, click **"Secrets"** at the top right and add these lines
