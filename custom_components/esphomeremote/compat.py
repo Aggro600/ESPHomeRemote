@@ -6,6 +6,7 @@ views) and read sensor.esphomeremote_konfig_<remote>. Remove this module once al
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers.service import async_set_service_schema
 
 DOMAIN = "esphomeremote"
 OLD_DOMAIN = "esphomeremote_konfig"
@@ -27,3 +28,9 @@ def setup(hass: HomeAssistant) -> None:
         async def forward(call: ServiceCall, new: str = new) -> None:
             await hass.services.async_call(DOMAIN, new, dict(call.data), blocking=True, context=call.context)
         hass.services.async_register(OLD_DOMAIN, old, forward)
+        # Beschreibung gleich mitgeben (2026-11-05): sonst sucht HA bei jedem Start eine services.yaml der
+        # Integration "esphomeremote_konfig" und meldet "Failed to load services.yaml" (es gibt sie nicht mehr)
+        async_set_service_schema(hass, OLD_DOMAIN, old, {
+            "name": f"{old} (alt)",
+            "description": f"Alter Name aus der Zeit vor der Umbenennung - leitet an {DOMAIN}.{new} weiter (alte Firmware).",
+            "fields": {}})

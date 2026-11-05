@@ -1,5 +1,19 @@
 # What's new · Was ist neu
 
+## 2026.11.5.2 (2026-11-05)
+
+**Streamer app knows "camera only".** When "camera only" is on for a streamer, Home Assistant now tells the app too: it no longer subscribes to window events (Android delivers nothing to it) and only reacts to camera commands. The app's status page shows a green "camera only" instead of red hints about missing notification access. To apply, tap "Update" at the streamer in the configurator.
+
+**No more error at startup.** The old service names esphomeremote_konfig.* (for devices with older firmware) now have a description – Home Assistant no longer logs "Failed to load services.yaml" on every start.
+
+<details><summary>Deutsch</summary>
+
+**Streamer-App kennt „Nur Kamera“.** Ist beim Streamer „Nur Kamera“ an, sagt Home Assistant das jetzt auch der App: sie abonniert dann keine Fenster-Ereignisse mehr (Android stellt ihr gar nichts zu) und reagiert nur noch auf Kamera-Befehle. Die Statusseite der App zeigt grün „Nur Kamera“ statt roter Hinweise auf fehlenden Benachrichtigungszugriff. Zum Übernehmen im Konfigurator beim Streamer auf „Aktualisieren“ tippen.
+
+**Keine Fehlermeldung mehr beim Start.** Die alten Dienstnamen esphomeremote_konfig.* (für Geräte mit älterer Firmware) haben jetzt eine Beschreibung – Home Assistant meldet nicht mehr bei jedem Start „Failed to load services.yaml“.
+
+</details>
+
 ## 2026.11.5.1 (2026-11-05)
 
 **Clean removal.** Deleting the integration entry now removes ESPHomeRemote without leftovers: the configurator disappears from the sidebar right away (no restart), settings, IR database and images are deleted, the streamer app is uninstalled from the streamers, services, repair issues and orphaned entities are removed. The ESPHome files of remotes and docks stay (they belong to the ESPHome add-on). If you already uninstalled and still see the configurator in the sidebar: install this version, delete the entry, then remove it in HACS.
