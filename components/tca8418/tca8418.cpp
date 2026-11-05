@@ -6,10 +6,13 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <esp_attr.h>
+
 namespace esphome {
 namespace tca8418 {
 
 static const char *const TAG = "tca8418";
+RTC_NOINIT_ATTR FruehEreignisse g_frueh_tasten;
 
 // TCA8418 register map (TI datasheet SCPS215).
 static const uint8_t REG_CFG = 0x01;
@@ -131,6 +134,17 @@ bool TCA8418Component::configure_() {
   // FORK 2026-10-20: Nach dem Aufwachen aus dem Tiefschlaf stehen im FIFO die Weck-Taste und alles, was waehrend des
   // Starts gedrueckt wurde. ZUERST sichern - das Neu-Einstellen unten leert den FIFO (gemessen: Weckpin "Taste",
   // FIFO danach 0). loop() wertet die gesicherten Ereignisse dann normal aus.
+  if (g_frueh_tasten.magic == FRUEH_MAGIC) {   // schon vom Schnellweg gelesen
+    g_frueh_tasten.magic = 0;
+    for (uint8_t i = 0; i < g_frueh_tasten.n && i < 10; i++) {
+      const uint8_t e = g_frueh_tasten.e[i];
+      if ((e & 0x7F) != 0) this->weck_ereignisse_.push_back(e);
+      if ((e & 0x80) && this->weck_taste_ == 0) this->weck_taste_ = e & 0x7F;
+    }
+    if (g_frueh_tasten.gesendet && this->weck_taste_ != 0) this->weck_erledigt_ = true;
+    ESP_LOGI(TAG, "Schnellweg: %u Tastenereignis(se) uebernommen, Weck-Taste %u %s", (unsigned) g_frueh_tasten.n,
+             this->weck_taste_, g_frueh_tasten.gesendet ? "schon gesendet" : "normal");
+  }
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED) {
     uint8_t n = 0;
     this->read_reg_(REG_KEY_LCK_EC, n);

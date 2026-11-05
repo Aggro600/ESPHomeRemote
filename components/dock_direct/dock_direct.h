@@ -60,6 +60,20 @@
 namespace esphome {
 namespace dock_direkt {
 
+// Fuer einen Schnellweg ganz am Anfang der Firmware (2026-11-05, Testversion Remote Gast): was ein Paket ans Dock
+// braucht, ueberlebt den Tiefschlaf im RTC-Speicher. Die Nummer ist der Anfang des naechsten Nummernblocks - die
+// Komponente setzt nach dem Start bei nr_frei + 1 fort (Block im NVS vorausgespeichert), also nie doppelt.
+struct SchnellDaten {
+  uint32_t magic;          // SCHNELL_MAGIC = gueltig
+  uint8_t kanal;           // Kanal des Docks (dock_kanal_ oder WLAN-Kanal)
+  uint8_t schluessel_len;
+  uint8_t schluessel[64];
+  uint32_t nr_frei;        // ab dieser Nummer darf der fruehe Versand zaehlen (nr_frei, nr_frei+1, ...)
+  uint8_t nr_benutzt;      // so viele Nummern hat er verbraucht (die Komponente setzt danach fort)
+};
+static const uint32_t SCHNELL_MAGIC = 0x5343484Eu;   // "SCHN"
+extern SchnellDaten g_schnell;
+
 enum Typ : uint8_t { IR = 1, RF = 2, HA = 3, ZUSTAND_FRAGE = 4, ZUSTAND = 5, HTTP_AUF = 6, HTTP_DATEN = 7, HTTP_ZU = 8, HTTP_QUITT = 9, HID = 10, HID_ANTWORT = 11,
                      SPRACHE = 12 };   // 12: Sprache fuer den Fernseher ueber das Dock (2026-10-24), s. senden_sprache
 
@@ -75,6 +89,16 @@ class DockDirekt : public Component
   void set_rf(remote_transmitter::RemoteTransmitterComponent *t) { rf_ = t; }
 #endif
   void add_on_senden(std::function<void(int typ)> &&f) { senden_cbs_.push_back(std::move(f)); }
+  // Aufzeichnen statt Senden (2026-11-05, Weck-Tabelle fuer den Schnellweg): solange gesetzt, landet jedes Paket mit
+  // Ziel und Inhalt hier, ohne Nummer/Pruefsumme und ohne Funk
+  struct Aufnahme {
+    uint8_t mac[6];
+    uint8_t typ;
+    uint32_t param;
+    uint16_t anzahl;
+    std::vector<uint8_t> inhalt;
+  };
+  void set_aufnahme(std::vector<Aufnahme> *a) { aufnahme_ = a; }
 #ifdef DD_HID
   void set_hid(dock_hid::DockHid *h) { hid_ = h; }
 #endif
@@ -166,6 +190,7 @@ class DockDirekt : public Component
                   std::function<void()> &&fehlschlag);
 
   std::string schluessel_;
+  std::vector<Aufnahme> *aufnahme_{nullptr};
   bool init_{false};
   uint32_t init_versuch_ms_{0};
   std::vector<std::function<void(int)>> senden_cbs_;

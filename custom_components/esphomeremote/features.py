@@ -267,7 +267,11 @@ class Funktionen:
             titel = "ESPHomeRemote Kamera auf dem TV" + (f" ({tvname})" if tvname else "")
             zustaende(self.hass).setzen(ek, "on" if z["sichtbar"] else "off",
                                        {"friendly_name": _t(self.hass, titel), "icon": "mdi:cctv", "camera": z["letzte"], "name": name,
-                                        "tv": tid or (tvname or ""), "cameras": [e for e in k["kameras"] if e.startswith("camera.")]})
+                                        "tv": tid or (tvname or ""), "cameras": [e for e in k["kameras"] if e.startswith("camera.")],
+                                        # Namen aus dem Konfigurator (2026-11-05, z. B. fuer das Popup-Menue am TV)
+                                        "camera_names": [str((k["kameras"].get(e) or {}).get("name") or e)
+                                                         for e in k["kameras"] if e.startswith("camera.")],
+                                        "streamer": getattr(self._app_streamer(k), "cfg", {}).get("id", "")})
             # Zustand = Groesse in der HA-Sprache (die Remote zeigt ihn so an), Attribut size = Wert fuer camera_size
             sid = next((i for i, g in GROESSE_ID.items() if g == k["groesse"]), "medium")
             zustaende(self.hass).setzen(eg, _t(self.hass, k["groesse"]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe") + (f" ({tvname})" if tvname else ""),
@@ -318,6 +322,21 @@ class Funktionen:
             _LOGGER.warning("Kamera auf dem TV: kein Fernseher '%s' (Konfigurator > Funktionen)", call.data.get("tv"))
             return
         tid, k = t
+        # Nur fuer diesen Aufruf (2026-11-05): size / position / seconds - die Einstellungen im Konfigurator bleiben
+        ov: dict = {}
+        if (g := call.data.get("size")) not in (None, ""):
+            g = GROESSE_ID.get(str(g), str(g))
+            if g in GROESSEN:
+                ov["groesse"] = g
+        if call.data.get("position") in POSITIONEN:
+            ov["position"] = call.data["position"]
+        if call.data.get("seconds") not in (None, ""):
+            try:
+                ov["sekunden"] = max(0, min(3600, int(float(call.data["seconds"]))))
+            except (TypeError, ValueError):
+                pass
+        if ov:
+            k = {**k, **ov}
         z = self._zst(tid)
         if not self._kamera_bereit(k):
             _LOGGER.warning("Kamera auf dem TV: kein Fernseher eingestellt (Konfigurator > Funktionen)")

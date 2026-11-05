@@ -251,6 +251,9 @@ class Verwalter:
             if st["adb"]:
                 for k in ("app_beenden", "neustart"):
                     soll[f"streamer_{st['id']}_{k}"] = ("button", sig, lambda st=st, k=k: StreamerKnopf(st, k))
+                if st.get("audio"):   # Soundbar per HDMI-CEC (2026-11-05)
+                    from .streamer import CecSchalter
+                    soll[f"streamer_{st['id']}_audio"] = ("switch", sig, lambda st=st: CecSchalter(self.hass, st["id"]))
         # Zusammengefasste "Jetzt laeuft"-Player (now_playing.py, Konfigurator-Seite "Wiedergabe")
         for j in self.kd.data.get("jetzt") or []:
             sig = hashlib.sha1(json.dumps(j, sort_keys=True).encode()).hexdigest()[:12]

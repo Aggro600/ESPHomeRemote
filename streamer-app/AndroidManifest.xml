@@ -3,6 +3,8 @@
      des Google Streamers per Webhook an Home Assistant - nur bei Aenderungen, statt der ADB-Abfrage alle 2 s. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="de.esphomeremote.streamer">
+    <!-- Tasten der Fernseher-Fernbedienung (HDMI-CEC) aus dem Systemprotokoll, Erteilen per ADB (1.16) -->
+    <uses-permission android:name="android.permission.READ_LOGS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Start-Seite: Knopf "Deinstallieren" (2026-10-26) -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />

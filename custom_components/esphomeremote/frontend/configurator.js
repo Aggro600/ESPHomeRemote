@@ -146,7 +146,15 @@ const SVC_DE = {
 };
 
 // Geraetename fuer die Anzeige: "remote-wz-kueche" -> "Remote Kueche"
-const devName = (d) => String(d).startsWith("remote-wz-")
+// Streamer-Menue im Editor (2026-11-05): Pseudo-Geraet "st:<streamer>"
+const ER_ST_NAMEN = {};
+const istSt = (d) => String(d).startsWith("st:");
+const ST_LAGEN = [["mitte", "Mitte"], ["links", "Links"], ["rechts", "Rechts"], ["oben", "Oben"], ["unten", "Unten"],
+  ["oben_links", "Oben links"], ["oben_rechts", "Oben rechts"], ["unten_links", "Unten links"], ["unten_rechts", "Unten rechts"]];
+// Was das Menue auf dem Fernseher kann (streamer_menu.html / streamer_menue.py)
+const ST_TYPEN = ["page", "action", "toggle", "light", "number", "select", "dropdown", "cover", "sensor", "text", "camera", "mtitel", "mtaste", "vpreset"];
+const ST_SCHRITTE = ["ha", "wait"];
+const devName = (d) => String(d).startsWith("st:") ? `Streamer: ${ER_ST_NAMEN[d] || String(d).slice(3)}` : String(d).startsWith("remote-wz-")
   ? "Remote " + String(d).slice(10).replace(/^./, (x) => x.toUpperCase())
   : String(d).split("-").map((w) => w.replace(/^./, (x) => x.toUpperCase())).join(" ");   // "open-remote" -> "Open Remote"
 // ---------------------------------------------------------------- Sprache (2026-11-01)
@@ -633,6 +641,12 @@ class EsphomeremoteKonfigurator extends HTMLElement {
 
   async _save() {
     const d = this.s.dev;
+    if (String(d).startsWith("st:")) {   // Streamer-Menue (2026-11-05)
+      const s = this.s, sid = d.slice(3);
+      s.stm[sid] = { ...s.stm[sid], menu: clone(this.cfg.menu) };
+      if (await this._stmSpeichern(sid)) { s.dirty[d] = false; s.saved[d] = JSON.stringify(this.cfg); }
+      this._render(); return;
+    }
     for (const [i, a] of this.cfg.activities.entries()) {
       if (!this._hasMenu(a)) {
         if (!confirm(`In der Aktivität „${a.name}“ öffnet keine Taste das Menü der Remote.\nTrotzdem speichern?`)) return;
@@ -1237,7 +1251,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       wait: { t: "wait", ms: 300 }, modus: { t: "modus", id: this.cfg.modi?.[0]?.id || "" } }[v];
   }
   _addArtModal() {
-    const arten = [["ble", "mdi:bluetooth", "Bluetooth-Gerät", "Taste an TV/Streamer (Lauter, OK, Home …)"],
+    const arten0 = [["ble", "mdi:bluetooth", "Bluetooth-Gerät", "Taste an TV/Streamer (Lauter, OK, Home …)"],
       ["ha", "mdi:home-assistant", "Home Assistant", "Skript, Szene, Licht, Schalter …"],
       ["regeln", "mdi:brightness-6", "Schrittweise regeln", "Licht heller/dunkler, Ventilator schneller"],
       ["ir", "mdi:remote", "Infrarot", "Code senden (gelernt oder aus der Datenbank)"],
@@ -1246,6 +1260,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       ["int", "mdi:cog", "Funktion der Remote", "Menü, Popup, Aktivität wechseln …"],
       ["wait", "mdi:timer-sand", "Warten", "Pause zwischen zwei Aktionen"],
       ...(this.cfg.modi?.length ? [["modus", "mdi:swap-horizontal", "Folgemodus starten", "Tasten vorübergehend umbelegen"]] : [])];
+    const arten = istSt(this.s.dev) ? arten0.filter(([v]) => ST_SCHRITTE.includes(v)) : arten0;
     return `<div class="modal" data-a="modalbg"><div class="dlg addart">
       <div class="dh"><h2>Was soll passieren?</h2><button class="icon" data-a="modalx"><ha-icon icon="mdi:close"></ha-icon></button></div>
       <div class="opts">${arten.map(([v, ic, l, d]) => `<button class="opt" data-a="addart_w" data-v="${v}"><ha-icon icon="${ic}"></ha-icon><span><b>${l}</b><small>${d}</small></span></button>`).join("")}</div>
@@ -1255,7 +1270,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     const id = `data-g="${g}" data-i="${i}"`;
     const typeSel = `<select data-f="t" ${id}>
       ${[["ble", "Bluetooth-Gerät"], ["ha", "Home Assistant"], ["regeln", "Schrittweise regeln (Licht / Ventilator)"], ["int", "Funktion der Remote"], ["ir", "Infrarot"], ["rf", "433 MHz (Dock)"], ["wait", "Warten"], ["modus", "Folgemodus starten"]]
-        .map(([v, l]) => `<option value="${v}" ${istRegeln(st) ? (v === "regeln" ? "selected" : "") : st.t === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+        .filter(([v]) => !istSt(this.s.dev) || ST_SCHRITTE.includes(v) || v === st.t).map(([v, l]) => `<option value="${v}" ${istRegeln(st) ? (v === "regeln" ? "selected" : "") : st.t === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
     let body = "";
     if (st.t === "ble") {
       // Geraete nur am Dock (2026-10-22, dock_hid): Wert "d:<dock>:<platz>"
@@ -1927,6 +1942,11 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       const k = s.klingel.klingel[Number(t.dataset.ki)];
       k[t.dataset.kl] = t.dataset.kl === "warten" ? Math.max(0, Math.min(30, Number(t.value) || 0)) : t.value;
       this._klingelSpeichern(); return;
+    }
+    if (t.dataset.stm) {
+      const m = s.stm[t.dataset.sid];
+      m[t.dataset.stm] = t.type === "checkbox" ? t.checked : ["groesse", "dauer"].includes(t.dataset.stm) ? Number(t.value) : t.value;
+      this._stmSpeichern(t.dataset.sid).then(() => this._render()); return;
     }
     if (t.dataset.st) {
       s.strm.streamer[Number(t.dataset.si)][t.dataset.st] = t.type === "checkbox" ? t.checked : t.value;
@@ -2759,6 +2779,7 @@ const MenuEditor = {
   },
 
   _mPageHead(p) {
+    if (istSt(this.s.dev)) return this._stmPageHead(p);
     const slug = this.s.meta[this.s.dev]?.slug, erreichbar = this._mReachable();
     return `<div class="phd">
       <div class="inl"><input data-mp="title" value="${esc(p.title || "")}" placeholder="Titel" ${fremdeZeichen(p.title).length ? `title="Zeichen ohne Schrift auf der Remote: ${esc(fremdeZeichen(p.title).join(" "))}" style="border-color:var(--gelb)"` : ""}><input data-mp="id" value="${esc(p.id)}" title="Kennung (für Verweise und HA-Popup)" class="mono"></div>
@@ -3401,7 +3422,7 @@ const MenuEditor = {
         <button class="btn ghost" data-a="mdup" title="Duplizieren"><ha-icon icon="mdi:content-duplicate"></ha-icon></button>
         <button class="btn ghost" data-a="mdel" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
       <div class="form mgrpform">${this._mGrp("eintrag", "mdi:card-text-outline", "Eintrag", esc(M_TYPE[it.t]?.l || it.t), `
-        <label>Art<select data-mi="t">${M_TYPES.map(([k, l]) => `<option value="${k}" ${k === it.t ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label>Art<select data-mi="t">${M_TYPES.filter(([k]) => !istSt(this.s.dev) || ST_TYPEN.includes(k) || k === it.t).map(([k, l]) => `<option value="${k}" ${k === it.t ? "selected" : ""}>${istSt(this.s.dev) && k === "camera" ? "Kamera einblenden (Bild im Bild)" : l}</option>`).join("")}</select></label>
         <label>Beschriftung${f("label", it.label, this._mItemText({ ...it, label: "" }) || "Text")}</label>
         ${fremdeZeichen(it.label).length ? `<small class="note warnz">Die Remote kann ${fremdeZeichen(it.label).map((c) => `„${esc(c)}“`).join(" ")} nicht anzeigen (fehlt in ihrer Schrift).</small>` : ""}
         ${it.t !== "text" && it.t !== "mtitel" ? `<label>Symbol <button class="iconpick" data-a="micon">${it.icon ? `<ha-icon icon="mdi:${esc(it.icon)}"></ha-icon> ${esc(it.icon)}` : "kein Symbol"}</button></label>` : ""}
@@ -6918,7 +6939,7 @@ const EINST_GRUPPEN = [
       "So lange ohne Bedienung, dann wird das Display gedimmt (Stufe <b>abgedunkelt</b>). Jede Taste, jeder Tipp – und mit „Aufhellen bei Bewegung“ auch eine Bewegung – macht es wieder hell. 0 = nicht abdunkeln."],
     ["ps_dim_pct", "Abdunkeln auf", STUFEN([5, 10, 15, 20, 25, 30, 40, 50, 60, 70], (v) => `${v} %`),
       "Helligkeit im abgedunkelten Zustand, bezogen auf die normale Helligkeit."],
-  ], "<b>Die Stufen der Remote:</b> <b>Hell</b> → nach „Abdunkeln nach“ <b>abgedunkelt</b> → nach „Display aus nach“ <b>Ruhezustand</b> (Display aus, der Chip läuft weiter, Bluetooth zum Fernseher bleibt verbunden, jede Taste wirkt sofort) → nach „Tiefschlaf nach“ <b>Tiefschlaf</b> (Chip fast ganz aus, Akku hält Wochen; Wecken = Neustart, ca. 4 s bis die Tasten wirken)."],
+  ], "<b>Die Stufen der Remote:</b> <b>Hell</b> → nach „Abdunkeln nach“ <b>abgedunkelt</b> → nach „Display aus nach“ <b>Ruhezustand</b> (Display aus, der Chip läuft weiter, Bluetooth zum Fernseher bleibt verbunden, jede Taste wirkt sofort) → nach „Tiefschlaf nach“ <b>Tiefschlaf</b> (Chip fast ganz aus, Akku hält Wochen; Wecken = Neustart – Tasten übers Dock wirken ab Firmware 2026.11.5.4 nach ca. 0,2–0,7 s, alles andere nach ca. 1–2 s)."],
   ["Anzeige", "mdi:monitor-dashboard", [
     ["sprache", "Sprache des Displays", [[0, "Wie Home Assistant"], [1, "Deutsch"], [2, "English"]],
       "Sprache der Texte auf dem Display dieser Remote. „Wie Home Assistant“ folgt der Systemsprache von HA (Deutsch, sonst Englisch). Gilt nur für diese Remote und läuft im Abgleich nicht mit. Deine eigenen Namen bleiben, wie sie sind. Die Remote startet nach dem Umstellen kurz neu."],
@@ -6952,9 +6973,9 @@ const EINST_GRUPPEN = [
     ["menue_weckt_nur", "Menütaste bei dunklem Display", [[false, "Weckt und öffnet das Menü"], [true, "Weckt nur das Display"]],
       "Nur für die Menütaste bei dunklem Display. Weckt und öffnet: ein Druck schaltet ein und öffnet sofort das Menü. Weckt nur: der erste Druck schaltet nur ein, der nächste öffnet das Menü."],
     ["weck_tasten", "Tasten beim Aufwachen aus dem Tiefschlaf", [[2, "Senden – auch die Weck-Taste"], [1, "Weck-Taste nur wecken, danach gedrückte senden"], [0, "Nur wecken – nichts nachsenden"]],
-      "Der Start aus dem Tiefschlaf dauert ca. 4 s. <b>Senden:</b> die Taste, mit der du weckst, und alles, was du während des Starts drückst, wirkt danach normal; Fernseher-Tasten warten, bis Bluetooth verbunden ist (bis zu 8 Tasten, höchstens 20 s nach dem Start, sonst verworfen). <b>Weck-Taste nur wecken:</b> die erste Taste schaltet nur ein, alle weiteren wirken wie oben. <b>Nur wecken:</b> die Weck-Taste wirkt nicht, und Fernseher-Tasten vor der Bluetooth-Verbindung werden verworfen. In allen Fällen gilt: Infrarot wirkt sofort, HA-Befehle gehen sofort übers Dock (ohne Dock warten sie bis zu 10 s auf die eigene HA-Verbindung)."],
-    ["weck_dock", "Weck-Taste übers Dock", [[0, "Schon beim Start senden (unter 1 s)"], [1, "Wie bisher: nach dem Start (ca. 4 s)"]],
-      "Gilt, wenn oben „Senden – auch die Weck-Taste“ gewählt ist. <b>Schon beim Start:</b> ist die Taste nur „kurz“ belegt und geht ihr Befehl übers Dock (Bluetooth am Dock, Infrarot oder 433 MHz übers Dock), schickt die Remote sie per Funk ans Dock, noch bevor Display und Menü hochfahren – ca. 1 s nach dem Druck. Erreicht sie das Dock nicht, geht die Taste wie bisher nach dem Start raus. Tasten mit Doppel-/Lang-Belegung, HA-Befehlen oder Funktionen der Remote wirken immer erst nach dem Start."],
+      "Der Start aus dem Tiefschlaf dauert ca. 1–2 s (ab Firmware 2026.11.5.4; vorher ca. 4 s). <b>Senden:</b> die Taste, mit der du weckst, und alles, was du während des Starts drückst, wirkt danach normal; Fernseher-Tasten warten, bis Bluetooth verbunden ist (bis zu 8 Tasten, höchstens 20 s nach dem Start, sonst verworfen). <b>Weck-Taste nur wecken:</b> die erste Taste schaltet nur ein, alle weiteren wirken wie oben. <b>Nur wecken:</b> die Weck-Taste wirkt nicht, und Fernseher-Tasten vor der Bluetooth-Verbindung werden verworfen. In allen Fällen gilt: Infrarot wirkt sofort, HA-Befehle gehen sofort übers Dock (ohne Dock warten sie bis zu 10 s auf die eigene HA-Verbindung)."],
+    ["weck_dock", "Weck-Taste übers Dock", [[0, "Schon beim Start senden (ca. 0,2–0,7 s)"], [1, "Erst nach dem Start (ca. 1–2 s)"]],
+      "Gilt, wenn oben „Senden – auch die Weck-Taste“ gewählt ist. <b>Schon beim Start:</b> ist die Taste nur „kurz“ belegt und geht ihr Befehl übers Dock (Bluetooth am Dock, Infrarot oder 433 MHz übers Dock), schickt die Remote sie per Funk ans Dock, noch bevor Display und Menü hochfahren: ab Firmware 2026.11.5.4 ganz am Anfang des Starts („Schnellweg“, die Remote merkt sich dafür vor dem Tiefschlaf die fertigen Befehle der aktuellen Aktivität) – ca. 0,7 s nach dem Druck, mit dem schnellen Bootloader (einmal per USB geflasht) ca. 0,2 s. Auch beim Hochnehmen: drückst du gleich danach, geht die Taste genauso schnell raus. Erreicht sie das Dock nicht, geht die Taste wie bisher nach dem Start raus. Tasten mit Doppel-/Lang-Belegung, HA-Befehlen oder Funktionen der Remote wirken immer erst nach dem Start."],
     ["motion_mode", "Aufwecken bei", [[0, "Aus"], [1, "Bewegung"], [2, "Hochheben"]],
       "Was das Display im <b>Ruhezustand</b> (Display aus, Remote wach) von selbst einschaltet. Aus: Bewegung weckt nie (nur Tasten, Touch, Klopfen). Bewegung: schon ein leichtes Anstoßen. Hochheben: erst, wenn sie gekippt bzw. aus der Ablage gehoben wird (Lage ändert sich um 12–35°, je nach Empfindlichkeit) – ein Stoß gegen den Tisch weckt dann nicht. Für den Tiefschlaf gibt es die eigene Einstellung darunter."],
     ["tief_motion", "Aufwecken aus dem Tiefschlaf bei", [[-1, "Wie oben (Aufwecken bei)"], [1, "Bewegung – schon leichtes Anstoßen"], [2, "Hochheben"], [0, "Aus – nur Tasten, Klopfen, Ladekabel"]],
@@ -7238,6 +7259,11 @@ const EinstTab = {
     try {
       this.s.jetzt = await this._hass.callWS({ type: "esphomeremote/jetzt_get" });
       this.s.strm = await this._hass.callWS({ type: "esphomeremote/streamer_get" });
+      this.s.stm ||= {};
+      for (const x of this.s.strm.streamer || []) {
+        try { this.s.stm[x.id] = (await this._hass.callWS({ type: "esphomeremote/streamer_menue_get", streamer: x.id })).daten; }
+        catch (e) { /* aeltere Integration */ }
+      }
     } catch (e) { this.s.jetzt = { fehler: e.message || String(e) }; }
     this._jzLaedt = false; this._render();
   },
@@ -7256,6 +7282,48 @@ const EinstTab = {
   },
   async _jetztClick(a, t) {
     const s = this.s;
+    if (a === "stm_lernen") {   // Taste anlernen: Lernmodus der App, erste Taste der Streamer-Fernbedienung nehmen
+      const sid = t.dataset.sid;
+      if (s.stmLernen) return true;
+      s.stmLernen = sid; this._render();
+      let unsub = null, tm = null;
+      const ende = async (code) => {
+        clearTimeout(tm); if (unsub) unsub(); s.stmLernen = null;
+        try { await this._hass.callWS({ type: "esphomeremote/streamer_lernen", streamer: sid, an: false }); } catch (e) { /* egal */ }
+        if (code != null) { s.stm[sid].taste = code; await this._stmSpeichern(sid); }
+        else s.msg = { err: true, text: "Keine Taste erkannt (20 s)." };
+        this._render();
+      };
+      try {
+        await this._hass.callWS({ type: "esphomeremote/streamer_lernen", streamer: sid, an: true });
+        unsub = await this._hass.connection.subscribeEvents((ev) => {
+          const d = ev.data || {};
+          if (d.streamer === sid && d.press === "learn" && !d.cec) ende(d.code);
+        }, "esphomeremote_streamer_key");
+        tm = setTimeout(() => ende(null), 20000);
+      } catch (e) { s.stmLernen = null; s.msg = { err: true, text: "Anlernen: " + (e.message || e) }; this._render(); }
+      return true;
+    }
+    if (a === "stm_test") {
+      const sid = String(s.dev).slice(3);
+      if (s.dirty[s.dev]) { s.msg = { err: true, text: "Erst speichern – der Fernseher zeigt den gespeicherten Stand." }; this._render(); return true; }
+      try { await this._hass.callService("esphomeremote", "streamer_menu", { streamer: sid, command: "open", page: s.mpage || this.menu.start }); s.msg = { text: "Auf dem Fernseher geöffnet." }; }
+      catch (e) { s.msg = { err: true, text: "Fernseher: " + (e.message || e) }; }
+      this._render(); return true;
+    }
+    if (a === "stm_edit") {   // Menue-Editor der Remote fuer diesen Streamer (Pseudo-Geraet st:<id>)
+      const sid = t.dataset.sid, id = "st:" + sid, m = s.stm[sid], x = s.strm.streamer.find((y) => y.id === sid);
+      if (!String(s.dev).startsWith("st:")) s.stmZurueck = s.dev;
+      ER_ST_NAMEN[id] = x?.name || sid;
+      s.cfg[id] = { menu: clone(m.menu), activities: [{ name: x?.name || "Streamer", keys: {} }], kameras: [] };
+      s.meta[id] = { streamer: sid }; s.enabled[id] = true; s.dirty[id] = false;
+      (s.saved ||= {})[id] = JSON.stringify(s.cfg[id]);
+      this._histReset(id);
+      if (!s.stmKamAlt) s.stmKamAlt = M_KAMERAS.map((k) => [...k]);
+      M_KAMERAS.length = 0; M_KAMERAS.push(...this._stmKameras(sid));
+      s.dev = id; s.bereich = "remote"; s.mode = "menu"; s.mpage = null; s.mitem = null;
+      this._render(); return true;
+    }
     if (a === "st_add") {
       const ids = new Set(s.strm.streamer.map((x) => x.id));
       let n = 1; while (ids.has(`streamer_${n}`)) n++;
@@ -7428,6 +7496,66 @@ const EinstTab = {
     return `<details class="appbox"><summary><b><ha-icon icon="mdi:format-list-numbered"></ha-icon> Einrichten am ${typ === "magenta" ? "MagentaTV Stick" : typ === "google" ? "Google TV Streamer" : "Gerät"}</b></summary>
       <ol style="margin:6px 0 4px 18px;padding:0">${schritte.map((z) => `<li style="margin:3px 0">${z}</li>`).join("")}</ol>${extra}</details>`;
   },
+  // Popup-Menue auf dem Fernseher (2026-11-05, streamer_menue.py): wie das Menue der Remote, je Streamer
+  _stmHtml(x) {
+    const m = this.s.stm?.[x.id];
+    if (!m) return "";
+    const lernt = this.s.stmLernen === x.id, n = (m.menu?.pages || []).length;
+    const opt = (v, l, w) => `<option value="${v}" ${String(w) === String(v) ? "selected" : ""}>${l}</option>`;
+    return `<details class="appbox" ${m.an ? "open" : ""}><summary><b><ha-icon icon="mdi:menu-open"></ha-icon> Menü auf dem Fernseher</b>${m.an ? " · an" : ""}</summary>
+      <small class="note">Dasselbe Menü wie auf der Remote (Seiten mit Kacheln) – über dem laufenden Bild, bedient mit den Pfeilen, OK und Zurück der Fernbedienung. Braucht die Streamer-App ab 1.17.</small>
+      <div class="ez"><span>Menü benutzen</span><label class="sw"><input type="checkbox" data-stm="an" data-sid="${esc(x.id)}" ${m.an ? "checked" : ""}></label></div>
+      <div class="ez"><span>Menü-Taste<small class="vtext">Taste der Streamer-Fernbedienung, die das Menü öffnet und schließt – sie gehört dann nur dem Menü. Gedrückt halten meldet das Ereignis <code>esphomeremote_streamer_key</code> (<code>press: long</code>) für eigene Automationen.</small></span>
+        <span>${m.taste ? `<code>${m.taste}</code> ` : ""}<button class="btn small ${lernt ? "primary" : ""}" data-a="stm_lernen" data-sid="${esc(x.id)}"><ha-icon icon="mdi:remote"></ha-icon>${lernt ? "Jetzt die Taste drücken …" : m.taste ? "Neu anlernen" : "Anlernen"}</button></span></div>
+      <div class="ez"><span>Größe<small class="vtext">Anteil des Bildschirms</small></span><select data-stm="groesse" data-sid="${esc(x.id)}">${[30, 40, 50, 60, 70, 80, 90].map((v) => opt(v, v + " %", m.groesse)).join("")}${opt(100, "Ganzer Bildschirm", m.groesse)}</select></div>
+      <div class="ez"><span>Lage<small class="vtext">Ecken und Ränder ab Streamer-App 1.19</small></span><select data-stm="position" data-sid="${esc(x.id)}">${ST_LAGEN.map(([v, l]) => opt(v, l, m.position)).join("")}</select></div>
+      <div class="ez"><span>Einblenddauer<small class="vtext">Schließt sich, wenn so lange keine Taste kommt</small></span><select data-stm="dauer" data-sid="${esc(x.id)}">${[[15, "15 s"], [30, "30 s"], [45, "45 s"], [60, "1 min"], [120, "2 min"], [300, "5 min"], [0, "Bleibt offen (bis Zurück)"]].map(([v, l]) => opt(v, l, m.dauer ?? 45)).join("")}</select></div>
+      <small class="note">Aus Home Assistant (z. B. von einer Remote-Taste): Aktion <code>esphomeremote.streamer_menu</code>, <code>streamer: ${esc(x.name)}</code>, optional <code>command:</code> (<code>toggle</code>, <code>open</code>, <code>close</code>), <code>page:</code> (Kennung einer Seite, z. B. <code>kamera</code>), <code>size:</code> (30–100), <code>position:</code> (<code>center</code>, <code>left</code>, <code>right</code>, <code>top</code>, <code>bottom</code>, <code>top-left</code> …) – die gelten nur für dieses eine Öffnen.</small>
+      <p><button class="btn primary" data-a="stm_edit" data-sid="${esc(x.id)}"><ha-icon icon="mdi:pencil"></ha-icon>Menü bearbeiten</button> <small>${n} Seite${n === 1 ? "" : "n"}</small></p></details>`;
+  },
+  async _stmSpeichern(sid) {
+    const s = this.s;
+    try {
+      const r = await this._hass.callWS({ type: "esphomeremote/streamer_menue_save", streamer: sid, daten: s.stm[sid] });
+      s.stm[sid] = r.daten;
+      s.msg = { text: "Menü gespeichert." + (r.angewendet ? "" : " Streamer gerade nicht erreichbar – gilt beim nächsten Speichern.") };
+      return true;
+    } catch (e) { s.msg = { err: true, text: "Menü: " + (e.message || e) }; return false; }
+  },
+  // Kameras des Fernsehers dieses Streamers fuer die Kamera-Kacheln (statt der Klingeln der Remote)
+  _stmKameras(sid) {
+    const H = this._hass.states;
+    const tvs = Object.values(H).filter((z) => z.entity_id.startsWith("binary_sensor.esphomeremote_camera_tv") && (z.attributes.cameras || []).length);
+    const tv = tvs.find((z) => z.attributes.streamer === sid) || tvs[0];
+    const e = tv?.attributes.cameras || Object.keys(H).filter((k) => k.startsWith("camera."));
+    const n = tv?.attributes.camera_names || [];
+    return e.map((k, i) => [k, n[i] || H[k]?.attributes.friendly_name || k]);
+  },
+  // Seitenkopf im Streamer-Menue: nur, was auf dem Fernseher wirkt
+  _stmPageHead(p) {
+    const erreichbar = this._mReachable(), x = this.s.strm?.streamer.find((y) => "st:" + y.id === this.s.dev);
+    return `<div class="phd">
+      <div class="inl"><input data-mp="title" value="${esc(p.title || "")}" placeholder="Titel"><input data-mp="id" value="${esc(p.id)}" title="Kennung (für Verweise und page: in der Aktion)" style="flex:0 0 30%"></div>
+      <div class="chk"><label class="sw small"><input type="checkbox" data-mp="flow" ${p.flow !== false ? "checked" : ""}><span>Automatisch anordnen (nach Reihenfolge)</span></label></div>
+      <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
+        <button class="btn small" data-a="maddsub" title="Neue Seite anlegen und hier verlinken"><ha-icon icon="mdi:file-tree"></ha-icon>Unterseite</button>
+        ${["mitem", "mitems"].includes(this.s.clip?.type) ? `<button class="btn small" data-a="mpaste" title="${esc(this.s.clip.label)}"><ha-icon icon="mdi:content-paste"></ha-icon>Einfügen${this.s.clip.type === "mitems" ? ` (${this.s.clip.data.length})` : ""}</button>` : ""}
+        <button class="btn small ghost" data-a="mers" title="Eine Entität überall durch eine andere ersetzen"><ha-icon icon="mdi:find-replace"></ha-icon>Entität ersetzen</button>
+        <button class="btn small" data-a="stm_test" title="Diese Seite jetzt auf dem Fernseher öffnen (gespeicherter Stand)"><ha-icon icon="mdi:television-play"></ha-icon>Auf dem Fernseher zeigen</button>
+        <button class="btn small ghost" data-a="mcopypage"><ha-icon icon="mdi:content-duplicate"></ha-icon>Seite kopieren</button>
+        <button class="btn small ghost" data-a="mdelpage"><ha-icon icon="mdi:delete-outline"></ha-icon>Seite löschen</button></div>
+      ${erreichbar.has(p.id) ? "" : `<div class="lose"><ha-icon icon="mdi:link-variant-off"></ha-icon><span><b>Nicht im Menü verlinkt</b> – nur direkt per Aktion mit <code>page: ${esc(p.id)}</code> erreichbar.</span>
+        <div class="inl">Einhängen auf <select id="linkto">${this.menu.pages.filter((pg) => pg.id !== p.id && erreichbar.has(pg.id)).map((pg) => `<option value="${esc(pg.id)}" ${pg.id === this.menu.start ? "selected" : ""}>${esc(pg.title || pg.id)}</option>`).join("")}</select>
+        <button class="btn small primary" data-a="mlink"><ha-icon icon="mdi:link-variant"></ha-icon>Einhängen</button></div></div>`}
+      <small class="note">Diese Seite direkt öffnen: Aktion <code>esphomeremote.streamer_menu</code>, <code>streamer: ${esc(x?.name || "")}</code>, <code>page: ${esc(p.id)}</code>. Kamera-Kacheln blenden die Kamera auf dem Fernseher dieses Streamers ein.</small>
+    </div>`;
+  },
+  _stmVerlassen() {
+    const s = this.s;
+    if (!String(s.dev).startsWith("st:")) return;
+    if (s.stmKamAlt) { M_KAMERAS.length = 0; M_KAMERAS.push(...s.stmKamAlt); s.stmKamAlt = null; }
+    s.dev = s.stmZurueck && s.order.includes(s.stmZurueck) ? s.stmZurueck : s.order[0];
+  },
   _strmHtml(name) {
     const d = this.s.strm, st = this._hass.states;
     if (!d) return "";
@@ -7449,6 +7577,15 @@ const EinstTab = {
       <div class="ez"><span>Adresse für die Streamer-App<small class="vtext">Ziel der Meldungen (Webhook)</small></span>
         <code style="word-break:break-all">http://${esc(d.basis || "<HA-IP>:8123")}/api/webhook/${esc(x.webhook)}</code></div>
       ${this._strmAppHtml(x, si)}
+      <details class="appbox" ${x.audio ? "open" : ""}><summary><b><ha-icon icon="mdi:soundbar"></ha-icon> Soundbar / AV-Receiver per HDMI</b>${x.audio ? " · an" : ""}</summary>
+        <small class="note">Schaltet das Audiogerät am Fernseher (HDMI-ARC) über diesen Streamer per HDMI-CEC ein und aus – Schalter <code>switch.…_soundbar</code> und Aktion <code>esphomeremote.streamer_cec</code> mit <code>command: on</code>/<code>off</code> (auch für Menü-Kacheln). Ohne Infrarot. Hängt das Gerät länger „tot“ im Standby, hilft einmal Strom weg und wieder da.</small>
+        <div class="ez"><span>Soundbar schalten</span><label class="sw"><input type="checkbox" data-st="audio" data-si="${si}" ${x.audio ? "checked" : ""}></label></div>
+        <div class="ez"><span>Zustand aus Entität<small class="vtext">Optional – sonst merkt sich der Schalter den letzten Befehl. Beispiel Hisense: Media Player des Fernsehers, Attribut <code>audio_output</code>, Wert <code>arc</code>.</small></span>
+          <span><input data-st="audio_zustand" data-si="${si}" value="${esc(x.audio_zustand || "")}" placeholder="media_player.…" style="width:14em">
+          <input data-st="audio_attr" data-si="${si}" value="${esc(x.audio_attr || "")}" placeholder="Attribut (leer = Zustand)" style="width:10em">
+          <input data-st="audio_wert" data-si="${si}" value="${esc(x.audio_wert || "")}" placeholder="Wert für „an“ (on)" style="width:8em"></span></div>
+      </details>
+      ${this._stmHtml(x)}
     </div>`;
     }).join("");
     return `<h3 style="margin-top:24px"><ha-icon icon="mdi:cast-variant"></ha-icon>Streamer</h3>
@@ -8104,7 +8241,7 @@ const FunktionenTab = {
     const tvKarte = (tid, k) => { const ent = (F.tv_entitaeten || {})[tid] || { kamera: "binary_sensor.esphomeremote_camera_tv" + (tid ? "_" + tid : "") }; return `
       <div class="karte"><h3><ha-icon icon="mdi:cctv"></ha-icon><input data-tv="${esc(tid)}" data-fk="tvname" value="${esc(k.name || "")}" maxlength="40" placeholder="${tid ? "Name" : "Fernseher 1 – Name, z. B. Wohnzimmer"}" style="flex:1" title="Name des Fernsehers (frei) – für tv: in den Aktionen">
           ${tid ? `<button class="icon sm" data-a="fk_tv_weg" data-tv="${esc(tid)}" title="Fernseher löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>` : ""}</h3>
-        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – als Overlay über allem: das laufende Video (YouTube, Netflix …) läuft weiter, der Ton der Kamera ist aus. Aktionen: <code>esphomeremote.camera_tv</code> mit <code>camera:</code> (Kamera, <code>last</code> oder <code>off</code>), <code>camera_size</code> mit <code>size:</code> (<code>small</code>, <code>medium</code>, <code>large</code>, <code>almost_full</code>) und <code>camera_position</code> mit <code>position:</code> (je auch <code>next</code>). Für Popups: <code>${esc(ent.kamera)}</code>.${tid ? ` Diesen Fernseher wählen: <code>tv: ${esc(k.name || tid)}</code>.` : (c.kamera_tvs || []).length ? " Ohne <code>tv:</code> gilt dieser (der erste) Fernseher." : ""}</div>
+        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – als Overlay über allem: das laufende Video (YouTube, Netflix …) läuft weiter, der Ton der Kamera ist aus. Aktionen: <code>esphomeremote.camera_tv</code> mit <code>camera:</code> (Kamera, <code>last</code>, <code>next</code>/<code>previous</code>/<code>off</code>) – nur für diesen Aufruf zusätzlich <code>size:</code>, <code>position:</code> und <code>seconds:</code> (Einblenddauer, <code>0</code> = bis <code>off</code>), sonst gelten die Einstellungen hier; dauerhaft umstellen: <code>camera_size</code> mit <code>size:</code> (<code>small</code>, <code>medium</code>, <code>large</code>, <code>almost_full</code>) und <code>camera_position</code> mit <code>position:</code> (je auch <code>next</code>). Für Popups: <code>${esc(ent.kamera)}</code>.${tid ? ` Diesen Fernseher wählen: <code>tv: ${esc(k.name || tid)}</code>.` : (c.kamera_tvs || []).length ? " Ohne <code>tv:</code> gilt dieser (der erste) Fernseher." : ""}</div>
         ${ez("Weg", `<select data-tv="${esc(tid)}" data-fk="weg"><option value="app" ${k.weg !== "hatv" ? "selected" : ""}>ESPHomeRemote Streamer-App (empfohlen)</option><option value="hatv" ${k.weg === "hatv" ? "selected" : ""}>App HA TV Dashboard</option></select>`,
           k.weg === "hatv" ? "Benachrichtigung an die App HA TV Dashboard" : "Overlay unserer Streamer-App (Wiedergabe › Streamer, ab Version 1.9): WebRTC über Home Assistant (kaum Verzögerung), sonst HLS, sonst Standbilder")}
         ${k.weg === "hatv" ? `${ez("Fernseher (App)", wahl(`data-tv="${esc(tid)}" data-fk="notify"`, F.notify.map((x) => ({ id: x, name: x.replace("notify.mobile_app_", "") })), k.notify, "– keiner (Funktion aus) –"), "Benachrichtigungsdienst der App HA TV Dashboard")}
@@ -9066,6 +9203,10 @@ const OberflaecheTab = {
   // ------------------------------------------------------------- Navigation
   _geh(b, m) {
     const s = this.s;
+    if (String(s.dev).startsWith("st:") && !(b === "remote" && (m || s.mode) === "menu")) {
+      if (s.dirty[s.dev] && !confirm("Ungespeicherte Änderungen am Streamer-Menü verwerfen?")) return;
+      this._stmVerlassen();
+    }
     if (s.modal && ["btset", "irset"].includes(s.modal.type)) s.modal = null;
     if (b === "remote" && !m) m = s.bereich === "remote" ? s.mode : s.letzterModus || "keys";
     s.bereich = b;
@@ -9181,8 +9322,8 @@ const OberflaecheTab = {
           : s.bereich === "dockgeraet" ? `<small>${esc(this._docks().find((g) => g.name === s.dockSel)?.friendly || s.dockSel || "")}<ha-icon icon="mdi:chevron-down"></ha-icon></small>` : ""}</span></button>
       <span class="grow"></span>
       <button class="suche" data-a="o_pal" title="Suchen (Strg+K)"><ha-icon icon="mdi:magnify"></ha-icon><span>Suchen …</span><kbd>Strg K</kbd></button>
-      ${rem ? `<span id="wlanp">${(this._wlanAlt = this._wlanKnopf())}</span>` : ""}
-      ${rem ? this._syncPillHtml() : ""}
+      ${rem && !String(s.dev).startsWith("st:") ? `<span id="wlanp">${(this._wlanAlt = this._wlanKnopf())}</span>` : ""}
+      ${rem && !String(s.dev).startsWith("st:") ? this._syncPillHtml() : ""}
     </header>`;
   },
   // WLAN einer Remote (2026-10-29, Nutzer: "verwirrend"): echter Zustand aus "WLAN aktiv" und "WLAN-Zustand"

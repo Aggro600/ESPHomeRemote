@@ -151,7 +151,19 @@
       "fields": {
         "camera": {
           "name": "Camera",
-          "description": "camera.xyz, \"last\" (last shown) or \"off\""
+          "description": "camera.xyz, \"last\" (last shown), \"next\"/\"previous\" (step through the camera list) or \"off\""
+        },
+        "size": {
+          "name": "Size (this time only)",
+          "description": "Optional – small, medium, large or almost_full. Empty = Configurator setting."
+        },
+        "position": {
+          "name": "Corner (this time only)",
+          "description": "Optional – top-left, top-right, bottom-right, bottom-left or center."
+        },
+        "seconds": {
+          "name": "Display time (this time only)",
+          "description": "Optional – hide after this many seconds, 0 = until \"off\". Empty = Configurator setting."
         }
       }
     },
@@ -180,6 +192,50 @@
         "device": {
           "name": "Device",
           "description": "Name as in the configurator (e.g. Streamer)"
+        }
+      }
+    },
+    "streamer_cec": {
+      "name": "Switch a TV device via HDMI",
+      "description": "Turns the soundbar/AV receiver (or the TV) on or off via HDMI-CEC through a streamer.",
+      "fields": {
+        "streamer": {
+          "name": "Streamer",
+          "description": "ID or name of the streamer in the Configurator"
+        },
+        "device": {
+          "name": "Device",
+          "description": "soundbar (audio system on HDMI-ARC) or tv"
+        },
+        "command": {
+          "name": "Command",
+          "description": "on or off"
+        }
+      }
+    },
+    "streamer_menu": {
+      "name": "TV menu",
+      "description": "Opens or closes the popup menu of a streamer (Streamer app 1.18+; page, size and position 1.19+).",
+      "fields": {
+        "streamer": {
+          "name": "Streamer",
+          "description": "ID or name of the streamer in the Configurator"
+        },
+        "command": {
+          "name": "Command",
+          "description": "toggle, open or close"
+        },
+        "page": {
+          "name": "Page",
+          "description": "Optional – ID of a menu page to show right away (e.g. camera). Always opens."
+        },
+        "size": {
+          "name": "Size (this time only)",
+          "description": "Optional – percent of the screen (30–100, 100 = full screen). Empty = Configurator setting."
+        },
+        "position": {
+          "name": "Position (this time only)",
+          "description": "Optional – center, left, right, top, bottom or a corner. Empty = Configurator setting."
         }
       }
     }

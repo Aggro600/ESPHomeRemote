@@ -47,7 +47,7 @@ STORE_VERSION = 1
 PANEL_URL = "remote"
 PANEL_URL_ALT = "fernbedienung"   # bis 2026-11-01 - alte Lesezeichen gehen weiter (ohne Eintrag in der Seitenleiste)
 STATIC_URL = "/esphomeremote_static"
-PANEL_VERSION = "194"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "199"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -1502,6 +1502,10 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .tv_camera import einrichten as tvkamera_einrichten
 
     tvkamera_einrichten(hass)
+    # Popup-Menue auf dem Fernseher je Streamer (2026-11-05)
+    from .streamer_menue import einrichten as stmenue_einrichten
+
+    stmenue_einrichten(hass, kd)
     bruecke = hass.data[DOMAIN + "_bruecke"] = Bruecke(hass, kd)
     licht = hass.data[DOMAIN + "_licht"] = Licht(hass, kd)
 

@@ -166,6 +166,29 @@ camera_tv:
       example: last
       selector:
         text:
+    size:
+      name: Size (this time only)
+      description: Optional – small, medium, large or almost_full. Empty = Configurator setting.
+      required: false
+      selector:
+        select:
+          options: [small, medium, large, almost_full]
+    position:
+      name: Corner (this time only)
+      description: Optional – top-left, top-right, bottom-right, bottom-left or center.
+      required: false
+      selector:
+        select:
+          options: [top-left, top-right, bottom-right, bottom-left, center]
+    seconds:
+      name: Display time (this time only)
+      description: Optional – hide after this many seconds, 0 = until "off". Empty = Configurator setting.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: s
 
 camera_size:
   name: Kamera-Größe auf dem Fernseher
@@ -212,3 +235,71 @@ restart:
       description: Name wie im Konfigurator (z. B. Streamer)
       selector:
         text:
+
+streamer_cec:
+  name: Switch a TV device via HDMI
+  description: Turns the soundbar/AV receiver (or the TV) on or off via HDMI-CEC through a streamer.
+  fields:
+    streamer:
+      name: Streamer
+      description: ID or name of the streamer in the Configurator
+      required: true
+      example: living_room
+      selector:
+        text:
+    device:
+      name: Device
+      required: false
+      default: soundbar
+      selector:
+        select:
+          options: [soundbar, tv]
+    command:
+      name: Command
+      required: true
+      example: "on"
+      selector:
+        select:
+          options: ["on", "off"]
+
+streamer_menu:
+  name: TV menu
+  description: Opens or closes the popup menu of a streamer (Streamer app 1.18+; page, size and position 1.19+).
+  fields:
+    streamer:
+      name: Streamer
+      description: ID or name of the streamer in the Configurator
+      required: true
+      example: living_room
+      selector:
+        text:
+    command:
+      name: Command
+      required: false
+      default: toggle
+      selector:
+        select:
+          options: [toggle, open, close]
+    page:
+      name: Page
+      description: Optional – ID of a menu page to show right away (e.g. camera). Always opens.
+      required: false
+      example: camera
+      selector:
+        text:
+    size:
+      name: Size (this time only)
+      description: Optional – percent of the screen (30–100, 100 = full screen). Empty = Configurator setting.
+      required: false
+      selector:
+        number:
+          min: 30
+          max: 100
+          unit_of_measurement: "%"
+    position:
+      name: Position (this time only)
+      description: Optional. Empty = Configurator setting.
+      required: false
+      selector:
+        select:
+          options: [center, left, right, top, bottom, top-left, top-right, bottom-left, bottom-right]

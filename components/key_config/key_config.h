@@ -14,6 +14,8 @@
 #include "esphome/components/json/json_util.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include <functional>
+#include <cstring>
+#include "esp_heap_caps.h"
 #include <map>
 #include <vector>
 #include <string>
@@ -33,8 +35,77 @@ struct Ctx {
   int aktivitaet;
 };
 
+// Block-Speicher fuer die Belegung (2026-11-05, Weck-Geschwindigkeit, nur mit set_schnell_parsen): ArduinoJson holt
+// fuer jede Zeichenkette eigenen Speicher - bei ~80 KB Belegung Tausende PSRAM-Anforderungen (~260 ms beim Start).
+// Hier ruecken die Zeiger in grossen PSRAM-Bloecken nur weiter; freigegeben wird alles auf einmal mit dem Dokument.
+class JsonArena : public ArduinoJson::Allocator {
+ public:
+  ~JsonArena() { for (auto *b : bloecke_) heap_caps_free(b); }
+  void *allocate(size_t n) override {
+    n = (n + 7) & ~size_t(7);
+    const size_t gesamt = n + 8;
+    if (bloecke_.empty() || frei_ < gesamt) {
+      const size_t g = gesamt > BLOCK ? gesamt : BLOCK;
+      auto *b = (uint8_t *) heap_caps_malloc(g, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (b == nullptr) return nullptr;
+      bloecke_.push_back(b);
+      pos_ = b;
+      frei_ = g;
+    }
+    void *p = pos_ + 8;
+    ((size_t *) p)[-1] = n;   // Groesse direkt vor dem Block (size_t = 4 Byte auf dem ESP32 - nicht an pos_ schreiben!)
+    letzt_ = (uint8_t *) p;
+    pos_ += gesamt;
+    frei_ -= gesamt;
+    return p;
+  }
+  void deallocate(void *p) override {
+    if (p != nullptr && p == letzt_) {   // nur der letzte Block kann zurueck
+      const size_t n = ((size_t *) p)[-1];
+      pos_ -= n + 8;
+      frei_ += n + 8;
+      letzt_ = nullptr;
+    }
+  }
+  void *reallocate(void *p, size_t n) override {
+    if (p == nullptr) return allocate(n);
+    const size_t alt = ((size_t *) p)[-1];
+    n = (n + 7) & ~size_t(7);
+    if (p == letzt_ && (n <= alt || n - alt <= frei_)) {   // letzter Block: an Ort und Stelle
+      frei_ += alt;
+      frei_ -= n;
+      pos_ = (uint8_t *) p + n;
+      ((size_t *) p)[-1] = n;
+      return p;
+    }
+    if (n <= alt) { ((size_t *) p)[-1] = n; return p; }
+    void *q = allocate(n);
+    if (q != nullptr) memcpy(q, p, alt);
+    return q;
+  }
+
+ protected:
+  static constexpr size_t BLOCK = 64 * 1024;
+  std::vector<uint8_t *> bloecke_;
+  uint8_t *pos_{nullptr};
+  uint8_t *letzt_{nullptr};
+  size_t frei_{0};
+};
+
 class TastenKonfig : public Component {
  public:
+  // Start schneller (2026-11-05, Testversion): Belegung im Block-Speicher parsen, s. JsonArena
+  void set_schnell_parsen(bool s) { schnell_parsen_ = s; }
+  // Aufwachen per Taste (2026-11-05): in setup() nur die Kurzfassung ohne Menue laden (cfgk, ~1/4 der Groesse),
+  // die volle Belegung danach mit voll_laden() - direkt nach dem fruehen Versand der Weck-Taste
+  void set_schnell_laden(bool s) { schnell_laden_ = s; }
+  void voll_laden();
+  // Weck-Tabelle (2026-11-05, Schnellweg): fuer die Aktivitaet die fertigen Dock-Pakete jeder Taste, die weck_frueh
+  // senden wuerde, ins NVS ("tasten"/"wtab") - nur wenn sich etwas geaendert hat. erlaubt = Einstellung "Weck-Taste
+  // senden" an. Format: ver(1)=1 akt(1) anzahl(1), je Taste: code(1) n(1), je Paket: mac(6) typ(1) param(4) anzahl(2)
+  // len(2) inhalt (alles little-endian).
+  void weck_tabelle_speichern(int aktivitaet, bool erlaubt);
+  bool nur_kurz() const { return nur_kurz_; }
   void set_host(const std::string &h) { host_ = h; }
   void set_key(const std::string &k) { key_ = k; }
   void set_times(uint32_t long_ms, uint32_t dbl_ms) { long_ms_ = long_ms; dbl_ms_ = dbl_ms; }
@@ -301,6 +372,12 @@ class TastenKonfig : public Component {
 
   json::SpiRamAllocator alloc_;
   JsonDocument *doc_{nullptr};
+  JsonArena *doc_arena_{nullptr};   // nur mit schnell_parsen_
+  bool schnell_parsen_{false};
+  bool schnell_laden_{false};
+  bool nur_kurz_{false};             // geladen ist nur die Kurzfassung (ohne "menu")
+  void kurz_speichern_(const std::string &voll_hash);
+  bool lesen_(const char *schluessel, std::string &out);
   bool an_{false};
   std::string hash_;
   uint32_t gen_{0};
