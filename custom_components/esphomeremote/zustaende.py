@@ -6,7 +6,6 @@ ein echter SensorEntity / BinarySensorEntity mit unique_id ("zustand:<entity_id>
 Firmware abonniert diese Namen und liest sie weiter wie bisher:
 
     sensor.esphomeremote_config_<remote>          Hash der Tasten-Konfiguration (__init__.py announce)
-    sensor.esphomeremote_konfig_<remote>          dasselbe fuer alte Firmware (compat.py)
     sensor.esphomeremote_tv_input, binary_sensor.esphomeremote_camera_tv, sensor.esphomeremote_camera_size (features.py)
     sensor.esphomeremote_timer_abgelaufen         (timer.py)
     sensor.esphomeremote_spiegel_<remote>_<rolle> (mirror.py)

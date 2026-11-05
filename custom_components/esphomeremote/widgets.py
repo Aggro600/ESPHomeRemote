@@ -118,7 +118,6 @@ class BildView(HomeAssistantView):
 
     url = "/api/esphomeremote/bild"
 
-    extra_urls = ["/api/esphomeremote_konfig/bild"]
     name = "api:esphomeremote:bild"
     requires_auth = False
 

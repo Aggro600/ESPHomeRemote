@@ -981,7 +981,6 @@ class FirmwareView(HomeAssistantView):
 
     url = "/api/esphomeremote/firmware/{datei}"
 
-    extra_urls = ["/api/esphomeremote_konfig/firmware/{datei}"]
     name = "api:esphomeremote:firmware"
     requires_auth = True
 

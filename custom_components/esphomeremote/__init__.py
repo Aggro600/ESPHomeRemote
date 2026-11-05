@@ -36,8 +36,6 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .defaults import EINST_STANDARD, default_config, default_menu
-from .compat import old_sensor
-from .compat import setup as compat_setup
 from .settings import EINST_SEITEN
 from .mirror import Spiegel, validate_ents
 from .widgets import BildView, WetterCache, timer_eintrag, wetter_eintrag
@@ -960,7 +958,6 @@ class KonfigData:
         await self.store.async_save(self.data)
         from .zustaende import holen as zustaende
         zustaende(self.hass).entfernen(f"sensor.esphomeremote_config_{dev_slug(dev)}")
-        zustaende(self.hass).entfernen(old_sensor(dev_slug(dev)))
         self.spiegel.weg(dev_slug(dev))
 
     def entry(self, dev: str) -> dict:
@@ -1105,7 +1102,6 @@ class KonfigData:
         from .zustaende import holen as zustaende
         z = zustaende(self.hass)
         z.setzen(f"sensor.esphomeremote_config_{dev_slug(dev)}", fnv1a(body), attrs)
-        z.setzen(old_sensor(dev_slug(dev)), fnv1a(body), {**attrs, "friendly_name": attrs["friendly_name"] + " (alt)"})   # alte Firmware liest diesen Namen
         if ds is not None:
             ds.konfig_neu(dev)   # andere Popup-Ausloeser (2026-10-24)
             ds._planen(dev, 1)   # neuer Soll-Stand -> auch an die Docks (Remote ohne eigene HA-Verbindung)
@@ -1143,7 +1139,6 @@ class CfgView(HomeAssistantView):
 
     url = "/api/esphomeremote/cfg/{dev}"
 
-    extra_urls = ["/api/esphomeremote_konfig/cfg/{dev}"]
     name = "api:esphomeremote:cfg"
     requires_auth = False
 
@@ -1186,7 +1181,6 @@ class StatesView(HomeAssistantView):
 
     url = "/api/esphomeremote/states"
 
-    extra_urls = ["/api/esphomeremote_konfig/states"]
     name = "api:esphomeremote:states"
     requires_auth = False
 
@@ -1496,7 +1490,15 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     funktionen = hass.data[DOMAIN + "_funktionen"] = Funktionen(hass, kd)
     hass.http.register_view(AnzeigeView(kd, anzeige))
     # Kamera als Overlay der eigenen Streamer-App (2026-11-01): WebRTC-Angebot, HLS, Standbild ohne HA-Anmeldung
-    compat_setup(hass)   # alte Firmware: alte Dienstnamen weiterleiten
+    # Uebergang nach der Umbenennung esphomeremote_konfig -> esphomeremote entfernt (2026-11-05, alle Remotes und Docks
+    # mit neuer Firmware): alte Dienstnamen, /api/esphomeremote_konfig/... und sensor.esphomeremote_konfig_* gibt es
+    # nicht mehr. Deren verwaiste Registry-Eintraege einmal wegraeumen.
+    from homeassistant.helpers import entity_registry as _er
+
+    _reg = _er.async_get(hass)
+    for _e in [e for e in list(_reg.entities.values())
+               if e.platform == DOMAIN and str(e.unique_id).startswith("zustand:sensor.esphomeremote_konfig_")]:
+        _reg.async_remove(_e.entity_id)
     from .tv_camera import einrichten as tvkamera_einrichten
 
     tvkamera_einrichten(hass)
