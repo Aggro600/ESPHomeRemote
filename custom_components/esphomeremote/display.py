@@ -189,7 +189,6 @@ class Anzeige:
 
 class AnzeigeView(HomeAssistantView):
     url = "/api/esphomeremote/anzeige/{dev}"
-    extra_urls = ["/api/esphomeremote_konfig/anzeige/{dev}"]
     name = "api:esphomeremote:anzeige"
     requires_auth = False
 

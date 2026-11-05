@@ -137,7 +137,7 @@ async def alles_entfernen(hass: HomeAssistant) -> None:
             frontend.async_remove_panel(hass, url)
         except Exception:  # noqa: BLE001
             pass
-    for dom in (DOMAIN, "esphomeremote_konfig"):   # dazu die alten Namen von vor der Umbenennung (compat.py)
+    for dom in (DOMAIN, "esphomeremote_konfig"):   # dazu die alten Namen von vor der Umbenennung (aeltere Installationen)
         for svc in list(hass.services.async_services().get(dom, {})):
             hass.services.async_remove(dom, svc)
 

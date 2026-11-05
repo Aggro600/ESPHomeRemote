@@ -1,5 +1,17 @@
 # What's new · Was ist neu
 
+## 2026.11.5.3 (2026-11-05)
+
+- **Cleanup:** the transition layer from the rename (esphomeremote_konfig → esphomeremote) is removed: old service names `esphomeremote_konfig.*`, the old `/api/esphomeremote_konfig/…` paths and the duplicate `sensor.esphomeremote_konfig_*` sensors (orphaned entries are removed at startup).
+- **Before updating:** update remotes and docks running firmware from before 2 Nov 2026 first – they still used the old names.
+
+<details><summary>Deutsch</summary>
+
+- **Aufgeräumt:** Die Übergangsschicht aus der Umbenennung (esphomeremote_konfig → esphomeremote) ist entfernt: alte Dienstnamen `esphomeremote_konfig.*`, die alten Adressen `/api/esphomeremote_konfig/…` und die doppelten Sensoren `sensor.esphomeremote_konfig_*` (verwaiste Einträge werden beim Start entfernt).
+- **Vorher:** Remotes und Docks mit Firmware von vor dem 2. 11. 2026 erst aktualisieren – sie riefen noch die alten Namen auf.
+
+</details>
+
 ## 2026.11.5.2 (2026-11-05)
 
 **Streamer app knows "camera only".** When "camera only" is on for a streamer, Home Assistant now tells the app too: it no longer subscribes to window events (Android delivers nothing to it) and only reacts to camera commands. The app's status page shows a green "camera only" instead of red hints about missing notification access. To apply, tap "Update" at the streamer in the configurator.

@@ -276,7 +276,6 @@ class ManifestView(HomeAssistantView):
 
     url = "/api/esphomeremote/manifest/{token}"
 
-    extra_urls = ["/api/esphomeremote_konfig/manifest/{token}"]
     name = "api:esphomeremote:manifest"
     requires_auth = False
 
@@ -297,7 +296,6 @@ class FirmwareView(HomeAssistantView):
 
     url = "/api/esphomeremote/fw/{token}"
 
-    extra_urls = ["/api/esphomeremote_konfig/fw/{token}"]
     name = "api:esphomeremote:fw"
     requires_auth = False
 
