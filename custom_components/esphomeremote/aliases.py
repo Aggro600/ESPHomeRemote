@@ -23,7 +23,8 @@ FIELDS: dict[str, dict[str, str]] = {
 VALUES: dict[tuple[str, str], dict[str, str]] = {
     ("rules", "type"): {"helligkeit": "brightness", "farbtemperatur": "color_temp", "stufe": "speed", "drehung": "oscillation"},
     ("light", "action"): {"an": "on", "aus": "off", "hell": "brightness", "farbe": "color", "szene": "scene"},
-    ("camera_tv", "camera"): {"letzte": "last", "aus": "off"},
+    ("camera_tv", "camera"): {"letzte": "last", "aus": "off", "naechste": "next", "nächste": "next",
+                              "vorherige": "previous", "zurueck": "previous", "zurück": "previous", "prev": "previous"},
     ("camera_size", "size"): {"klein": "small", "mittel": "medium", "groß": "large", "gross": "large",
                               "fast vollbild": "almost_full", "naechste": "next", "nächste": "next",
                               "almost fullscreen": "almost_full"},

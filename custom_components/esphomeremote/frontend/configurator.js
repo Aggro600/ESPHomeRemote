@@ -1929,7 +1929,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       this._klingelSpeichern(); return;
     }
     if (t.dataset.st) {
-      s.strm.streamer[Number(t.dataset.si)][t.dataset.st] = t.value;
+      s.strm.streamer[Number(t.dataset.si)][t.dataset.st] = t.type === "checkbox" ? t.checked : t.value;
       this._strmSpeichern(); return;
     }
     if (t.dataset.jz) {
@@ -7259,7 +7259,7 @@ const EinstTab = {
     if (a === "st_add") {
       const ids = new Set(s.strm.streamer.map((x) => x.id));
       let n = 1; while (ids.has(`streamer_${n}`)) n++;
-      s.strm.streamer.push({ id: `streamer_${n}`, name: "Streamer", adb: "", webhook: "" });
+      s.strm.streamer.push({ id: `streamer_${n}`, name: "Streamer", adb: "", webhook: "", typ: "google" });
       await this._strmSpeichern(); return true;
     }
     if (a === "st_del") {
@@ -7370,13 +7370,13 @@ const EinstTab = {
       <button class="btn small" data-a="st_app" data-v="status" data-si="${si}">Nochmal prüfen</button></div>`;
     const v = a.verfuegbar || {}, neu = a.installiert && v.code > a.code;
     const zeile = (gut, ja, nein) => `<li class="${gut ? "gut" : "schlecht"}"><ha-icon icon="mdi:${gut ? "check-circle" : "alert-circle"}"></ha-icon>${gut ? ja : nein}</li>`;
-    const alles = a.installiert && a.bedienung && a.medien && a.webhook_ok;
+    const nur = !!x.nur_kamera, alles = a.installiert && a.bedienung && (nur || (a.medien && a.webhook_ok));
     return `<div class="appbox"><b><ha-icon icon="mdi:android"></ha-icon> Streamer-App</b>
       ${a.installiert ? `<ul class="appst">
         ${zeile(true, `Installiert: Version ${esc(a.name)}${neu ? ` – <b>${esc(v.name)} verfügbar</b>` : " (aktuell)"}`, "")}
         ${zeile(a.bedienung, "App und Tastatur erkennen (Bedienungshilfe an)", "Bedienungshilfe aus")}
-        ${zeile(a.medien, "Titel und Cover lesen (Benachrichtigungszugriff)", "Benachrichtigungszugriff fehlt")}
-        ${zeile(a.webhook_ok, "Mit Home Assistant verbunden", a.webhook ? "Meldet an eine andere Adresse" : "Noch nicht mit Home Assistant verbunden")}
+        ${nur ? `<li class="gut"><ha-icon icon="mdi:cctv"></ha-icon>Nur Kamera: meldet nichts an Home Assistant, wird nicht abgefragt</li>` : `${zeile(a.medien, "Titel und Cover lesen (Benachrichtigungszugriff)", "Benachrichtigungszugriff fehlt")}
+        ${zeile(a.webhook_ok, "Mit Home Assistant verbunden", a.webhook ? "Meldet an eine andere Adresse" : "Noch nicht mit Home Assistant verbunden")}`}
         ${a.zuletzt ? zeile(true, `Letzte Meldung: ${new Date(a.zuletzt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`, "") : ""}</ul>`
       : `<p>Noch nicht auf dem Streamer. „Einrichten“ spielt die App auf (Version ${esc(v.name || "?")}), schaltet ihre Dienste frei und verbindet sie mit Home Assistant – in einem Schritt, etwa 20 Sekunden.</p>`}
       <div class="inl">
@@ -7404,6 +7404,30 @@ const EinstTab = {
     }
     this._render();
   },
+  // Anleitung je Geraet (2026-11-05). MagentaTV Stick Gen 2 Typ A: so am Hisense eingerichtet - Entwickleroptionen,
+  // USB-Debugging (ADB im Netz auf 5555), Freigabe "Immer zulassen", danach "Einrichten" wie beim Google Streamer.
+  _strmAnleitung(x) {
+    const typ = x.typ || "google";
+    const schritte = typ === "magenta" ? [
+      "Am Stick: <b>Einstellungen → System → Info</b> → 7× auf <b>„Android TV OS-Build“</b> drücken (Entwickleroptionen frei).",
+      "<b>Einstellungen → System → Entwickleroptionen</b> → <b>„USB-Debugging“</b> einschalten (ADB im Netzwerk, Port 5555).",
+      "IP-Adresse nachsehen: <b>Einstellungen → Netzwerk &amp; Internet</b> → WLAN. Am besten im Router fest vergeben.",
+      "In Home Assistant die Integration <b>Android TV</b> mit dieser IP hinzufügen. Am Stick erscheint <b>„USB-Debugging zulassen?“</b> → <b>„Immer zulassen“</b> anhaken, OK.",
+      "Unten das ADB-Gerät wählen und bei „Streamer-App“ auf <b>Einrichten</b> – die App kommt auf den Stick, Bedienungshilfe und Benachrichtigungszugriff werden freigegeben."]
+      : typ === "google" ? [
+      "Am Streamer: <b>Einstellungen → System → Info</b> → 7× auf <b>„Android TV OS-Build“</b> drücken.",
+      "<b>Entwickleroptionen → USB-Debugging</b> einschalten.",
+      "Integration <b>Android TV</b> mit der IP des Streamers hinzufügen und am Fernseher „Immer zulassen“ bestätigen.",
+      "ADB-Gerät wählen und bei „Streamer-App“ auf <b>Einrichten</b>."]
+      : [
+      "Entwickleroptionen freischalten (meist 7× auf die Build-Nummer unter Einstellungen → Info) und <b>USB-/ADB-Debugging</b> einschalten.",
+      "Integration <b>Android TV</b> mit der IP hinzufügen, am Gerät „Immer zulassen“ bestätigen.",
+      "ADB-Gerät wählen und bei „Streamer-App“ auf <b>Einrichten</b>."];
+    const extra = typ === "magenta"
+      ? `<small class="note">Kamerabilder: Der Stick dekodiert keine Hauptstreams mit 5 MP (2560×1920) – im Fenster bleibt dann nur das Play-Symbol. Für ihn den Substream der Kamera nehmen (go2rtc <code>…_sub</code>).</small>` : "";
+    return `<details class="appbox"><summary><b><ha-icon icon="mdi:format-list-numbered"></ha-icon> Einrichten am ${typ === "magenta" ? "MagentaTV Stick" : typ === "google" ? "Google TV Streamer" : "Gerät"}</b></summary>
+      <ol style="margin:6px 0 4px 18px;padding:0">${schritte.map((z) => `<li style="margin:3px 0">${z}</li>`).join("")}</ol>${extra}</details>`;
+  },
   _strmHtml(name) {
     const d = this.s.strm, st = this._hass.states;
     if (!d) return "";
@@ -7414,6 +7438,12 @@ const EinstTab = {
       <h3><ha-icon icon="mdi:cast-variant"></ha-icon><input data-st="name" data-si="${si}" value="${esc(x.name)}" maxlength="32" style="flex:1">
         <button class="icon sm" data-a="st_del" data-si="${si}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
       <small>${zul ? `Zuletzt gemeldet: ${new Date(zul).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${d.app?.[x.id] ? ` · ${esc(d.app[x.id])}` : ""}` : "Noch nichts empfangen – Streamer-App installieren und Adresse eintragen."}</small>
+      <div class="ez"><span>Gerät<small class="vtext">Die Streamer-App ist für alle dieselbe – das Gerät bestimmt nur die Anleitung</small></span>
+        <select data-st="typ" data-si="${si}">${[["google", "Google TV Streamer"], ["magenta", "MagentaTV Stick (Gen 2, Typ A)"], ["android", "Anderes Android-TV-Gerät"]]
+          .map(([k, l]) => `<option value="${k}" ${(x.typ || "google") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      ${this._strmAnleitung(x)}
+      <div class="ez"><span>Nur Kamera<small class="vtext">Die App zeigt nur das Kamera-Popup – keine Titel, Cover, Tastatur-Meldungen, und Home Assistant fragt den Streamer nicht laufend ab. Weniger Last, z. B. für den MagentaTV Stick.</small></span>
+        <label class="sw"><input type="checkbox" data-st="nur_kamera" data-si="${si}" ${x.nur_kamera ? "checked" : ""}></label></div>
       <div class="ez"><span>ADB-Gerät<small class="vtext">Android-TV-Integration des Streamers: Adresse eintragen, App beenden, Neustart, „am Fernseher sichtbar“</small></span>
         <select data-st="adb" data-si="${si}"><option value="">— keins —</option>${[...new Set([...(x.adb ? [x.adb] : []), ...mps])].map((e) => `<option value="${esc(e)}" ${e === x.adb ? "selected" : ""}>${esc(name(e))}</option>`).join("")}</select></div>
       <div class="ez"><span>Adresse für die Streamer-App<small class="vtext">Ziel der Meldungen (Webhook)</small></span>
@@ -8035,6 +8065,7 @@ Object.defineProperties(EsphomeremoteKonfigurator.prototype, Object.getOwnProper
 // Was vorher persoenliche HA-Pakete waren, einstellbar fuer alle (custom_components/.../funktionen.py):
 // TV-Eingang, Kamera auf dem Fernseher, Neustart per ADB, Lampe blinkt bei neuer Firmware, Dock-Wache.
 const FKT_POS = [["top-right", "oben rechts"], ["top-left", "oben links"], ["bottom-right", "unten rechts"], ["bottom-left", "unten links"], ["center", "Mitte"]];
+const F_STREAMER = (F) => (F && F.streamer) || [];
 const FunktionenTab = {
   _fktLaden(neu) {
     if ((this.s.fkt && !neu) || this._fktLaedt) return;
@@ -8059,16 +8090,36 @@ const FunktionenTab = {
     const t = c.tv_eingang, k = c.kamera_tv;
     const quellen = (this._hass.states[t.tv]?.attributes.source_list || []).map(String);
     const eingang = F.eingang === "aus" ? "aus" : F.eingang ? `${F.eingang}${t.streamer && F.eingang === t.streamer ? " (Streamer)" : ""}` : "–";
-    const kam = F.kameras.map((x) => { const v = k.kameras[x.id]; return `<div class="fkam ${v ? "an" : ""}">
-        <label class="sw small"><input type="checkbox" data-fk="kam_an" data-e="${esc(x.id)}" ${v ? "checked" : ""}><span><b>${esc(x.name)}</b><small>${esc(x.id)}</small></span></label>
-        ${v ? `<input data-fk="kam_name" data-e="${esc(x.id)}" value="${esc(v.name)}" placeholder="Name auf dem TV">
-          ${k.go2rtc && k.weg === "hatv" ? `<input data-fk="kam_src" data-e="${esc(x.id)}" value="${esc(v.src)}" placeholder="go2rtc-Name (${esc(x.id.split(".")[1])})">` : ""}
-          <button class="btn small" data-a="fk_kam" data-e="${esc(x.id)}" title="Jetzt auf dem Fernseher zeigen"><ha-icon icon="mdi:television-play"></ha-icon>Zeigen</button>` : ""}</div>`; }).join("");
+    // je Fernseher (2026-11-05): Kameras, Name, Streamer, Bildquelle – tv = Kennung ("" = der erste)
+    const kamListe = (tid, k) => F.kameras.map((x) => { const v = k.kameras[x.id]; return `<div class="fkam ${v ? "an" : ""}">
+        <label class="sw small"><input type="checkbox" data-tv="${esc(tid)}" data-fk="kam_an" data-e="${esc(x.id)}" ${v ? "checked" : ""}><span><b>${esc(x.name)}</b><small>${esc(x.id)}</small></span></label>
+        ${v ? `<input data-tv="${esc(tid)}" data-fk="kam_name" data-e="${esc(x.id)}" value="${esc(v.name)}" placeholder="Name auf dem TV">
+          ${k.go2rtc && (k.weg === "hatv" || k.quelle === "sub") ? `<input data-tv="${esc(tid)}" data-fk="kam_src" data-e="${esc(x.id)}" value="${esc(v.src)}" placeholder="go2rtc-Name (${esc(x.id.split(".")[1])}${k.quelle === "sub" ? "_sub" : ""})">` : ""}
+          <button class="btn small" data-tv="${esc(tid)}" data-a="fk_kam" data-e="${esc(x.id)}" title="Jetzt auf diesem Fernseher zeigen"><ha-icon icon="mdi:television-play"></ha-icon>Zeigen</button>` : ""}</div>`; }).join("");
     const neu = c.neustart.map((g, i) => `<div class="fneu">
         <input data-fk="ns_name" data-i="${i}" value="${esc(g.name)}" placeholder="Name, z. B. Streamer">
         ${wahl(`data-fk="ns_entity" data-i="${i}" title="Android-TV-Entität (Integration Android Debug Bridge)"`, F.media, g.entity, "– Entität wählen –")}
         <button class="btn small" data-a="fk_neustart" data-i="${i}" title="Jetzt neu starten"><ha-icon icon="mdi:restart"></ha-icon>Neu starten</button>
         <button class="icon sm" data-a="fk_ns_weg" data-i="${i}" title="Entfernen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`).join("");
+    const tvKarte = (tid, k) => { const ent = (F.tv_entitaeten || {})[tid] || { kamera: "binary_sensor.esphomeremote_camera_tv" + (tid ? "_" + tid : "") }; return `
+      <div class="karte"><h3><ha-icon icon="mdi:cctv"></ha-icon><input data-tv="${esc(tid)}" data-fk="tvname" value="${esc(k.name || "")}" maxlength="40" placeholder="${tid ? "Name" : "Fernseher 1 – Name, z. B. Wohnzimmer"}" style="flex:1" title="Name des Fernsehers (frei) – für tv: in den Aktionen">
+          ${tid ? `<button class="icon sm" data-a="fk_tv_weg" data-tv="${esc(tid)}" title="Fernseher löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>` : ""}</h3>
+        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – als Overlay über allem: das laufende Video (YouTube, Netflix …) läuft weiter, der Ton der Kamera ist aus. Aktionen: <code>esphomeremote.camera_tv</code> mit <code>camera:</code> (Kamera, <code>last</code> oder <code>off</code>), <code>camera_size</code> mit <code>size:</code> (<code>small</code>, <code>medium</code>, <code>large</code>, <code>almost_full</code>) und <code>camera_position</code> mit <code>position:</code> (je auch <code>next</code>). Für Popups: <code>${esc(ent.kamera)}</code>.${tid ? ` Diesen Fernseher wählen: <code>tv: ${esc(k.name || tid)}</code>.` : (c.kamera_tvs || []).length ? " Ohne <code>tv:</code> gilt dieser (der erste) Fernseher." : ""}</div>
+        ${ez("Weg", `<select data-tv="${esc(tid)}" data-fk="weg"><option value="app" ${k.weg !== "hatv" ? "selected" : ""}>ESPHomeRemote Streamer-App (empfohlen)</option><option value="hatv" ${k.weg === "hatv" ? "selected" : ""}>App HA TV Dashboard</option></select>`,
+          k.weg === "hatv" ? "Benachrichtigung an die App HA TV Dashboard" : "Overlay unserer Streamer-App (Wiedergabe › Streamer, ab Version 1.9): WebRTC über Home Assistant (kaum Verzögerung), sonst HLS, sonst Standbilder")}
+        ${k.weg === "hatv" ? `${ez("Fernseher (App)", wahl(`data-tv="${esc(tid)}" data-fk="notify"`, F.notify.map((x) => ({ id: x, name: x.replace("notify.mobile_app_", "") })), k.notify, "– keiner (Funktion aus) –"), "Benachrichtigungsdienst der App HA TV Dashboard")}
+        ${ez("go2rtc-Adresse (optional)", `<input data-tv="${esc(tid)}" data-fk="go2rtc" value="${esc(k.go2rtc)}" placeholder="http://…:1984">`, "Mit go2rtc als WebRTC (schnell), leer = HLS von Home Assistant")}`
+          : ez("Streamer", wahl(`data-tv="${esc(tid)}" data-fk="kstreamer"`, F.streamer || [], k.streamer, (F.streamer || []).length ? "– erster mit ADB –" : "– keiner eingerichtet –"), (F.streamer || []).length ? "" : "Erst unter Wiedergabe einen Streamer mit ADB-Entität einrichten und die App aufspielen.")}
+        ${k.weg === "hatv" ? "" : ez("Bildquelle", `<select data-tv="${esc(tid)}" data-fk="quelle"><option value="voll" ${k.quelle !== "sub" ? "selected" : ""}>Kamera in Home Assistant (volle Auflösung)</option><option value="sub" ${k.quelle === "sub" ? "selected" : ""}>go2rtc-Substream (…_sub)</option></select>`,
+          k.quelle === "sub" ? "Kleinere Auflösung direkt von go2rtc – nötig für den MagentaTV Stick (dekodiert keine 5-MP-Hauptstreams)." : "Für Streamer, die hohe Auflösungen schaffen (Google TV Streamer).")}
+        ${k.weg !== "hatv" && k.quelle === "sub" ? ez("go2rtc-Adresse", `<input data-tv="${esc(tid)}" data-fk="go2rtc" value="${esc(k.go2rtc)}" placeholder="http://…:1984">`, k.go2rtc ? "" : "Ohne Adresse gilt „volle Auflösung“.") : ""}
+        ${ez("Position", `<select data-tv="${esc(tid)}" data-fk="position">${FKT_POS.map(([v, l]) => `<option value="${v}" ${k.position === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
+        ${ez("Größe", `<select data-tv="${esc(tid)}" data-fk="groesse">${["Klein", "Mittel", "Groß", ...(k.weg === "hatv" ? [] : ["Fast Vollbild"])].map((v) => `<option ${k.groesse === v ? "selected" : ""}>${v}</option>`).join("")}</select>`, k.groesse === "Fast Vollbild" ? "Ganzer Bildschirm mit schmalem Rand" : "")}
+        ${k.weg === "hatv" ? "" : ez("Ausblenden nach", `<select data-tv="${esc(tid)}" data-fk="sekunden">${[[0, "nie (bis „aus“)"], [15, "15 s"], [30, "30 s"], [60, "1 min"], [120, "2 min"], [300, "5 min"]].map(([v, l]) => `<option value="${v}" ${Number(k.sekunden || 0) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
+        ${k.weg === "hatv" ? "" : ez("Name im Bild", `<label class="sw"><input type="checkbox" data-tv="${esc(tid)}" data-fk="titel" ${k.titel !== false ? "checked" : ""}></label>`)}
+        <div class="fkams">${kamListe(tid, k) || '<div class="none">Keine Kameras in Home Assistant.</div>'}</div>
+        ${k.notify || k.weg !== "hatv" ? `<div class="inl" style="margin-top:8px"><button class="btn small" data-tv="${esc(tid)}" data-a="fk_kam" data-e="aus"><ha-icon icon="mdi:television-off"></ha-icon>Kamera ausblenden</button></div>` : ""}</div>`; };
+    const tvKarten = [["", c.kamera_tv], ...(c.kamera_tvs || []).map((x) => [x.id, x])].map(([tid, k]) => tvKarte(tid, k)).join("");
     return `<div class="einst fkt">
       <p class="hint">Funktionen für das ganze Zuhause, die die Remotes nutzen. Nichts davon braucht eigene Skripte oder Pakete in Home Assistant – in Tasten, Menüs und Popups wählst du sie als Home-Assistant-Aktion (<code>esphomeremote.…</code>) bzw. als Entität.</p>
       <div class="egrid">
@@ -8078,19 +8129,9 @@ const FunktionenTab = {
         ${t.tv ? ez("Streamer hängt an", `<select data-fk="streamer"><option value="">– kein Streamer –</option>${[...new Set([...quellen, t.streamer].filter(Boolean))].map((q) => `<option value="${esc(q)}" ${q === t.streamer ? "selected" : ""}>${esc(q)}</option>`).join("")}</select>`, "Eingang des Streamers – nur nötig für den CEC-Sensor darunter.") : ""}
         ${t.tv && t.streamer ? ez("CEC-Sensor (optional)", wahl(`data-fk="cec"`, F.sensoren, t.cec, "– keiner –"), "Steht er auf true/an, meldet der Sensor den Eingang des Streamers – hilft, wenn der Fernseher die Quelle nicht verlässlich meldet.") : ""}
         ${t.tv ? `<div class="ez"><span class="zt">Jetzt</span><b>${esc(eingang)}</b></div>` : ""}</div>
-      <div class="karte"><h3><ha-icon icon="mdi:cctv"></ha-icon>Kamera auf dem Fernseher</h3>
-        <div class="eintro">Kamera als Bild im Bild auf dem Fernseher – als Overlay über allem: das laufende Video (YouTube, Netflix …) läuft weiter, der Ton der Kamera ist aus. Aktionen: <code>esphomeremote.camera_tv</code> mit <code>camera:</code> (Kamera, <code>last</code> oder <code>off</code>), <code>camera_size</code> mit <code>size:</code> (<code>small</code>, <code>medium</code>, <code>large</code>, <code>almost_full</code>) und <code>camera_position</code> mit <code>position:</code> (je auch <code>next</code>). Für Popups: <code>binary_sensor.esphomeremote_camera_tv</code>.</div>
-        ${ez("Weg", `<select data-fk="weg"><option value="app" ${k.weg !== "hatv" ? "selected" : ""}>ESPHomeRemote Streamer-App (empfohlen)</option><option value="hatv" ${k.weg === "hatv" ? "selected" : ""}>App HA TV Dashboard</option></select>`,
-          k.weg === "hatv" ? "Benachrichtigung an die App HA TV Dashboard" : "Overlay unserer Streamer-App (Wiedergabe › Streamer, ab Version 1.9): WebRTC über Home Assistant (kaum Verzögerung), sonst HLS, sonst Standbilder")}
-        ${k.weg === "hatv" ? `${ez("Fernseher (App)", wahl(`data-fk="notify"`, F.notify.map((x) => ({ id: x, name: x.replace("notify.mobile_app_", "") })), k.notify, "– keiner (Funktion aus) –"), "Benachrichtigungsdienst der App HA TV Dashboard")}
-        ${ez("go2rtc-Adresse (optional)", `<input data-fk="go2rtc" value="${esc(k.go2rtc)}" placeholder="http://…:1984">`, "Mit go2rtc als WebRTC (schnell), leer = HLS von Home Assistant")}`
-          : ez("Streamer", wahl(`data-fk="kstreamer"`, F.streamer || [], k.streamer, (F.streamer || []).length ? "– erster mit ADB –" : "– keiner eingerichtet –"), (F.streamer || []).length ? "" : "Erst unter Wiedergabe einen Streamer mit ADB-Entität einrichten und die App aufspielen.")}
-        ${ez("Position", `<select data-fk="position">${FKT_POS.map(([v, l]) => `<option value="${v}" ${k.position === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
-        ${ez("Größe", `<select data-fk="groesse">${["Klein", "Mittel", "Groß", ...(k.weg === "hatv" ? [] : ["Fast Vollbild"])].map((v) => `<option ${k.groesse === v ? "selected" : ""}>${v}</option>`).join("")}</select>`, k.groesse === "Fast Vollbild" ? "Ganzer Bildschirm mit schmalem Rand" : "")}
-        ${k.weg === "hatv" ? "" : ez("Ausblenden nach", `<select data-fk="sekunden">${[[0, "nie (bis „aus“)"], [15, "15 s"], [30, "30 s"], [60, "1 min"], [120, "2 min"], [300, "5 min"]].map(([v, l]) => `<option value="${v}" ${Number(k.sekunden || 0) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
-        ${k.weg === "hatv" ? "" : ez("Name im Bild", `<label class="sw"><input type="checkbox" data-fk="titel" ${k.titel !== false ? "checked" : ""}></label>`)}
-        <div class="fkams">${kam || '<div class="none">Keine Kameras in Home Assistant.</div>'}</div>
-        ${k.notify || k.weg !== "hatv" ? `<div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_kam" data-e="aus"><ha-icon icon="mdi:television-off"></ha-icon>Kamera ausblenden</button></div>` : ""}</div>
+      ${tvKarten}
+      <div class="karte" style="justify-content:center;align-items:flex-start"><button class="btn" data-a="fk_tv_neu"><ha-icon icon="mdi:television-classic"></ha-icon><ha-icon icon="mdi:plus"></ha-icon>Weiteren Fernseher</button>
+        <small class="note">Zweiter Fernseher mit eigenem Streamer, eigenen Kameras und eigenem Namen (z. B. MagentaTV Stick am Hisense).</small></div>
       <div class="karte"><h3><ha-icon icon="mdi:restart"></ha-icon>Neustart per ADB</h3>
         <div class="eintro">Hängt ein Android-Gerät (Streamer, Fernseher), startet es die Remote neu – Aktion <code>esphomeremote.restart</code> mit dem Namen. Über die Android-TV-Entität der Integration „Android Debug Bridge“ (ADB-Befehl reboot).</div>
         ${neu || '<div class="none">Noch kein Gerät.</div>'}
@@ -8105,14 +8146,21 @@ const FunktionenTab = {
     const f = t.dataset.fk, c = this.s.fkt?.cfg;
     if (!f || !c) return false;
     if (["tv", "streamer", "cec"].includes(f)) await this._fktSetzen({ tv_eingang: { [f]: t.value } });
-    else if (["notify", "go2rtc", "position", "groesse", "weg"].includes(f)) await this._fktSetzen({ kamera_tv: { [f]: t.value } });
-    else if (f === "kstreamer") await this._fktSetzen({ kamera_tv: { streamer: t.value } });
-    else if (f === "sekunden") await this._fktSetzen({ kamera_tv: { sekunden: Number(t.value) } });
-    else if (f === "titel") await this._fktSetzen({ kamera_tv: { titel: t.checked } });
-    else if (f === "kam_an") await this._fktSetzen({ kamera_tv: { kameras: { [t.dataset.e]: t.checked ? { name: "", src: "" } : null } } });
-    else if (f === "kam_name" || f === "kam_src") {
-      const v = { ...(c.kamera_tv.kameras[t.dataset.e] || {}) }; v[f === "kam_name" ? "name" : "src"] = t.value;
-      await this._fktSetzen({ kamera_tv: { kameras: { [t.dataset.e]: v } } });
+    // Kamera auf dem Fernseher: tv = Kennung des Fernsehers ("" = der erste)
+    else if (t.dataset.tv != null && ["notify", "go2rtc", "position", "groesse", "weg", "quelle", "kstreamer", "sekunden", "titel", "tvname", "kam_an", "kam_name", "kam_src"].includes(f)) {
+      const tv = t.dataset.tv, k = tv ? (c.kamera_tvs || []).find((x) => x.id === tv) : c.kamera_tv;
+      if (!k) return true;
+      let w;
+      if (["notify", "go2rtc", "position", "groesse", "weg", "quelle"].includes(f)) w = { [f]: t.value };
+      else if (f === "tvname") w = { name: t.value };
+      else if (f === "kstreamer") {   // MagentaTV Stick: gleich den Substream vorschlagen
+        w = { streamer: t.value };
+        if ((F_STREAMER(this.s.fkt).find((x) => x.id === t.value) || {}).typ === "magenta") w.quelle = "sub";
+      } else if (f === "sekunden") w = { sekunden: Number(t.value) };
+      else if (f === "titel") w = { titel: t.checked };
+      else if (f === "kam_an") w = { kameras: { [t.dataset.e]: t.checked ? { name: "", src: "" } : null } };
+      else { const v = { ...(k.kameras[t.dataset.e] || {}) }; v[f === "kam_name" ? "name" : "src"] = t.value; w = { kameras: { [t.dataset.e]: v } }; }
+      await this._fktSetzen({ kamera_tv: { tv, ...w } });
     } else if (f.startsWith("ns_")) {
       const l = c.neustart.map((x) => ({ ...x })), i = Number(t.dataset.i);
       l[i][f.slice(3)] = t.value;
@@ -8133,7 +8181,14 @@ const FunktionenTab = {
       await this._hass.callService("esphomeremote", "restart", { device: g.name }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
       this.s.msg = { text: `Neustart an „${g.name}“ geschickt.` };
     } else if (a === "fk_kam") {
-      await this._hass.callService("esphomeremote", "camera_tv", { camera: t.dataset.e }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
+      const tv = t.dataset.tv || "";
+      await this._hass.callService("esphomeremote", "camera_tv", { camera: t.dataset.e, ...(tv ? { tv } : {}) }).catch((e) => { this.s.msg = { err: true, text: e.message }; });
+    } else if (a === "fk_tv_neu") {
+      const name = (prompt("Name des Fernsehers (z. B. Hisense, Schlafzimmer):", "") || "").trim();
+      if (name) await this._fktSetzen({ kamera_tv_neu: name });
+    } else if (a === "fk_tv_weg") {
+      const x = (c.kamera_tvs || []).find((y) => y.id === t.dataset.tv);
+      if (x && confirm(`Fernseher „${x.name || x.id}“ löschen? Seine Kamera-Einstellungen gehen verloren.`)) await this._fktSetzen({ kamera_tv_weg: x.id });
     }
     return true;
   },

@@ -34,7 +34,7 @@ APP_DIR = Path(__file__).parent / "streamer_app"   # mitgelieferte App (Release-
 DOMAIN = "esphomeremote"
 
 NAMEN = {
-    "com.netflix.ninja": "Netflix", "org.smarttube.stable": "SmartTube", "com.google.android.youtube.tv": "YouTube",
+    "de.telekom.magentatv.androidtv": "MagentaTV", "com.netflix.ninja": "Netflix", "org.smarttube.stable": "SmartTube", "com.google.android.youtube.tv": "YouTube",
     "com.google.android.apps.youtube.music": "YouTube Music", "com.disney.disneyplus": "Disney+", "de.rtli.tvnow": "RTL+",
     "org.xbmc.kodi": "Kodi", "com.amazon.amazonvideo.livingroom": "Prime Video", "com.spotify.tv.android": "Spotify",
     "com.plexapp.android": "Plex", "de.sky.bw": "Sky", "com.apple.atve.androidtv.appletv": "Apple TV",
@@ -47,11 +47,17 @@ NAMEN = {
 }
 LAUNCHER = ("com.google.android.apps.tv.launcherx", "com.google.android.tvlauncher", "com.spocky.projengmenu",
             "com.android.systemui", "com.android.tv.settings", "com.google.android.tvsettings")
+MAGENTATV = "de.telekom.magentatv.androidtv"
 SMARTTUBE = "org.smarttube.stable"
-RE_SITZUNG = re.compile(r"package=([^ \n]+)[ \n]+state=PlaybackState [{]state=[A-Z_]+[(]([0-9]+)[)], position=([0-9]+), "
+# Zustand als "state=PLAYING(3)" (Android 13+, Google TV Streamer) oder nur "state=3" (Android 12, MagentaTV Stick Gen 2 -
+# 2026-11-05: dort wurde sonst keine Sitzung erkannt, Titel war der App-Name, Status "paused")
+RE_SITZUNG = re.compile(r"package=([^ \n]+)[ \n]+state=PlaybackState [{]state=(?:[A-Z_]+[(])?([0-9]+)[)]?, position=(-?[0-9]+), "
                         r"buffered position=[0-9]+, speed=([-0-9.]+), updated=([0-9]+)[^\n]*[\n][ ]+metadata: ([^\n]*)")
 RE_TOP = re.compile(r"topResumedActivity=ActivityRecord[{][0-9a-f]+ u[0-9]+ ([A-Za-z0-9_.]+)/")
 LEER, NETFLIX = "/local/esphomeremote_cover_leer.png", "/local/esphomeremote_netflix_n.png"
+
+
+GERAETE = ("google", "magenta", "android")   # Google TV Streamer, MagentaTV Stick (Gen 2, Typ A), anderes Android-TV
 
 
 def validate_streamer(liste) -> list[dict]:
@@ -69,7 +75,12 @@ def validate_streamer(liste) -> list[dict]:
         wh = str(st.get("webhook") or "").strip() or f"esphomeremote_streamer_{secrets.token_hex(12)}"
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", wh):
             raise vol.Invalid("Streamer: Webhook-Kennung ungültig")
-        out.append({"id": sid, "name": str(st.get("name") or "Streamer")[:32], "adb": adb, "webhook": wh})
+        # Geraetetyp (2026-11-05): nur fuer die Anleitung im Konfigurator - die App ist fuer alle dieselbe
+        typ = str(st.get("typ") or "google")
+        # nur_kamera (2026-11-05, Nutzer: "dass die App nur das mit dem Kamerastream macht, die ganzen anderen Sachen
+        # nicht ... dass der Fernseher nicht so viele Anfragen verarbeiten muss"): Software-Schalter, keine zweite APK
+        out.append({"id": sid, "name": str(st.get("name") or "Streamer")[:32], "adb": adb, "webhook": wh,
+                    "typ": typ if typ in GERAETE else "android", "nur_kamera": bool(st.get("nur_kamera"))})
     return out
 
 
@@ -101,6 +112,10 @@ def auswerten(r: str, alt: dict, basis: str) -> dict:
         else:
             titel = app
     interpret = feld("ARTIST") if (sel and ist_st) else ""
+    if pkg == MAGENTATV and ", " in titel:
+        # MagentaTV (2026-11-05): Beschreibung "Sendung, Sender" -> Titel = Sendung, Interpret = Sender
+        # (am letzten Komma trennen: Sendungen haben selbst Kommas, Sender nie)
+        titel, interpret = titel.rsplit(", ", 1)
     status = ("paused" if fg else "") if not sel else ("playing" if sel[1] == "3" else "paused")
     leer, netflix = f"http://{basis}{LEER}", f"http://{basis}{NETFLIX}"
     art = ""
@@ -124,6 +139,8 @@ def auswerten(r: str, alt: dict, basis: str) -> dict:
         a_pos, a_zeit, a_lief = alt.get("position", -1), alt.get("pos_zeit"), alt.get("laeuft")
         erwartet = a_pos + ((dt_util.utcnow() - a_zeit).total_seconds() * float(sel[3]) if (a_zeit and laeuft) else 0)
         pos = a_pos if (a_pos >= 0 and a_lief == laeuft and abs(neu - erwartet) <= 2) else neu
+        if pos > 10 * 365 * 86400:   # Live-TV (MagentaTV): "Position" ist die Uhrzeit - keine echte Position
+            pos = -1
         tempo = float(playing[0][3]) if playing else 1.0
     dm = re.findall("DUR:" + re.escape(pkg) + "=([0-9]+)", r) if sel else []
     dauer = int(int(dm[0]) / 1000) if dm else 0
@@ -168,7 +185,7 @@ class Streamer:
             self._weg.append(lambda: webhook.async_unregister(self.hass, wh))
         except ValueError as err:   # Kennung schon vergeben (z. B. noch ein altes Template-Paket mit demselben Webhook)
             _LOGGER.warning("Streamer %s: Webhook %s nicht moeglich: %s", self.cfg["name"], self.cfg["webhook"], err)
-        if self.cfg["adb"]:
+        if self.cfg["adb"] and not self.cfg.get("nur_kamera"):
             from datetime import timedelta
             self._weg.append(async_track_time_interval(self.hass, self._cec_fragen, timedelta(seconds=30)))
             self.hass.async_create_task(self._cec_fragen(None))
@@ -196,6 +213,10 @@ class Streamer:
     async def adb(self, befehl: str) -> str:
         if not self.cfg["adb"]:
             raise vol.Invalid("Kein ADB-Gerät gewählt")
+        st = self.hass.states.get(self.cfg["adb"])
+        if st is None or st.state == "unavailable":
+            # Nur-Kamera: die Android-TV-Entitaet wird nicht abgefragt und verbindet sich nicht selbst neu
+            await self.hass.services.async_call("homeassistant", "update_entity", {"entity_id": self.cfg["adb"]}, blocking=True)
         await self.hass.services.async_call("androidtv", "adb_command", {"entity_id": self.cfg["adb"], "command": befehl}, blocking=True)
         st = self.hass.states.get(self.cfg["adb"])
         return str(st.attributes.get("adb_response") or "") if st else ""
@@ -241,7 +262,7 @@ class Streamer:
         z = self.daten.get("zuletzt")
         return {"installiert": bool(code), "code": int(code[0]) if code else 0, "name": name[0] if name else "",
                 "bedienung": f"{APP_PKG}/" in teile[1], "medien": f"{APP_PKG}/" in teile[2],
-                "webhook": url if url not in ("", "null") else "", "webhook_ok": url == soll,
+                "webhook": url if url not in ("", "null") else "", "webhook_ok": url == soll, "nur_kamera": bool(self.cfg.get("nur_kamera")),
                 "zuletzt": z.isoformat() if z else None}
 
     async def app_einrichten(self) -> dict:
@@ -270,10 +291,36 @@ class Streamer:
         acc = (await self.adb("settings get secure enabled_accessibility_services")).strip()
         liste = [x for x in acc.split(":") if x and x != "null" and not x.startswith(APP_PKG + "/")]
         liste.append(f"{APP_PKG}/{APP_PKG}.AccessibilityHelper")
-        await self.adb(f"settings put secure enabled_accessibility_services {':'.join(liste)}; settings put secure accessibility_enabled 1; "
-                       f"cmd notification allow_listener {APP_PKG}/{APP_PKG}.MediaListener")
-        await self.eintragen()
+        await self.adb(f"settings put secure enabled_accessibility_services {':'.join(liste)}; settings put secure accessibility_enabled 1")
+        await self.modus_anwenden()
         return await self.app_status()
+
+    async def modus_anwenden(self) -> None:
+        """Voll: Titel/Cover/Tastatur melden (Benachrichtigungszugriff, Webhook), Android-TV-Entitaet wird abgefragt.
+        Nur Kamera: App meldet nichts (kein Benachrichtigungszugriff, kein Ziel), HA fragt den Streamer nicht ab -
+        nur das Kamera-Overlay (Bedienungshilfe) und ADB-Befehle auf Abruf."""
+        nur = bool(self.cfg.get("nur_kamera"))
+        lis = f"{APP_PKG}/{APP_PKG}.MediaListener"
+        if nur:
+            await self.adb(f"cmd notification disallow_listener {lis}; settings delete global esphomeremote_webhook")
+            self.daten = {}
+            self.cec = None
+            self._melden()
+        else:
+            await self.adb(f"cmd notification allow_listener {lis}")
+            await self.eintragen()
+        await self._abfragen(not nur)
+
+    async def _abfragen(self, an: bool) -> None:
+        """Regelmaessiges Abfragen der Android-TV-Integration (Systemoption des Eintrags) an/aus."""
+        from homeassistant.helpers import entity_registry as er
+
+        ent = er.async_get(self.hass).async_get(self.cfg["adb"]) if self.cfg["adb"] else None
+        ce = self.hass.config_entries.async_get_entry(ent.config_entry_id) if ent and ent.config_entry_id else None
+        if ce is None or ce.domain != "androidtv" or ce.pref_disable_polling == (not an):
+            return
+        self.hass.config_entries.async_update_entry(ce, pref_disable_polling=not an)
+        await self.hass.config_entries.async_reload(ce.entry_id)
 
     async def app_entfernen(self) -> dict:
         acc = (await self.adb("settings get secure enabled_accessibility_services")).strip()
@@ -331,7 +378,9 @@ def _antwort(hass) -> dict:
     s: Streamers = hass.data[DOMAIN + "_streamer"]
     return {"streamer": s.liste, "basis": s.kd.basis(),
             "zuletzt": {sid: (st.daten.get("zuletzt").isoformat() if st.daten.get("zuletzt") else None) for sid, st in s.alle.items()},
-            "app": {sid: st.daten.get("app") or "" for sid, st in s.alle.items()}}
+            "app": {sid: st.daten.get("app") or "" for sid, st in s.alle.items()},
+            # was gerade laeuft (2026-11-05, zur Kontrolle im Konfigurator / bei der Fehlersuche)
+            "jetzt": {sid: {k: st.daten.get(k) for k in ("titel", "interpret", "status", "cover", "paket", "position", "dauer")} for sid, st in s.alle.items()}}
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/streamer_app", vol.Required("streamer"): str,
@@ -383,10 +432,17 @@ async def ws_streamer_save(hass, connection, msg) -> None:
     for j in s.kd.data.get("jetzt") or []:
         if j.get("streamer") and j["streamer"] not in ids:
             j["streamer"] = ""
+    vorher = {sid: bool(st.cfg.get("nur_kamera")) for sid, st in s.alle.items()}   # Stand vor sync()
     await s.kd.store.async_save(s.kd.data)
     s.sync()
     if (v := hass.data.get(DOMAIN + "_dock")) is not None:
         await v.sync()
+    for sid, st in s.alle.items():   # Nur-Kamera umgeschaltet: gleich am Streamer anwenden
+        if sid in vorher and vorher[sid] != bool(st.cfg.get("nur_kamera")) and st.cfg.get("adb"):
+            try:
+                await st.modus_anwenden()
+            except Exception as err:  # noqa: BLE001 - Streamer aus: gilt beim naechsten "Einrichten"
+                _LOGGER.warning("Streamer %s: Modus nicht angewendet: %s", st.cfg["name"], err)
     connection.send_result(msg["id"], _antwort(hass))
 
 

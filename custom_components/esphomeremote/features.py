@@ -44,8 +44,12 @@ GROESSE_ID = {"small": "Klein", "medium": "Mittel", "large": "Groß", "almost_fu
 POSITIONEN = ("top-right", "top-left", "bottom-right", "bottom-left", "center")
 STANDARD = {
     "tv_eingang": {"tv": "", "streamer": "", "cec": "", "erkennung": ""},   # erkennung: nur noch fuer die Umstellung
-    "kamera_tv": {"weg": "app", "streamer": "", "sekunden": 0, "titel": True,
+    "kamera_tv": {"weg": "app", "streamer": "", "sekunden": 0, "titel": True, "name": "", "quelle": "voll",
                   "notify": "", "go2rtc": "", "position": "top-right", "groesse": "Mittel", "kameras": {}},
+    # weitere Fernseher (2026-11-05, Nutzer: "mehrere Geraete anlegen, Google Streamer, Magenta Stick ... den Namen
+    # frei vergeben ... beide installieren und deinstallieren ... und die Kameras auswaehlen"). Gleicher Aufbau wie
+    # kamera_tv plus "id"; kamera_tv bleibt der erste Fernseher (Entitaeten ohne Endung, Dienste ohne "tv").
+    "kamera_tvs": [],
     "neustart": [],
     "version_licht": "",
     "dock_wache": True,
@@ -61,8 +65,8 @@ class Funktionen:
     def __init__(self, hass: HomeAssistant, kd) -> None:
         self.hass, self.kd = hass, kd
         self._abos: list = []
-        self._letzte = ""          # zuletzt gezeigte Kamera
-        self._sichtbar = False
+        self._st: dict[str, dict] = {}   # je Fernseher (id, "" = erster): letzte Kamera, sichtbar, Timer
+        self._gesetzt: set[str] = set()  # Kamera-Entitaeten, die gerade gesetzt sind
         self._dock_off: dict[str, float] = {}
         self._knapp: set[str] = set()
 
@@ -112,27 +116,23 @@ class Funktionen:
                     c["tv_eingang"][k] = str(neu["tv_eingang"][k] or "")[:120]
         if isinstance(neu.get("kamera_tv"), dict):
             k2 = neu["kamera_tv"]
-            for k in ("notify", "go2rtc", "streamer"):
-                if k in k2:
-                    c["kamera_tv"][k] = str(k2[k] or "").strip()[:200]
-            if k2.get("weg") in ("app", "hatv"):
-                c["kamera_tv"]["weg"] = k2["weg"]
-            if "sekunden" in k2:
-                c["kamera_tv"]["sekunden"] = max(0, min(3600, int(k2["sekunden"] or 0)))
-            if "titel" in k2:
-                c["kamera_tv"]["titel"] = bool(k2["titel"])
-            if k2.get("position") in POSITIONEN:
-                c["kamera_tv"]["position"] = k2["position"]
-            if k2.get("groesse") in GROESSEN:
-                c["kamera_tv"]["groesse"] = k2["groesse"]
-            if isinstance(k2.get("kameras"), dict):   # camera.x -> {an, name, src}; None = entfernen
-                for e, v in k2["kameras"].items():
-                    if not str(e).startswith("camera."):
-                        continue
-                    if v is None:
-                        c["kamera_tv"]["kameras"].pop(e, None)
-                    elif isinstance(v, dict):
-                        c["kamera_tv"]["kameras"][e] = {"name": str(v.get("name") or "")[:40], "src": str(v.get("src") or "")[:80]}
+            ziel = self._tv_cfg(str(k2.get("tv") or ""))   # "tv": welcher Fernseher (leer = erster)
+            if ziel is not None:
+                self._kamera_setzen(ziel, k2)
+        if neu.get("kamera_tv_neu"):   # weiterer Fernseher, Name frei
+            name = str(neu["kamera_tv_neu"]).strip()[:40] or "Fernseher"
+            from homeassistant.util import slugify
+            basis = (slugify(name) or "tv")[:20]
+            ids = {"", *(t["id"] for t in c["kamera_tvs"])}
+            tid, n = basis, 2
+            while tid in ids or tid == "tv":
+                tid, n = f"{basis}_{n}", n + 1
+            c["kamera_tvs"].append({**{k: (v if not isinstance(v, (dict, list)) else type(v)()) for k, v in STANDARD["kamera_tv"].items()},
+                                    "id": tid, "name": name})
+        if neu.get("kamera_tv_weg"):
+            weg = str(neu["kamera_tv_weg"])
+            c["kamera_tvs"] = [t for t in c["kamera_tvs"] if t["id"] != weg]
+            self._st.pop(weg, None)
         if isinstance(neu.get("neustart"), list):
             c["neustart"] = [{"name": str(x.get("name") or "")[:30], "entity": str(x.get("entity") or "")[:120],
                               "ip": str(x.get("ip") or "").strip()[:60]} for x in neu["neustart"] if isinstance(x, dict) and x.get("name")][:8]
@@ -155,7 +155,9 @@ class Funktionen:
                 "sensoren": [x for x in liste("sensor") + liste("binary_sensor")], "notify": [f"notify.{s}" for s in notify],
                 "eingang": (st.get(E_EINGANG).state if st.get(E_EINGANG) else None),
                 "tv_quelle": self._tv_text(),
-                "streamer": [{"id": s["id"], "name": s["name"]} for s in (self.kd.data.get("streamer") or []) if s.get("adb")]}
+                "streamer": [{"id": s["id"], "name": s["name"], "typ": s.get("typ") or "google"}
+                             for s in (self.kd.data.get("streamer") or []) if s.get("adb")],
+                "tv_entitaeten": {tid: {"kamera": self._e(E_KAMERA, tid), "groesse": self._e(E_GROESSE, tid)} for tid, _ in self._tvs()}}
 
     # ------------------------------------------------------------------ TV-Eingang
     def _tv_text(self) -> str:
@@ -198,84 +200,159 @@ class Funktionen:
         zustaende(self.hass).setzen(E_EINGANG, wert[:250], {"friendly_name": _t(self.hass, "ESPHomeRemote TV Eingang"), "icon": "mdi:video-input-hdmi",
                                                            "options": liste + ["off"], "streamer": bool(t["streamer"]) and wert == t["streamer"]})
 
-    # ------------------------------------------------------------------ Kamera auf dem Fernseher
+    # ------------------------------------------------------------------ Kamera auf dem Fernseher (mehrere, 2026-11-05)
+    def _tvs(self) -> list[tuple[str, dict]]:
+        c = self.cfg
+        return [("", c["kamera_tv"])] + [(t["id"], t) for t in c["kamera_tvs"] if t.get("id")]
+
+    def _tv(self, wahl: str = "") -> tuple[str, dict] | None:
+        """Fernseher nach Kennung oder Name (gross/klein egal); leer = der erste."""
+        w = str(wahl or "").strip().lower()
+        if not w:
+            return self._tvs()[0]
+        for tid, k in self._tvs():
+            if w in (tid, str(k.get("name") or "").strip().lower()):
+                return tid, k
+        return None
+
+    def _tv_cfg(self, wahl: str) -> dict | None:
+        t = self._tv(wahl)
+        return t[1] if t else None
+
+    @staticmethod
+    def _e(basis: str, tid: str) -> str:
+        return f"{basis}_{tid}" if tid else basis
+
+    def _zst(self, tid: str) -> dict:
+        return self._st.setdefault(tid, {"letzte": "", "sichtbar": False, "timer": None})
+
+    @staticmethod
+    def _kamera_setzen(k: dict, k2: dict) -> None:
+        for f in ("notify", "go2rtc", "streamer"):
+            if f in k2:
+                k[f] = str(k2[f] or "").strip()[:200]
+        if "name" in k2:
+            k["name"] = str(k2["name"] or "").strip()[:40]
+        if k2.get("quelle") in ("voll", "sub"):
+            k["quelle"] = k2["quelle"]
+        if k2.get("weg") in ("app", "hatv"):
+            k["weg"] = k2["weg"]
+        if "sekunden" in k2:
+            k["sekunden"] = max(0, min(3600, int(k2["sekunden"] or 0)))
+        if "titel" in k2:
+            k["titel"] = bool(k2["titel"])
+        if k2.get("position") in POSITIONEN:
+            k["position"] = k2["position"]
+        if k2.get("groesse") in GROESSEN:
+            k["groesse"] = k2["groesse"]
+        if isinstance(k2.get("kameras"), dict):   # camera.x -> {name, src}; None = entfernen
+            for e, v in k2["kameras"].items():
+                if not str(e).startswith("camera."):
+                    continue
+                if v is None:
+                    k["kameras"].pop(e, None)
+                elif isinstance(v, dict):
+                    k["kameras"][e] = {"name": str(v.get("name") or "")[:40], "src": str(v.get("src") or "")[:80]}
+
     @callback
     def _kamera_zustand(self) -> None:
-        k = self.cfg["kamera_tv"]
-        if not self._kamera_bereit():
-            for e in (E_KAMERA, E_GROESSE):
-                zustaende(self.hass).aus(e)
-            return
-        name = self._kamera_name(self._letzte) if self._letzte else ""
-        zustaende(self.hass).setzen(E_KAMERA, "on" if self._sichtbar else "off",
-                                   {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera auf dem TV"), "icon": "mdi:cctv", "camera": self._letzte, "name": name})
-        # Zustand = Groesse in der HA-Sprache (die Remote zeigt ihn so an), Attribut size = Wert fuer camera_size
-        sid = next((i for i, g in GROESSE_ID.items() if g == k["groesse"]), "medium")
-        zustaende(self.hass).setzen(E_GROESSE, _t(self.hass, k["groesse"]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe"),
-                                                                           "icon": "mdi:resize", "size": sid, "options": list(GROESSE_ID)})
+        jetzt: set[str] = set()
+        for tid, k in self._tvs():
+            ek, eg = self._e(E_KAMERA, tid), self._e(E_GROESSE, tid)
+            if not self._kamera_bereit(k):
+                continue
+            z = self._zst(tid)
+            tvname = k.get("name") or ""
+            name = self._kamera_name(k, z["letzte"]) if z["letzte"] else ""
+            titel = "ESPHomeRemote Kamera auf dem TV" + (f" ({tvname})" if tvname else "")
+            zustaende(self.hass).setzen(ek, "on" if z["sichtbar"] else "off",
+                                       {"friendly_name": _t(self.hass, titel), "icon": "mdi:cctv", "camera": z["letzte"], "name": name,
+                                        "tv": tid or (tvname or ""), "cameras": [e for e in k["kameras"] if e.startswith("camera.")]})
+            # Zustand = Groesse in der HA-Sprache (die Remote zeigt ihn so an), Attribut size = Wert fuer camera_size
+            sid = next((i for i, g in GROESSE_ID.items() if g == k["groesse"]), "medium")
+            zustaende(self.hass).setzen(eg, _t(self.hass, k["groesse"]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe") + (f" ({tvname})" if tvname else ""),
+                                                                       "icon": "mdi:resize", "size": sid, "options": list(GROESSE_ID)})
+            jetzt |= {ek, eg}
+        for e in self._gesetzt - jetzt | ({E_KAMERA, E_GROESSE} - jetzt):
+            zustaende(self.hass).aus(e)
+        self._gesetzt = jetzt
 
-    def _app_streamer(self):
+    def _app_streamer(self, k: dict):
         """Streamer mit ADB fuer das Overlay der eigenen App (eingestellt oder der erste mit ADB)."""
         alle = getattr(self.hass.data.get(DOMAIN + "_streamer"), "alle", {}) or {}
-        sid = self.cfg["kamera_tv"]["streamer"]
+        sid = k["streamer"]
         st = alle.get(sid) if sid else None
         return st or next((s for s in alle.values() if s.cfg.get("adb")), None)
 
-    def _kamera_bereit(self) -> bool:
-        k = self.cfg["kamera_tv"]
-        return bool(self._app_streamer()) if k["weg"] == "app" else bool(k["notify"])
+    def _kamera_bereit(self, k: dict) -> bool:
+        return bool(self._app_streamer(k)) if k["weg"] == "app" else bool(k["notify"])
 
-    async def _app_senden(self, kam: str | None) -> None:
+    async def _app_senden(self, tid: str, k: dict, kam: str | None) -> None:
         """Overlay der Streamer-App per ADB-Broadcast: zeigen (kam) oder schliessen (None)."""
         from .tv_camera import basis_url
 
-        st = self._app_streamer()
+        st = self._app_streamer(k)
         if st is None:
             _LOGGER.warning("Kamera auf dem TV: kein Streamer mit ADB eingerichtet (Konfigurator > Wiedergabe)")
             return
-        k = self.cfg["kamera_tv"]
         b = "am broadcast -a de.esphomeremote.streamer.CAMERA -p de.esphomeremote.streamer"
         if kam is None:
             await st.adb(f"{b} --es aktion aus")
             return
-        name = re.sub(r"[^\w äöüÄÖÜß.\-]", "", self._kamera_name(kam))[:40] if k["titel"] else ""
-        await st.adb(f"{b} --es aktion zeigen --es kamera {kam} --es name '{name}' --es basis {basis_url(self.hass, self.kd.basis())}"
+        name = re.sub(r"[^\w äöüÄÖÜß.\-]", "", self._kamera_name(k, kam))[:40] if k["titel"] else ""
+        basis = basis_url(self.hass, self.kd.basis())
+        if k.get("quelle") == "sub" and k.get("go2rtc"):   # Bild direkt von go2rtc (Substream), z. B. MagentaTV Stick
+            basis += f"/t/{tid or '_'}"
+        await st.adb(f"{b} --es aktion zeigen --es kamera {kam} --es name '{name}' --es basis {basis}"
                      f" --es groesse '{k['groesse']}' --es position {k['position']} --ei sekunden {int(k['sekunden'])}")
 
-    def _kamera_name(self, e: str) -> str:
-        v = self.cfg["kamera_tv"]["kameras"].get(e) or {}
+    def _kamera_name(self, k: dict, e: str) -> str:
+        v = k["kameras"].get(e) or {}
         s = self.hass.states.get(e)
         return v.get("name") or (s.attributes.get("friendly_name") if s else "") or e
 
     async def _dienst_kamera(self, call) -> None:
         kam = str(call.data.get("camera") or "last")
-        k = self.cfg["kamera_tv"]
-        if not self._kamera_bereit():
+        t = self._tv(call.data.get("tv") or "")
+        if t is None:
+            _LOGGER.warning("Kamera auf dem TV: kein Fernseher '%s' (Konfigurator > Funktionen)", call.data.get("tv"))
+            return
+        tid, k = t
+        z = self._zst(tid)
+        if not self._kamera_bereit(k):
             _LOGGER.warning("Kamera auf dem TV: kein Fernseher eingestellt (Konfigurator > Funktionen)")
             return
         if kam == "off" and k["weg"] == "app":
-            await self._app_senden(None)
-            self._sichtbar = False
+            await self._app_senden(tid, k, None)
+            z["sichtbar"] = False
             self._kamera_zustand()
             return
         if kam == "off":
-            await self._senden({"title": "Kamera aus", "message": " ", "data": {"notif_type": "stream", "config": {"duration": 0, "width": 120}}})
-            self._sichtbar = False
+            await self._senden(k, {"title": "Kamera aus", "message": " ", "data": {"notif_type": "stream", "config": {"duration": 0, "width": 120}}})
+            z["sichtbar"] = False
             self._kamera_zustand()
             return
+        liste = [e for e in k["kameras"] if e.startswith("camera.")]
         if kam == "last":
-            kam = self._letzte or next(iter(k["kameras"]), "")
+            kam = z["letzte"] or next(iter(liste), "")
+        elif kam in ("next", "previous"):
+            # Weiterschalten wie bei der Groesse (Nutzer 2026-11-05: "nicht nur die letzte Kamera, sondern
+            # weiterschalten - next, next, next"): Reihenfolge der Kameraliste dieses Fernsehers, ringsum
+            if not liste:
+                return
+            i = liste.index(z["letzte"]) if z["letzte"] in liste else (-1 if kam == "next" else 0)
+            kam = liste[(i + (1 if kam == "next" else -1)) % len(liste)]
         if not kam.startswith("camera."):
             return
-        schon = self._sichtbar
+        schon = z["sichtbar"]
         if k["weg"] == "app":
-            await self._app_senden(kam)
+            await self._app_senden(tid, k, kam)
             if schon:
-                await self._popups_erneut()
-            self._letzte, self._sichtbar = kam, True
+                await self._popups_erneut(self._e(E_KAMERA, tid))
+            z["letzte"], z["sichtbar"] = kam, True
             self._kamera_zustand()
             if k["sekunden"]:
-                self._aus_timer(k["sekunden"])
+                self._aus_timer(tid, k["sekunden"])
             return
         v = k["kameras"].get(kam) or {}
         objekt = kam.split(".", 1)[1]
@@ -284,18 +361,18 @@ class Funktionen:
             video, fmt = f"{basis}/webrtc.html?src={v.get('src') or objekt}&media=video", "webrtc"
         else:
             video, fmt = "hls", "hls"
-        name = self._kamera_name(kam)
+        name = self._kamera_name(k, kam)
         if schon:
-            await self._popups_erneut()
-        await self._senden({"title": name, "message": " ", "data": {
+            await self._popups_erneut(self._e(E_KAMERA, tid))
+        await self._senden(k, {"title": name, "message": " ", "data": {
             "notif_type": "stream", "entity_id": kam, "camera_name": name, "video": video,
             "config": {"position": k["position"], "duration": 1296000, "fontsize": "small", "width": GROESSEN.get(k["groesse"], 480),
                        "transparency": 0, "show_frame": False}}})
-        _LOGGER.debug("Kamera %s auf dem TV (%s)", kam, fmt)
-        self._letzte, self._sichtbar = kam, True
+        _LOGGER.debug("Kamera %s auf dem TV %s (%s)", kam, tid or "1", fmt)
+        z["letzte"], z["sichtbar"] = kam, True
         self._kamera_zustand()
 
-    async def _popups_erneut(self) -> None:
+    async def _popups_erneut(self, entity: str) -> None:
         """Kamera lief schon: der Zustand bleibt "on", ein Popup mit Ausloeser "Kamera auf dem TV -> an" ginge nicht
         noch einmal auf. Nutzer 2026-11-01: "wenn die Kamera schon auf ist und ich die Taste nochmal druecke, kommt mein
         Popup nicht - der sollte aber kommen". Darum diese Popups direkt oeffnen (sonst ueber das Dock)."""
@@ -307,7 +384,7 @@ class Funktionen:
                 continue
             for pg in seiten:
                 auf = (pg.get("popup") or {}).get("open") or []
-                if not any(a.get("entity") == E_KAMERA and not a.get("attr") and str(a.get("to") or "").lower() in ("on", "an") for a in auf):
+                if not any(a.get("entity") == entity and not a.get("attr") and str(a.get("to") or "").lower() in ("on", "an") for a in auf):
                     continue
                 svc = f"{dev.replace('-', '_')}_menue_popup"
                 try:
@@ -319,26 +396,35 @@ class Funktionen:
                         ds.test_zeigen(dev, pg["id"])
                 break
 
-    def _aus_timer(self, s: int) -> None:
+    def _aus_timer(self, tid: str, s: int) -> None:
         """Zustand nach Ablauf zuruecksetzen (die App schliesst das Overlay selbst)."""
-        if getattr(self, "_timer", None):
-            self._timer()
+        z = self._zst(tid)
+        if z["timer"]:
+            z["timer"]()
         from homeassistant.helpers.event import async_call_later
 
         def weg(_now) -> None:
-            self._timer = None
-            self._sichtbar = False
+            z["timer"] = None
+            z["sichtbar"] = False
             self._kamera_zustand()
-        self._timer = async_call_later(self.hass, s, weg)
+        z["timer"] = async_call_later(self.hass, s, weg)
 
-    async def _senden(self, daten: dict) -> None:
-        dom, svc = self.cfg["kamera_tv"]["notify"].split(".", 1)
+    async def _senden(self, k: dict, daten: dict) -> None:
+        dom, svc = k["notify"].split(".", 1)
         await self.hass.services.async_call(dom, svc, daten, blocking=False)
+
+    async def _nochmal(self, tid: str) -> None:
+        z = self._zst(tid)
+        if z["sichtbar"] and z["letzte"]:   # laufende Kamera gleich neu (Groesse/Ecke)
+            await self._dienst_kamera(type("C", (), {"data": {"camera": z["letzte"], "tv": tid}})())
 
     async def _dienst_position(self, call) -> None:
         """Ecke der Kamera (oder "naechste": im Uhrzeigersinn weiter); eine laufende Kamera rueckt sofort."""
+        t = self._tv(call.data.get("tv") or "")
+        if t is None:
+            return
+        tid, k = t
         p = str(call.data.get("position") or "next")
-        k = self.cfg["kamera_tv"]
         if p == "next":
             n = ["top-left", "top-right", "bottom-right", "bottom-left"]
             p = n[(n.index(k["position"]) + 1) % 4] if k["position"] in n else "top-right"
@@ -346,13 +432,15 @@ class Funktionen:
             return
         k["position"] = p
         await self.kd.store.async_save(self.kd.data)
-        if self._sichtbar and self._letzte:
-            await self._dienst_kamera(type("C", (), {"data": {"camera": self._letzte}})())
+        await self._nochmal(tid)
 
     async def _dienst_groesse(self, call) -> None:
+        t = self._tv(call.data.get("tv") or "")
+        if t is None:
+            return
+        tid, k = t
         g = str(call.data.get("size") or "next")
         g = GROESSE_ID.get(g, g)   # intern das deutsche Wort (Konfigurator, App)
-        k = self.cfg["kamera_tv"]
         if g == "next":
             n = list(GROESSEN)
             g = n[(n.index(k["groesse"]) + 1) % len(n)] if k["groesse"] in n else "Mittel"
@@ -361,8 +449,7 @@ class Funktionen:
         k["groesse"] = g
         await self.kd.store.async_save(self.kd.data)
         self._kamera_zustand()
-        if self._sichtbar and self._letzte:   # laufende Kamera gleich in der neuen Groesse
-            await self._dienst_kamera(type("C", (), {"data": {"camera": self._letzte}})())
+        await self._nochmal(tid)
 
     # ------------------------------------------------------------------ Neustart per ADB
     def _neustart_umstellen(self) -> None:

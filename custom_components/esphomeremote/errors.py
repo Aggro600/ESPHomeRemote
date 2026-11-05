@@ -107,7 +107,7 @@ class Beobachter:
 
 
 async def einrichten(hass: HomeAssistant) -> None:
-    b = Beobachter(hass)
+    b = hass.data["esphomeremote_fehler"] = Beobachter(hass)   # in hass.data: entfernen.py findet seinen Store
     await b.starten()
 
     @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/bekannte_fehler",
