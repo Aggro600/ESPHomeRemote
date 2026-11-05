@@ -153,9 +153,16 @@ camera_tv:
   name: Kamera auf dem Fernseher
   description: Zeigt eine Kamera als Bild im Bild auf dem Fernseher (Konfigurator > Funktionen), oder blendet sie aus.
   fields:
+    tv:
+      name: Fernseher
+      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste.
+      required: false
+      example: Hisense
+      selector:
+        text:
     camera:
       name: Kamera
-      description: camera.xyz, "last" (zuletzt gezeigte) oder "off"
+      description: camera.xyz, "last" (zuletzt gezeigte), "next"/"previous" (weiterschalten durch die Kameraliste) oder "off"
       example: last
       selector:
         text:
@@ -164,6 +171,13 @@ camera_size:
   name: Kamera-Größe auf dem Fernseher
   description: small, medium, large, almost_full oder "next" (durchschalten). Eine laufende Kamera übernimmt die neue Größe sofort.
   fields:
+    tv:
+      name: Fernseher
+      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste.
+      required: false
+      example: Hisense
+      selector:
+        text:
     size:
       name: Größe
       example: next
@@ -175,6 +189,13 @@ camera_position:
   name: Kamera-Ecke auf dem Fernseher
   description: Ecke der Kamera (top-left, top-right, bottom-right, bottom-left, center) oder "next" (im Uhrzeigersinn). Eine laufende Kamera rückt sofort.
   fields:
+    tv:
+      name: Fernseher
+      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste.
+      required: false
+      example: Hisense
+      selector:
+        text:
     position:
       name: Ecke
       example: next

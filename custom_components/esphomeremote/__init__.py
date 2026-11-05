@@ -49,7 +49,7 @@ STORE_VERSION = 1
 PANEL_URL = "remote"
 PANEL_URL_ALT = "fernbedienung"   # bis 2026-11-01 - alte Lesezeichen gehen weiter (ohne Eintrag in der Seitenleiste)
 STATIC_URL = "/esphomeremote_static"
-PANEL_VERSION = "191"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "194"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -1290,6 +1290,17 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     return True   # Panel und Adressen bleiben bis zum Neustart (HA kann Views nicht abmelden)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry) -> None:
+    """Eintrag geloescht (nicht: neu geladen/Neustart): rueckstandslos aufraeumen (2026-11-05, entfernen.py) -
+    Seitenleiste, Daten, Dienste, Hinweise, Streamer-App."""
+    from .entfernen import alles_entfernen
+
+    try:
+        await alles_entfernen(hass)
+    except Exception:  # noqa: BLE001 - Loeschen des Eintrags darf nie scheitern
+        _LOGGER.exception("ESPHomeRemote: Aufraeumen beim Entfernen unvollstaendig")
 
 
 async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:

@@ -148,5 +148,97 @@ class TvKameraView(HomeAssistantView):
         return web.Response(status=404)
 
 
+# ---------------------------------------------------------------- je Fernseher (2026-11-05)
+# Basis <PFAD>/<geheim>/t/<tv>: Einstellungen dieses Fernsehers. Bildquelle "sub" + go2rtc-Adresse: Bild direkt von
+# go2rtc, und zwar vom Substream (<kamera>_sub, sonst eigener go2rtc-Name der Kamera, sonst <kamera>). Grund: der
+# MagentaTV Stick (Gen 2) dekodiert die 2560x1920 des Hauptstreams nicht - WebRTC verbunden, aber kein Bild, nur das
+# Play-Symbol der WebView. Sonst ("voll") wie bisher ueber die Kamera in Home Assistant.
+_STREAMS: dict[str, tuple[float, set]] = {}
+
+
+async def _go2rtc_streams(hass: HomeAssistant, basis: str) -> set:
+    import time
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    t, namen = _STREAMS.get(basis, (0.0, set()))
+    if time.monotonic() - t < 60:
+        return namen
+    try:
+        async with async_get_clientsession(hass).get(f"{basis}/api/streams", timeout=5) as r:
+            namen = set((await r.json(content_type=None)) or {})
+    except Exception:  # noqa: BLE001
+        pass
+    _STREAMS[basis] = (time.monotonic(), namen)
+    return namen
+
+
+def _tv_einst(hass: HomeAssistant, tv: str) -> dict | None:
+    f = hass.data.get(DOMAIN + "_funktionen")
+    return f._tv_cfg("" if tv == "_" else tv) if f is not None else None
+
+
+async def _quelle(hass: HomeAssistant, k: dict, e: str) -> str:
+    obj = e.split(".", 1)[1]
+    eigen = ((k.get("kameras") or {}).get(e) or {}).get("src") or ""
+    namen = await _go2rtc_streams(hass, k["go2rtc"].rstrip("/"))
+    for n in (f"{obj}_sub", f"{eigen}_sub" if eigen else "", eigen, obj):
+        if n and n in namen:
+            return n
+    return eigen or obj
+
+
+class TvKameraTvView(TvKameraView):
+    url = PFAD + "/{geheim}/t/{tv}/{art}"
+    name = f"api:{DOMAIN}:tvkamera_tv"
+
+    def _sub(self, tv: str) -> dict | None:
+        k = _tv_einst(self.hass, tv)
+        return k if k and k.get("quelle") == "sub" and k.get("go2rtc") else None
+
+    async def post(self, request: web.Request, geheim: str, tv: str, art: str) -> web.Response:
+        k = self._sub(tv)
+        if k is None or art != "offer" or not secrets.compare_digest(geheim, GEHEIM):
+            return await super().post(request, geheim, art)
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        try:
+            d = await request.json()
+        except ValueError:
+            return web.json_response({"fehler": "kein JSON"}, status=400)
+        e, sdp = str(d.get("kamera") or ""), str(d.get("sdp") or "")
+        if not e.startswith("camera.") or not sdp:
+            return web.json_response({"fehler": "kamera/sdp fehlt"}, status=400)
+        src = await _quelle(self.hass, k, e)
+        try:
+            async with async_get_clientsession(self.hass).post(f"{k['go2rtc'].rstrip('/')}/api/webrtc", params={"src": src},
+                                                               json={"type": "offer", "sdp": sdp}, timeout=10) as r:
+                a = await r.json(content_type=None)
+        except Exception as err:  # noqa: BLE001
+            return web.json_response({"fehler": f"go2rtc: {err}"})
+        if not isinstance(a, dict) or not a.get("sdp"):
+            return web.json_response({"fehler": f"go2rtc: {str(a)[:200]}"})
+        return web.json_response({"sdp": a["sdp"], "kandidaten": [], "sitzung": ""})
+
+    async def get(self, request: web.Request, geheim: str, tv: str, art: str) -> web.Response:
+        k = self._sub(tv)
+        if k is None or art not in ("hls", "bild") or not secrets.compare_digest(geheim, GEHEIM):
+            return await super().get(request, geheim, art)
+        e = request.query.get("kamera", "")
+        if not e.startswith("camera."):
+            return web.Response(status=400)
+        src, basis = await _quelle(self.hass, k, e), k["go2rtc"].rstrip("/")
+        if art == "hls":
+            return web.json_response({"url": f"{basis}/api/stream.m3u8?src={src}"})
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        try:
+            async with async_get_clientsession(self.hass).get(f"{basis}/api/frame.jpeg", params={"src": src}, timeout=8) as r:
+                body = await r.read()
+        except Exception as err:  # noqa: BLE001
+            return web.Response(status=503, text=str(err))
+        return web.Response(body=body, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 def einrichten(hass: HomeAssistant) -> None:
     hass.http.register_view(TvKameraView(hass))
+    hass.http.register_view(TvKameraTvView(hass))

@@ -1,5 +1,35 @@
 # What's new · Was ist neu
 
+## 2026.11.5.1 (2026-11-05)
+
+**Clean removal.** Deleting the integration entry now removes ESPHomeRemote without leftovers: the configurator disappears from the sidebar right away (no restart), settings, IR database and images are deleted, the streamer app is uninstalled from the streamers, services, repair issues and orphaned entities are removed. The ESPHome files of remotes and docks stay (they belong to the ESPHome add-on). If you already uninstalled and still see the configurator in the sidebar: install this version, delete the entry, then remove it in HACS.
+
+**Camera on several TVs.** Under Functions › Camera on the TV you can add more TVs, each with a free name, its own streamer, camera list, image source, size and corner. The actions camera_tv, camera_size and camera_position have a tv field for this; without tv the first TV is used as before. Each TV gets its own entities (binary_sensor.esphomeremote_camera_tv_<name>).
+
+**Step through cameras.** camera_tv accepts camera: next and previous – through the TV's camera list.
+
+**Substream image source.** Per TV: image straight from the go2rtc substream (<camera>_sub). Needed for streamers that cannot decode high resolutions (e.g. MagentaTV Stick: otherwise only the play icon).
+
+**MagentaTV Stick as streamer.** Device type per streamer (Google TV Streamer, MagentaTV Stick Gen 2, other Android TV) with matching setup guide. Streamers on Android 12 are now recognised correctly (title and state did not arrive there). MagentaTV reports the programme as title and the channel as artist; live TV no longer reports a bogus position.
+
+**Camera only.** Switch per streamer: the app only shows the camera popup, reports nothing to Home Assistant and is no longer polled – less load for weak sticks.
+
+<details><summary>Deutsch</summary>
+
+**Vollständig entfernen.** Wird der Integrationseintrag gelöscht, räumt ESPHomeRemote jetzt rückstandslos auf: der Konfigurator verschwindet sofort aus der Seitenleiste (ohne Neustart), Einstellungen, IR-Datenbank und Bilder werden gelöscht, die Streamer-App wird von den Streamern deinstalliert, Dienste, Reparatur-Hinweise und verwaiste Entitäten verschwinden. Die ESPHome-Dateien der Remotes und Docks bleiben (sie gehören zum ESPHome-Add-on). Wer die Integration schon deinstalliert hat und den Konfigurator noch in der Seitenleiste sieht: Version installieren, Eintrag löschen, dann in HACS entfernen.
+
+**Kamera auf mehreren Fernsehern.** Unter Funktionen › Kamera auf dem Fernseher lassen sich weitere Fernseher anlegen, jeder mit frei wählbarem Namen, eigenem Streamer, eigener Kameraliste, Bildquelle, Größe und Ecke. Aktionen camera_tv, camera_size und camera_position haben dafür das Feld tv; ohne tv gilt wie bisher der erste Fernseher. Pro Fernseher gibt es eigene Entitäten (binary_sensor.esphomeremote_camera_tv_<name>).
+
+**Kameras weiterschalten.** camera_tv kennt camera: next und previous (auch nächste/vorherige) – durch die Kameraliste des Fernsehers.
+
+**Bildquelle Substream.** Pro Fernseher wählbar: Bild direkt vom go2rtc-Substream (<kamera>_sub). Nötig für Streamer, die hohe Auflösungen nicht dekodieren (z. B. MagentaTV Stick: sonst nur das Play-Symbol).
+
+**MagentaTV Stick als Streamer.** Gerätetyp pro Streamer (Google TV Streamer, MagentaTV Stick Gen 2, anderes Android-TV) mit passender Einrichtungsanleitung. Streamer mit Android 12 werden jetzt richtig erkannt (Titel und Status kamen dort nicht an). MagentaTV meldet Sendung als Titel und Sender als Interpret; Live-TV meldet keine unsinnige Position mehr.
+
+**Nur Kamera.** Schalter pro Streamer: die App zeigt nur noch das Kamera-Popup, meldet nichts an Home Assistant und wird nicht mehr laufend abgefragt – weniger Last für schwache Sticks.
+
+</details>
+
 ## 2026.11.4.7 (2026-11-04)
 
 **README readable in HACS.** HACS shows the README of the release, could not load relative images and printed the logo's <picture> block as text. The logo is a plain image now (on a dark card, readable in light and dark mode), and all images and links use absolute URLs. No functional changes; the firmware is unchanged.
