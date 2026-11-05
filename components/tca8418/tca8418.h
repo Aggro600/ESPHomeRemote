@@ -31,6 +31,18 @@ class TCA8418KeyTrigger : public Trigger<uint8_t, uint8_t, uint8_t, bool, bool> 
 // This combination is required for boards (e.g. OMOTE/OpenRemote Rev5/Rev6)
 // that scan most buttons as a matrix but wire one or more special buttons
 // (e.g. a dedicated power button) directly to a spare row/col pin instead.
+// Schnellweg (2026-11-05): hat ein frueher Ablauf den FIFO nach dem Aufwachen schon gelesen (vor ESPHome), stehen die
+// Ereignisse hier (RTC-Speicher). configure_() uebernimmt sie, als haette er sie selbst gelesen; gesendet = die
+// Weck-Taste ging schon ans Dock (wie weck_erledigt).
+struct FruehEreignisse {
+  uint32_t magic;
+  uint8_t n;
+  uint8_t e[10];
+  uint8_t gesendet;
+};
+static const uint32_t FRUEH_MAGIC = 0x46525548u;   // "FRUH"
+extern FruehEreignisse g_frueh_tasten;
+
 class TCA8418Component : public Component, public i2c::I2CDevice {
  public:
   // FORK 2026-10-20: Taste, die die Remote aus dem Tiefschlaf geweckt hat (0 = keine/anderer Weckgrund) - gueltig ab

@@ -56,14 +56,169 @@ static uint32_t id_einzeln(int k) { return 0x7A000000u | (k << 2) | 1; }
 
 // ------------------------------------------------------------------ Laden/Speichern
 
-void TastenKonfig::setup() {
+// NVS-Blob lesen (PSRAM-Puffer)
+bool TastenKonfig::lesen_(const char *schluessel, std::string &out) {
   nvs_handle_t h;
+  if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+  size_t len = 0;
+  bool ok = nvs_get_blob(h, schluessel, nullptr, &len) == ESP_OK && len > 0 && len <= MAX_BYTES;
+  if (ok) {
+    char *buf = (char *) heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+    ok = buf != nullptr && nvs_get_blob(h, schluessel, buf, &len) == ESP_OK;
+    if (ok) out.assign(buf, len);
+    free(buf);
+  }
+  nvs_close(h);
+  return ok;
+}
+
+// Kurzfassung = volle Belegung ohne "menu" (das Menue braucht die Weck-Taste nicht) + Kennung der vollen Fassung
+void TastenKonfig::kurz_speichern_(const std::string &voll_hash) {
+  if (doc_ == nullptr) return;
+  JsonDocument k(&alloc_);
+  k.set(*doc_);
+  k.remove("menu");
+  std::string t;
+  serializeJson(k, t);
+  nvs_handle_t nh;
+  if (nvs_open(NVS_NS, NVS_READWRITE, &nh) != ESP_OK) return;
+  esp_err_t e = nvs_set_blob(nh, "cfgk", t.data(), t.size());
+  if (e == ESP_OK) e = nvs_set_str(nh, "cfgkh", voll_hash.c_str());
+  if (e == ESP_OK) e = nvs_commit(nh);
+  nvs_close(nh);
+  ESP_LOGI(TAG, "Kurzfassung fuer das Aufwachen gespeichert (%u Byte)%s", (unsigned) t.size(),
+           e == ESP_OK ? "" : " - FEHLER");
+}
+
+void TastenKonfig::weck_tabelle_speichern(int akt, bool erlaubt) {
+#ifdef TK_USE_DIREKT
+  std::string t;
+  t.push_back((char) 1);
+  t.push_back((char) (akt & 0xFF));
+  t.push_back((char) 0);
+  int n = 0;
+  if (erlaubt && aktiv() && direkt_ != nullptr && doc_ != nullptr && !nur_kurz_) {
+    std::vector<dock_direkt::DockDirekt::Aufnahme> auf;
+    auto offen = std::move(dock_offen_);   // Aufzeichnen darf keine "Antwort offen"-Merker hinterlassen
+    const uint32_t stand = stand_nach_ms_;
+    const int slot = aktivitaet_slot(akt);
+    for (int k = 1; k < 110 && n < 60; k++) {
+      if (modus_taste(k)) continue;
+      JsonObjectConst kc = taste_cfg_(akt, k);
+      if (kc.isNull() || hat_(kc, DOPPELT) || hat_(kc, LANG) || (kc["repeat"] | 0) > 0) continue;
+      if (!frueh_geeignet_(steps_(kc, KURZ), slot)) continue;
+      auf.clear();
+      direkt_->set_aufnahme(&auf);
+      frueh_slot_ = slot;
+      ausfuehren_(akt, k, KURZ, true);
+      frueh_slot_ = -1;
+      direkt_->set_aufnahme(nullptr);
+      if (auf.empty() || auf.size() > 4) continue;
+      std::string e;
+      e.push_back((char) k);
+      e.push_back((char) auf.size());
+      for (auto &a : auf) {
+        e.append((const char *) a.mac, 6);
+        e.push_back((char) a.typ);
+        for (int i = 0; i < 4; i++) e.push_back((char) (a.param >> (8 * i)));
+        e.push_back((char) (a.anzahl & 0xFF));
+        e.push_back((char) (a.anzahl >> 8));
+        e.push_back((char) (a.inhalt.size() & 0xFF));
+        e.push_back((char) (a.inhalt.size() >> 8));
+        e.append((const char *) a.inhalt.data(), a.inhalt.size());
+      }
+      if (t.size() + e.size() > 12000) break;   // NVS-Blob klein halten
+      t += e;
+      n++;
+    }
+    dock_offen_ = std::move(offen);
+    stand_nach_ms_ = stand;
+  }
+  t[2] = (char) n;
+  {
+    std::string liste;
+    size_t i = 3;
+    for (int k = 0; k < n && i + 2 <= t.size(); k++) {
+      const uint8_t code = (uint8_t) t[i], np = (uint8_t) t[i + 1];
+      liste += std::to_string(code) + " ";
+      size_t j = i + 2;
+      for (int q = 0; q < np && j + 15 <= t.size(); q++) j += 15 + ((uint8_t) t[j + 13] | ((uint8_t) t[j + 14] << 8));
+      i = j;
+    }
+    ESP_LOGI(TAG, "Weck-Tabelle Aktivitaet %d (%s): %d Tasten [%s]", akt, erlaubt ? "an" : "Einstellung aus", n,
+             liste.c_str());
+  }
+  std::string alt;
+  if (lesen_("wtab", alt) && alt == t) return;   // unveraendert: Flash schonen
+  nvs_handle_t nh;
+  if (nvs_open(NVS_NS, NVS_READWRITE, &nh) != ESP_OK) return;
+  esp_err_t e = nvs_set_blob(nh, "wtab", t.data(), t.size());
+  if (e == ESP_OK) e = nvs_commit(nh);
+  nvs_close(nh);
+  ESP_LOGI(TAG, "Weck-Tabelle gespeichert: Aktivitaet %d, %d Tasten, %u Byte%s", akt, n, (unsigned) t.size(),
+           e == ESP_OK ? "" : " - FEHLER");
+#endif
+}
+
+void TastenKonfig::voll_laden() {
+  if (!nur_kurz_) return;
+  const uint32_t t0 = millis();
+  std::string voll;
+  nur_kurz_ = false;
+  if (!lesen_("cfg", voll)) return;
+  anwenden_(voll.data(), voll.size(), fnv1a(voll.data(), voll.size()), false);
+  ESP_LOGI(TAG, "Volle Belegung nachgeladen (%u ms)", (unsigned) (millis() - t0));
+}
+
+void TastenKonfig::setup() {
+  // Aufwachen per Taste: zuerst nur die Kurzfassung (s. set_schnell_laden)
+  if (schnell_laden_) {
+    const uint32_t t0 = millis();
+    std::string kurz, kh;
+    nvs_handle_t hh;
+    if (nvs_open(NVS_NS, NVS_READONLY, &hh) == ESP_OK) {
+      char b[24] = {0};
+      size_t n = sizeof(b);
+      if (nvs_get_str(hh, "cfgkh", b, &n) == ESP_OK) kh = b;
+      nvs_close(hh);
+    }
+    if (!kh.empty() && lesen_("cfgk", kurz) && anwenden_(kurz.data(), kurz.size(), kh, false)) {
+      nur_kurz_ = true;
+      ESP_LOGI(TAG, "Kurzfassung geladen (%u Byte, %u ms) - volle Belegung folgt nach der Weck-Taste",
+               (unsigned) kurz.size(), (unsigned) (millis() - t0));
+      status_melden_();
+#ifdef TK_USE_DIREKT
+      if (direkt_ != nullptr)
+        direkt_->add_on_hid_antwort([this](const uint8_t *, uint8_t m, uint8_t p, bool ok) { hid_antwort_(m, p, ok); });
+#endif
+      return;
+    }
+  }
+  nvs_handle_t h;
+  const uint32_t t0 = millis();
   if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
     size_t len = 0;
     if (nvs_get_blob(h, "cfg", nullptr, &len) == ESP_OK && len > 0 && len <= MAX_BYTES) {
       char *buf = (char *) heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+      const uint32_t t1 = millis();
       if (buf != nullptr && nvs_get_blob(h, "cfg", buf, &len) == ESP_OK) {
-        anwenden_(buf, len, fnv1a(buf, len), false);
+        const uint32_t t2 = millis();
+        const std::string vh = fnv1a(buf, len);
+        anwenden_(buf, len, vh, false);
+        {   // Kurzfassung fehlt oder ist von einer aelteren Belegung: neu anlegen
+          std::string kh;
+          nvs_handle_t hh;
+          if (nvs_open(NVS_NS, NVS_READONLY, &hh) == ESP_OK) {
+            char b[24] = {0};
+            size_t n = sizeof(b);
+            if (nvs_get_str(hh, "cfgkh", b, &n) == ESP_OK) kh = b;
+            nvs_close(hh);
+          }
+          if (kh != vh) kurz_speichern_(vh);
+        }
+        // Startzeit (2026-11-05, Messung Weck-Geschwindigkeit): wo die Zeit beim Laden bleibt
+        ESP_LOGI(TAG, "Belegung %u Byte: oeffnen %u ms, lesen %u ms, anwenden %u ms", (unsigned) len, (unsigned) (t1 - t0),
+                 (unsigned) (t2 - t1), (unsigned) (millis() - t2));
       }
       free(buf);
     }
@@ -101,11 +256,13 @@ void TastenKonfig::status_melden_() {
 }
 
 bool TastenKonfig::anwenden_(const char *daten, size_t len, const std::string &h, bool speichern) {
-  auto *neu = new JsonDocument(&alloc_);
+  JsonArena *arena = schnell_parsen_ ? new JsonArena() : nullptr;
+  auto *neu = arena != nullptr ? new JsonDocument(arena) : new JsonDocument(&alloc_);
   DeserializationError err = deserializeJson(*neu, daten, len);
   if (err || !(*neu)["activities"].is<JsonArrayConst>()) {
     ESP_LOGE(TAG, "Belegung ungueltig (%s) - verworfen", err ? err.c_str() : "keine activities");
     delete neu;
+    delete arena;
     return false;
   }
   if (speichern) {
@@ -126,9 +283,12 @@ bool TastenKonfig::anwenden_(const char *daten, size_t len, const std::string &h
   }
   if (speichern) einst_uebernehmen_(doc_, neu);   // beim Start aus dem NVS nicht: die Remote hat ihre Werte schon
   delete doc_;
+  delete doc_arena_;   // erst nach dem Dokument, das darin lag
   doc_ = neu;
+  doc_arena_ = arena;
   gen_++;
   hash_ = h;
+  if (speichern) kurz_speichern_(h);   // neue Belegung von HA: Kurzfassung fuers Aufwachen gleich mit
   an_ = (*doc_)["on"] | true;
   ESP_LOGI(TAG, "Belegung %s geladen (%u Byte, %s, %u Aktivitaeten)", h.c_str(), (unsigned) len,
            an_ ? "AN" : "aus", (unsigned) (*doc_)["activities"].size());

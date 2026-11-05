@@ -1,0 +1,299 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Menu</title>
+<!-- Popup-Menue der Streamer-App (2026-11-05, custom_components/esphomeremote/streamer_menue.py): dasselbe Menue-Format
+     wie die Remote (Seiten mit Kacheln, 6 Spalten). Bedienung: die App ruft taste("up"|"down"|"left"|"right"|"ok"|"back")
+     auf; App.zu() schliesst das Overlay. Symbole: Material Design Icons (Webfont). -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+<style>
+  :root { --akzent: #03a9f4; --karte: #2a2a2e; --karte2: #34343a; --text: #fff; --text2: #b3b3b8; --an: #ffc107; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: rgba(18, 18, 20, 0.94); color: var(--text);
+    font-family: Roboto, "Segoe UI", Arial, sans-serif; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  #kopf { flex: none; display: flex; align-items: center; gap: 1.2vh; padding: 2.2vh 3vh 1.2vh; font-size: 3.4vh; font-weight: 600; }
+  #kopf .mdi { font-size: 3.6vh; color: var(--text2); }
+  #uhr { margin-left: auto; color: var(--text2); font-weight: 400; font-size: 3vh; }
+  #raster { display: grid; grid-template-columns: repeat(6, 1fr); grid-auto-rows: var(--zeile); gap: 1.4vh;
+    position: relative; padding: 1.6vh 3vh 3vh; scroll-padding: 1.6vh 0 3vh; overflow-y: auto; flex: 1; min-height: 0; scroll-behavior: smooth; }
+  .k { background: var(--karte); border-radius: 2vh; padding: 1.4vh 1.8vh; display: flex; flex-direction: column;
+    justify-content: center; gap: 0.6vh; min-width: 0; border: 0.4vh solid transparent; transition: transform .08s; }
+  .k.f { border-color: var(--akzent); background: var(--karte2); transform: scale(1.02); }
+  .k.text { background: transparent; padding-left: 0.4vh; justify-content: flex-end; color: var(--text2); font-size: 2.6vh; }
+  .k .z { display: flex; align-items: center; gap: 1.2vh; min-width: 0; }
+  .k .mdi { font-size: 4vh; line-height: 1; }
+  .k .l { font-size: 2.6vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .k .w { font-size: 2.2vh; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .k.an .mdi { color: var(--an); }
+  .k.gross .mdi { font-size: 6vh; }
+  .k.gross { align-items: center; text-align: center; }
+  .k.gross .z { flex-direction: column; }
+  .balken { height: 0.8vh; border-radius: 0.4vh; background: #444; overflow: hidden; }
+  .balken i { display: block; height: 100%; background: var(--akzent); }
+  #frage { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, .6); }
+  #frage .box { background: var(--karte); border-radius: 2.4vh; padding: 3vh 4vh; min-width: 40vh; text-align: center; }
+  #frage .t { font-size: 3vh; margin-bottom: 2.4vh; }
+  #frage .b { display: flex; gap: 2vh; justify-content: center; }
+  #frage .b div { padding: 1.4vh 4vh; border-radius: 1.6vh; background: var(--karte2); font-size: 2.8vh; border: 0.4vh solid transparent; }
+  #frage .b div.f { border-color: var(--akzent); }
+  #meldung { position: fixed; bottom: 2vh; left: 50%; transform: translateX(-50%); background: #333; padding: 1vh 2.4vh;
+    border-radius: 1.4vh; font-size: 2.4vh; opacity: 0; transition: opacity .3s; }
+</style>
+</head>
+<body>
+<div id="kopf"><span class="mdi mdi-menu"></span><span id="titel"></span><span id="uhr"></span></div>
+<div id="raster"></div>
+<div id="frage"><div class="box"><div class="t" id="frage_t"></div><div class="b"><div data-j="1" id="ja">Yes</div><div data-j="0" id="nein">No</div></div></div></div>
+<div id="meldung"></div>
+<script>
+"use strict";
+let MENU = null, Z = {}, seite = null, stapel = [], fokus = 0, kacheln = [], frage = null;
+const ICON = { page: "chevron-right-circle-outline", action: "gesture-tap", toggle: "toggle-switch-outline", light: "lightbulb",
+  cover: "window-shutter", sensor: "eye-outline", select: "format-list-bulleted", dropdown: "format-list-bulleted",
+  number: "tune-variant", camera: "cctv", mtaste: "play-pause", vpreset: "volume-medium", widget: "clock-outline" };
+// Feste Texte: Englisch, weitere Sprachen hier (Sprache von Home Assistant, setzt streamer_menue.py beim Ausliefern)
+const SPRACHE = "__LANG__".slice(0, 2);
+const TEXTE = { de: { "Menu": "Menü", "On": "An", "Off": "Aus", "unavailable": "nicht verfügbar", "unknown": "unbekannt",
+  "Nothing playing": "Nichts läuft", "Volume": "Lautstärke", "Camera": "Kamera", "Run": "Ausführen", "really?": "wirklich?",
+  "Yes": "Ja", "No": "Nein", "Error": "Fehler", "Home Assistant not reachable": "Home Assistant nicht erreichbar",
+  "Next": "Weiter", "Previous": "Zurück", "Mute": "Stumm", "Volume up": "Lauter", "Volume down": "Leiser", "Stop": "Stopp",
+  "Power": "Ein/Aus" } };
+const T = (s) => (TEXTE[SPRACHE] || {})[s] || s;
+document.documentElement.lang = SPRACHE;
+const MT = { play_pause: ["play-pause", "Play/Pause"], next: ["skip-next", T("Next")], prev: ["skip-previous", T("Previous")],
+  mute: ["volume-mute", T("Mute")], vol_up: ["volume-plus", T("Volume up")], vol_down: ["volume-minus", T("Volume down")],
+  stop: ["stop", T("Stop")], power: ["power", T("Power")] };
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const zs = (e) => Z[e] || null;
+const name = (it) => it.label || zs(it.entity)?.a?.friendly_name || it.entity || it.src || "";
+
+// Hoehe einer Rastereinheit: hoechstens Spaltenbreite * 0.55 (wie die Remote, etwas flacher); passt die Seite
+// damit nicht ins Fenster, werden die Reihen flacher (bis zur Mindesthoehe fuer Text + Wert), erst dann wird gescrollt
+function zeile() {
+  const r = document.getElementById("raster"), cs = getComputedStyle(r);
+  const w = (r.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 5 * parseFloat(cs.columnGap)) / 6;
+  const max = Math.max(40, Math.round(w * 0.55));
+  document.documentElement.style.setProperty("--zeile", max + "px");
+  const n = cs.gridTemplateRows.split(" ").filter((x) => x && x !== "none").length;
+  if (!n) return;
+  const platz = r.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - (n - 1) * parseFloat(cs.rowGap);
+  const min = Math.round(window.innerHeight * 0.115);   // Name + Wert + Balken passen noch hinein
+  document.documentElement.style.setProperty("--zeile", Math.max(min, Math.min(max, Math.floor(platz / n))) + "px");
+}
+
+function sichtbar(it) { return !["special", "setting"].includes(it.t); }
+function fokusbar(it) { return !["text", "sensor", "mtitel", "widget"].includes(it.t); }
+
+function inhalt(it) {
+  const s = zs(it.entity), st = s?.s, a = s?.a || {};
+  let icon = it.icon || ICON[it.t] || "circle-outline", wert = "", an = false, balken = null;
+  switch (it.t) {
+    case "toggle": case "light":
+      an = st === "on";
+      wert = st === "on" ? (a.brightness != null ? Math.round(a.brightness / 2.55) + " %" : T("On")) : st === "off" ? T("Off") : (st || "");
+      if (it.t === "light" && a.brightness != null && an) balken = a.brightness / 2.55;
+      if (it.t === "light" && !it.icon) icon = an ? "lightbulb-on" : "lightbulb-outline";
+      break;
+    case "cover":
+      wert = a.current_position != null ? a.current_position + " %" : ({ open: "Offen", closed: "Zu", opening: "Öffnet", closing: "Schließt" }[st] || st || "");
+      if (a.current_position != null) balken = a.current_position; break;
+    case "sensor": wert = st === "on" ? T("On") : st === "off" ? T("Off") : st != null ? st + (a.unit_of_measurement ? " " + a.unit_of_measurement : "") : ""; an = st === "on"; break;
+    case "select": case "dropdown": wert = st || ""; break;
+    case "number":
+      if (it.entity?.startsWith("media_player.")) { wert = a.volume_level != null ? Math.round(a.volume_level * 100) + " %" : ""; balken = (a.volume_level || 0) * 100; }
+      else wert = st != null ? st + (a.unit_of_measurement ? " " + a.unit_of_measurement : "") : "";
+      break;
+    case "mtaste": { const m = MT[it.fn || "play_pause"] || MT.play_pause; if (!it.icon) icon = m[0]; if (!it.label) it._l = m[1]; break; }
+    case "vpreset": wert = (it.wert ?? 0) + " %"; if (!it.label) it._l = T("Volume"); break;
+    case "mtitel": wert = a.media_artist || ""; it._l = a.media_title || name(it) || T("Nothing playing"); icon = it.icon || "music"; break;
+    case "widget": icon = "clock-outline"; it._l = new Date().toLocaleTimeString(SPRACHE, { hour: "2-digit", minute: "2-digit" }); break;
+    case "camera": if (!it.label) it._l = (it.src || it.entity || T("Camera")).replace(/^camera\./, ""); break;
+  }
+  if (wert === "unavailable" || wert === "unknown") wert = T(wert);
+  return { icon, wert, an, balken, label: it._l || name(it) };
+}
+
+let elemente = [];   // [{d, it}] aller sichtbaren Kacheln der Seite
+function kachelHtml(it) {
+  const c = inhalt(it);
+  return { an: c.an, html: it.t === "text" ? esc(it.label || "") :
+    `<div class="z"><span class="mdi mdi-${esc(c.icon)}"></span><span class="l">${esc(c.label)}</span></div>` +
+    (c.wert ? `<div class="w">${esc(c.wert)}</div>` : "") +
+    (c.balken != null ? `<div class="balken"><i style="width:${Math.max(0, Math.min(100, c.balken))}%"></i></div>` : "") };
+}
+
+// Seite neu aufbauen - nur beim Seitenwechsel (das alle 2 s neu zu bauen liess die Markierung zucken und das Scrollen springen)
+function zeichnen() {
+  const r = document.getElementById("raster");
+  document.getElementById("titel").textContent = seite?.title || T("Menu");
+  kacheln = []; elemente = [];
+  r.innerHTML = "";
+  r.scrollTop = 0;
+  (seite?.items || []).forEach((it, i) => {
+    if (!sichtbar(it)) return;
+    const d = document.createElement("div");
+    const c = kachelHtml(it);
+    d.className = "k" + (it.t === "text" ? " text" : "") + (c.an ? " an" : "") + ((it.h || 1) >= 2 && (it.w || 6) <= 3 ? " gross" : "");
+    d.style.gridColumn = (it.x != null && !seite.flow ? `${it.x + 1} / ` : "") + `span ${Math.min(6, it.w || 6)}`;
+    d.style.gridRow = (it.y != null && !seite.flow ? `${it.y + 1} / ` : "") + `span ${it.h || 1}`;
+    d.innerHTML = c.html; d._html = c.html;
+    r.appendChild(d);
+    elemente.push({ d, it });
+    if (fokusbar(it)) kacheln.push({ d, it, i });
+  });
+  if (fokus >= kacheln.length) fokus = Math.max(0, kacheln.length - 1);
+  zeile();
+  markieren();
+}
+
+function markieren() {
+  kacheln.forEach((k, j) => k.d.classList.toggle("f", j === fokus));
+  sichtbarMachen(kacheln[fokus]?.d);
+}
+
+// Markierte Kachel ganz ins Bild holen (mit Luft fuer Rahmen und Vergroesserung), ohne unnoetig zu scrollen
+function sichtbarMachen(d) {
+  if (!d) return;
+  const r = document.getElementById("raster"), luft = window.innerHeight * 0.025;
+  const ro = r.getBoundingClientRect(), b = d.getBoundingClientRect();
+  if (b.top - luft < ro.top) r.scrollTop -= ro.top - b.top + luft;
+  else if (b.bottom + luft > ro.bottom) r.scrollTop += b.bottom + luft - ro.bottom;
+}
+
+function aktualisieren() {   // nur Inhalte der Kacheln neu, wenn sich etwas geaendert hat - kein Neuaufbau, kein Scrollen
+  for (const e of elemente) {
+    const c = kachelHtml(e.it);
+    if (c.html !== e.d._html) { e.d.innerHTML = c.html; e.d._html = c.html; }
+    e.d.classList.toggle("an", !!c.an);
+  }
+}
+
+function zeigeSeite(id, zurueck) {
+  const p = MENU.pages.find((x) => x.id === id);
+  if (!p) return;
+  if (!zurueck && seite) stapel.push({ id: seite.id, fokus });
+  seite = p;
+  fokus = 0;
+  zeichnen();
+}
+
+// Naechste Kachel in der Richtung wie am Fernseher: zuerst die naechste Reihe (bzw. Spalte) - Abstand der Kanten -,
+// darin die Kachel, die sich am meisten mit der jetzigen ueberdeckt, dann die mit dem naechsten Mittelpunkt.
+// Gemessen ohne die Vergroesserung der Markierung (offsetTop/Left statt getBoundingClientRect).
+function lage(d) { return { l: d.offsetLeft, t: d.offsetTop, r: d.offsetLeft + d.offsetWidth, b: d.offsetTop + d.offsetHeight }; }
+function nachbar(richtung) {
+  if (!kacheln[fokus]) return fokus;
+  const a = lage(kacheln[fokus].d), senk = richtung === "up" || richtung === "down", TOL = 6;
+  let best = -1, bw = null;
+  kacheln.forEach((k, j) => {
+    if (j === fokus) return;
+    const b = lage(k.d);
+    const abst = { down: b.t - a.b, up: a.t - b.b, right: b.l - a.r, left: a.l - b.r }[richtung];
+    if (abst < -TOL) return;   // nicht in dieser Richtung
+    const ueber = senk ? Math.min(a.r, b.r) - Math.max(a.l, b.l) : Math.min(a.b, b.b) - Math.max(a.t, b.t);
+    if (!senk && ueber <= 0) return;   // links/rechts nur in derselben Reihe
+    const mitte = senk ? Math.abs((b.l + b.r) - (a.l + a.r)) / 2 : Math.abs((b.t + b.b) - (a.t + a.b)) / 2;
+    const ganz = ueber >= (senk ? b.r - b.l : b.b - b.t) - 1;   // liegt ganz unter/neben der jetzigen: links bzw. oben zuerst
+    const w = [Math.round(Math.max(0, abst) / TOL), -Math.max(0, ueber), ganz ? (senk ? b.l : b.t) : mitte];
+    if (!bw || w[0] < bw[0] || (w[0] === bw[0] && (w[1] < bw[1] || (w[1] === bw[1] && w[2] < bw[2])))) { bw = w; best = j; }
+  });
+  if (best < 0 && (richtung === "down" || richtung === "up") && kacheln.length) best = richtung === "down" ? 0 : kacheln.length - 1;   // rundum
+  return best < 0 ? fokus : best;
+}
+
+function melden(t) {
+  const m = document.getElementById("meldung");
+  m.textContent = t; m.style.opacity = 1;
+  clearTimeout(melden._t); melden._t = setTimeout(() => (m.style.opacity = 0), 1500);
+}
+
+async function senden(k, art) {
+  try {
+    const r = await fetch("aktion", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seite: seite.id, index: k.i, art }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) melden(T("Error") + (j.fehler ? ": " + j.fehler : ""));
+    setTimeout(laden, 400);
+  } catch (e) { melden(T("Home Assistant not reachable")); }
+}
+
+function navigiert(it) {   // Seiten-Kachel oder Aktion "Popup/Seite oeffnen": im Menue blaettern
+  if (it.t === "page" && it.target) { zeigeSeite(it.target); return true; }
+  const s = (it.steps || []).find((x) => x.t === "int" && (x.fn === "popup_open" || x.fn === "page") && x.page);
+  if (s) { zeigeSeite(s.page); return true; }
+  return false;
+}
+
+function frageZeigen(text, dann) {
+  frage = { dann, j: 1 };
+  document.getElementById("frage_t").textContent = text;
+  document.getElementById("frage").style.display = "flex";
+  frageMarkieren();
+}
+function frageMarkieren() { document.querySelectorAll("#frage .b div").forEach((d) => d.classList.toggle("f", +d.dataset.j === frage.j)); }
+function frageZu() { frage = null; document.getElementById("frage").style.display = "none"; }
+
+function ok() {
+  const k = kacheln[fokus];
+  if (!k) return;
+  if (navigiert(k.it)) return;
+  if (k.it.confirm) { frageZeigen((k.it.label || T("Run")) + " – " + T("really?"), () => senden(k, "tap")); return; }
+  senden(k, "tap");
+}
+
+// Von der App aufgerufen
+window.taste = function (t) {
+  ruheNeu();
+  if (frage) {
+    if (t === "left" || t === "right" || t === "up" || t === "down") { frage.j = frage.j ? 0 : 1; frageMarkieren(); }
+    else if (t === "ok") { const f = frage; frageZu(); if (f.j) f.dann(); }
+    else if (t === "back") frageZu();
+    return true;
+  }
+  const k = kacheln[fokus];
+  if ((t === "left" || t === "right") && k && ["light", "cover", "number", "select", "dropdown"].includes(k.it.t)) {
+    senden(k, t === "right" ? "plus" : "minus"); return true;
+  }
+  if (["up", "down", "left", "right"].includes(t)) { fokus = nachbar(t); markieren(); return true; }
+  if (t === "ok") { ok(); return true; }
+  if (t === "back") {
+    const z = stapel.pop();
+    if (z) { zeigeSeite(z.id, true); fokus = z.fokus; markieren(); return true; }
+    if (window.App) window.App.zu();
+    return false;
+  }
+  return false;
+};
+
+// nach "dauer" s ohne Taste zu (Konfigurator, 0 = bleibt offen)
+let ruhe = null;
+let DAUER = 45;
+function ruheNeu() { clearTimeout(ruhe); if (DAUER > 0) ruhe = setTimeout(() => window.App && window.App.zu(), DAUER * 1000); }
+
+async function laden() {
+  try {
+    const r = await fetch("daten", { cache: "no-store" });
+    const j = await r.json();
+    const erst = !MENU;
+    MENU = j.menu; Z = j.zustaende || {};
+    if (j.dauer != null && j.dauer !== DAUER) { DAUER = j.dauer; ruheNeu(); }
+    const wunsch = new URLSearchParams(location.search).get("seite");
+    if (erst) zeigeSeite(MENU.pages.some((p) => p.id === wunsch) ? wunsch : MENU.start || MENU.pages[0]?.id); else aktualisieren();
+  } catch (e) { if (!MENU) document.getElementById("raster").innerHTML = `<div class="k text">${T("Home Assistant not reachable")}</div>`; }
+}
+
+function uhr() { document.getElementById("uhr").textContent = new Date().toLocaleTimeString(SPRACHE, { hour: "2-digit", minute: "2-digit" }); }
+
+window.addEventListener("resize", () => { zeile(); markieren(); });
+document.addEventListener("keydown", (e) => {   // Test im Browser
+  const m = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "ok", Escape: "back", Backspace: "back" }[e.key];
+  if (m) { window.taste(m); e.preventDefault(); }
+});
+document.getElementById("ja").textContent = T("Yes"); document.getElementById("nein").textContent = T("No");
+zeile(); uhr(); setInterval(uhr, 15000); laden(); setInterval(laden, 2000); ruheNeu();
+</script>
+</body>
+</html>

@@ -151,7 +151,19 @@
       "fields": {
         "camera": {
           "name": "Kamera",
-          "description": "camera.xyz, \"last\" (zuletzt gezeigte) oder \"off\""
+          "description": "camera.xyz, \"last\" (zuletzt gezeigte), \"next\"/\"previous\" (durch die Kameraliste weiterschalten) oder \"off\""
+        },
+        "size": {
+          "name": "Größe (nur dieses Mal)",
+          "description": "Optional – small, medium, large oder almost_full. Leer = Größe aus dem Konfigurator."
+        },
+        "position": {
+          "name": "Ecke (nur dieses Mal)",
+          "description": "Optional – top-left, top-right, bottom-right, bottom-left oder center."
+        },
+        "seconds": {
+          "name": "Einblenddauer (nur dieses Mal)",
+          "description": "Optional – nach so vielen Sekunden ausblenden, 0 = bis \"off\". Leer = Dauer aus dem Konfigurator."
         }
       }
     },
@@ -180,6 +192,50 @@
         "device": {
           "name": "Gerät",
           "description": "Name wie im Konfigurator (z. B. Streamer)"
+        }
+      }
+    },
+    "streamer_cec": {
+      "name": "Gerät am Fernseher per HDMI schalten",
+      "description": "Schaltet die Soundbar/den AV-Receiver (oder den Fernseher) per HDMI-CEC über einen Streamer ein oder aus.",
+      "fields": {
+        "streamer": {
+          "name": "Streamer",
+          "description": "Kennung oder Name des Streamers aus dem Konfigurator"
+        },
+        "device": {
+          "name": "Gerät",
+          "description": "soundbar (Audiogerät an HDMI-ARC) oder tv"
+        },
+        "command": {
+          "name": "Befehl",
+          "description": "on (ein) oder off (aus)"
+        }
+      }
+    },
+    "streamer_menu": {
+      "name": "Menü auf dem Fernseher",
+      "description": "Öffnet oder schließt das Popup-Menü eines Streamers (Streamer-App ab 1.18; Seite, Größe und Lage ab 1.19).",
+      "fields": {
+        "streamer": {
+          "name": "Streamer",
+          "description": "Kennung oder Name des Streamers aus dem Konfigurator"
+        },
+        "command": {
+          "name": "Befehl",
+          "description": "toggle (umschalten), open (öffnen) oder close (schließen)"
+        },
+        "page": {
+          "name": "Seite",
+          "description": "Optional – Kennung einer Menüseite, die gleich offen sein soll (z. B. kamera). Öffnet immer."
+        },
+        "size": {
+          "name": "Größe (nur dieses Mal)",
+          "description": "Optional – Prozent des Bildschirms (30–100, 100 = ganzer Bildschirm). Leer = Einstellung im Konfigurator."
+        },
+        "position": {
+          "name": "Lage (nur dieses Mal)",
+          "description": "Optional – center, left, right, top, bottom oder eine Ecke. Leer = Einstellung im Konfigurator."
         }
       }
     }

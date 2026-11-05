@@ -43,6 +43,7 @@ static const uint32_t ANTWORT_MS = 150;   // ohne Sende-Rueckmeldung: als Fehlsc
 // Aufwachen reihum auch ausgeschaltete Docks an. Antwortet es nicht mehr, wird es vergessen (naechster_versuch_).
 static RTC_DATA_ATTR uint8_t s_rtc_ok_mac[6];
 static RTC_DATA_ATTR uint32_t s_rtc_ok_magic;
+RTC_NOINIT_ATTR SchnellDaten g_schnell;
 static const uint32_t RTC_OK_MAGIC = 0x4F4B444Bu;
 static std::atomic<bool> s_fertig{false};
 static std::atomic<bool> s_ok{false};
@@ -165,9 +166,22 @@ void DockDirekt::setup() {
   // Laufende Nummer (beide Seiten senden): ab dem vorausgespeicherten Stand weiter, naechsten Block gleich sichern
   nr_pref_ = global_preferences->make_preference<uint32_t>(0x44445202u);
   if (!nr_pref_.load(&nr_)) nr_ = 0;
+  // Ein frueher Versand (Schnellweg) hat die Nummer nr_frei benutzt: sie ist der Anfang dieses Blocks (= gespeichertes
+  // Blockende) - weiter bei nr_frei + 1, das ++nr_ unten ergibt das von selbst. Steht er hoeher, dorthin.
+  if (g_schnell.magic == SCHNELL_MAGIC && g_schnell.nr_benutzt) {
+    const uint32_t zuletzt = g_schnell.nr_frei + g_schnell.nr_benutzt - 1;
+    if (zuletzt > nr_) nr_ = zuletzt;
+  }
   nr_bis_ = nr_ + 1000;
   nr_pref_.save(&nr_bis_);
   global_preferences->sync();   // sofort schreiben: nach einem Absturz duerfen keine Nummern doppelt vorkommen
+  // Schnellweg-Daten fuers naechste Aufwachen: naechster Block beginnt bei nr_bis_
+  g_schnell.kanal = dock_kanal_ != 0 ? dock_kanal_ : kanal_;
+  g_schnell.schluessel_len = (uint8_t) std::min<size_t>(schluessel_.size(), sizeof(g_schnell.schluessel));
+  memcpy(g_schnell.schluessel, schluessel_.data(), g_schnell.schluessel_len);
+  g_schnell.nr_frei = nr_bis_;
+  g_schnell.nr_benutzt = 0;
+  g_schnell.magic = SCHNELL_MAGIC;
   {   // AES-Schluessel fuer HTTP ueber das Dock: SHA-256("dock-http" + Schluessel), erste 16 Byte
     uint8_t h[32];
     mbedtls_md_context_t c;
@@ -308,6 +322,16 @@ void DockDirekt::zustand_setzen(const std::string &remote, const std::string &te
 
 bool DockDirekt::einreihen_(const uint8_t mac[6], Typ typ, uint32_t param, uint16_t anzahl, const std::vector<uint8_t> &inhalt,
                             std::function<void()> &&fehlschlag) {
+  if (aufnahme_ != nullptr) {   // Weck-Tabelle: nur festhalten
+    Aufnahme a;
+    memcpy(a.mac, mac, 6);
+    a.typ = (uint8_t) typ;
+    a.param = param;
+    a.anzahl = anzahl;
+    a.inhalt = inhalt;
+    aufnahme_->push_back(std::move(a));
+    return true;
+  }
   if (warte_.size() >= 6 || !bereit_()) return false;
   auto *w = wifi::global_wifi_component;
   // WLAN verbindet sich gerade (sucht Kanaele): nicht dazwischenfunken
@@ -332,6 +356,8 @@ bool DockDirekt::einreihen_(const uint8_t mac[6], Typ typ, uint32_t param, uint1
     nr_bis_ = nr_ + 1000;
     nr_pref_.save(&nr_bis_);
     global_preferences->sync();
+    g_schnell.nr_frei = nr_bis_;
+    g_schnell.nr_benutzt = 0;
   }
   u32(p, nr_);
   u32(p, param);
@@ -476,6 +502,7 @@ void DockDirekt::loop() {
       ESP_LOGD(TAG, "WLAN-Kanal %u gemerkt", (unsigned) k);
       kanal_ = k;
       kanal_pref_.save(&kanal_);
+      g_schnell.kanal = dock_kanal_ != 0 ? dock_kanal_ : kanal_;
     }
   }
 
@@ -499,7 +526,7 @@ void DockDirekt::loop() {
         if (funk_geliehen_) {   // diesen Kanal fuer das naechste Mal
           uint8_t k = 0;
           wifi_second_chan_t s;
-          if (esp_wifi_get_channel(&k, &s) == ESP_OK && k != dock_kanal_ && k != 0) { dock_kanal_ = k; dock_kanal_pref_.save(&dock_kanal_); }
+          if (esp_wifi_get_channel(&k, &s) == ESP_OK && k != dock_kanal_ && k != 0) { dock_kanal_ = k; dock_kanal_pref_.save(&dock_kanal_); g_schnell.kanal = k; }
         }
 #ifndef DD_EMPFANG   // nur die Remote (das Dock wechselt laufend zwischen den Remotes)
         if (memcmp(ok_mac_, aktuell_.mac, 6) != 0 || !ok_gueltig_) {   // nur bei Wechsel ins Flash

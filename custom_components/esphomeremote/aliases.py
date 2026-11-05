@@ -14,10 +14,12 @@ FIELDS: dict[str, dict[str, str]] = {
     "timer_extend": {"minuten": "minutes"},
     "blaster_send": {"sender": "transmitter", "traeger": "carrier", "art": "type", "wiederholen": "repeat"},
     "light": {"aktion": "action", "wert": "value"},
-    "camera_tv": {"kamera": "camera"},
+    "camera_tv": {"kamera": "camera", "groesse": "size", "ecke": "position", "sekunden": "seconds"},
     "camera_size": {"groesse": "size"},
     "camera_position": {},
     "restart": {"geraet": "device"},
+    "streamer_cec": {"geraet": "device", "befehl": "command"},
+    "streamer_menu": {"befehl": "command", "seite": "page", "groesse": "size"},
 }
 
 VALUES: dict[tuple[str, str], dict[str, str]] = {
@@ -29,6 +31,14 @@ VALUES: dict[tuple[str, str], dict[str, str]] = {
                               "fast vollbild": "almost_full", "naechste": "next", "nächste": "next",
                               "almost fullscreen": "almost_full"},
     ("camera_position", "position"): {"naechste": "next", "nächste": "next"},
+    ("streamer_cec", "device"): {"fernseher": "tv"},
+    ("streamer_cec", "command"): {"an": "on", "ein": "on", "aus": "off"},
+    ("streamer_menu", "command"): {"umschalten": "toggle", "auf": "open", "zu": "close"},
+    ("streamer_menu", "position"): {"mitte": "center", "links": "left", "rechts": "right", "oben": "top", "unten": "bottom",
+                                    "oben_links": "top-left", "oben_rechts": "top-right",
+                                    "unten_links": "bottom-left", "unten_rechts": "bottom-right"},
+    ("camera_tv", "size"): {"klein": "small", "mittel": "medium", "groß": "large", "gross": "large",
+                            "fast vollbild": "almost_full", "almost fullscreen": "almost_full"},
 }
 
 

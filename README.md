@@ -30,8 +30,13 @@
   <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md"><b>✨ What's new</b></a>
 </p>
 
-> **Language:** the configurator and the texts on the remote are currently in **German**. This guide gives the
-> German names as they appear on screen, with the English meaning next to them.
+> **Language:** the configurator, the integration, the remote's display and the TV menu are available in
+> **English and German** – Home Assistant's language applies. A few screenshots and page names in this guide are
+> still German; the English meaning is given next to them.
+
+> **Updating to 2026.11.5.4 or later:** connect each remote **once via USB cable** and flash it from the
+> configurator: *Firmware* page of the remote → **USB** (Chrome or Edge on a PC). The faster wake-up needs a new bootloader, and the bootloader
+> cannot be updated over Wi-Fi. Wi-Fi updates keep working without it – the remote just wakes about 0.5 s slower.
 
 ---
 
@@ -47,8 +52,8 @@ on PC and phone. Changes reach the remote in seconds.
 <td width="33%" valign="top">
 
 ### ⚡ Instant, even from sleep
-The docking station relays keys, commands and state by radio. Wake the remote with a key press – the key is
-already on its way before the display is on.
+The docking station relays keys, commands and state by radio. Wake the remote with a key press – the key
+reaches the dock in about **0.2 s**, long before the display is on.
 
 </td>
 <td width="33%" valign="top">
@@ -75,6 +80,8 @@ the dock does the rest.
   doorbell popups.
 - **Voice assistant** – Google on the TV or Home Assistant Assist, with the built-in microphone.
 - **Motion gestures** – shake, tilt, or teach your own (circle, swipe …).
+- **Your menu on the TV** – the same tile menu as on the remote, as an overlay on any Android TV streamer,
+  operated with the TV's own remote. Plus camera picture-in-picture and soundbar on/off via HDMI-CEC.
 
 ## Configure everything in your browser
 
@@ -104,6 +111,20 @@ Put the remote in its dock and it becomes a bedside or coffee-table display: **t
 appointments and battery** – you pick the parts and their order. When music plays it switches to a
 **spectrum analyser**, optionally over the album cover. Tap the screen for a **control bar**: back to the
 remote, music ⇄ clock, ⏮ ⏯ ⏭ – or *Heute aus* (off until you take it out of the dock).
+
+## On the TV: menu, cameras, soundbar
+
+With the **ESPHomeRemote Streamer** app (ships with the integration, installed from the configurator over ADB) an
+Android TV streamer – Google TV Streamer, MagentaTV Stick or any other Android TV device – becomes part of your setup:
+
+- **TV menu** – build a menu with the same editor as for the remote (pages, tiles, lights, scenes, covers, cameras,
+  volume, door openers with a yes/no prompt) and open it on the TV with a key of the streamer's remote or from Home
+  Assistant (`esphomeremote.streamer_menu`). Size from 30 % to full screen, nine positions, display time adjustable.
+- **Camera on the TV** – picture-in-picture over whatever is playing, on several TVs, with size, corner and display
+  time – fixed in the configurator or per call (`esphomeremote.camera_tv` with `size`, `position`, `seconds`).
+- **Soundbar via HDMI-CEC** – turn the soundbar or AV receiver on the TV's HDMI-ARC on and off through the streamer,
+  no infrared needed (`switch.…_soundbar`, `esphomeremote.streamer_cec`).
+- **Now playing** – title, cover, position and the on-screen keyboard of every app with a media session.
 
 ## Opening apps, made easy
 
@@ -197,7 +218,8 @@ timer, picture mode …). Send a page to your other remotes with one click.</td>
   battery level.
 - **Brightness from the light sensor** – display, key backlight and dock LED follow the room light; the curve
   learns as you adjust it.
-- **Camera and doorbell** – image on the remote, camera on the TV (in three sizes).
+- **Camera and doorbell** – image on the remote, camera on the TV (four sizes, five positions, several TVs).
+- **TV menu** – your tile menu as an overlay on Android TV streamers, plus soundbar on/off via HDMI-CEC.
 - **Long battery life** – deep sleep, wakes up when lifted, tapped or a key is pressed; the wake-up key and
   everything pressed during start-up still arrives.
 
@@ -246,8 +268,8 @@ In Home Assistant: *Settings → Add-ons → Add-on Store →* install and start
 1. If you don't have it yet: install **HACS** (https://hacs.xyz – once, 5 minutes).
 2. Open **HACS** in Home Assistant, search for **"ESPHomeRemote"** → **Download**
    (or click [Open in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration)).
-   *Not found?* Older HACS versions or a stale list: **⋮** at the top right → **"Custom repositories"** →
-   paste `https://github.com/Aggro600/ESPHomeRemote`, type **"Integration"** → **Add**, then search again.
+   ESPHomeRemote is in the **HACS default list** – no custom repository needed. *Not found?* Reload the list in HACS
+   (**⋮** → *Reload*) or update HACS.
 3. **Restart** Home Assistant (*Settings → System → ⏻ at the top right → Restart*).
 4. *Settings → Devices & services →* **"+ Add integration"** → **"ESPHomeRemote"**.
    Keep the remote's name as it is (`esphomeremote`) → **Submit**.
@@ -292,11 +314,12 @@ ota:
 
 ### Streamer app (optional)
 
-For title, cover art and the keyboard popup from an Android TV streamer: enable developer options and USB
-debugging on the streamer, add the **Android Debug Bridge** integration with its IP in Home Assistant, then in
-the configurator *Wiedergabe (playback) → Streamer anlegen (add streamer)* → **Einrichten (set up)**. The app ships
-with the integration; updating and uninstalling work the same way. On the TV, "ESPHomeRemote Streamer" shows
-whether everything is running. Details: [streamer-app/README.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/streamer-app/README.md).
+For the TV menu, camera on the TV, soundbar via HDMI-CEC, title, cover art and the keyboard popup from an Android TV
+streamer: enable developer options and USB debugging on the streamer, add the **Android Debug Bridge** integration
+with its IP in Home Assistant, then in the configurator *Wiedergabe (playback) → Streamer anlegen (add streamer)* →
+**Einrichten (set up)**. The app ships with the integration; updating and uninstalling work the same way. On the TV,
+"ESPHomeRemote Streamer" shows whether everything is running. Each streamer card then has **Menu on the TV** (key,
+size, position, display time, **Edit menu**) and **Soundbar / AV receiver via HDMI**. Details: [streamer-app/README.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/streamer-app/README.md).
 
 ### Updates
 
@@ -304,6 +327,8 @@ whether everything is running. Details: [streamer-app/README.md](https://github.
   with the list of what's new. Install, restart Home Assistant – done.
 - **Remotes and docks:** afterwards the configurator shows "Neue Version …" (new version) under *Firmware* –
   **Alle aktualisieren** (update all) builds and flashes them (touch sleeping remotes briefly).
+- **Once per remote from 2026.11.5.4: flash via USB cable** (new bootloader for the fast wake-up, see above).
+  Wi-Fi updates keep working without it.
 - The firmware comes from the `stabil` branch (latest release).
 - What's new: [CHANGELOG.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md).
 
@@ -371,9 +396,15 @@ Some built-in pages (home screen player, doorbell, sleep timer) use the entities
 `esphomeremote.yaml` → `substitutions`. Enter yours there or leave them out – you build the menu in the
 configurator anyway.
 
-**Camera on the TV in small / medium / large** (optional):
-in the configurator under **Funktionen → Kamera auf dem Fernseher** (app *HA TV Dashboard* on the TV).
-That is also where you set up the TV input (for popups like "only if TV input is not HDMI 3") and restarts via ADB.
+**Camera on the TV** (optional):
+in the configurator under **Funktionen → Kamera auf dem Fernseher** (camera on the TV) – shown by the streamer app as
+an overlay, on one or several TVs, each with its own camera list, size and corner. From automations:
+`esphomeremote.camera_tv` with `camera:` (`camera.xyz`, `last`, `next`, `previous`, `off`) and optionally `size:`,
+`position:` and `seconds:` for that one call. That is also where you set up the TV input (for popups like "only if
+TV input is not HDMI 3") and restarts via ADB.
+
+**Open the TV menu from a remote key:** assign the action `esphomeremote.streamer_menu` with `streamer: <name>`
+(optional `command: toggle/open/close`, `page:`, `size:`, `position:`).
 
 ---
 
@@ -383,7 +414,7 @@ That is also where you set up the TV input (for popups like "only if TV input is
   developer setup) – please make changes there, not here.
 - Custom components in `components/`: display (`ili9341_i80`), keypad (`tca8418`), battery gauge
   (`max17048`), motion sensor (`lis3dh`), Bluetooth HID (`espidf_ble_keyboard`, `atv_voice`),
-  configurator (`tasten_konfig`, `menue`), SD card, touch (`ft63x6`).
+  configurator (`key_config`, `menu`), SD card, touch (`ft63x6`).
 - `custom_components/esphomeremote`: integration with panel (`frontend/configurator.js`), delivers the
   assignment to the remote over HTTP.
 - Code comments and the developer notes in `docs/development/` are in German.
@@ -398,7 +429,7 @@ everything the remotes are actually built with:
   For these remotes the integration runs a Bluetooth bridge at `127.0.0.1:<port>` (from 16053). It does not change
   ESPHome's config entries itself: if an entry points elsewhere, a repair issue names host and port; set them via
   ESPHome → Reconfigure, or with "Point ESPHome entries to the bridge" in the configurator (Firmware, asks first).
-- `components/ha_tunnel`, `components/network` (Bluetooth layer), `components/dock_direkt`, `dock_hid`,
+- `components/ha_tunnel`, `components/network` (Bluetooth layer), `components/dock_direct`, `dock_hid`,
   `bluetooth_connection` (dock), `custom_components/esphomeremote/ble_link.py` (HA counterpart of the
   Bluetooth layer), `home-assistant/packages/` (YAML alternative to the integration), `docs/development/` (architecture, radio
   concept, measurements).

@@ -30,6 +30,10 @@
   <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md"><b>✨ Was ist neu</b></a>
 </p>
 
+> **Update auf 2026.11.5.4 oder neuer:** jede Remote **einmal per USB-Kabel** anschließen und im Konfigurator
+> aufspielen: Seite *Firmware* der Remote → **USB** (Chrome oder Edge am PC). Das schnellere Aufwachen braucht einen neuen Bootloader, und der lässt sich
+> nicht über WLAN aktualisieren. WLAN-Updates gehen auch ohne – die Remote wacht dann nur etwa 0,5 s langsamer auf.
+
 ---
 
 <table>
@@ -45,7 +49,7 @@ von Home Assistant, am PC und am Handy. Änderungen sind in Sekunden auf der Rem
 
 ### ⚡ Sofort da, selbst aus dem Schlaf
 Die Dockingstation leitet Tasten, Befehle und den Stand per Funk weiter. Remote mit einer Taste wecken – die
-Taste ist schon unterwegs, bevor das Display an ist.
+Taste ist nach etwa **0,2 s** beim Dock, lange bevor das Display an ist.
 
 </td>
 <td width="33%" valign="top">
@@ -71,6 +75,8 @@ den Rest macht das Dock.
 - **Dein Smart Home auf dem Display** – Licht mit Reglern und Farben, Rollos, Sensoren, Kameras, Szenen,
   Klingel-Popups.
 - **Sprachassistent** – Google am Fernseher oder Home Assistant Assist, mit eingebautem Mikrofon.
+- **Dein Menü auf dem Fernseher** – dasselbe Kachel-Menü wie auf der Remote, eingeblendet auf jedem Android-TV-Streamer
+  und bedient mit der Fernbedienung des Fernsehers. Dazu Kamera als Bild im Bild und Soundbar ein/aus per HDMI-CEC.
 - **Bewegungsgesten** – schütteln, kippen oder eigene anlernen (Kreis, Wischen …).
 
 ## Alles im Browser einstellen
@@ -191,7 +197,8 @@ Sleeptimer, Bildmodus …). Eine Seite mit einem Klick an deine anderen Remotes 
   dazu **Popups**, die von selbst aufgehen („Es hat geklingelt“, Sleeptimer, Bildmodus bei Netflix …).
 - **Smart Display im Dock** – steht die Remote im Dock, zeigt sie Uhrzeit, Wetter, Raumklima, Termine und Ladestand.
 - **Helligkeit nach Lichtsensor** – Display, Tastenlicht und Dock-LED folgen dem Raumlicht; die Kurve lernt mit.
-- **Kamera und Klingel** – Bild auf der Fernbedienung, Kamera auf dem Fernseher (in drei Größen).
+- **Kamera und Klingel** – Bild auf der Fernbedienung, Kamera auf dem Fernseher (vier Größen, fünf Lagen, mehrere Fernseher).
+- **Menü auf dem Fernseher** – dein Kachel-Menü als Einblendung auf Android-TV-Streamern, dazu Soundbar ein/aus per HDMI-CEC.
 - **Lange Akkulaufzeit** – Tiefschlaf, wacht auf beim Hochheben, Klopfen oder Tastendruck; die Weck-Taste und alles,
   was während des Starts gedrückt wird, kommt trotzdem an.
 
@@ -242,8 +249,8 @@ und starten.
 1. Falls noch nicht da: **HACS** installieren (https://hacs.xyz – einmalig, 5 Minuten).
 2. In Home Assistant **HACS** öffnen, nach **„ESPHomeRemote“** suchen → **Herunterladen**
    (oder [In HACS öffnen](https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration) anklicken).
-   *Nicht gefunden?* Ältere HACS-Version oder veraltete Liste: oben rechts **⋮** → **„Benutzerdefinierte Repositories“** →
-   `https://github.com/Aggro600/ESPHomeRemote` einfügen, Typ **„Integration“** → **Hinzufügen**, dann noch einmal suchen.
+   ESPHomeRemote steht in der **Standardliste von HACS** – kein benutzerdefiniertes Repository nötig. *Nicht gefunden?*
+   Liste in HACS neu laden (**⋮** → *Neu laden*) oder HACS aktualisieren.
 3. Home Assistant **neu starten** (*Einstellungen → System → oben rechts ⏻ → Neu starten*).
 4. *Einstellungen → Geräte & Dienste →* **„+ Integration hinzufügen“** → **„ESPHomeRemote“**.
    Den Namen der Fernbedienung so lassen (`esphomeremote`) → **Absenden**.
@@ -288,10 +295,22 @@ ota:
 
 ### Streamer-App (optional)
 
-Für Titel, Cover und das Tastatur-Popup von einem Android-TV-Streamer: am Streamer die Entwickleroptionen und
-USB-Debugging einschalten, in Home Assistant die Integration **Android Debug Bridge** mit seiner IP hinzufügen, dann
-im Konfigurator *Wiedergabe → Streamer anlegen* → **Einrichten**. Die App kommt mit der Integration mit; Updates und
-Deinstallieren gehen dort genauso. Auf dem Fernseher zeigt sie unter „ESPHomeRemote Streamer“, ob alles läuft.
+Für das Menü auf dem Fernseher, die Kamera auf dem Fernseher, die Soundbar per HDMI-CEC, Titel, Cover und das
+Tastatur-Popup von einem Android-TV-Streamer: am Streamer die Entwickleroptionen und USB-Debugging einschalten, in Home
+Assistant die Integration **Android Debug Bridge** mit seiner IP hinzufügen, dann im Konfigurator *Wiedergabe →
+Streamer anlegen* → **Einrichten**. Die App kommt mit der Integration mit; Updates und Deinstallieren gehen dort genauso.
+Auf dem Fernseher zeigt sie unter „ESPHomeRemote Streamer“, ob alles läuft. Jede Streamer-Karte hat dann **Menü auf dem
+Fernseher** (Taste, Größe, Lage, Einblenddauer, **Menü bearbeiten**) und **Soundbar / AV-Receiver per HDMI**.
+
+### Auf dem Fernseher: Menü, Kameras, Soundbar
+
+- **Menü auf dem Fernseher** – mit demselben Editor wie für die Remote gebaut (Seiten, Kacheln, Licht, Szenen, Rollos,
+  Kameras, Lautstärke, Türöffner mit Ja/Nein-Abfrage), geöffnet mit einer Taste der Streamer-Fernbedienung oder aus
+  Home Assistant (`esphomeremote.streamer_menu`). Größe 30 % bis ganzer Bildschirm, neun Lagen, Einblenddauer einstellbar.
+- **Kamera auf dem Fernseher** – Bild im Bild über allem, was läuft, auf mehreren Fernsehern, mit Größe, Ecke und
+  Einblenddauer – fest im Konfigurator oder je Aufruf (`esphomeremote.camera_tv` mit `size`, `position`, `seconds`).
+- **Soundbar per HDMI-CEC** – Soundbar oder AV-Receiver am HDMI-ARC des Fernsehers über den Streamer ein- und
+  ausschalten, ohne Infrarot (`switch.…_soundbar`, `esphomeremote.streamer_cec`).
 
 ### Updates
 
@@ -299,6 +318,8 @@ Deinstallieren gehen dort genauso. Auf dem Fernseher zeigt sie unter „ESPHomeR
   mit der Liste, was neu ist. Installieren, Home Assistant neu starten – fertig.
 - **Fernbedienungen und Docks:** danach im Konfigurator unter *Firmware* steht „Neue Version …“ –
   **Alle aktualisieren** baut und spielt sie auf (schlafende Remotes kurz anfassen).
+- **Einmal je Remote ab 2026.11.5.4: per USB-Kabel aufspielen** (neuer Bootloader für das schnelle Aufwachen, siehe
+  oben). WLAN-Updates gehen auch ohne.
 - Die Firmware kommt vom Zweig `stabil` (letzter Release).
 - Was neu ist: [CHANGELOG.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md).
 
@@ -365,9 +386,14 @@ Einige eingebaute Seiten (Startseite-Player, Klingel, Sleeptimer) nutzen die Ent
 `esphomeremote.yaml` → `substitutions`. Trage dort deine ein oder lass sie weg – das Menü baust du
 ohnehin im Konfigurator.
 
-**Kamera auf dem Fernseher in Klein / Mittel / Groß** (optional):
-im Konfigurator unter **Funktionen → Kamera auf dem Fernseher** (App *HA TV Dashboard* auf dem Fernseher).
-Dort stellst du auch den TV-Eingang (für Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“) und den Neustart per ADB ein.
+**Kamera auf dem Fernseher** (optional):
+im Konfigurator unter **Funktionen → Kamera auf dem Fernseher** – die Streamer-App blendet sie ein, auf einem oder
+mehreren Fernsehern, je mit eigener Kameraliste, Größe und Ecke. Aus Automationen: `esphomeremote.camera_tv` mit
+`camera:` (`camera.xyz`, `last`, `next`, `previous`, `off`), optional `size:`, `position:` und `seconds:` nur für diesen
+Aufruf. Dort stellst du auch den TV-Eingang (für Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“) und den Neustart per ADB ein.
+
+**Menü auf dem Fernseher von einer Remote-Taste öffnen:** Aktion `esphomeremote.streamer_menu` mit `streamer: <Name>`
+(optional `command: toggle/open/close`, `page:`, `size:`, `position:`).
 
 ---
 
@@ -377,7 +403,7 @@ Dort stellst du auch den TV-Eingang (für Popups wie „Nur wenn TV-Eingang ist 
   im Entwickler-Setup) – Änderungen bitte dort, nicht hier.
 - Eigene Komponenten in `components/`: Display (`ili9341_i80`), Tastenfeld (`tca8418`), Akku
   (`max17048`), Lagesensor (`lis3dh`), Bluetooth-HID (`espidf_ble_keyboard`, `atv_voice`),
-  Konfigurator (`tasten_konfig`, `menue`), SD-Karte, Touch (`ft63x6`).
+  Konfigurator (`key_config`, `menu`), SD-Karte, Touch (`ft63x6`).
 - `custom_components/esphomeremote`: Integration mit Panel
   (`frontend/configurator.js`), liefert die Belegung per HTTP an die Fernbedienung.
 
@@ -391,7 +417,7 @@ Remotes tatsächlich gebaut werden:
   Für diese Remotes betreibt die Integration eine Bluetooth-Brücke unter `127.0.0.1:<Port>` (ab 16053). Die ESPHome-Einträge
   stellt sie nicht selbst um: zeigt einer woandershin, nennt ein Reparatur-Hinweis Host und Port; eintragen über
   ESPHome → Neu konfigurieren oder im Konfigurator (Firmware) mit „ESPHome-Einträge auf die Brücke stellen“ (fragt vorher).
-- `components/ha_tunnel`, `components/network` (Bluetooth-Schicht), `components/dock_direkt`, `dock_hid`,
+- `components/ha_tunnel`, `components/network` (Bluetooth-Schicht), `components/dock_direct`, `dock_hid`,
   `bluetooth_connection` (Dock), `custom_components/esphomeremote/ble_link.py` (HA-Gegenstück der Bluetooth-Schicht),
   `home-assistant/packages/` (YAML-Alternative zur Integration), `docs/development/` (Architektur, Funkkonzept, Messungen).
 

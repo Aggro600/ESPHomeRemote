@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.5.3"
+    version: "2026.11.5.4"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
@@ -71,6 +71,7 @@ esphome:
     - esphomeremote-accent.h   # Akzentfarbe aus dem Konfigurator (2026-11-01)
     - esphomeremote-keys.h   # Tasten-Konfigurator (2026-10-03)
     - esphomeremote-wifi.h
+    - esphomeremote-schnellweg.h   # Weck-Taste ganz am Anfang per ESP-NOW ans Dock (2026-11-05)
     - esphomeremote-sd-images.h
     - esphomeremote-levels.h
     - esphomeremote-battery.h
@@ -83,6 +84,14 @@ esphome:
     - esphomeremote-extras.h   # Einstellungsseite Smart Display + Bluetooth "Maus & Tastatur" (2026-10-17)
     - esphomeremote-gestures-page.h   # Seite Gesten: Liste, Belegung, Anlernen (2026-10-17)
     - esphomeremote-music.h   # Musik-Anzeige: Spektrum ueber das Mikrofon (2026-10-18)
+  # Schnellweg (2026-11-05): vor dem Tiefschlaf die Weck-Tabelle der aktuellen Aktivitaet ablegen (nur geschrieben, wenn
+  # sich etwas geaendert hat) und das ROM beim Aufwachen schweigen lassen
+  on_shutdown:
+    - lambda: |-
+        esp_deep_sleep_disable_rom_logging();
+        id(tk_cfg).bt_weg_modus = []() { return (int) id(bt_weg); };
+        id(tk_cfg).weck_tabelle_speichern(id(tk_cfg).tasten_akt(id(activity), id(akt_an)),
+                                          id(weck_dock) == 0 && id(weck_tasten) == 2);
   on_boot:
     # Prioritaet 1100: laeuft VOR dem I2C-Bus (setup_priority BUS = 1000).
     # Nach einem Deep-Sleep-Wake zuerst die Holds loesen UND die +VSW-Rail
@@ -90,6 +99,15 @@ esphome:
     # R11/R12 haengen an +VSW) ins Leere ("Recovery failed, SCL held low"),
     # bevor das Display-Component die Rail viel spaeter hochfaehrt.
     # Auf einem Kaltstart schadet das nicht (Rail kommt eh gleich).
+    # Schnellweg (2026-11-05, esphomeremote-schnellweg.h): allererste Komponente - warten, bis der fruehe Task Funk und
+    # I2C freigegeben hat. Danach: beim Aufwachen per Taste/Bewegung nur die Kurzfassung der Belegung laden.
+    - priority: 9000
+      then:
+        - lambda: |-
+            schnellweg::abwarten();
+            const bool taste = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1 &&
+                               (esp_sleep_get_ext1_wakeup_status() & ((1ULL << 8) | (1ULL << 2)));
+            id(tk_cfg).set_schnell_laden(taste);
     - priority: 1100
       then:
         - lambda: |-
@@ -136,7 +154,11 @@ esphome:
             // 300 ms: der Touch-Controller (FT6236, an derselben Rail wie das Panel) braucht ab dem Einschalten ~300 ms
             // fuer eine stabile Nullreferenz - sonst Geisterberuehrungen nach dem Aufwachen (gemessen von OpenRemote,
             // LORDSn1per/OpenRemote-Firmware, PHANTOM_TOUCH_FINDINGS.md).
-            delay(300);   // Panel-Regler + FT6236 einschwingen lassen
+            // Seit 2026-11-05 nicht mehr hier am Stueck: Rail nur kurz einschwingen lassen (I2C-Pullups), den Rest der
+            // 300 ms wartet erst der Touch vor seinem Start (on_boot 244.5) - bis dahin laeuft ohnehin das Display
+            // (~0,8 s). So verzoegert die Wartezeit die Weck-Taste nicht mehr (Messung: -300 ms).
+            schnellweg::rail_ms = millis();
+            delay(10);
     # Prioritaet 950: I2C-Bus (1000) laeuft schon, sonst noch nichts. War die Remote
     # heruntergefahren, startet sie nur bei Aus-Taste (Code 102) oder Ladekabel - jede andere
     # Taste schickt sie sofort wieder schlafen (Nutzerwunsch 2026-09-28, s. esphomeremote-pm.h).
@@ -260,6 +282,15 @@ esphome:
     - priority: 248
       then:
         - script.execute: weck_frueh_pruefen
+    # Volle Belegung direkt nach der Weck-Taste (2026-11-05: beim Aufwachen kam zuerst nur die Kurzfassung) - vor dem
+    # Menue (-100), das sie braucht
+    - priority: 247.9
+      then:
+        - lambda: 'id(tk_cfg).voll_laden();'
+    # Rest der 300 ms Einschwingzeit von Panel-Regler und Touch (s. on_boot 1100) - direkt vor dem Display (245)
+    - priority: 245.5
+      then:
+        - lambda: 'while (millis() - schnellweg::rail_ms < 300) delay(5);'
     # Noch einmal nach Display/Touch und vor dem Ende des Starts: Taste erst nach dem Hochnehmen gedrueckt (2026-10-23)
     - priority: 244.4
       then:
@@ -269,6 +300,12 @@ esphome:
         - script.execute: weck_frueh_pruefen
     # WLAN nach dem fruehen Versand der Weck-Taste starten (s. on_boot 1100)
     # Bis dahin funkt dock_direkt auf dem Kanal des Docks (Tasten, Stand, Werte sofort); 4 s nach dem Start.
+    # Schnellweg (2026-11-05): Ergebnis ins Weckprotokoll
+    - priority: -250
+      then:
+        - lambda: |-
+            const std::string t = schnellweg::text();
+            if (!t.empty()) { ESP_LOGI("schnellweg", "%s", t.c_str()); weck_log(t.c_str()); }
     - priority: -150
       then:
         - delay: 4s
@@ -625,6 +662,15 @@ esp32:
       # Puffer) im knappen internen RAM - nur noch 7 KB frei, dadurch konnte die Remote
       # ihre Entitaetenliste nicht mehr an HA senden. Jetzt liegt alles ab 512 Byte im PSRAM.
       CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "512"
+      # Schneller aus dem Tiefschlaf (2026-11-05, gemessen an Remote Gast):
+      # - kein PSRAM-Speichertest beim Start (8 MB: ~0,5 s)
+      # - Bootloader prueft die Firmware beim Aufwachen nicht und schreibt nichts aus (~0,55 s). Der Bootloader kommt
+      #   NUR per USB-Flash auf die Remote - per WLAN-Update bleibt der alte (dann einfach ohne diesen Gewinn).
+      CONFIG_SPIRAM_MEMTEST: "n"
+      CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP: "y"
+      CONFIG_BOOTLOADER_LOG_LEVEL_NONE: "y"
+      CONFIG_BOOTLOADER_LOG_LEVEL_INFO: "n"
+      CONFIG_BOOTLOADER_LOG_LEVEL: "0"
       # Die Stapel der Core-0-Tasks (BTC/BTU u. a.) bleiben bewusst beim Standard: pauschal vergroessert brachen
       # Bluetooth und die Sprachsuche ein. Bei einem Ueberlauf gezielt nur den betroffenen Task anheben.
     advanced:

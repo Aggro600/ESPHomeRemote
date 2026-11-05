@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
@@ -37,16 +38,24 @@ public class AccessibilityHelper extends AccessibilityService {
         @Override public void onReceive(Context c, Intent i) { Camera.befehl(AccessibilityHelper.this, i); }
     };
 
+    // Popup-Menue aus Home Assistant (1.16, Menue.java)
+    private final BroadcastReceiver menue = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { Menue.befehl(AccessibilityHelper.this, i); }
+    };
+
     @Override
     protected void onServiceConnected() {
         IntentFilter f = new IntentFilter(CURSOR);
         IntentFilter fk = new IntentFilter(Camera.AKTION);
+        IntentFilter fm = new IntentFilter(Menue.AKTION);
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(cursor, f, Context.RECEIVER_EXPORTED);
             registerReceiver(kamera, fk, Context.RECEIVER_EXPORTED);
+            registerReceiver(menue, fm, Context.RECEIVER_EXPORTED);
         } else {
             registerReceiver(cursor, f);
             registerReceiver(kamera, fk);
+            registerReceiver(menue, fm);
         }
         modusBeob = new ContentObserver(h) {
             @Override public void onChange(boolean selbst) { modusAnwenden(); }
@@ -54,6 +63,21 @@ public class AccessibilityHelper extends AccessibilityService {
         getContentResolver().registerContentObserver(Settings.Global.getUriFor("esphomeremote_modus"), false, modusBeob);
         modusAnwenden();
         if (!State.nurKamera(this)) pruefen();
+        tasten = new Tasten(this, h);   // Tasten umbelegen (1.16)
+        cecTasten = new CecTasten(this, h, tasten);   // Tasten der Fernseher-Fernbedienung (per HDMI-CEC)
+    }
+
+    private Tasten tasten;
+    private CecTasten cecTasten;
+
+    // Tasten fuer Home Assistant (2026-11-05, Tasten.java): true = verbraucht, Android bekommt sie nicht
+    @Override
+    protected boolean onKeyEvent(KeyEvent e) {
+        try {
+            return tasten != null && tasten.ereignis(e);
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     // Nur Kamera: Android stellt gar keine Fenster-Ereignisse mehr zu (eventTypes 0) - das Overlay braucht nur den
@@ -81,7 +105,12 @@ public class AccessibilityHelper extends AccessibilityService {
         try { if (modusBeob != null) getContentResolver().unregisterContentObserver(modusBeob); } catch (Exception ignored) { }
         try { unregisterReceiver(cursor); } catch (Exception ignored) { }
         try { unregisterReceiver(kamera); } catch (Exception ignored) { }
+        try { unregisterReceiver(menue); } catch (Exception ignored) { }
+        Menue.zu();
+        WebMenue.zu();
         Camera.aus();
+        if (tasten != null) tasten.aus();
+        if (cecTasten != null) cecTasten.aus();
         super.onDestroy();
     }
 

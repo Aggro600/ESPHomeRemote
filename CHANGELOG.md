@@ -1,5 +1,39 @@
 # What's new · Was ist neu
 
+## 2026.11.5.4 (2026-11-05)
+
+> ⚠️ **Flash each remote once via USB cable.** The faster wake-up needs a new bootloader, and a bootloader can't be updated over Wi-Fi. In the configurator: *Firmware* page of the remote → **USB** (Chrome or Edge on a PC). Update the **docks first** (over Wi-Fi as usual). Wi-Fi updates of the remote keep working without USB – it just wakes about 0.5 s slower.
+
+**Wakes up in a blink.** In dock mode, a key press now reaches the dock about **0.2 s** after waking (before: about 3 s). The key is read and sent straight after power-up, before the display and the rest of the firmware start; the remote loads a short version of its configuration first; the PSRAM self-test at boot is gone. Also works when the remote is woken by motion and the key comes a moment later.
+
+**Menu on the TV.** Every streamer with the Streamer app (1.19) can show a popup menu on the TV – built with the same editor as the remote's menu (pages, tiles, lights, scenes, covers, cameras, volume, door openers with a yes/no prompt). In the configurator at the streamer: *Menu on the TV* – menu key (learn it with the streamer's remote), size from 30 % to full screen, nine positions, display time, **Edit menu**, **Show on the TV**. Operated with the arrows, OK and Back of the streamer's remote; on TVs that forward their remote via HDMI-CEC the TV remote works too. New action `esphomeremote.streamer_menu` (`command: toggle/open/close`, optional `page`, `size`, `position` for that one opening) – e.g. for a key on the remote.
+
+**Soundbar via HDMI-CEC.** Per streamer, *Soundbar / AV receiver via HDMI* turns the audio device on the TV's HDMI-ARC on and off through the streamer – no infrared. You get `switch.esphomeremote_streamer_<id>_soundbar` (state optionally from an entity, e.g. the TV's audio output) and the action `esphomeremote.streamer_cec` (`device: soundbar/tv`, `command: on/off`).
+
+**Camera on the TV, per call.** `esphomeremote.camera_tv` takes optional `size`, `position` and `seconds` (display time, 0 = until off) for that one call; the configurator settings stay as they are.
+
+**Streamer keys for automations.** Keys of the streamer's remote can be reported to Home Assistant as the event `esphomeremote_streamer_key` (`code`, `name`, `press: short/long/learn`, `source`, `cec`).
+
+**Fixes:** the soundbar switch no longer updates its state from a worker thread; the TV menu no longer flickers or jumps while it refreshes, and arrow keys move to the nearest tile in the next row.
+
+<details><summary>Deutsch</summary>
+
+> ⚠️ **Jede Remote einmal per USB-Kabel aufspielen.** Das schnellere Aufwachen braucht einen neuen Bootloader, und ein Bootloader lässt sich nicht über WLAN aktualisieren. Im Konfigurator: Seite *Firmware* der Remote → **USB** (Chrome oder Edge am PC). **Docks zuerst** aktualisieren (wie gewohnt über WLAN). WLAN-Updates der Remote gehen auch ohne USB – sie wacht dann nur etwa 0,5 s langsamer auf.
+
+**Wacht im Nu auf.** Im Dock-Betrieb ist ein Tastendruck jetzt etwa **0,2 s** nach dem Aufwachen beim Dock (vorher etwa 3 s). Die Taste wird direkt nach dem Einschalten gelesen und gesendet, noch bevor Display und restliche Firmware starten; die Remote lädt zuerst eine kurze Fassung ihrer Konfiguration; der PSRAM-Selbsttest beim Start entfällt. Klappt auch, wenn die Remote durch Bewegung aufwacht und die Taste kurz danach kommt.
+
+**Menü auf dem Fernseher.** Jeder Streamer mit der Streamer-App (1.19) kann ein Popup-Menü auf dem Fernseher zeigen – gebaut mit demselben Editor wie das Menü der Remote (Seiten, Kacheln, Licht, Szenen, Rollos, Kameras, Lautstärke, Türöffner mit Ja/Nein-Abfrage). Im Konfigurator beim Streamer: *Menü auf dem Fernseher* – Menü-Taste (mit der Streamer-Fernbedienung anlernen), Größe von 30 % bis ganzer Bildschirm, neun Lagen, Einblenddauer, **Menü bearbeiten**, **Auf dem Fernseher zeigen**. Bedient mit Pfeilen, OK und Zurück der Streamer-Fernbedienung; bei Fernsehern, die ihre Fernbedienung per HDMI-CEC weiterreichen, auch mit der des Fernsehers. Neue Aktion `esphomeremote.streamer_menu` (`command: toggle/open/close`, optional `page`, `size`, `position` nur für dieses Öffnen) – z. B. für eine Taste der Remote.
+
+**Soundbar per HDMI-CEC.** Je Streamer schaltet *Soundbar / AV-Receiver per HDMI* das Audiogerät am HDMI-ARC des Fernsehers über den Streamer ein und aus – ohne Infrarot. Dazu gibt es `switch.esphomeremote_streamer_<id>_soundbar` (Zustand wahlweise aus einer Entität, z. B. der Tonausgabe des Fernsehers) und die Aktion `esphomeremote.streamer_cec` (`device: soundbar/tv`, `command: on/off`).
+
+**Kamera auf dem Fernseher je Aufruf.** `esphomeremote.camera_tv` nimmt optional `size`, `position` und `seconds` (Einblenddauer, 0 = bis off) nur für diesen Aufruf; die Einstellungen im Konfigurator bleiben.
+
+**Streamer-Tasten für Automationen.** Tasten der Streamer-Fernbedienung lassen sich als Ereignis `esphomeremote_streamer_key` an Home Assistant melden (`code`, `name`, `press: short/long/learn`, `source`, `cec`).
+
+**Behoben:** Der Soundbar-Schalter schreibt seinen Zustand nicht mehr aus einem Hintergrund-Thread; das Menü auf dem Fernseher flackert und springt beim Aktualisieren nicht mehr, und die Pfeiltasten gehen zur nächsten Kachel in der nächsten Reihe.
+
+</details>
+
 ## 2026.11.5.3 (2026-11-05)
 
 - **Cleanup:** the transition layer from the rename (esphomeremote_konfig → esphomeremote) is removed: old service names `esphomeremote_konfig.*`, the old `/api/esphomeremote_konfig/…` paths and the duplicate `sensor.esphomeremote_konfig_*` sensors (orphaned entries are removed at startup).

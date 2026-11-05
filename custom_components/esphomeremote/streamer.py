@@ -79,8 +79,13 @@ def validate_streamer(liste) -> list[dict]:
         typ = str(st.get("typ") or "google")
         # nur_kamera (2026-11-05, Nutzer: "dass die App nur das mit dem Kamerastream macht, die ganzen anderen Sachen
         # nicht ... dass der Fernseher nicht so viele Anfragen verarbeiten muss"): Software-Schalter, keine zweite APK
+        # Soundbar/AV-Receiver am Fernseher per HDMI-CEC ueber diesen Streamer (2026-11-05): Schalter + Dienst
+        # streamer_cec; Zustand optional aus einer Entitaet (z. B. Tonausgabe des Fernsehers = ARC)
+        az = str(st.get("audio_zustand") or "").strip()
         out.append({"id": sid, "name": str(st.get("name") or "Streamer")[:32], "adb": adb, "webhook": wh,
-                    "typ": typ if typ in GERAETE else "android", "nur_kamera": bool(st.get("nur_kamera"))})
+                    "typ": typ if typ in GERAETE else "android", "nur_kamera": bool(st.get("nur_kamera")),
+                    "audio": bool(st.get("audio")), "audio_zustand": az if re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", az) else "",
+                    "audio_attr": str(st.get("audio_attr") or "")[:40], "audio_wert": str(st.get("audio_wert") or "")[:40]})
     return out
 
 
@@ -198,9 +203,27 @@ class Streamer:
 
     async def _webhook(self, hass, webhook_id, request):
         try:
-            text = str((await request.json()).get("text") or "")
+            daten = await request.json()
         except Exception:  # noqa: BLE001
             return None
+        # Tasten umbelegen (2026-11-05, App 1.16): {"taste": {code, name, art (kurz/lang/lernen), quelle, cec}}
+        # -> Ereignis esphomeremote_streamer_key (englisch: press short/long/learn, source, cec)
+        taste = daten.get("taste") if isinstance(daten, dict) else None
+        if isinstance(taste, dict):
+            hass.bus.async_fire(f"{DOMAIN}_streamer_key", {
+                "streamer": self.cfg.get("id"), "streamer_name": self.cfg.get("name"),
+                "code": taste.get("code"), "name": taste.get("name"),
+                "press": {"kurz": "short", "lang": "long", "lernen": "learn"}.get(taste.get("art"), taste.get("art")),
+                "source": taste.get("quelle"), "cec": bool(taste.get("cec"))})
+            return None
+        # Einfaches Popup-Menue (App 1.16, Menue.java): {"menue": {id, wahl, text}} -> esphomeremote_streamer_menu_choice
+        menue = daten.get("menue") if isinstance(daten, dict) else None
+        if isinstance(menue, dict):
+            hass.bus.async_fire(f"{DOMAIN}_streamer_menu_choice", {
+                "streamer": self.cfg.get("id"), "streamer_name": self.cfg.get("name"),
+                "id": menue.get("id"), "choice": menue.get("wahl"), "text": menue.get("text")})
+            return None
+        text = str(daten.get("text") or "") if isinstance(daten, dict) else ""
         try:
             self.daten = auswerten(text, self.daten, self.kd.basis() or "homeassistant.local:8123")
         except Exception:  # noqa: BLE001 - eine kaputte Meldung darf den Webhook nicht abschiessen
@@ -303,8 +326,10 @@ class Streamer:
         lis = f"{APP_PKG}/{APP_PKG}.MediaListener"
         if nur:
             # esphomeremote_modus: die App (ab 1.15) abonniert dann keine Fenster-Ereignisse mehr, Statusseite gruen
-            await self.adb(f"cmd notification disallow_listener {lis}; settings delete global esphomeremote_webhook; "
-                           "settings put global esphomeremote_modus kamera")
+            # Ziel-Adresse bleibt (2026-11-05): die App meldet darueber umbelegte Tasten - Zustaende schickt sie in
+            # diesem Modus ohnehin nicht
+            await self.adb(f"cmd notification disallow_listener {lis}; settings put global esphomeremote_modus kamera")
+            await self.eintragen()
             self.daten = {}
             self.cec = None
             self._melden()
@@ -368,10 +393,49 @@ class Streamers:
                 self.alle[sid].starten()
 
 
+# ----------------------------------------------------------------- HDMI-CEC ueber den Streamer (2026-11-05)
+# Android (12-14) laesst ohne Root keine freien CEC-Befehle zu, der HDMI-Dienst aber gezielt an ein Geraet:
+#   IHdmiControlService.powerOnRemoteDevice (Transaktion 33): <User Control Pressed: Power On Function>
+#   IHdmiControlService.powerOffRemoteDevice (Transaktion 32): <Standby> nur an dieses Geraet
+# Logische Adressen: 0 = Fernseher, 5 = Audiosystem (Soundbar/AV-Receiver). Getestet: MagentaTV Stick + Hisense HS214.
+CEC_ADRESSE = {"soundbar": 5, "tv": 0}
+
+
+async def cec_befehl(st, geraet: str, an: bool) -> None:
+    adr = CEC_ADRESSE[geraet]
+    await st.adb(f"service call hdmi_control {33 if an else 32} i32 {adr} i32 {1 if an else 0}")
+
+
+def _streamer_finden(s, wahl: str):
+    w = str(wahl or "").strip().lower()
+    for sid, st in s.alle.items():
+        if w in (sid, str(st.cfg.get("name") or "").strip().lower()):
+            return st
+    return None
+
+
 def einrichten(hass: HomeAssistant, kd) -> Streamers:
     s = Streamers(hass, kd)
     hass.data[DOMAIN + "_streamer"] = s
     s.sync()
+
+    async def dienst_cec(call) -> None:
+        # Felder englisch (device, command), alte deutsche Namen ueber aliases.py
+        st = _streamer_finden(s, call.data.get("streamer"))
+        if st is None:
+            raise vol.Invalid(f"Unknown streamer '{call.data.get('streamer')}'")
+        geraet = str(call.data.get("device") or "soundbar").lower()
+        if geraet not in CEC_ADRESSE:
+            raise vol.Invalid("device: soundbar or tv")
+        cmd = call.data.get("command", "on")
+        an = cmd is True or str(cmd).lower() in ("on", "true", "1")
+        await cec_befehl(st, geraet, an)
+        v = hass.data.get(DOMAIN + "_dock")
+        if geraet == "soundbar" and v and (e := v.ents.get(f"streamer_{st.cfg['id']}_audio")):
+            e.merken(an)
+
+    from .aliases import schema_with_aliases
+    hass.services.async_register(DOMAIN, "streamer_cec", dienst_cec, schema=schema_with_aliases("streamer_cec"))
     for fn in (ws_streamer_get, ws_streamer_save, ws_streamer_eintragen, ws_streamer_app):
         websocket_api.async_register_command(hass, fn)
     return s
@@ -522,3 +586,82 @@ class StreamerKnopf(ButtonEntity):
             await st.app_beenden()
         else:
             await st.adb("reboot")
+
+
+# ----------------------------------------------------------------- Soundbar-Schalter (2026-11-05)
+from homeassistant.components.switch import SwitchEntity  # noqa: E402
+from homeassistant.helpers.event import async_track_state_change_event  # noqa: E402
+from homeassistant.helpers.restore_state import RestoreEntity  # noqa: E402
+
+
+class CecSchalter(SwitchEntity, RestoreEntity):
+    """Soundbar/AV-Receiver am Fernseher, geschaltet per HDMI-CEC ueber den Streamer."""
+    _attr_should_poll = False
+    _attr_icon = "mdi:soundbar"
+
+    def __init__(self, hass: HomeAssistant, sid: str) -> None:
+        self._h, self.sid = hass, sid   # nicht self.hass: das setzt HA erst beim Hinzufuegen
+        self._attr_unique_id = f"streamer_{sid}_audio"
+        self.entity_id = f"switch.esphomeremote_streamer_{sid}_soundbar"
+        self._an: bool | None = None
+        self._ab = None
+
+    @property
+    def _st(self):
+        return self._h.data[DOMAIN + "_streamer"].alle.get(self.sid)
+
+    @property
+    def name(self) -> str:
+        st = self._st
+        return f"{st.cfg.get('name') if st else self.sid} Soundbar"
+
+    @property
+    def available(self) -> bool:
+        st = self._st
+        return st is not None and bool(st.cfg.get("audio")) and bool(st.cfg.get("adb"))
+
+    @property
+    def assumed_state(self) -> bool:
+        st = self._st
+        return not (st and st.cfg.get("audio_zustand"))
+
+    @property
+    def is_on(self) -> bool | None:
+        st = self._st
+        q = st.cfg.get("audio_zustand") if st else ""
+        if q:
+            z = self._h.states.get(q)
+            if z is not None:
+                attr = st.cfg.get("audio_attr")
+                ist = z.attributes.get(attr) if attr else z.state
+                soll = st.cfg.get("audio_wert") or "on"
+                return str(ist).lower() == soll.lower()
+        return self._an
+
+    def umbenennen(self, _sig) -> None:   # dock.py ruft das bei geaendertem Streamer-Namen
+        if self.entity_id and self.hass is not None:
+            self.async_write_ha_state()
+
+    def merken(self, an: bool) -> None:
+        self._an = an
+        if self.hass is not None and self.entity_id:
+            self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        if (alt := await self.async_get_last_state()) is not None and alt.state in ("on", "off"):
+            self._an = alt.state == "on"
+        st = self._st
+        if st and st.cfg.get("audio_zustand"):
+            self.async_on_remove(async_track_state_change_event(self.hass, [st.cfg["audio_zustand"]], self._quelle_neu))
+
+    @callback
+    def _quelle_neu(self, _ereignis) -> None:   # im Event-Loop (ohne @callback liefe es im Executor-Thread)
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await cec_befehl(self._st, "soundbar", True)
+        self.merken(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await cec_befehl(self._st, "soundbar", False)
+        self.merken(False)
