@@ -302,12 +302,14 @@ class Streamer:
         nur = bool(self.cfg.get("nur_kamera"))
         lis = f"{APP_PKG}/{APP_PKG}.MediaListener"
         if nur:
-            await self.adb(f"cmd notification disallow_listener {lis}; settings delete global esphomeremote_webhook")
+            # esphomeremote_modus: die App (ab 1.15) abonniert dann keine Fenster-Ereignisse mehr, Statusseite gruen
+            await self.adb(f"cmd notification disallow_listener {lis}; settings delete global esphomeremote_webhook; "
+                           "settings put global esphomeremote_modus kamera")
             self.daten = {}
             self.cec = None
             self._melden()
         else:
-            await self.adb(f"cmd notification allow_listener {lis}")
+            await self.adb(f"cmd notification allow_listener {lis}; settings delete global esphomeremote_modus")
             await self.eintragen()
         await self._abfragen(not nur)
 
@@ -326,7 +328,8 @@ class Streamer:
         acc = (await self.adb("settings get secure enabled_accessibility_services")).strip()
         liste = [x for x in acc.split(":") if x and x != "null" and not x.startswith(APP_PKG + "/")]
         befehl = f"settings put secure enabled_accessibility_services {':'.join(liste)}" if liste else "settings delete secure enabled_accessibility_services"
-        r = await self.adb(f"{befehl}; settings delete global esphomeremote_webhook; pm uninstall {APP_PKG} 2>&1")
+        r = await self.adb(f"{befehl}; settings delete global esphomeremote_webhook; settings delete global esphomeremote_modus; "
+                           f"pm uninstall {APP_PKG} 2>&1")
         if "Success" not in r and "not installed" not in r.lower() and "Unknown package" not in r:
             raise vol.Invalid(f"Deinstallieren ging nicht: {r.strip()[:200]}")
         return await self.app_status()

@@ -112,6 +112,16 @@ public class Start extends Activity {
         final String url = Settings.Global.getString(cr, "esphomeremote_webhook");
         final boolean a = acc != null && acc.contains(pkg + "/"), n = nl != null && nl.contains(pkg + "/"),
                 u = url != null && !url.isEmpty();
+        if (State.nurKamera(this)) {   // Nur Kamera (2026-11-05): kein Fehler, dass nichts gemeldet wird - so gewollt
+            zeile(0, a, "Kamera-Popup bereit (Bedienungshilfe an)", "Bedienungshilfe ist aus – ohne sie kein Kamera-Popup");
+            zeile(1, true, "Nur Kamera: Titel, Cover und Tastatur aus", "");
+            zeile(2, true, "Meldet nichts an Home Assistant (so eingestellt)", "");
+            zeile(3, true, "Umschalten im Konfigurator beim Streamer („Nur Kamera“)", "");
+            meldung.setText(a ? "Nur Kamera – die App zeigt nur das Kamera-Popup." : "Bedienungshilfe einschalten, sonst kommt kein Kamera-Popup.");
+            meldung.setTextColor(a ? GRUEN : GRAU);
+            hilfe.setVisibility(a ? View.GONE : View.VISIBLE);
+            return;
+        }
         zeile(0, a, "App und Bildschirmtastatur erkennen", "Bedienungshilfe ist aus");
         zeile(1, n, "Titel und Cover lesen", "Benachrichtigungszugriff fehlt");
         zeile(2, u, "Mit Home Assistant verbunden", "Noch nicht mit Home Assistant verbunden");

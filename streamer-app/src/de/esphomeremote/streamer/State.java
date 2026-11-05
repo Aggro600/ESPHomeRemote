@@ -106,7 +106,17 @@ final class State {
         return b.toString();
     }
 
+    // Nur Kamera (2026-11-05): Home Assistant setzt "settings put global esphomeremote_modus kamera" - dann zeigt die
+    // App nur das Kamera-Popup, wertet keine Fenster aus und meldet nichts (weniger Last auf schwachen Sticks)
+    static boolean nurKamera(Context c) {
+        return "kamera".equals(Settings.Global.getString(c.getContentResolver(), "esphomeremote_modus"));
+    }
+
     private void senden() {
+        if (nurKamera(ctx)) {
+            letzterFehler = null;
+            return;
+        }
         final String sig = signatur();
         synchronized (this) {
             if (sig.equals(gesendet)) return;

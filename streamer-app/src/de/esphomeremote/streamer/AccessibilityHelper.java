@@ -1,6 +1,9 @@
 package de.esphomeremote.streamer;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
+import android.database.ContentObserver;
+import android.provider.Settings;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -45,11 +48,37 @@ public class AccessibilityHelper extends AccessibilityService {
             registerReceiver(cursor, f);
             registerReceiver(kamera, fk);
         }
-        pruefen();
+        modusBeob = new ContentObserver(h) {
+            @Override public void onChange(boolean selbst) { modusAnwenden(); }
+        };
+        getContentResolver().registerContentObserver(Settings.Global.getUriFor("esphomeremote_modus"), false, modusBeob);
+        modusAnwenden();
+        if (!State.nurKamera(this)) pruefen();
+    }
+
+    // Nur Kamera: Android stellt gar keine Fenster-Ereignisse mehr zu (eventTypes 0) - das Overlay braucht nur den
+    // verbundenen Dienst. Zurueck auf voll: die Ereignisse aus der XML-Konfiguration wieder abonnieren.
+    private ContentObserver modusBeob;
+    private int ereignisseVoll = -1;
+
+    private void modusAnwenden() {
+        try {
+            AccessibilityServiceInfo info = getServiceInfo();
+            if (info == null) return;
+            if (ereignisseVoll == -1) ereignisseVoll = info.eventTypes;
+            final int soll = State.nurKamera(this) ? 0 : ereignisseVoll;
+            if (info.eventTypes != soll) {
+                info.eventTypes = soll;
+                setServiceInfo(info);
+            }
+            if (soll != 0) pruefen();
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
     public void onDestroy() {
+        try { if (modusBeob != null) getContentResolver().unregisterContentObserver(modusBeob); } catch (Exception ignored) { }
         try { unregisterReceiver(cursor); } catch (Exception ignored) { }
         try { unregisterReceiver(kamera); } catch (Exception ignored) { }
         Camera.aus();
@@ -75,6 +104,7 @@ public class AccessibilityHelper extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent e) {
+        if (ereignisseVoll != -1 && getServiceInfo() != null && getServiceInfo().eventTypes == 0) return;   // Nur Kamera
         // Fensterwechsel kommen oft in Bursts - einmal danach pruefen
         h.removeCallbacks(pruefen);
         h.postDelayed(pruefen, 60);   // 150 ms bis 2026-10-26
