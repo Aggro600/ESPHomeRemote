@@ -98,6 +98,7 @@ const INT_FNS = [
   ["display_off", "Display aus (im Dunkeln: nur wecken)"],
   ["display_wake", "Display an"],
   ["voice_ptt", "Sprechen, solange gedrückt (nur für Lang)"],
+  ["announce", "Durchsage, solange gedrückt (nur für Lang)"],
   ["assistant_toggle", "Assistent wechseln (Google ↔ Home Assistant)"],
   ["activity", "Aktivität wechseln zu …"],
   ["activity_next", "Nächste Aktivität"],
@@ -484,8 +485,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     this._remember(`${GNAME[a]} und ${GNAME[b]} getauscht.`);
     [kc[a], kc[b]] = [kc[b], kc[a]];
     // Sprechen-solange-gedrueckt geht nur bei Lang
-    for (const g of [a, b]) if (g !== "long" && (kc[g] || []).some((s) => s.t === "int" && s.fn === "voice_ptt"))
-      this.s.msg.text += " Achtung: „Sprechen, solange gedrückt“ wirkt nur bei Lang.";
+    for (const g of [a, b]) if (g !== "long" && (kc[g] || []).some((s) => s.t === "int" && ["voice_ptt", "announce"].includes(s.fn)))
+      this.s.msg.text += " Achtung: „… solange gedrückt“ wirkt nur bei Lang.";
     this.setKeyCfg(this.s.key, kc);
   }
 
@@ -1317,7 +1318,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
           <textarea data-f="data" ${id} rows="2" placeholder="brightness_pct: 50">${esc(data)}</textarea>
           <input data-f="svcraw" ${id} value="${esc(st.svc)}" title="Dienst direkt eingeben" placeholder="domain.dienst"></details>`;
     } else if (st.t === "int") {
-      body = `<select data-f="fn" ${id}>${INT_FNS.map(([v, l]) => `<option value="${v}" ${st.fn === v ? "selected" : ""} ${v === "voice_ptt" && g !== "long" ? "disabled" : ""}>${esc(l)}</option>`).join("")}</select>
+      body = `<select data-f="fn" ${id}>${INT_FNS.map(([v, l]) => `<option value="${v}" ${st.fn === v ? "selected" : ""} ${["voice_ptt", "announce"].includes(v) && g !== "long" ? "disabled" : ""}>${esc(l)}</option>`).join("")}</select>
         ${st.fn === "activity" ? `<select data-f="arg" ${id}>${this.cfg.activities.map((a, j) => `<option value="${j}" ${st.arg === j ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : ""}
         ${st.fn === "popup_open" ? `<select data-f="page" ${id}>${(this.cfg.menu?.pages || []).map((pg) => `<option value="${esc(pg.id)}" ${st.page === pg.id ? "selected" : ""}>${esc(pg.title || pg.id)}${pg.popup ? " (Popup)" : ""}</option>`).join("")}${M_INHALTE.filter(([k]) => !(this.cfg.menu?.pages || []).some((pg) => pg.popup && pg.inhalt === k))
             .map(([k, l]) => `<option value="__neu_${k}">+ ${esc(l)} als Popup anlegen</option>`).join("")}</select>
@@ -1536,7 +1537,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
     if (o) { this._render(); return; }
     if (await this._neuClick(a, t)) { this._render(); return; }
     if (await this._fwClick(a, t)) { this._render(); return; }
-    if (await this._einstClick(a, t)) { this._render(); return; }
+    { const r = await this._einstClick(a, t); if (r === "still") return; if (r) { this._render(); return; } }
     if (await this._lichtClick(a, t)) { this._render(); return; }
     if (await this._gestenClick(a, t)) { this._render(); return; }
     if (await this._dockClick(a, t)) { this._render(); return; }
@@ -1942,6 +1943,10 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       const k = s.klingel.klingel[Number(t.dataset.ki)];
       k[t.dataset.kl] = t.dataset.kl === "warten" ? Math.max(0, Math.min(30, Number(t.value) || 0)) : t.value;
       this._klingelSpeichern(); return;
+    }
+    if (t.dataset.ds) {
+      s.durchsage[t.dataset.ds] = t.type === "checkbox" ? t.checked : t.dataset.ds === "lautstaerke" ? Number(t.value) : t.value;
+      this._durchsageSpeichern(); return;
     }
     if (t.dataset.stm) {
       const m = s.stm[t.dataset.sid];
@@ -6340,8 +6345,8 @@ const FirmwareTab = {
     try {
       const r = await this._hass.callWS({ type: "esphomeremote/fw_liste" });
       Object.assign(fw, r, { fehlerWs: "", geladen: true, zeit: Date.now() });
-      fw.schlange = r.jobs;
-      if ((!fw.job || fw.job.fertig) && r.jobs.length) { const j = r.jobs.find((x) => x.status === "laeuft") || r.jobs[0]; fw.job = { ...j, fertig: false, log: [] }; this._fwFolgen(j.job_id); }
+      this._fwSchlangeSetzen(r.jobs, r.fertige);
+      if (r.jobs.length) this._fwBeobachten();
     } catch (e) { fw.fehlerWs = e.message || String(e); fw.geladen = true; }
     this._render();
   },
@@ -6382,7 +6387,7 @@ const FirmwareTab = {
     if (weg == null || !wege.some((w) => w[0] === weg && !w[2])) weg = this._fwStandardWeg(g);
     const beschaeftigt = fw.usb && !fw.usb.fertig;   // Firmware-Auftraege reihen sich ein (2026-10-30), nur USB sperrt
     const knopf = weg === "" ? ["download", "Bauen + herunterladen"] : weg === "usb" ? ["usb-port", "Per USB flashen"] : ["upload", "Installieren"];
-    const meins = (fw.job && fw.job.dateien?.includes(g.datei) && (fw.job.dateien.length === 1 || !fw.job.fertig)) || (fw.usb && fw.usb.datei === g.datei);
+    const meins = fw.usb && fw.usb.datei === g.datei;   // USB im Browser laeuft hier im Tab - Fortschritt auf der Karte
     const wlan = g.art === "remote" && g.name ? `<span class="wlanp" data-d="${esc(g.name)}">${this._wlanKnopf(g.name)}</span>` : "";
     return `<div class="karte hw">
       <div class="kopf"><ha-icon icon="${g.art === "dock" ? "mdi:dock-window" : g.art === "test" ? "mdi:clipboard-check-outline" : "mdi:remote"}"></ha-icon><b>${esc(g.friendly || g.name)}</b>${wlan}<small>${esc(g.datei)}${g.fw ? ` · Version ${esc(g.fw)}` : ""}</small><span class="grow"></span>${g.veraltet ? '<span class="badge warn">Neue Version</span>' : ""}${this._fwBadges(g)}</div>
@@ -6407,7 +6412,8 @@ const FirmwareTab = {
       ${g.art === "remote" && g.vorgemerkt ? `<small class="note">Vorgemerkt: Sobald die Remote online ist, baut Home Assistant die Firmware und spielt sie per WLAN auf. Auf der Remote selbst geht es jederzeit über Einstellungen › Wartung & Tests › Firmware aktualisieren.</small>` : ""}
       ${weg === "usb" ? `<small class="note">Gerät per USB an diesen Computer stecken. Nach dem Bauen fragt der Browser nach dem Anschluss (z. B. „USB JTAG/serial debug unit“, „CP2102“ oder „USB Serial“).${g.art === "dock" ? " Klappt das Verbinden nicht: am Super Mini BOOT halten, RESET tippen, BOOT loslassen." : ""}</small>` : ""}
       ${weg === "" ? `<small class="note">Die Datei (…factory.bin) lässt sich z. B. auf <a href="https://web.esphome.io" target="_blank" rel="noopener">web.esphome.io</a> installieren.</small>` : ""}
-      ${meins ? this._fwJobHtml() : ""}
+      <span class="fwstatus" data-datei="${esc(g.datei)}">${this._fwKartenStatus(g.datei)}</span>
+      ${meins ? this._fwUsbHtml() : ""}
     </div>`;
   },
   // Remotes: nur die im Konfigurator angelegten (die aus der YAML-Konfiguration nicht). Docks: alle.
@@ -6415,90 +6421,160 @@ const FirmwareTab = {
     if (g.art === "dock") return true;
     return g.art === "remote" && !!this.s.meta?.[g.name]?.entfernbar;
   },
-  _fwJobHtml() {
-    const { job: j, usb: u } = this.s.fw;
-    const teile = [];
-    if (j) {
-      const pct = typeof j.progress === "number" ? Math.max(0, Math.min(100, Math.round(j.progress))) : null;
-      teile.push(`<div class="${j.fertig && j.status !== "fertig" ? "msg err" : ""}" style="margin-top:6px">
-        <b>${esc(j.titel || "")}:</b> ${esc(j.fertig ? (j.status === "fertig" ? "fertig" : "Fehler") : j.schritt || "läuft")}${pct != null && !j.fertig ? ` · ${pct} %` : ""}${j.fehler ? " – " + esc(j.fehler) : ""}
-        ${!j.fertig ? `<div class="balken"><i style="width:${pct ?? 5}%"></i></div>` : ""}</div>`);
-    }
-    if (u) {
-      teile.push(`<div class="${u.fehler ? "msg err" : ""}" style="margin-top:6px"><b>USB:</b> ${esc(u.text || "")}${u.fehler ? " – " + esc(u.fehler) : ""}
-        ${u.hinweis ? `<div class="msg warn" style="margin-top:6px"><ha-icon icon="mdi:chip"></ha-icon> ${esc(u.hinweis)}</div>` : ""}
-        ${u.pct != null && !u.fertig ? `<div class="balken"><i style="width:${u.pct}%"></i></div>` : ""}</div>`);
-    }
-    const wartend = (this.s.fw.schlange || []).filter((x) => x.status === "wartet" && x.job_id !== j?.job_id);
-    if (wartend.length) teile.push(`<div class="fwschlange"><b>Warteschlange</b>${wartend.map((x, n) => `<div class="fwsz"><span>${n + 1}. ${esc(x.titel || x.dateien.join(", "))} <small>${x.port === "" ? "bauen" : x.port === "OTA" ? "bauen + aufspielen" : "USB"}</small></span>
-      <button class="icon sm" data-a="fw_raus" data-job="${esc(x.job_id)}" title="Aus der Warteschlange nehmen"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")}</div>`);
-    const log = [...(j?.log || []), ...(u?.log || [])];
-    if (log.length) teile.push(`<div class="joblog">${esc(log.slice(-80).join("\n"))}</div>`);
-    return `<div class="fwjob">${teile.join("")}</div>`;
+  // ------------------------------------------------------------ Auftraege (2026-11-05)
+  // Nutzer: "eine gemeinsame Warteschleife fuer Docks und Remotes ... sortieren, wieder rausloeschen, Position veraendern
+  // ... sehen, ob vorgemerkt, nur bauen, USB, WLAN ... nicht immer die richtigen Fenster". Darum: EINE Liste oben auf
+  // der Firmware-Seite (laufend, wartend, zuletzt fertig) und EIN Protokoll - das des gewaehlten Auftrags (neu
+  // gestartete werden automatisch gewaehlt, Klick auf eine Zeile waehlt). Gerätekarten zeigen nur noch den Stand.
+  _fwSchlangeSetzen(jobs, fertige) {
+    const fw = this.s.fw;
+    fw.schlange = jobs || [];
+    if (fertige) fw.fertige = fertige;
+    const lauf = fw.schlange.find((x) => x.status === "laeuft");
+    fw.job = lauf ? { ...lauf, fertig: false } : null;   // fuer Kopfleiste und Uebersicht
   },
-  // Laufender Auftrag (2026-10-27): nur den Auftragskasten neu zeichnen statt der ganzen Seite - sonst sprang alle
-  // 1,5 s die ganze Seite (Fenster scrollte nach unten). false = es gibt keinen Kasten, ganz neu zeichnen.
-  _fwJobAuffrischen() {
-    const kaesten = this.shadowRoot.querySelectorAll(".fwjob");
-    if (!kaesten.length) return false;
-    const tmp = document.createElement("div");
-    tmp.innerHTML = this._fwJobHtml();
-    const neu = tmp.firstElementChild;
-    kaesten.forEach((k) => {
-      const alt = k.querySelector(".joblog"), nlog = neu.querySelector(".joblog");
-      const unten = !alt || alt.scrollHeight - alt.scrollTop - alt.clientHeight < 24;
-      for (const el of [...k.children]) if (!el.classList.contains("joblog")) el.remove();
-      for (const el of [...neu.children]) if (!el.classList.contains("joblog")) k.insertBefore(el.cloneNode(true), k.querySelector(".joblog"));
-      if (nlog && !alt) k.appendChild(nlog.cloneNode(true));
-      else if (alt && nlog && alt.textContent !== nlog.textContent) {
+  _fwArt(a) {
+    return { bauen: ["mdi:hammer-wrench", "Nur bauen"], wlan: ["mdi:wifi", "WLAN"], usb_ha: ["mdi:usb-port", "USB am HA-Rechner"],
+      usb_browser: ["mdi:usb", "USB im Browser"], download: ["mdi:download", "Bauen + herunterladen"],
+      vorgemerkt: ["mdi:calendar-clock", "Vorgemerkt"] }[a] || ["mdi:chip", a || "Auftrag"];
+  },
+  _fwKartenStatus(datei) {
+    const fw = this.s.fw, x = (fw.schlange || []).find((j) => j.dateien?.includes(datei));
+    if (!x) return "";
+    const [ic, art] = this._fwArt(x.art);
+    const pct = typeof x.progress === "number" ? ` · ${Math.round(x.progress)} %` : "";
+    return `<button class="fwbadge ${x.status === "laeuft" ? "laeuft" : ""}" data-a="fw_logzeigen" data-job="${esc(x.job_id)}" title="Protokoll zeigen">
+      <ha-icon icon="${ic}"></ha-icon>${esc(art)} · ${x.status === "laeuft" ? esc(x.schritt || "läuft") + pct : `wartet, Platz ${x.platz}`}</button>`;
+  },
+  _fwUsbHtml() {
+    const u = this.s.fw.usb;
+    if (!u) return "";
+    return `<div class="fwjob"><div class="${u.fehler ? "msg err" : ""}" style="margin-top:6px"><b>USB:</b> ${esc(u.text || "")}${u.fehler ? " – " + esc(u.fehler) : ""}
+      ${u.hinweis ? `<div class="msg warn" style="margin-top:6px"><ha-icon icon="mdi:chip"></ha-icon> ${esc(u.hinweis)}</div>` : ""}
+      ${u.pct != null && !u.fertig ? `<div class="balken"><i style="width:${u.pct}%"></i></div>` : ""}</div>
+      ${u.log?.length ? `<div class="joblog">${esc(u.log.slice(-80).join("\n"))}</div>` : ""}</div>`;
+  },
+  _fwListeHtml() {
+    const fw = this.s.fw, sch = fw.schlange || [], fer = fw.fertige || [], sel = fw.logId;
+    const wartend = sch.filter((x) => x.status !== "laeuft");
+    const zeit = (t) => t ? new Date(t * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "";
+    const zeile = (x, art) => {
+      const [ic, artText] = this._fwArt(x.art);
+      const pct = typeof x.progress === "number" ? Math.max(0, Math.min(100, Math.round(x.progress))) : null;
+      const n = wartend.indexOf(x);
+      const knoepfe = art === "wartet"
+        ? `<button class="icon sm" data-a="fw_schieben" data-w="hoch" data-job="${esc(x.job_id)}" title="Nach vorn" ${n === 0 ? "disabled" : ""}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+           <button class="icon sm" data-a="fw_schieben" data-w="runter" data-job="${esc(x.job_id)}" title="Nach hinten" ${n === wartend.length - 1 ? "disabled" : ""}><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+           <button class="icon sm" data-a="fw_raus" data-job="${esc(x.job_id)}" title="Aus der Warteschlange nehmen"><ha-icon icon="mdi:close"></ha-icon></button>`
+        : art === "fertig" ? `<button class="icon sm" data-a="fw_raus" data-job="${esc(x.job_id)}" title="Aus der Liste nehmen"><ha-icon icon="mdi:close"></ha-icon></button>` : "";
+      const stand = art === "laeuft" ? `${esc(x.schritt || "läuft")}${pct != null ? ` · ${pct} %` : ""}`
+        : art === "wartet" ? `wartet · Platz ${x.platz}`
+        : x.status === "fertig" ? `fertig ${zeit(x.t_ende)}` : `${esc(x.fehler || "Fehler")} ${zeit(x.t_ende)}`;
+      const sym = art === "laeuft" ? "mdi:progress-wrench" : art === "wartet" ? "mdi:timer-sand" : x.status === "fertig" ? "mdi:check-circle" : "mdi:alert-circle";
+      return `<div class="fwz ${art} ${x.status === "fehler" ? "err" : ""} ${x.job_id === sel ? "gewaehlt" : ""}" data-a="fw_logzeigen" data-job="${esc(x.job_id)}" title="Protokoll zeigen">
+        <ha-icon class="fwsym" icon="${sym}"></ha-icon>
+        <span class="fwt"><b>${esc(x.titel || (x.dateien || []).join(", "))}</b><small>${stand}</small></span>
+        <span class="fwart" title="${esc(artText)}"><ha-icon icon="${ic}"></ha-icon>${esc(artText)}</span>${knoepfe}
+        ${art === "laeuft" ? `<div class="balken"><i style="width:${pct ?? 5}%"></i></div>` : ""}</div>`;
+    };
+    return [...sch.filter((x) => x.status === "laeuft").map((x) => zeile(x, "laeuft")), ...wartend.map((x) => zeile(x, "wartet")),
+      ...(fer.length ? [`<div class="fwtrenn">Zuletzt</div>`] : []), ...fer.map((x) => zeile(x, "fertig"))].join("");
+  },
+  _fwLogKopf() {
+    const fw = this.s.fw, x = [...(fw.schlange || []), ...(fw.fertige || [])].find((j) => j.job_id === fw.logId) || fw.logJob;
+    return x ? `Protokoll: <b>${esc(x.titel || "")}</b> · ${esc(this._fwArt(x.art)[1])}` : "Protokoll";
+  },
+  _fwAuftraegeHtml() {
+    const fw = this.s.fw;
+    if (!(fw.schlange || []).length && !(fw.fertige || []).length) return "";
+    const log = fw.logJob?.log || [];
+    return `<div class="karte hw fwauftraege"><div class="dkopf"><h3><ha-icon icon="mdi:format-list-numbered"></ha-icon> Aufträge</h3>
+        <small class="note">Für Remotes und Docks gemeinsam, einer nach dem anderen. Wartende mit ↑ ↓ umsortieren oder mit ✕ herausnehmen; Klick auf eine Zeile zeigt ihr Protokoll.</small></div>
+      <div class="fwliste">${this._fwListeHtml()}</div>
+      ${fw.logId ? `<div class="fwlogkopf">${this._fwLogKopf()}</div><div class="joblog">${esc(log.slice(-120).join("\n") || (fw.logJob?.status === "wartet" ? "Wartet in der Warteschlange …" : "…"))}</div>` : ""}</div>`;
+  },
+  // Nur Liste, Protokoll und Karten-Abzeichen neu (sonst sprang alle 1,5 s die ganze Seite). false = nichts davon da.
+  _fwAuftraegeAuffrischen() {
+    const r = this.shadowRoot, kasten = r?.querySelector(".fwauftraege");
+    const hatAuftraege = (this.s.fw.schlange || []).length || (this.s.fw.fertige || []).length;
+    if (!kasten && hatAuftraege) return false;
+    if (kasten && !hatAuftraege) return false;
+    if (kasten) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = this._fwAuftraegeHtml();
+      const neu = tmp.firstElementChild;
+      const liste = kasten.querySelector(".fwliste"), nl = neu.querySelector(".fwliste");
+      if (liste.innerHTML !== nl.innerHTML) liste.innerHTML = nl.innerHTML;
+      const altK = kasten.querySelector(".fwlogkopf"), neuK = neu.querySelector(".fwlogkopf");
+      const alt = kasten.querySelector(".joblog"), nlog = neu.querySelector(".joblog");
+      if (!!altK !== !!neuK) return false;
+      if (altK && altK.innerHTML !== neuK.innerHTML) altK.innerHTML = neuK.innerHTML;
+      if (alt && nlog && alt.textContent !== nlog.textContent) {
+        const unten = alt.scrollHeight - alt.scrollTop - alt.clientHeight < 24;
         alt.textContent = nlog.textContent;
         if (unten) alt.scrollTop = alt.scrollHeight;
       }
-    });
+    }
+    for (const el of r.querySelectorAll(".fwstatus[data-datei]")) { const h = this._fwKartenStatus(el.dataset.datei); if (el.innerHTML !== h) el.innerHTML = h; }
     return true;
   },
-  _fwFolgen(job_id) {
+  // Ein Takt fuer alles: Warteschlange + Protokoll des gewaehlten Auftrags, solange etwas laeuft oder wartet
+  _fwBeobachten() {
+    if (this._fwT) return;
     const fw = this.s.fw;
-    clearInterval(this._fwT);
-    return new Promise((fertig) => {
-      const tick = async () => {
-        try {
-          const r = await this._hass.callWS({ type: "esphomeremote/fw_job", job_id });
-          fw.job = r;
-          await this._fwSchlange();
-          if (r.fertig) {
-            clearInterval(this._fwT);
-            fertig(r);
-            // naechster Auftrag der Warteschlange: gleich anzeigen
-            const naechst = (fw.schlange || []).find((x) => x.job_id !== job_id);
-            if (naechst) setTimeout(() => { if (!fw.job || fw.job.fertig) { fw.job = { ...naechst, fertig: false, log: [] }; this._fwFolgen(naechst.job_id); } }, 1500);
-            if (!fw.usb) {
-              this.s.msg = r.status === "fertig" ? { text: r.port === "" ? "Firmware gebaut." : `${r.titel}: installiert.` } : { err: true, text: `${r.titel}: ${r.fehler || "Fehler"} – siehe Protokoll.` };
-              setTimeout(() => this._fwLaden(), 2000);
-              if (r.port) setTimeout(() => this._fwLaden(), 25000);   // bis das Geraet wieder online meldet
-            }
-          }
-        } catch (e) { clearInterval(this._fwT); fw.job = { job_id, fertig: true, status: "fehler", fehler: e.message, log: [] }; fertig(fw.job); }
-        if (this.s.bereich !== "remote" && (fw.job?.fertig || !this._fwJobAuffrischen())) this._render();
-      };
-      this._fwT = setInterval(tick, 1500);
-      tick();
-    });
+    let vorher = new Set((fw.schlange || []).map((x) => x.job_id));
+    const tick = async () => {
+      try {
+        const r = await this._hass.callWS({ type: "esphomeremote/fw_schlange" });
+        this._fwSchlangeSetzen(r.jobs, r.fertige);
+        const jetzt = new Set(r.jobs.map((x) => x.job_id));
+        const fertig = (r.fertige || []).filter((x) => vorher.has(x.job_id) && !jetzt.has(x.job_id));
+        vorher = jetzt;
+        if (fertig.length && !fw.usb) {
+          const f = fertig[0];
+          this.s.msg = f.status === "fertig" ? { text: f.art === "bauen" || f.art === "vorgemerkt" ? `${f.titel}: gebaut.` : `${f.titel}: ${f.art === "download" ? "gebaut" : "installiert"}.` }
+            : { err: true, text: `${f.titel}: ${f.fehler || "Fehler"} – siehe Protokoll.` };
+          setTimeout(() => this._fwLaden(), 2000);
+          if (fertig.some((x) => x.port)) setTimeout(() => this._fwLaden(), 25000);   // bis das Geraet wieder online meldet
+        }
+        // gewaehlt ist nichts (oder ein laengst fertiger): dem laufenden folgen
+        if (!fw.logId && r.jobs.length) fw.logId = (r.jobs.find((x) => x.status === "laeuft") || r.jobs[0]).job_id;
+        if (fw.logId && !(fw.logJob?.job_id === fw.logId && fw.logJob.fertig)) {
+          try { fw.logJob = await this._hass.callWS({ type: "esphomeremote/fw_job", job_id: fw.logId }); }
+          catch (e) { fw.logJob = null; fw.logId = null; }
+        }
+        if (!r.jobs.length) { clearInterval(this._fwT); this._fwT = null; }
+      } catch (e) { clearInterval(this._fwT); this._fwT = null; }
+      if (this.s.bereich !== "remote" && !this._fwAuftraegeAuffrischen()) this._render();
+    };
+    this._fwT = setInterval(tick, 1500);
+    tick();
   },
-  // Warteschlange (2026-10-30): jeder Auftrag reiht sich ein; angezeigt wird der laufende, die anderen in der Schlange
-  async _fwStarten(dateien, port) {
+  async _fwLogZeigen(job_id) {
     const fw = this.s.fw;
-    const r = await this._hass.callWS({ type: "esphomeremote/fw_installieren", dateien, port, wlan_nachher: Number(fw.wlanNachher || 0) });
-    const laeuft = fw.job && !fw.job.fertig && fw.job.job_id !== r.job_id;
-    if (laeuft) {
-      this.s.msg = { text: `${r.schon ? "Steht schon in der Warteschlange" : "In die Warteschlange gestellt"}${r.platz ? ` (${r.platz} davor)` : ""}.` };
-      this._fwSchlange();
-      return this._fwWarten(r.job_id);
-    }
-    fw.job = { job_id: r.job_id, dateien, port, titel: "", status: "laeuft", fertig: false, log: [] };
-    return this._fwFolgen(r.job_id);
+    fw.logId = job_id;
+    try { fw.logJob = await this._hass.callWS({ type: "esphomeremote/fw_job", job_id }); } catch (e) { fw.logJob = null; }
+    this._render();
+    const el = this.shadowRoot?.querySelector(".fwauftraege");
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   },
-  // auf einen Auftrag warten, ohne ihn anzuzeigen (z. B. "Bauen + herunterladen" in der Schlange)
+  // Einreihen ohne zu warten; der neue Auftrag wird gewaehlt (sein Protokoll erscheint oben)
+  async _fwEinreihen(dateien, port, art = "") {
+    const fw = this.s.fw;
+    const r = await this._hass.callWS({ type: "esphomeremote/fw_installieren", dateien, port, art, wlan_nachher: Number(fw.wlanNachher || 0) });
+    fw.logId = r.job_id; fw.logJob = null;
+    if (r.platz) this.s.msg = { text: `${r.schon ? "Steht schon in der Warteschlange" : "In die Warteschlange gestellt"} (Platz ${r.platz}).` };
+    try { const q = await this._hass.callWS({ type: "esphomeremote/fw_schlange" }); this._fwSchlangeSetzen(q.jobs, q.fertige); } catch (e) { /* egal */ }
+    this._fwBeobachten();
+    this._render();
+    return r;
+  },
+  // Einreihen und warten, bis der Auftrag fertig ist (USB im Browser, Herunterladen)
+  async _fwStarten(dateien, port, art = "") {
+    const r = await this._fwEinreihen(dateien, port, art);
+    return this._fwWarten(r.job_id);
+  },
+  // auf einen Auftrag warten
   _fwWarten(job_id) {
     return new Promise((fertig) => {
       const t = setInterval(async () => {
@@ -6508,7 +6584,7 @@ const FirmwareTab = {
     });
   },
   async _fwSchlange() {
-    try { this.s.fw.schlange = (await this._hass.callWS({ type: "esphomeremote/fw_schlange" })).jobs; } catch (e) { /* egal */ }
+    try { const r = await this._hass.callWS({ type: "esphomeremote/fw_schlange" }); this._fwSchlangeSetzen(r.jobs, r.fertige); } catch (e) { /* egal */ }
   },
   async _fwHolen(datei) {
     const r = await this._hass.fetchWithAuth(`/api/esphomeremote/firmware/${encodeURIComponent(datei)}`);
@@ -6560,7 +6636,7 @@ const FirmwareTab = {
         this._render();
       } else if (CHIP[g.art] && !chipName.startsWith(CHIP[g.art])) throw new Error(`Falsches Gerät: ${chip}, erwartet ${CHIP[g.art]} (Remote)`);
       u.text = "Firmware wird gebaut …"; this._render();
-      const j = await this._fwStarten([g.datei], "");
+      const j = await this._fwStarten([g.datei], "", "usb_browser");
       if (j.status !== "fertig") throw new Error("Bauen fehlgeschlagen" + (j.fehler ? ": " + j.fehler : ""));
       u.text = "Firmware wird geladen …"; this._render();
       const daten = await this._fwHolen(g.datei);
@@ -6623,7 +6699,10 @@ const FirmwareTab = {
         rest += dec.decode(value, { stream: true }).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
         const zeilen = rest.split(/\r?\n/);
         rest = zeilen.pop();
-        for (const z of zeilen) if (z.trim()) { u.log.push(z.slice(0, 300)); if (u.log.length > 400) u.log.shift(); }
+        for (const roh of zeilen) {
+          const z = roh.split("\r").filter((t) => t.trim()).pop() || "";   // \r wie im Terminal: letzter Stand zaehlt
+          if (z.trim()) { u.log.push(z.slice(0, 300)); if (u.log.length > 400) u.log.shift(); }
+        }
         if (Date.now() - letzt > 500) { letzt = Date.now(); this._render(); }
       }
       clearTimeout(stop);
@@ -6649,7 +6728,7 @@ const FirmwareTab = {
     const updates = fw.geraete.filter((g) => (g.update || g.veraltet) && !g.gesperrt && g.art !== "test" && !(g.art === "dock" && !g.online));
     const alt = fw.geraete.filter((g) => g.veraltet);
     const beschaeftigt = fw.usb && !fw.usb.fertig;   // Firmware-Auftraege reihen sich ein (2026-10-30), nur USB sperrt
-    const sammel = fw.job && fw.job.dateien?.length > 1 ? `<div class="karte hw">${this._fwJobHtml()}</div>` : "";
+    const sammel = this._fwAuftraegeHtml();
     return `<div class="fw">
       <div class="dkopf"><h2><ha-icon icon="mdi:chip"></ha-icon> Firmware &amp; Geräte</h2><span class="grow"></span>
         <label class="inl2" title="Remotes im Dock-Betrieb: wie lange ihr WLAN nach einem Update noch an bleibt">WLAN beim Update
@@ -6820,8 +6899,8 @@ const FirmwareTab = {
         fw.usb = null;
         if (weg === "usb") { await this._fwUsb(g); return true; }
         try {
-          const j = await this._fwStarten([datei], weg);
-          if (weg === "" && j.status === "fertig") await this._fwDownload(datei);
+          if (weg === "") { const j = await this._fwStarten([datei], "", "download"); if (j.status === "fertig") await this._fwDownload(datei); }
+          else await this._fwEinreihen([datei], weg);
         } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
         return true;
       }
@@ -6829,7 +6908,13 @@ const FirmwareTab = {
         const liste = fw.geraete.filter((x) => (x.update || x.veraltet) && !x.gesperrt && x.art !== "test" && !(x.art === "dock" && !x.online));
         if (!confirm(`Diese ${liste.length} Gerät(e) per WLAN aktualisieren?\n\n${liste.map((x) => "• " + (x.friendly || x.datei)).join("\n")}`)) return true;
         fw.usb = null;
-        try { await this._fwStarten(liste.map((x) => x.datei), "OTA"); } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        // je Geraet ein eigener Auftrag (2026-11-05) - einzeln verschieb- und herausnehmbar; Docks zuerst
+        const sortiert = [...liste.filter((x) => x.art === "dock"), ...liste.filter((x) => x.art !== "dock")];
+        let erster = null;
+        for (const x of sortiert) {
+          try { const r = await this._fwEinreihen([x.datei], "OTA"); erster ||= r.job_id; } catch (e) { this.s.msg = { err: true, text: `${x.friendly || x.datei}: ${e.message || e}` }; }
+        }
+        if (erster) { fw.logId = erster; fw.logJob = null; this.s.msg = { text: `${sortiert.length} Aufträge eingereiht – Docks zuerst. Reihenfolge oben unter „Aufträge“ änderbar.` }; }
         return true;
       }
       case "fw_usblog": fw.usb = null; await this._fwUsbLog(g); return true;
@@ -6840,9 +6925,15 @@ const FirmwareTab = {
         await this._fwLaden(); return true;
       }
       case "fw_raus":
-        try { this.s.fw.schlange = (await this._hass.callWS({ type: "esphomeremote/fw_abbrechen", job_id: t.dataset.job })).jobs; }
+        try { const r = await this._hass.callWS({ type: "esphomeremote/fw_abbrechen", job_id: t.dataset.job }); this._fwSchlangeSetzen(r.jobs, r.fertige);
+          if (fw.logId === t.dataset.job) { fw.logId = null; fw.logJob = null; } }
         catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
         return true;
+      case "fw_schieben":
+        try { const r = await this._hass.callWS({ type: "esphomeremote/fw_verschieben", job_id: t.dataset.job, wohin: t.dataset.w }); this._fwSchlangeSetzen(r.jobs, r.fertige); }
+        catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
+      case "fw_logzeigen": await this._fwLogZeigen(t.dataset.job); return true;
       case "fw_allevormerken": {   // alle veralteten Remotes vormerken - jede wird gleich gebaut (Warteschlange)
         const liste = fw.geraete.filter((x) => x.art === "remote" && (x.update || x.veraltet) && !x.gesperrt && !x.vorgemerkt);
         for (const x of liste) { try { await this._hass.callWS({ type: "esphomeremote/fw_vormerken", datei: x.datei, an: true }); } catch (e) { /* weiter */ } }
@@ -6851,7 +6942,7 @@ const FirmwareTab = {
       }
       case "fw_nurbauen": {
         fw.usb = null;
-        try { await this._fwStarten([t.dataset.datei], ""); this.s.msg = { text: "Wird gebaut – danach geht „Installieren“ schnell." }; }
+        try { await this._fwEinreihen([t.dataset.datei], "", "bauen"); this.s.msg = { text: "Wird gebaut – danach geht „Installieren“ schnell." }; }
         catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
         return true;
       }
@@ -6859,7 +6950,7 @@ const FirmwareTab = {
         try {
           const r = await this._hass.callWS({ type: "esphomeremote/fw_vormerken", datei, an: !g.vorgemerkt });
           if (r.job_id) {   // wird gleich gebaut (Warteschlange), aufgespielt wird, sobald die Remote benutzt wird
-            if (!fw.job || fw.job.fertig) { fw.job = { job_id: r.job_id, dateien: [datei], port: "", titel: "", status: "laeuft", fertig: false, log: [] }; this._fwFolgen(r.job_id); }
+            fw.logId = r.job_id; fw.logJob = null; this._fwBeobachten();
             this.s.msg = { text: `${g.friendly || datei}: wird jetzt gebaut und aufgespielt, sobald die Remote das nächste Mal benutzt wird.` };
           }
         } catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
@@ -7232,6 +7323,12 @@ const EINST_CSS = `
 .einst input[type=number] { width:5.5em; }
 .einst .estat { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 10px; }
 .einst .ehilfe { margin:-2px 0 6px; font-size:12px; line-height:1.4; color:var(--sec); }
+.ehilfe[data-hk]:not(.auf), .eintro[data-hk]:not(.auf) { display:none; }
+.ehilfe[data-hk], .eintro[data-hk] { background:var(--secondary-background-color, rgba(127,127,127,.08)); border-radius:6px; padding:6px 8px; }
+.ehbtn { background:none; border:0; padding:0 0 0 4px; margin:0; cursor:pointer; color:var(--sec); vertical-align:-2px; line-height:1; }
+.ehbtn ha-icon { --mdc-icon-size:16px; }
+.ehbtn.auf, .ehbtn:hover { color:var(--acc); }
+h3 .ehbtn ha-icon { --mdc-icon-size:18px; }
 .einst .ehilfe.tvwahl { color:var(--primary-text-color); }
 .einst .ehilfe.tvwahl ha-icon { --mdc-icon-size:16px; color:var(--sec); margin-right:4px; vertical-align:-3px; }
 .einst .eintro { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--sec); }
@@ -7304,6 +7401,7 @@ const EinstTab = {
       } catch (e) { s.stmLernen = null; s.msg = { err: true, text: "Anlernen: " + (e.message || e) }; this._render(); }
       return true;
     }
+    if (a === "ds_vorschlag") { s.durchsage.ziel = t.dataset.e; await this._durchsageSpeichern(); return true; }
     if (a === "stm_test") {
       const sid = String(s.dev).slice(3);
       if (s.dirty[s.dev]) { s.msg = { err: true, text: "Erst speichern – der Fernseher zeigt den gespeicherten Stand." }; this._render(); return true; }
@@ -7813,6 +7911,11 @@ const EinstTab = {
     // Markierung (2026-10-25): "wlan" = nur bei "Nur WLAN" sinnvoll (im Dock-Betrieb ist das WLAN aus), "alt" = aus der
     // Zeit des Bluetooth-Tunnels, nur sichtbar, solange die Remote noch einen alten Wert hat, "fein" = eingeklappt
     const sichtbar = ([k, , , , tag]) => k in w && !(tag === "wlan" && w.nur_ble !== false) && !(tag === "alt" && (k === "ha_link_modus" ? w[k] === 3 : w[k] === 0));
+    // Erklaerungen (2026-11-06, Rueckmeldung Tester: "super unuebersichtlich, so viel Text"): eingeklappt hinter einem
+    // (i) an der Zeile; "Alle Erklaerungen zeigen" oben klappt alle auf (gemerkt im Browser)
+    const hAuf = this._hilfeAuf || (this._hilfeAuf = new Set());
+    const hAlle = this._hilfeAlleLesen();
+    const iBtn = (hk) => `<button class="ehbtn ${hAlle || hAuf.has(hk) ? "auf" : ""}" data-a="ehilfe" data-hk="${esc(hk)}" title="Erklärung"><ha-icon icon="mdi:information-outline"></ha-icon></button>`;
     const zeile = this._einstZeile = ([k, name, art, hilfe, tag]) => {
       if (!sichtbar([k, name, art, hilfe, tag])) return "";
       const v = w[k];
@@ -7824,8 +7927,8 @@ const EinstTab = {
         ctl = `<input type="number" data-einst="${k}" min="${art.min}" max="${art.max}" value="${v}"> ${art.einheit}${art.null && v === 0 ? ` <small>(${art.null})</small>` : ""}`;
       } else ctl = `<label class="sw"><input type="checkbox" data-einst="${k}" ${v ? "checked" : ""}></label>`;
       const anders = k in std && std[k] !== v;
-      return `<div class="ez ${offen.has(k) ? "offen" : ""} ${anders ? "anders" : ""}" data-k="${k}" title="${offen.has(k) ? "wartet auf die Remote" : anders ? "weicht vom Standard ab" : ""}"><span>${esc(name)}${this._lichtHinweis(k)}</span>${ctl}</div>`
-        + (hilfe ? `<p class="ehilfe">${hilfe}</p>` : "") + (k === "ps_wifi_off_tv_s" || k === "ps_deep_tv_s" ? this._tvWahlHtml()
+      return `<div class="ez ${offen.has(k) ? "offen" : ""} ${anders ? "anders" : ""}" data-k="${k}" title="${offen.has(k) ? "wartet auf die Remote" : anders ? "weicht vom Standard ab" : ""}"><span>${esc(name)}${this._lichtHinweis(k)}${hilfe ? iBtn(k) : ""}</span>${ctl}</div>`
+        + (hilfe ? `<p class="ehilfe ${hAlle || hAuf.has(k) ? "auf" : ""}" data-hk="${esc(k)}">${hilfe}</p>` : "") + (k === "ps_wifi_off_tv_s" || k === "ps_deep_tv_s" ? this._tvWahlHtml()
           : k === "musik_player" ? this._tvWahlHtml("jetzt") : "");
     };
     const karten = EINST_GRUPPEN.filter(([titel]) => !EINST_WOANDERS[titel]).map(([titel, icon, felder, intro]) => {
@@ -7835,16 +7938,17 @@ const EinstTab = {
       const wlanHinweis = titel === "Energie" && w.nur_ble !== false
         ? `<p class="ehilfe">WLAN-Optionen erscheinen nur bei der Verbindungsart „Nur WLAN“ – im Dock-Betrieb ist das WLAN ohnehin aus und kommt nur bei Bedarf.</p>` : "";
       const akz = titel === "Anzeige" ? `<div class="ez"><span>Akzentfarbe <small>(ganze Remote · mit „Speichern“)</small></span></div>${this._akzentHtml()}` : "";
-      return z || fein ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}</h3>${intro ? `<div class="eintro">${intro}</div>` : ""}${akz}${z}${wlanHinweis}${feinHtml}</div>` : "";
+      return z || fein ? `<div class="karte"><h3><ha-icon icon="${icon}"></ha-icon>${titel}${intro ? iBtn("intro:" + titel) : ""}</h3>${intro ? `<div class="eintro ${hAlle || hAuf.has("intro:" + titel) ? "auf" : ""}" data-hk="${esc("intro:" + titel)}">${intro}</div>` : ""}${akz}${z}${wlanHinweis}${feinHtml}</div>` : "";
     }).join("") + this._begruessungHtml(zeile);
     const zeit = m.einst_at ? new Date(m.einst_at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "–";
     const nAnders = Object.keys(std).filter((k) => k in w && std[k] !== w[k]).length;
-    return `<div class="einst">
+    return `<div class="einst ${hAlle ? "hilfe-alle" : ""}">
       <p class="hint">Änderungen gehen <b>sofort</b> an die Remote (kein „Speichern“ nötig) – schläft sie, beim nächsten Aufwachen. Was du an der Remote selbst umstellst, erscheint hier.
         ⏳ = wartet auf die Remote. <span style="color:var(--acc)">Farbig</span> = anders als der Standard für neue Remotes.</p>
       <div class="estat"><small>Zuletzt von der Remote gemeldet: ${zeit}${offen.size ? ` · ${offen.size} Änderung(en) unterwegs` : ""}</small><span class="grow"></span>
         ${nAnders ? `<button class="btn small" data-a="einst_std_laden" title="Alle Einstellungen auf den Standard setzen"><ha-icon icon="mdi:backup-restore"></ha-icon>Auf Standard (${nAnders})</button>` : ""}
-        <button class="btn small ghost" data-a="einst_std_merken" title="Die Einstellungen dieser Remote gelten künftig als Standard für neue Remotes"><ha-icon icon="mdi:star-outline"></ha-icon>Als Standard merken</button></div>
+        <button class="btn small ghost" data-a="einst_std_merken" title="Die Einstellungen dieser Remote gelten künftig als Standard für neue Remotes"><ha-icon icon="mdi:star-outline"></ha-icon>Als Standard merken</button>
+        <button class="btn small ghost" data-a="ehilfe_alle" title="Die Erklärungen zu jeder Einstellung auf- oder zuklappen (einzeln: das (i) an der Zeile)"><ha-icon icon="mdi:${hAlle ? "information-off-outline" : "information-outline"}"></ha-icon>${hAlle ? "Erklärungen ausblenden" : "Alle Erklärungen zeigen"}</button></div>
       <div class="inl" style="margin:6px 0 12px">
         <button class="btn small" data-a="werk_laden" title="Belegung (Aktivitäten, Tasten, Menü, Startseite …) und Einstellungen aus der Werkseinstellung übernehmen"><ha-icon icon="mdi:backup-restore"></ha-icon>Werkseinstellung laden</button>
         <button class="btn small ghost" data-a="werk_merken" title="Belegung und Einstellungen dieser Remote als Werkseinstellung merken (bleibt auf deinem Home Assistant)"><ha-icon icon="mdi:content-save-cog-outline"></ha-icon>Als Werkseinstellung speichern</button></div>
@@ -7937,8 +8041,28 @@ const EinstTab = {
     await this._einstSetzen({ werte: { [k]: v } });
     this._render();
   },
+  _hilfeAlleLesen() {
+    if (this._hilfeAlle === undefined) {
+      try { this._hilfeAlle = localStorage.getItem("erk_hilfe_alle") === "1"; } catch (e) { this._hilfeAlle = false; }
+    }
+    return this._hilfeAlle;
+  },
   async _einstClick(a, t) {
     const s = this.s;
+    if (a === "ehilfe") {   // eine Erklaerung auf/zu - direkt im DOM, ohne alles neu zu zeichnen
+      const hk = t.dataset.hk, set = this._hilfeAuf || (this._hilfeAuf = new Set());
+      const auf = !t.classList.contains("auf");
+      if (auf) set.add(hk); else set.delete(hk);
+      const wurzel = this.shadowRoot;
+      wurzel.querySelectorAll(".ehilfe[data-hk], .eintro[data-hk]").forEach((el) => { if (el.dataset.hk === hk) el.classList.toggle("auf", auf); });
+      t.classList.toggle("auf", auf);
+      return "still";
+    }
+    if (a === "ehilfe_alle") {
+      this._hilfeAlle = !this._hilfeAlleLesen();
+      try { localStorage.setItem("erk_hilfe_alle", this._hilfeAlle ? "1" : "0"); } catch (e) { /* egal */ }
+      return true;
+    }
     if (a === "einst_vmodus") {
       const m = VERBINDUNG_MODI.find(([id]) => id === t.dataset.m);
       if (!m || !confirm(`Verbindung „${m[1]}“ für ${devName(s.dev)} setzen?\n\n${m[3]}`)) return true;
@@ -8273,11 +8397,34 @@ const FunktionenTab = {
         <div class="eintro">Hängt ein Android-Gerät (Streamer, Fernseher), startet es die Remote neu – Aktion <code>esphomeremote.restart</code> mit dem Namen. Über die Android-TV-Entität der Integration „Android Debug Bridge“ (ADB-Befehl reboot).</div>
         ${neu || '<div class="none">Noch kein Gerät.</div>'}
         <div class="inl" style="margin-top:8px"><button class="btn small" data-a="fk_ns_neu"><ha-icon icon="mdi:plus"></ha-icon>Gerät</button></div></div>
+      ${this._durchsageHtml(F)}
       <div class="karte"><h3><ha-icon icon="mdi:bell-ring-outline"></ha-icon>Hinweise</h3>
         ${ez("Lampe blinkt bei neuer Firmware", wahl(`data-fk="version_licht"`, F.lichter, c.version_licht, "– keine –"), "Meldet eine Remote nach dem Update ihre neue Version, blinkt diese Lampe dreimal und stellt sich dann zurück.")}
         ${ez("Dock-Wache", `<label class="sw"><input type="checkbox" data-fk="dock_wache" ${c.dock_wache ? "checked" : ""}></label>`, "Meldung in Home Assistant, wenn ein Dock 30 s nicht erreichbar ist oder sein Speicher knapp wird.")}
         ${c.dock_wache ? ez("Speicher knapp unter", `<input type="number" min="1" max="40" data-fk="dock_block_kb" value="${c.dock_block_kb}" style="width:5em"> kB`, "Größter freier Block im Dock") : ""}</div>
       </div></div>`;
+  },
+  // Durchsage (2026-11-06, sprache.py): Taste halten, sprechen - HA spielt es auf einem Lautsprecher
+  _durchsageHtml(F) {
+    const d = this.s.durchsage;
+    if (!d) { if (!this._dsLaedt) { this._dsLaedt = true; this._hass.callWS({ type: "esphomeremote/durchsage_get" }).then((r) => { this.s.durchsage = r; this._render(); }).catch(() => { this.s.durchsage = { fehler: true }; }); } return ""; }
+    if (d.fehler) return "";
+    const H = this._hass.states;
+    const mps = Object.keys(H).filter((e) => e.startsWith("media_player.")).sort((a, b) => (H[a].attributes.friendly_name || a).localeCompare(H[b].attributes.friendly_name || b, "de"));
+    const ziel = d.ziel || "";
+    return `<div class="karte"><h3><ha-icon icon="mdi:bullhorn-outline"></ha-icon>Durchsage</h3>
+      <div class="eintro">Taste der Remote halten, sprechen, loslassen – Home Assistant spielt die Aufnahme auf dem Lautsprecher ab (z. B. einer Cast-Gruppe für die ganze Wohnung). Auf eine Taste legen: <b>Funktion der Remote → Durchsage, solange gedrückt</b> (bei Lang). Die Aufnahme geht wie der Sprachassistent ohne WLAN über das Dock, sonst über WLAN.</div>
+      <div class="ez"><span class="zt">Durchsage an</span><label class="sw"><input type="checkbox" data-ds="an" ${d.an ? "checked" : ""}></label></div>
+      <div class="ez"><span class="zt">Lautsprecher</span><select data-ds="ziel"><option value="">– wählen –</option>${[...new Set([...(ziel ? [ziel] : []), ...mps])].map((e) => `<option value="${esc(e)}" ${e === ziel ? "selected" : ""}>${esc(H[e]?.attributes.friendly_name || e)}${H[e] ? "" : " (nicht gefunden)"}</option>`).join("")}</select></div>
+      ${!ziel && d.vorschlag ? `<small class="note">Vorschlag: <button class="linkbtn" data-a="ds_vorschlag" data-e="${esc(d.vorschlag)}">${esc(H[d.vorschlag]?.attributes.friendly_name || d.vorschlag)}</button></small>` : ""}
+      <div class="ez"><span class="zt">Lautstärke<small class="vtext">Für die Durchsage setzen und danach zurück – „wie eingestellt“ lässt sie, wie sie ist</small></span><select data-ds="lautstaerke">${[[0, "wie eingestellt"], [30, "30 %"], [40, "40 %"], [50, "50 %"], [60, "60 %"], [70, "70 %"], [80, "80 %"]].map(([v, l]) => `<option value="${v}" ${Number(d.lautstaerke) === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div class="ez"><span class="zt">Gong davor</span><label class="sw"><input type="checkbox" data-ds="gong" ${d.gong ? "checked" : ""}></label></div>
+      <small class="note">Auf der Remote: Bluetooth-Schicht (Firmware ab 2026.11.6.1). Höchstens etwa 25 s je Durchsage.</small></div>`;
+  },
+  async _durchsageSpeichern() {
+    try { this.s.durchsage = await this._hass.callWS({ type: "esphomeremote/durchsage_save", daten: this.s.durchsage }); this.s.msg = { text: "Durchsage gespeichert." }; }
+    catch (e) { this.s.msg = { err: true, text: "Durchsage: " + (e.message || e) }; }
+    this._render();
   },
   async _fkChange(t) {
     const f = t.dataset.fk, c = this.s.fkt?.cfg;
@@ -8733,6 +8880,18 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .hseinst { display:flex; flex-direction:column; gap:10px; } .hseinst h3 { display:flex; align-items:center; gap:6px; margin:0; font-size:15px; }
 .rshome .pgrid { margin-top:-4px; }
 .klblock { border:1px solid var(--div); border-radius:10px; padding:8px; margin:8px 0; } .klfeld { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.fwliste { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+.fwz { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 10px; border-radius:10px; background:var(--flaeche); cursor:pointer; border:1px solid transparent; }
+.fwz:hover { border-color:var(--divider-color); } .fwz.gewaehlt { border-color:var(--primary-color); }
+.fwz .fwsym { --mdc-icon-size:20px; opacity:.8; } .fwz.laeuft .fwsym { color:var(--primary-color); } .fwz.fertig .fwsym { color:var(--success-color, #4caf50); }
+.fwz.err .fwsym { color:var(--error-color, #db4437); } .fwz.fertig { opacity:.85; }
+.fwz .fwt { flex:1; min-width:160px; display:flex; flex-direction:column; } .fwz .fwt small { opacity:.7; }
+.fwz .fwart { display:inline-flex; align-items:center; gap:4px; font-size:12px; padding:2px 8px; border-radius:999px; background:var(--card-background-color); --mdc-icon-size:15px; white-space:nowrap; }
+.fwz .balken { flex-basis:100%; }
+.fwtrenn { font-size:12px; opacity:.6; margin:6px 2px 0; }
+.fwlogkopf { margin:10px 2px 4px; font-size:13px; }
+.fwbadge { display:inline-flex; align-items:center; gap:4px; margin-top:6px; font:inherit; font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid var(--divider-color); background:var(--flaeche); color:inherit; cursor:pointer; --mdc-icon-size:15px; }
+.fwbadge.laeuft { border-color:var(--primary-color); color:var(--primary-color); }
 .fwschlange { margin-top:8px; display:flex; flex-direction:column; gap:4px; } .fwsz { display:flex; align-items:center; gap:8px; padding:4px 8px; border-radius:8px; background:var(--flaeche); } .fwsz span { flex:1; } .fwsz small { opacity:.6; }
 .mw { position:absolute; inset:2px; display:flex; gap:8px; overflow:hidden; text-align:left; border-radius:8px; }
 .pi .mw b, .mw b { font-size:15px; font-weight:400; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; } .pi .mw small, .mw small { font-size:11px; opacity:.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; min-height:13px; }

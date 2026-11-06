@@ -671,6 +671,7 @@ inline void intern(const char *fn, int arg, const Ctx &c) {
   }
   else if (!strcmp(fn, "display_wake")) wake_backlight->execute();
   else if (!strcmp(fn, "voice_ptt")) { if (c.geste == tasten_konfig::LANG) voice_start->execute(); }
+  else if (!strcmp(fn, "announce")) { if (c.geste == tasten_konfig::LANG) durchsage_start->execute(); }
   else if (!strcmp(fn, "assistant_toggle")) toggle_assistant->execute();
   else if (!strcmp(fn, "activity")) aktivitaet_setzen(arg);
   else if (!strcmp(fn, "activity_next")) aktivitaet_setzen((activity->value() + 1) % aktivitaeten_anzahl());
@@ -988,6 +989,13 @@ inline void startseite_anwenden() {
 inline void einrichten() {
   auto *t = tk_cfg;
   t->intern = [](const char *fn, int arg, int geste, bool dunkel) {
+    if (!strcmp(fn, "voice_ptt_ende") && durchsage_laeuft->value()) {
+      // Durchsage losgelassen (2026-11-06): Aufnahme beenden - der Rest geht an HA, die Antwort kommt als Ereignis
+      voice_want->value() = false;
+      durchsage_laeuft->value() = false;
+      durchsage_ende->execute();
+      return;
+    }
     if (!strcmp(fn, "voice_ptt_ende")) {
       // Push-to-Talk losgelassen: voice_want SOFORT loeschen (voice_stop hat im Google-Zweig 1500 ms delay)
       voice_want->value() = false;

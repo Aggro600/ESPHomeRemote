@@ -348,6 +348,163 @@ bool HaTunnel::voice_start() {
   return true;
 }
 
+bool HaTunnel::voice_http_start(const std::string &pfad) {
+  if (mic_ == nullptr || voice_ring_ == nullptr || http_port_ == 0 || voice_task_ != nullptr) {
+    notice_(std::string("Sprache (HTTP): Start abgelehnt (") + (mic_ == nullptr ? "kein Mikrofon" :
+            voice_ring_ == nullptr ? "kein Puffer" : http_port_ == 0 ? "kein Vermittler" : "laeuft noch") + ")");
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> g(voice_mtx_);
+    voice_head_ = voice_tail_ = 0;
+    voice_frames_ = voice_dropped_ = 0;
+    voice_frame_.clear();
+    adpcm_pred_ = 0;
+    adpcm_index_ = 0;
+    voice_end_pending_ = false;
+  }
+  voice_pfad_ = pfad;
+  voice_http_ = true;
+  voice_on_ = true;
+  mic_->start();
+  if (xTaskCreate([](void *a) {
+        auto *t = static_cast<HaTunnel *>(a);
+        t->voice_http_task_();
+        t->voice_task_ = nullptr;
+        vTaskDelete(nullptr);
+      }, "sprache_http", 6144, this, 5, &voice_task_) != pdPASS) {
+    voice_task_ = nullptr;
+    voice_on_ = false;
+    voice_http_ = false;
+    mic_->stop();
+    notice_("Sprache (HTTP): kein Task");
+    return false;
+  }
+  notice_("Sprache (HTTP): Aufnahme laeuft");
+  return true;
+}
+
+static bool alles_senden(int s, const uint8_t *d, size_t n) {
+  while (n) {
+    const int w = lwip_send(s, d, n, 0);
+    if (w <= 0) return false;
+    d += w;
+    n -= w;
+  }
+  return true;
+}
+
+void HaTunnel::voice_http_task_() {
+  auto melden = [this](int t, const std::string &s) {
+    std::lock_guard<std::mutex> g(voice_ev_mtx_);
+    voice_ev_.emplace_back(t, s);
+  };
+  const uint32_t t0 = millis();
+  int s = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  bool ok = s >= 0;
+  if (ok) {
+    struct timeval to = {5, 0};
+    lwip_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &to, sizeof(to));
+    struct sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(http_port_);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ok = lwip_connect(s, (struct sockaddr *) &a, sizeof(a)) == 0;
+  }
+  if (ok) {
+    const std::string kopf = "POST " + voice_pfad_ + " HTTP/1.1\r\nHost: ha\r\nContent-Type: application/octet-stream\r\n"
+                             "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+    ok = alles_senden(s, (const uint8_t *) kopf.data(), kopf.size());
+  }
+  // Audio: je Runde bis zu 16 Rahmen als ein Chunk, bis losgelassen und alles draussen ist
+  static const size_t JE = 16;
+  uint8_t *buf = (uint8_t *) heap_caps_malloc(JE * VOICE_FRAME_MAX + 16, MALLOC_CAP_SPIRAM);
+  uint32_t bytes = 0;
+  bool ende = false;
+  while (ok && buf != nullptr && !ende) {
+    size_t n = 0;
+    {
+      std::lock_guard<std::mutex> g(voice_mtx_);
+      for (size_t i = 0; i < JE && voice_tail_ != voice_head_; i++) {
+        memcpy(buf + 10 + n, voice_ring_ + voice_tail_ * VOICE_FRAME_MAX, voice_len_[voice_tail_]);
+        n += voice_len_[voice_tail_];
+        voice_tail_ = (voice_tail_ + 1) % VOICE_RING;
+      }
+      if (voice_end_pending_ && voice_tail_ == voice_head_) { voice_end_pending_ = false; ende = true; }
+    }
+    if (n) {
+      char h[11];
+      const int hl = snprintf(h, sizeof(h), "%X\r\n", (unsigned) n);
+      memcpy(buf + 10 - hl, h, hl);
+      buf[10 + n] = '\r';
+      buf[11 + n] = '\n';
+      ok = alles_senden(s, buf + 10 - hl, hl + n + 2);
+      bytes += n;
+    } else if (!ende) {
+      vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (millis() - t0 > 45000) { ESP_LOGW(TAG, "Sprache (HTTP): Aufnahme zu lang - Ende"); ende = true; }
+  }
+  if (ok && ende) ok = alles_senden(s, (const uint8_t *) "0\r\n\r\n", 5);
+  if (buf != nullptr) heap_caps_free(buf);
+  const uint32_t t_auf = millis();
+  ESP_LOGI(TAG, "Sprache (HTTP): %u Bytes Audio gesendet in %u ms%s", (unsigned) bytes, (unsigned) (t_auf - t0), ok ? "" : " - abgebrochen");
+  // Antwort: Kopf, dann Chunks mit Zeilen "<typ>|<text>" (leere Zeilen = Lebenszeichen)
+  bool fertig_gemeldet = false;
+  if (ok) {
+    struct timeval to = {1, 0};
+    lwip_setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof(to));
+    std::string roh, text;
+    bool kopf_da = false, schluss = false;
+    uint32_t letzte = millis();
+    char b[256];
+    while (!schluss && millis() - letzte < 8000 && millis() - t_auf < 90000) {
+      const int k = lwip_recv(s, b, sizeof(b), 0);
+      if (k == 0) break;
+      if (k < 0) continue;
+      letzte = millis();
+      roh.append(b, k);
+      if (!kopf_da) {
+        const size_t e = roh.find("\r\n\r\n");
+        if (e == std::string::npos) continue;
+        if (roh.compare(0, 12, "HTTP/1.1 200") != 0 && roh.compare(0, 12, "HTTP/1.0 200") != 0) {
+          melden(4, "Home Assistant: " + roh.substr(9, std::min<size_t>(roh.find('\r'), 40) - 9));
+          break;
+        }
+        kopf_da = true;
+        roh.erase(0, e + 4);
+      }
+      // Chunks entpacken
+      for (;;) {
+        const size_t z = roh.find("\r\n");
+        if (z == std::string::npos) break;
+        const size_t n = strtoul(roh.c_str(), nullptr, 16);
+        if (n == 0 && z > 0) { schluss = true; break; }
+        if (roh.size() < z + 2 + n + 2) break;
+        text.append(roh, z + 2, n);
+        roh.erase(0, z + 2 + n + 2);
+      }
+      // Zeilen melden
+      size_t nl;
+      while ((nl = text.find('\n')) != std::string::npos) {
+        const std::string zeile = text.substr(0, nl);
+        text.erase(0, nl + 1);
+        const size_t st = zeile.find('|');
+        if (st == std::string::npos || st == 0) continue;
+        const int typ = atoi(zeile.c_str());
+        if (typ == 5) fertig_gemeldet = true;
+        melden(typ, zeile.substr(st + 1));
+      }
+    }
+  } else {
+    melden(4, "Keine Verbindung zu Home Assistant");
+  }
+  if (s >= 0) lwip_close(s);
+  if (!fertig_gemeldet) melden(5, "");
+  voice_http_ = false;
+  ESP_LOGI(TAG, "Sprache (HTTP): fertig nach %u ms", (unsigned) (millis() - t0));
+}
+
 void HaTunnel::voice_stop() {
   if (!voice_on_) return;
   voice_on_ = false;
@@ -429,6 +586,8 @@ void HaTunnel::setup() {
     ESP_LOGI(TAG, "Nur Bluetooth: AUS (gespeichert)");
   }
   voice_ring_ = (uint8_t *) heap_caps_malloc(VOICE_RING * VOICE_FRAME_MAX, MALLOC_CAP_SPIRAM);
+  voice_len_ = (uint16_t *) heap_caps_calloc(VOICE_RING, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+  if (voice_len_ == nullptr) { heap_caps_free(voice_ring_); voice_ring_ = nullptr; }
   if (mic_ != nullptr)
     mic_->add_data_callback([this](const std::vector<uint8_t> &data) { this->voice_mic_data_(data); });
   http_setup_();
@@ -761,6 +920,16 @@ void HaTunnel::set_ruhe(bool r) {
 }
 
 void HaTunnel::loop() {
+  // Sprache per HTTP: Ereignisse aus dem Task hier ausliefern (Anzeige, Aktionen laufen im Hauptthread)
+  if (!voice_ev_.empty()) {
+    std::deque<std::pair<int, std::string>> ev;
+    {
+      std::lock_guard<std::mutex> g(voice_ev_mtx_);
+      ev.swap(voice_ev_);
+    }
+    for (auto &e : ev)
+      for (auto &cb : voice_cbs_) cb(e.first, e.second);
+  }
   // Dauerschleife (high_freq_) nur, solange Daten fliessen, und 0,3 s danach (2026-10-07). Vorher lief sie bei offener
   // Sitzung ununterbrochen - mit "Nur Bluetooth" also immer: der Prozessor kam nie in den Leichtschlaf
   // (pm_bericht: rtos1 97 %, light_sleep_counts 0). Neue Daten vom Link holt die normale Runde (16/50 ms) ab.
@@ -827,7 +996,7 @@ void HaTunnel::loop() {
   }
   // Dann senden: Steuerrahmen zuerst, dann Sprache, dann der liegengebliebene Datenrahmen
   if (!flush_ctl_()) return;
-  if (voice_on_ || voice_end_pending_) voice_pump_();
+  if ((voice_on_ || voice_end_pending_) && !voice_http_) voice_pump_();
   if (!pending_.empty()) {
     if (!kb_->link_send(pending_.data(), pending_.size())) return;
     pending_.clear();

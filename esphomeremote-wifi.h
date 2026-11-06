@@ -34,6 +34,9 @@ inline void dhcp_statt_fester_ip() {
 inline bool g_nur_ble = false;
 // Sprache ueber den Bluetooth-Tunnel (ha_tunnel, nur -halink): die -halink-Konfiguration setzt die Haken. Leer = aus.
 inline std::function<bool()> g_link_voice_start;
+// Sprache per HTTP ueber den Vermittler (2026-11-06, ha_tunnel voice_http_start): "assist" oder "durchsage" -
+// WLAN, Bluetooth-Link oder Dock, was gerade geht. Nur mit der Bluetooth-Schicht (-halink) gesetzt.
+inline std::function<bool(const char *)> g_http_voice_start;
 inline std::function<void()> g_link_voice_stop;
 // Home Assistant ueber den Bluetooth-Tunnel verbunden (ha_tunnel, nur -halink; Farbe des HA-Symbols). Leer = nie.
 inline std::function<bool()> g_link_ha;

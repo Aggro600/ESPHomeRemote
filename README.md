@@ -78,7 +78,8 @@ the dock does the rest.
   archive, plus your own learned codes.
 - **Your smart home on the display** – lights with sliders and colours, covers, sensors, cameras, scenes,
   doorbell popups.
-- **Voice assistant** – Google on the TV or Home Assistant Assist, with the built-in microphone.
+- **Voice assistant** – Google on the TV or Home Assistant Assist, with the built-in microphone (also via the dock, Wi-Fi stays off).
+- **Announcements** – hold a key, speak, and it plays on your speakers (e.g. a Cast group) with a chime.
 - **Motion gestures** – shake, tilt, or teach your own (circle, swipe …).
 - **Your menu on the TV** – the same tile menu as on the remote, as an overlay on any Android TV streamer,
   operated with the TV's own remote. Plus camera picture-in-picture and soundbar on/off via HDMI-CEC.

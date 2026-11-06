@@ -64,6 +64,7 @@ ha_tunnel:
     - if:
         condition: {lambda: 'return typ == 4 || typ == 5;'}
         then:
+          - globals.set: {id: durchsage_laeuft, value: "false"}
           - lambda: 'id(tunnel).voice_stop();'
           - globals.set: {id: voice_active, value: "false"}
           - script.execute: apply_mic_power
@@ -138,6 +139,11 @@ esphome:
             wlan_zugriff::g_nur_ble = id(tunnel).ble_only();
             wlan_zugriff::g_link_voice_start = []() { return id(tunnel).voice_start(); };   // Mikrofon-Taste ohne WLAN
             wlan_zugriff::g_link_voice_stop = []() { id(tunnel).voice_stop(); };
+            // Sprache per HTTP (2026-11-06): Sprachassistent ohne WLAN ueber das Dock, Durchsage
+            wlan_zugriff::g_http_voice_start = [](const char *zweck) {
+              return id(tunnel).voice_http_start(std::string("/api/esphomeremote/sprache/") + App.get_name() + "?zweck=" + zweck +
+                                                 "&k=" + id(tk_cfg).schluessel());
+            };
             wlan_zugriff::g_link_ha = []() { return id(tunnel).session_open(); };   // HA-Symbol blau
             // Bilder/Konfiguration ueber das Dock (2026-10-20): laeuft im HTTP-Task des Tunnels
             id(tunnel).set_http_dock([](int c, std::vector<uint8_t> &vorab) { return id(direkt).http_relay(c, vorab); });

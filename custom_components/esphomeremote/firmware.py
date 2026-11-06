@@ -268,18 +268,37 @@ def _erwartete_mac(hass: HomeAssistant, name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------------------------- Jobs
-def _job(titel: str, dateien: list[str], port: str) -> dict:
+# Art eines Auftrags fuer die Anzeige (2026-11-05): bauen | wlan | usb_ha | usb_browser | download | vorgemerkt
+ARTEN = ("bauen", "wlan", "usb_ha", "usb_browser", "download", "vorgemerkt")
+
+
+def _job(titel: str, dateien: list[str], port: str, art: str = "") -> dict:
     jid = uuid.uuid4().hex[:12]
-    j = {"job_id": jid, "titel": titel, "dateien": dateien, "port": port, "status": "wartet", "schritt": "In der Warteschlange",
-         "progress": None, "log": deque(maxlen=500), "fehler": "", "fertig": False, "t0": time.time(),
-         "aktuell": None, "ergebnisse": {}}
+    if art not in ARTEN:
+        art = "bauen" if port == "" else "wlan" if port == "OTA" else "usb_ha"
+    j = {"job_id": jid, "titel": titel, "dateien": dateien, "port": port, "art": art, "status": "wartet",
+         "schritt": "In der Warteschlange", "progress": None, "log": deque(maxlen=500), "fehler": "", "fertig": False,
+         "t0": time.time(), "t_start": None, "t_ende": None, "aktuell": None, "ergebnisse": {}}
     _jobs[jid] = j
     return j
 
 
 def _log(j: dict, z: str) -> None:
-    z = re.sub(r"\\033\[[0-9;]*[A-Za-z]|\x1b\[[0-9;]*[A-Za-z]", "", str(z or "")).rstrip()
-    if z:
+    """Eine Ausgabezeile merken. Wagenruecklauf (\\r) wie im Terminal: Fortschrittsanzeigen (Upload 1% ... 100%)
+    ueberschreiben die vorige Zeile statt jede Stufe als neue Zeile anzuhaengen."""
+    z = re.sub(r"\\033\[[0-9;]*[A-Za-z]|\x1b\[[0-9;]*[A-Za-z]", "", str(z or "")).rstrip("\n")
+    cr = "\r" in z
+    ueber = cr and (j.get("_cr_ende") or j.get("_cr_zeile"))   # nur Fortschritt ersetzt Fortschritt
+    j["_cr_ende"], j["_cr_zeile"] = z.endswith("\r"), cr
+    if cr:
+        teile = [t for t in z.split("\r") if t.strip()]
+        z = teile[-1] if teile else ""
+    z = z.rstrip()
+    if not z:
+        return
+    if ueber and j["log"]:
+        j["log"][-1] = z[:300]
+    else:
         j["log"].append(z[:300])
 
 
@@ -524,7 +543,6 @@ async def _ota_uebergang(hass: HomeAssistant, j: dict, g: dict, port: str, info:
 
 # Warteschlange (2026-10-30, Nutzer: nicht warten muessen, bis ein Auftrag fertig ist): Auftraege laufen nacheinander -
 # das ESPHome-Add-on baut ohnehin nur eins auf einmal, zwei Builds parallel stritten sich um Prozessor und Speicher.
-_schlange = asyncio.Lock()
 
 
 def _offen(datei: str) -> dict | None:
@@ -532,17 +550,65 @@ def _offen(datei: str) -> dict | None:
     return next((j for j in _jobs.values() if not j["fertig"] and datei in j["dateien"]), None)
 
 
+# Gemeinsame Warteschlange fuer Remotes und Docks (2026-11-05, Nutzer: "sortieren und bearbeiten, wieder rausloeschen,
+# Position veraendern"): _reihe = wartende Auftraege in Reihenfolge, _laeuft = der eine laufende. Statt einer Sperre
+# (strikt der Reihe nach) wartet jeder Auftrag, bis er vorne steht und nichts laeuft.
+_reihe: list[str] = []
+_lauf: dict = {"id": None}
+_bed: asyncio.Condition | None = None
+_FELDER = ("job_id", "titel", "dateien", "port", "art", "status", "schritt", "progress", "fehler", "t0", "t_start", "t_ende")
+
+
+def _bedingung() -> asyncio.Condition:
+    global _bed
+    if _bed is None:
+        _bed = asyncio.Condition()
+    return _bed
+
+
+async def _anstossen() -> None:
+    c = _bedingung()
+    async with c:
+        c.notify_all()
+
+
 def _schlange_liste() -> list[dict]:
-    return [{k: v for k, v in j.items() if k in ("job_id", "titel", "dateien", "port", "status", "schritt", "t0")}
-            for j in sorted(_jobs.values(), key=lambda x: x["t0"]) if not j["fertig"]]
+    """Laufender Auftrag zuerst, dann die wartenden in ihrer Reihenfolge."""
+    ids = ([_lauf["id"]] if _lauf["id"] in _jobs else []) + [i for i in _reihe if i in _jobs]
+    return [{**{k: _jobs[i].get(k) for k in _FELDER}, "platz": n} for n, i in enumerate(ids)]
+
+
+def _fertige_liste() -> list[dict]:
+    f = sorted((j for j in _jobs.values() if j["fertig"] and not j.get("ausgeblendet")), key=lambda x: x.get("t_ende") or 0, reverse=True)
+    return [{k: j.get(k) for k in _FELDER} for j in f[:8]]
+
+
+def _aufraeumen() -> None:
+    """Hoechstens 30 fertige Auftraege (mit Protokoll) behalten."""
+    f = sorted((j for j in _jobs.values() if j["fertig"]), key=lambda x: x.get("t_ende") or 0)
+    for j in f[:-30]:
+        _jobs.pop(j["job_id"], None)
 
 
 async def _ablauf(hass: HomeAssistant, j: dict, geraete: list[dict], port: str) -> None:
-    async with _schlange:
+    c = _bedingung()
+    async with c:
+        await c.wait_for(lambda: j.get("abgebrochen") or (_lauf["id"] is None and _reihe and _reihe[0] == j["job_id"]))
+        if j["job_id"] in _reihe:
+            _reihe.remove(j["job_id"])
         if j.get("abgebrochen"):
+            c.notify_all()
             return
-        j["status"], j["schritt"], j["t0"] = "laeuft", "Startet", time.time()
+        _lauf["id"] = j["job_id"]
+    j["status"], j["schritt"], j["t_start"] = "laeuft", "Startet", time.time()
+    try:
         await _ablauf_jetzt(hass, j, geraete, port)
+    finally:
+        j["t_ende"] = time.time()
+        _aufraeumen()
+        async with c:
+            _lauf["id"] = None
+            c.notify_all()
 
 
 async def _ablauf_jetzt(hass: HomeAssistant, j: dict, geraete: list[dict], port: str) -> None:
@@ -647,7 +713,7 @@ async def liste(hass: HomeAssistant) -> dict:
                 x["online"] = x["wlan"]
         out.append(x)
     laufend = _schlange_liste()
-    return {"geraete": out, "ports": ports, "fehler": fehler, "jobs": laufend, "version": soll,
+    return {"geraete": out, "ports": ports, "fehler": fehler, "jobs": laufend, "fertige": _fertige_liste(), "version": soll,
             "lokal": await hass.async_add_executor_job(lambda: (ESPHOME_DIR / "templates" / "remote.yaml").exists()),
             "entwickler": await hass.async_add_executor_job(entwickler),
             "altlasten": await hass.async_add_executor_job(altlasten)}
@@ -662,7 +728,8 @@ async def ws_liste(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_installieren",
                                   vol.Required("dateien"): [str], vol.Required("port"): str,
-                                  vol.Optional("wlan_nachher", default=0): vol.All(int, vol.Range(min=0, max=480))})
+                                  vol.Optional("wlan_nachher", default=0): vol.All(int, vol.Range(min=0, max=480)),
+                                  vol.Optional("art", default=""): str})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_installieren(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
@@ -688,19 +755,21 @@ async def ws_installieren(hass: HomeAssistant, connection: websocket_api.ActiveC
     if len(geraete) == 1 and (o := _offen(geraete[0]["datei"])) is not None and o["port"] == port:
         connection.send_result(msg["id"], {"job_id": o["job_id"], "schon": True, "platz": _platz(o)})
         return
-    j = _starten(hass, geraete, port, msg["wlan_nachher"])
+    j = _starten(hass, geraete, port, msg["wlan_nachher"], msg["art"])
     connection.send_result(msg["id"], {"job_id": j["job_id"], "platz": _platz(j)})
 
 
 def _platz(j: dict) -> int:
-    """0 = laeuft, 1.. = so viele warten davor (bzw. laufen)."""
-    vor = [x for x in _jobs.values() if not x["fertig"] and x["t0"] < j["t0"] and x is not j]
-    return 0 if j["status"] == "laeuft" else len(vor)
+    """0 = laeuft, 1.. = so viele stehen davor (der laufende mitgezaehlt)."""
+    if j["job_id"] == _lauf["id"]:
+        return 0
+    return (_reihe.index(j["job_id"]) if j["job_id"] in _reihe else len(_reihe)) + (1 if _lauf["id"] else 0)
 
 
-def _starten(hass: HomeAssistant, geraete: list[dict], port: str, wlan_nachher: int = 0) -> dict:
+def _starten(hass: HomeAssistant, geraete: list[dict], port: str, wlan_nachher: int = 0, art: str = "") -> dict:
     titel = (geraete[0].get("friendly") or geraete[0]["datei"]) if len(geraete) == 1 else f"{len(geraete)} Geraete"
-    j = _job(titel, [g["datei"] for g in geraete], port)
+    j = _job(titel, [g["datei"] for g in geraete], port, art)
+    _reihe.append(j["job_id"])
     j["wlan_nachher"] = wlan_nachher   # Minuten WLAN nach dem Update (0 = nur fuers Update, 2026-10-29)
     hass.async_create_background_task(_ablauf(hass, j, geraete, port), f"{DOMAIN} firmware {j['job_id']}")
     # Remotes per WLAN: Stand laufend auf der Remote zeigen (Wartung & Tests)
@@ -855,28 +924,53 @@ async def ws_vormerken(hass: HomeAssistant, connection: websocket_api.ActiveConn
     job = None
     if msg["an"] and _offen(msg["datei"]) is None:   # in die Warteschlange (2026-10-30), auch wenn gerade etwas laeuft
         g = next(x for x in await hass.async_add_executor_job(remote_dateien) if x["datei"] == msg["datei"])
-        job = _starten(hass, [g], "")["job_id"]
+        job = _starten(hass, [g], "", art="vorgemerkt")["job_id"]
     connection.send_result(msg["id"], {"vorgemerkt": sp["vorgemerkt"], "job_id": job})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_abbrechen", vol.Required("job_id"): str})
 @websocket_api.require_admin
-@callback
-def ws_abbrechen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
-    """Wartenden Auftrag aus der Warteschlange nehmen (laufende laufen zu Ende)."""
+@websocket_api.async_response
+async def ws_abbrechen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Wartenden Auftrag aus der Warteschlange nehmen (laufende laufen zu Ende); fertigen aus der Liste ausblenden."""
     j = _jobs.get(msg["job_id"])
-    if j is None or j["fertig"] or j["status"] != "wartet":
+    if j is not None and j["fertig"]:
+        j["ausgeblendet"] = True
+    elif j is None or j["status"] != "wartet":
         connection.send_error(msg["id"], "job", "Nur wartende Aufträge lassen sich herausnehmen")
         return
-    j.update(abgebrochen=True, fertig=True, status="fehler", fehler="Aus der Warteschlange genommen", schritt="Herausgenommen")
-    connection.send_result(msg["id"], {"jobs": _schlange_liste()})
+    else:
+        j.update(abgebrochen=True, fertig=True, status="fehler", fehler="Aus der Warteschlange genommen", schritt="Herausgenommen",
+                 t_ende=time.time(), ausgeblendet=True)
+        if j["job_id"] in _reihe:
+            _reihe.remove(j["job_id"])
+        await _anstossen()
+    connection.send_result(msg["id"], {"jobs": _schlange_liste(), "fertige": _fertige_liste()})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_verschieben", vol.Required("job_id"): str,
+                                  vol.Required("wohin"): vol.In(["hoch", "runter", "oben", "unten"])})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_verschieben(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Wartenden Auftrag in der Warteschlange verschieben (2026-11-05)."""
+    i = msg["job_id"]
+    if i not in _reihe:
+        connection.send_error(msg["id"], "job", "Nur wartende Aufträge lassen sich verschieben")
+        return
+    n = _reihe.index(i)
+    _reihe.remove(i)
+    ziel = {"hoch": max(0, n - 1), "runter": min(len(_reihe), n + 1), "oben": 0, "unten": len(_reihe)}[msg["wohin"]]
+    _reihe.insert(ziel, i)
+    await _anstossen()
+    connection.send_result(msg["id"], {"jobs": _schlange_liste(), "fertige": _fertige_liste()})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_schlange"})
 @websocket_api.require_admin
 @callback
 def ws_schlange(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
-    connection.send_result(msg["id"], {"jobs": _schlange_liste()})
+    connection.send_result(msg["id"], {"jobs": _schlange_liste(), "fertige": _fertige_liste()})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/fw_job", vol.Required("job_id"): str})
@@ -1051,7 +1145,7 @@ async def ws_aufraeumen(hass: HomeAssistant, connection: websocket_api.ActiveCon
 
 
 def registrieren(hass: HomeAssistant) -> None:
-    for fn in (ws_liste, ws_installieren, ws_job, ws_abbrechen, ws_schlange, ws_sperren, ws_vormerken, ws_test_wiederholen, ws_entwickler, ws_umstellen, ws_aufraeumen):
+    for fn in (ws_liste, ws_installieren, ws_job, ws_abbrechen, ws_verschieben, ws_schlange, ws_sperren, ws_vormerken, ws_test_wiederholen, ws_entwickler, ws_umstellen, ws_aufraeumen):
         websocket_api.async_register_command(hass, fn)
     hass.http.register_view(FirmwareView(hass))
 

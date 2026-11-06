@@ -48,7 +48,7 @@ esphome:
   friendly_name: Remote WZ Remotename
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.5.4"
+    version: "2026.11.6.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
@@ -1526,6 +1526,8 @@ globals:
   # Wird die Sprachtaste noch gehalten? Nach dem Mikrofon-Vorlauf wird das
   # geprueft - sonst startet eine Abfrage, nachdem schon losgelassen wurde.
   - {id: voice_want,     type: bool,      restore_value: false, initial_value: "false"}
+  # Durchsage laeuft (2026-11-06): Loslassen beendet dann die Aufnahme, statt den Sprachassistenten zu beenden
+  - {id: durchsage_laeuft, type: bool, restore_value: false, initial_value: "false"}
   - {id: voice_active,   type: bool,      restore_value: false, initial_value: "false"}
   - {id: mic_allowed,    type: bool,      restore_value: true,  initial_value: "true"}
   - {id: key_was_dark,   type: bool,      restore_value: false, initial_value: "false"}
@@ -4852,45 +4854,55 @@ script:
                   - lvgl.label.update: {id: voice_answer, text: !lambda 'return std::string(id(voice_such_weg) ? "SmartTube-Suche hört zu." : "Google hört zu. Das Erkannte erscheint auf dem Fernseher.");'}
                   - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
                 else:
-                  # HA verbunden, aber kein WLAN -> Sprache ueber den Bluetooth-Tunnel (ha_tunnel, 2026-10-06).
-                  # Der Haken ist nur in den -halink-Konfigurationen gesetzt; ohne ihn alles wie bisher.
+                  # Kein WLAN -> Sprache per HTTP ueber den Vermittler (2026-11-06): Dock oder Bluetooth-Link, was geht -
+                  # ohne erst das WLAN zu holen. Die Antwort kommt als Text zurueck wie beim Link.
                   - if:
-                      condition: {lambda: "return !wifi::global_wifi_component->is_connected() && api::global_api_server->is_connected() && wlan_zugriff::g_link_voice_start && wlan_zugriff::g_link_voice_start();"}
+                      condition: {lambda: 'return !wifi::global_wifi_component->is_connected() && wlan_zugriff::g_http_voice_start && wlan_zugriff::g_http_voice_start("assist");'}
                       then:
                         - script.execute: wake_backlight
                         - lvgl.label.update: {id: voice_you,    text: "..."}
-                        - lvgl.label.update: {id: voice_answer, text: "hört zu (Bluetooth)"}
+                        - lvgl.label.update: {id: voice_answer, text: "hört zu"}
                         - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
                       else:
-                        # Kommt die Fernbedienung gerade aus dem Ruhezustand, braucht
-                        # das WLAN ein paar Sekunden. Ohne Verbindung tut
-                        # voice_assistant.start schlicht nichts - man steht dann vor
-                        # einem Geraet, das nicht reagiert und nichts sagt.
-                        - if:
-                            condition:
-                              not: {voice_assistant.connected:}
-                            then:
-                              # WLAN aus (Dock-Betrieb): fuer den HA-Assistenten das eigene WLAN holen (2026-10-25)
-                              - lambda: 'if (wlan_zugriff::g_nur_ble) wlan_zugriff::bedarf(60000, "Sprache an HA");'
-                              - lvgl.label.update: {id: voice_you,    text: "Moment"}
-                              - lvgl.label.update: {id: voice_answer, text: "Verbinde mit Home Assistant ..."}
-                              - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
-                              # Auf den Assistenten warten, nicht nur auf die API: HA meldet sich dafuer erst nach dem
-                              # Verbindungsaufbau an - vorher endete der Start in "No API client connected" (2026-10-25)
-                              - wait_until:
-                                  condition: {voice_assistant.connected:}
-                                  timeout: 12s   # 8 -> 12 s (2026-10-25): bei "WLAN aus" startet das WLAN erst jetzt
-                        - if:
-                            condition: {voice_assistant.connected:}
-                            then: [{voice_assistant.start:}]
-                            else:
-                              - lvgl.label.update: {id: voice_you,    text: "Keine Verbindung"}
-                              - lvgl.label.update: {id: voice_answer, text: "Home Assistant ist nicht erreichbar. Google geht trotzdem - mit doppeltem Druck umschalten."}
-                              - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
-                              - lambda: 'ESP_LOGW("assi", "keine API-Verbindung - Abfrage nicht gestartet");'
-                              - globals.set: {id: voice_active, value: "false"}
-                              - script.execute: apply_mic_power
-                              - lambda: 'id(kb).set_rssi_paused(false);'
+                      # HA verbunden, aber kein WLAN -> Sprache ueber den Bluetooth-Tunnel (ha_tunnel, 2026-10-06).
+                      # Der Haken ist nur in den -halink-Konfigurationen gesetzt; ohne ihn alles wie bisher.
+                      - if:
+                          condition: {lambda: "return !wifi::global_wifi_component->is_connected() && api::global_api_server->is_connected() && wlan_zugriff::g_link_voice_start && wlan_zugriff::g_link_voice_start();"}
+                          then:
+                            - script.execute: wake_backlight
+                            - lvgl.label.update: {id: voice_you,    text: "..."}
+                            - lvgl.label.update: {id: voice_answer, text: "hört zu (Bluetooth)"}
+                            - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
+                          else:
+                            # Kommt die Fernbedienung gerade aus dem Ruhezustand, braucht
+                            # das WLAN ein paar Sekunden. Ohne Verbindung tut
+                            # voice_assistant.start schlicht nichts - man steht dann vor
+                            # einem Geraet, das nicht reagiert und nichts sagt.
+                            - if:
+                                condition:
+                                  not: {voice_assistant.connected:}
+                                then:
+                                  # WLAN aus (Dock-Betrieb): fuer den HA-Assistenten das eigene WLAN holen (2026-10-25)
+                                  - lambda: 'if (wlan_zugriff::g_nur_ble) wlan_zugriff::bedarf(60000, "Sprache an HA");'
+                                  - lvgl.label.update: {id: voice_you,    text: "Moment"}
+                                  - lvgl.label.update: {id: voice_answer, text: "Verbinde mit Home Assistant ..."}
+                                  - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
+                                  # Auf den Assistenten warten, nicht nur auf die API: HA meldet sich dafuer erst nach dem
+                                  # Verbindungsaufbau an - vorher endete der Start in "No API client connected" (2026-10-25)
+                                  - wait_until:
+                                      condition: {voice_assistant.connected:}
+                                      timeout: 12s   # 8 -> 12 s (2026-10-25): bei "WLAN aus" startet das WLAN erst jetzt
+                            - if:
+                                condition: {voice_assistant.connected:}
+                                then: [{voice_assistant.start:}]
+                                else:
+                                  - lvgl.label.update: {id: voice_you,    text: "Keine Verbindung"}
+                                  - lvgl.label.update: {id: voice_answer, text: "Home Assistant ist nicht erreichbar. Google geht trotzdem - mit doppeltem Druck umschalten."}
+                                  - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
+                                  - lambda: 'ESP_LOGW("assi", "keine API-Verbindung - Abfrage nicht gestartet");'
+                                  - globals.set: {id: voice_active, value: "false"}
+                                  - script.execute: apply_mic_power
+                                  - lambda: 'id(kb).set_rssi_paused(false);'
             - script.execute: voice_power_guard
           else:
             - lambda: 'ESP_LOGD("assi", "zu kurz gedrueckt - keine Abfrage");'
@@ -4902,6 +4914,53 @@ script:
   # Nachlaufzeit verhindert, dass das letzte Stueck Audio abgeschnitten wird.
   # Notbremse: bleibt eine Home-Assistant-Abfrage haengen, faellt der
   # Mikrofonstrom trotzdem wieder weg.
+  # Durchsage (2026-11-06, Tastenfunktion "announce", nur Lang): aufnehmen, solange gedrueckt; Home Assistant spielt
+  # sie auf dem Lautsprecher aus dem Konfigurator (Funktionen > Durchsage). Weg wie beim Sprachassistenten ohne WLAN:
+  # HTTP ueber den Vermittler (WLAN, Link oder Dock). Loslassen: voice_ptt_ende (esphomeremote-keys.h).
+  - id: durchsage_start
+    mode: restart
+    then:
+      - if:
+          condition: {lambda: "return id(sdkarte)->is_mounted();"}
+          then:
+            - lambda: 'ESP_LOGW("sd", "Durchsage nicht moeglich: SD-Karte eingebunden (geteilte Pins)");'
+            - script.stop: durchsage_start
+      - script.stop: voice_stop
+      - voice_assistant.stop:
+      - lambda: 'id(kb).execute_action("atv_mic_stop");'
+      - script.execute: wake_backlight
+      - globals.set: {id: voice_want, value: "true"}
+      - globals.set: {id: voice_active, value: "true"}
+      - script.execute: apply_mic_power
+      # kurzer Tipp: keine Durchsage (wie beim Sprachassistenten)
+      - delay: 250ms
+      - if:
+          condition: {lambda: "return id(voice_want);"}
+          then:
+            - if:
+                condition: {lambda: 'return wlan_zugriff::g_http_voice_start && wlan_zugriff::g_http_voice_start("durchsage");'}
+                then:
+                  - globals.set: {id: durchsage_laeuft, value: "true"}
+                  - lvgl.label.update: {id: voice_you,    text: "Durchsage"}
+                  - lvgl.label.update: {id: voice_answer, text: "Sprich jetzt – loslassen zum Senden"}
+                  - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
+                  - script.execute: voice_power_guard
+                else:
+                  - lvgl.label.update: {id: voice_you,    text: "Durchsage"}
+                  - lvgl.label.update: {id: voice_answer, text: "Geht gerade nicht (keine Verbindung zu Home Assistant)"}
+                  - lvgl.page.show: {id: page_voice, animation: FADE_IN, time: 150ms}
+                  - globals.set: {id: voice_active, value: "false"}
+                  - script.execute: apply_mic_power
+          else:
+            - globals.set: {id: voice_active, value: "false"}
+            - script.execute: apply_mic_power
+
+  # Durchsage losgelassen: Aufnahme beenden - der Rest geht an HA, Antwort/Ende kommen als Ereignis (on_voice_event)
+  - id: durchsage_ende
+    then:
+      - lambda: 'if (wlan_zugriff::g_link_voice_stop) wlan_zugriff::g_link_voice_stop();'
+      - lvgl.label.update: {id: voice_answer, text: "wird gesendet …"}
+
   - id: voice_power_guard
     mode: restart
     then:
