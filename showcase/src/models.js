@@ -40,7 +40,12 @@ export const TEILE = {
   rueckseite: { name: "Rückseite", teile: ["remote_gehaeuse"], farbe: "#0b0c0e", fuzzy: true },
   front: { name: "Frontcover", teile: ["remote_abdeckung"], farbe: "#17181b", fuzzy: true },
   tasten: { name: "Tasten", teile: ["remote_tasten"], farbe: "#101114" },
-  symbole: { name: "Symbole", teile: ["remote_tasten_symbole", "remote_taste_aus_symbol"], farbe: "#f2f4f7" },
+  symbole: { name: "Symbole", teile: ["remote_tasten_symbole"], farbe: "#f2f4f7" },
+  // Vier Farbtasten (2026-11-06): einheitlich in einer Farbe oder wie gedruckt in Rot/Gruen/Gelb/Blau ("original")
+  farbtasten: { name: "Farbtasten", teile: ["remote_taste_rot", "remote_taste_gruen", "remote_taste_gelb", "remote_taste_blau"], farbe: "original",
+    original: { remote_taste_rot: "#b3120f", remote_taste_gruen: "#0f8a2e", remote_taste_gelb: "#e8b80c", remote_taste_blau: "#0f4fd6" } },
+  aus: { name: "Ein/Aus-Taste", teile: ["remote_taste_aus"], farbe: "#bf140f" },
+  aus_symbol: { name: "Ein/Aus-Symbol", teile: ["remote_taste_aus_symbol"], farbe: "#f2f4f7" },
   dock: { name: "Dock", teile: ["dock_schale"], farbe: "#101114", fuzzy: true },
 };
 export const PALETTE = [
@@ -175,7 +180,8 @@ export function explosionSetzen(teile, e) {
 }
 
 export function farbeSetzen(teile, teil, hex) {
-  for (const n of TEILE[teil].teile) teile[n]?.material.color.set(hex);
+  const t = TEILE[teil];
+  for (const n of t.teile) teile[n]?.material.color.set(hex === "original" && t.original ? t.original[n] : hex);
 }
 
 export function fuzzySetzen(teile, teil, an) {

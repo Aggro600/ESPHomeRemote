@@ -82,15 +82,18 @@ async function start() {
   tafel.innerHTML = Object.entries(TEILE).map(([k, t]) => `<div class="farbteil" data-teil="${k}">
       <div class="farbkopf"><span>${t.name}</span>
         ${t.fuzzy ? `<button class="pille klein" data-fuzzy="${k}" aria-pressed="false" title="Strukturierte Oberfläche wie mit der Slicer-Option Fuzzy Skin (nur Außenwände)">Fuzzy Skin</button>` : ""}
-        <label class="frei" title="Eigene Farbe"><input type="color" data-frei="${k}" value="${t.farbe}"></label></div>
+        ${t.original ? `<button class="pille klein" data-teil="${k}" data-hex="original" aria-pressed="false" title="Wie gedruckt: Rot, Grün, Gelb, Blau">4 Farben</button>` : ""}
+        <label class="frei" title="Eigene Farbe – gilt für alle ${t.teile.length > 1 ? t.teile.length + " Tasten" : "Teile"}"><input type="color" data-frei="${k}" value="${t.farbe === "original" ? "#101114" : t.farbe}"></label></div>
       <div class="farben">${PALETTE.map(([n, h]) => `<button class="farbe" data-teil="${k}" data-hex="${h}" aria-label="${n}" title="${n}" style="--f:${h}"></button>`).join("")}</div>
     </div>`).join("");
   const farbe = (k, hex) => {
     farbeSetzen(teile, k, hex);
     (farbStand[k] ||= {}).farbe = hex;
-    tafel.querySelectorAll(`.farbe[data-teil="${k}"]`).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.hex.toLowerCase() === hex.toLowerCase())));
-    tafel.querySelector(`[data-frei="${k}"]`).value = hex;
-    tafel.querySelector(`[data-teil="${k}"] .frei`).style.setProperty("--f", hex);
+    tafel.querySelectorAll(`[data-teil="${k}"][data-hex]`).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.hex.toLowerCase() === hex.toLowerCase())));
+    if (hex !== "original") {
+      tafel.querySelector(`[data-frei="${k}"]`).value = hex;
+      tafel.querySelector(`.farbteil[data-teil="${k}"] .frei`).style.setProperty("--f", hex);
+    }
   };
   const fuzzy = (k, an) => {
     fuzzySetzen(teile, k, an);
