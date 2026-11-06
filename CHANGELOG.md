@@ -1,5 +1,31 @@
 # What's new · Was ist neu
 
+## 2026.11.6.1 (2026-11-06)
+
+**Announcements.** New remote function *Announcement while held* (long press only): hold the key, speak, release – Home Assistant plays it on a speaker of your choice, e.g. a Chromecast group, with a chime and the volume raised. Settings in the configurator under *Functions → Announcement*: on/off, speaker, volume for the announcement (restored afterwards), chime. Up to about 25 s. The recording is cleaned up: interference from the remote's electronics (whine at 1 kHz and its multiples) is filtered out, and the clicks when the microphone starts and when you release the key are cut off.
+
+**Voice assistant via the dock.** In dock mode the remote now streams speech to Home Assistant through the dock (or the Bluetooth link) while you speak – Wi-Fi stays off. With Wi-Fi on everything works as before.
+
+**Firmware workshop.** Remotes and docks share one queue: reorder jobs (up/down, first/last), remove waiting ones, and every job shows what it does (scheduled, build only, USB, Wi-Fi). The log below always belongs to the job you picked. Progress output (upload 1 % … 100 %) now overwrites its line like in a terminal instead of adding a new line for every step.
+
+**Tidier settings.** The explanations on the *Settings* page are collapsed behind an ⓘ next to each setting and card title; **Show all explanations** opens them all (remembered in the browser).
+
+Update over Wi-Fi as usual – no USB needed this time.
+
+<details><summary>Deutsch</summary>
+
+**Durchsage.** Neue Funktion der Remote *Durchsage, solange gedrückt* (nur für Lang): Taste halten, sprechen, loslassen – Home Assistant spielt es auf einem Lautsprecher deiner Wahl ab, z. B. einer Chromecast-Gruppe, mit Gong und angehobener Lautstärke. Einstellungen im Konfigurator unter *Funktionen → Durchsage*: an/aus, Lautsprecher, Lautstärke für die Durchsage (danach zurückgestellt), Gong. Bis etwa 25 s. Die Aufnahme wird gesäubert: Störungen der Remote-Elektronik (Pfeifen bei 1 kHz und Vielfachen) werden herausgefiltert, das Knacken beim Start des Mikrofons und beim Loslassen der Taste abgeschnitten.
+
+**Sprachassistent übers Dock.** Im Dock-Betrieb schickt die Remote die Sprache jetzt schon während des Sprechens über das Dock (oder die Bluetooth-Verbindung) an Home Assistant – das WLAN bleibt aus. Mit WLAN bleibt alles wie bisher.
+
+**Firmware-Werkstatt.** Remotes und Docks haben eine gemeinsame Warteschlange: Aufträge verschieben (hoch/runter, ganz nach oben/unten), wartende entfernen, und jeder Auftrag zeigt, was er tut (vorgemerkt, nur bauen, USB, WLAN). Das Log darunter gehört immer zum gewählten Auftrag. Fortschrittsanzeigen (Upload 1 % … 100 %) überschreiben ihre Zeile jetzt wie im Terminal, statt für jede Stufe eine neue Zeile anzuhängen.
+
+**Aufgeräumte Einstellungen.** Die Erklärungen auf der Seite *Einstellungen* sind hinter einem ⓘ an jeder Einstellung und Kartenüberschrift eingeklappt; **Alle Erklärungen zeigen** klappt alle auf (merkt sich der Browser).
+
+Update wie gewohnt über WLAN – diesmal ohne USB.
+
+</details>
+
 ## 2026.11.5.4 (2026-11-05)
 
 > ⚠️ **Flash each remote once via USB cable.** The faster wake-up needs a new bootloader, and a bootloader can't be updated over Wi-Fi. In the configurator: *Firmware* page of the remote → **USB** (Chrome or Edge on a PC). Update the **docks first** (over Wi-Fi as usual). Wi-Fi updates of the remote keep working without USB – it just wakes about 0.5 s slower.

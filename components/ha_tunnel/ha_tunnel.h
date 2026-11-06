@@ -1,5 +1,8 @@
 #pragma once
 #include <functional>
+#include <deque>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 // HALINK (2026-10-05): ESPHome-API ueber Bluetooth tunneln, s. __init__.py.
 //
 // Rahmen auf dem Link, erstes Byte = Typ:
@@ -41,6 +44,8 @@
 // ("ATT fixed channel already congested, drop PDU") - fuer den verschluesselten API-Strom toedlich.
 #include <atomic>
 #include <deque>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lwip/inet.h"
 #include <mutex>
 #include "esphome/core/automation.h"
@@ -96,6 +101,11 @@ class HaTunnel : public Component {
   // Sprache ueber den Link
   void set_microphone(microphone::Microphone *mic, float gain) { mic_ = mic; voice_gain_ = gain; }
   bool voice_start();   // false = kein Link oder kein Mikrofon
+  // Sprache per HTTP (2026-11-06): dieselbe Aufnahme als POST an <pfad> ueber den Vermittler - der waehlt WLAN,
+  // Link oder Dock. Antwortzeilen "<typ>|<text>" kommen als dieselben Ereignisse wie beim Link (on_voice_event).
+  bool voice_http_start(const std::string &pfad);
+  bool voice_http() const { return voice_http_; }
+  void voice_http_task_();   // oeffentlich nur fuer den Task-Einstieg
   void voice_stop();
   bool voice_active() const { return voice_on_; }
   void meldung(const std::string &text) { notice_(text); }   // landet ueber die Bruecke im HA-Log
@@ -180,9 +190,15 @@ class HaTunnel : public Component {
   // Fertige Rahmen -> Hauptschleife: Ringpuffer im PSRAM fuer 6 s Audio. Vorher 1 s im internen RAM - beim Druecken
   // laeuft der Link noch im Spartakt, der Puffer lief ueber und der ANFANG fiel raus (Nutzer 2026-10-06).
   static const size_t VOICE_FRAME_MAX = 4 + 128;
-  static const size_t VOICE_RING = 384;       // 384 x 16 ms = 6,1 s
+  // 1920 x 16 ms = 30 s (2026-11-06, vorher 6 s): eine Durchsage kommt auch ueber einen langsamen Weg ganz an
+  static const size_t VOICE_RING = 1920;
   uint8_t *voice_ring_{nullptr};
-  uint16_t voice_len_[VOICE_RING]{};
+  uint16_t *voice_len_{nullptr};   // im PSRAM wie der Ring
+  volatile bool voice_http_{false};
+  std::string voice_pfad_;
+  std::mutex voice_ev_mtx_;
+  std::deque<std::pair<int, std::string>> voice_ev_;   // Ereignisse aus dem HTTP-Task -> loop()
+  TaskHandle_t voice_task_{nullptr};
   size_t voice_head_{0}, voice_tail_{0};
   uint32_t voice_frames_{0}, voice_dropped_{0};
   std::mutex voice_mtx_;

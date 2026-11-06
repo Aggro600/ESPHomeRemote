@@ -47,7 +47,7 @@ STORE_VERSION = 1
 PANEL_URL = "remote"
 PANEL_URL_ALT = "fernbedienung"   # bis 2026-11-01 - alte Lesezeichen gehen weiter (ohne Eintrag in der Seitenleiste)
 STATIC_URL = "/esphomeremote_static"
-PANEL_VERSION = "199"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+PANEL_VERSION = "202"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,
@@ -1506,6 +1506,10 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .streamer_menue import einrichten as stmenue_einrichten
 
     stmenue_einrichten(hass, kd)
+    # Sprache per HTTP (2026-11-06): Assist ohne WLAN (ueber das Dock) und Durchsage
+    from .sprache import einrichten as sprache_einrichten
+
+    sprache_einrichten(hass, kd)
     bruecke = hass.data[DOMAIN + "_bruecke"] = Bruecke(hass, kd)
     licht = hass.data[DOMAIN + "_licht"] = Licht(hass, kd)
 
@@ -1917,7 +1921,7 @@ async def wlan_fenster(hass: HomeAssistant, dev: str, sek: int, grund: str = "Ko
 
 # ---- Sicherung (2026-10-26): alles, was der Konfigurator verwaltet, und Einspielen ohne Abgleich ----
 SICHERUNG_GLOBAL = ("jetzt", "streamer", "klingel", "licht", "anzeige", "dock", "dockscan", "funktionen", "docks_einst",
-                    "einst_standard", "werk", "reihenfolge")
+                    "einst_standard", "werk", "reihenfolge", "durchsage", "streamer_menue")
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sicherung"})

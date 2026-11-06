@@ -74,7 +74,8 @@ den Rest macht das Dock.
   eigene, angelernte Codes.
 - **Dein Smart Home auf dem Display** – Licht mit Reglern und Farben, Rollos, Sensoren, Kameras, Szenen,
   Klingel-Popups.
-- **Sprachassistent** – Google am Fernseher oder Home Assistant Assist, mit eingebautem Mikrofon.
+- **Sprachassistent** – Google am Fernseher oder Home Assistant Assist, mit eingebautem Mikrofon (auch übers Dock, das WLAN bleibt aus).
+- **Durchsage** – Taste halten, sprechen, und es läuft mit Gong auf deinen Lautsprechern (z. B. einer Cast-Gruppe).
 - **Dein Menü auf dem Fernseher** – dasselbe Kachel-Menü wie auf der Remote, eingeblendet auf jedem Android-TV-Streamer
   und bedient mit der Fernbedienung des Fernsehers. Dazu Kamera als Bild im Bild und Soundbar ein/aus per HDMI-CEC.
 - **Bewegungsgesten** – schütteln, kippen oder eigene anlernen (Kreis, Wischen …).

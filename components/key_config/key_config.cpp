@@ -1561,7 +1561,7 @@ bool TastenKonfig::ereignis(int taste, bool gedrueckt, int aktivitaet, bool dunk
       z.lang_fertig = false;
       // Push-to-Talk: Loslassen beendet die Aufnahme
       for (JsonObjectConst s : steps_(kc, LANG))
-        if (strcmp(s["t"] | "", "int") == 0 && strcmp(s["fn"] | "", "voice_ptt") == 0 && intern)
+        if (strcmp(s["t"] | "", "int") == 0 && (strcmp(s["fn"] | "", "voice_ptt") == 0 || strcmp(s["fn"] | "", "announce") == 0) && intern)
           intern("voice_ptt_ende", 0, LANG, z.dunkel);
       return true;
     }
