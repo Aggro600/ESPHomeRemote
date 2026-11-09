@@ -75,7 +75,7 @@ static const uint32_t SCHNELL_MAGIC = 0x5343484Eu;   // "SCHN"
 extern SchnellDaten g_schnell;
 
 enum Typ : uint8_t { IR = 1, RF = 2, HA = 3, ZUSTAND_FRAGE = 4, ZUSTAND = 5, HTTP_AUF = 6, HTTP_DATEN = 7, HTTP_ZU = 8, HTTP_QUITT = 9, HID = 10, HID_ANTWORT = 11,
-                     SPRACHE = 12 };   // 12: Sprache fuer den Fernseher ueber das Dock (2026-10-24), s. senden_sprache
+                     SPRACHE = 12, ZEIT_FRAGE = 13, ZEIT = 14 };   // 13/14: Uhrzeit ueber das Dock (2026-11-06)   // 12: Sprache fuer den Fernseher ueber das Dock (2026-10-24), s. senden_sprache
 
 class DockDirekt : public Component
 #ifdef DD_HA
@@ -162,6 +162,10 @@ class DockDirekt : public Component
   uint32_t netz_gesendet() const { return n_netz_; }
 
   // Remote: Dock, das zuletzt bestaetigt hat (zuerst probieren)
+  // Remote: so oft nach der Uhrzeit gefragt, ohne dass eine kam (altes Dock / Dock ohne Zeit) - dann WLAN (SNTP)
+  uint8_t zeit_ohne_antwort() const;
+  // Remote: HA ist ueber das Dock erreichbar (letzte Antwort des Docks < 2 min alt und das Dock hatte HA)
+  bool ha_ueber_dock() const { return dock_ha_ && dock_ha_ms_ != 0 && millis() - dock_ha_ms_ < 120000; }
   bool letztes_ok(uint8_t out[6]) const { if (!ok_gueltig_) return false; memcpy(out, ok_mac_, 6); return true; }
   uint32_t ok_ms() const { return ok_ms_; }
   // Remote: WLAN verbindet sich gerade - Funk zum Dock kurz gesperrt (kein Zeichen, dass das Dock fehlt)
@@ -273,6 +277,8 @@ class DockDirekt : public Component
   dock_hid::DockHid *hid_{nullptr};
 #endif
   uint32_t stand_pruef_{0}, stand_ms_{0};   // Remote: Pruefwert und Zeit des zuletzt ganz erhaltenen Stands
+  bool dock_ha_{false};
+  uint32_t dock_ha_ms_{0};
   uint32_t antwort_bis_ms_{0};   // Remote: Funk bis dahin offen halten (Antwort auf die Zustands-Anfrage)
 #ifdef DD_HA
   struct HaAuftrag { std::string dienst; std::map<std::string, std::string> daten; uint32_t t0; };

@@ -3352,5 +3352,19 @@
  "Erklärung": "Explanation",
  "Alle Erklärungen zeigen": "Show all explanations",
  "Erklärungen ausblenden": "Hide explanations",
- "Die Erklärungen zu jeder Einstellung auf- oder zuklappen (einzeln: das (i) an der Zeile)": "Expand or collapse the explanation of every setting (single ones: the (i) next to the row)"
+ "Die Erklärungen zu jeder Einstellung auf- oder zuklappen (einzeln: das (i) an der Zeile)": "Expand or collapse the explanation of every setting (single ones: the (i) next to the row)",
+ "Überschrift": "Heading",
+ "Steht oben im Menü (Titel der Startseite – die anderen Seiten unter „Menü bearbeiten“)": "Shown at the top of the menu (title of the start page – other pages under “Edit menu”)",
+ "Überschrift (oben im Menü)": "Heading (top of the menu)",
+ "Überschrift dieser Seite – steht oben im Menü auf dem Fernseher": "Heading of this page – shown at the top of the menu on the TV",
+ "Menü-Taste gedrückt halten": "Hold the menu key",
+ "Das Ereignis für eigene Automationen kommt in jedem Fall.": "The event for your own automations is sent either way.",
+ "Nichts weiter": "Nothing else",
+ "Kamera zeigen / ausblenden": "Show / hide camera",
+ "Läuft schon eine, blendet Halten sie aus": "If one is already showing, holding hides it",
+ "Zuletzt gezeigte": "Last shown",
+ "Größe der Kamera": "Camera size",
+ "Wie eingestellt": "As configured",
+ "Kein Fernseher nutzt diesen Streamer für die Kamera – unter Funktionen › Kamera auf dem Fernseher den Streamer wählen.": "No TV uses this streamer for the camera – choose the streamer under Features › Camera on the TV.",
+ "Laufenden Auftrag abbrechen? Ein halb geflashtes Gerät startet danach evtl. nicht – dann neu flashen.": "Cancel the running job? A half-flashed device may not start afterwards – flash it again then."
 }

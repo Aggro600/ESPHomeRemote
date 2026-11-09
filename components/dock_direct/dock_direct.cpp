@@ -16,6 +16,9 @@
 #include <mbedtls/aes.h>
 #include <atomic>
 #include <cstring>
+#include <algorithm>
+#include <ctime>
+#include <sys/time.h>
 #include <deque>
 #include <mutex>
 #include "lwip/sockets.h"
@@ -54,6 +57,18 @@ static void besitz_abgeben(int wer) { int ich = wer; s_besitzer.compare_exchange
 // Tasten vor Bildern (2026-10-31): loop() hat etwas zu senden, waehrend der HTTP-Task den Funk hat (Cover ueber das Dock
 // brauchte bis zu 3 s und hielt so lange jeden Befehl auf) - der HTTP-Task gibt den Funk dann kurz ab.
 static std::atomic<bool> s_loop_will{false};
+// Uhrzeit ueber das Dock (2026-11-06): im RTC-Speicher, damit sie den Tiefschlaf ueberstehen
+static RTC_DATA_ATTR uint8_t s_zeit_ohne_antwort = 0;
+static RTC_DATA_ATTR uint32_t s_zeit_gesetzt_t = 0;   // Epoche der letzten Uhrzeit vom Dock
+static RTC_DATA_ATTR uint32_t s_zeit_gefragt_t = 0;
+static uint32_t millis_seit_zeit_() {
+  const time_t t = ::time(nullptr);
+  // hoechstens alle 5 min fragen, falls das Dock nicht antwortet
+  if (s_zeit_gefragt_t != 0 && t >= (time_t) s_zeit_gefragt_t && t - s_zeit_gefragt_t < 300) return 0;
+  if (s_zeit_gesetzt_t == 0 || t < (time_t) s_zeit_gesetzt_t) return UINT32_MAX;
+  return (uint32_t) std::min<time_t>((t - s_zeit_gesetzt_t) * 1000, UINT32_MAX - 1);
+}
+uint8_t DockDirekt::zeit_ohne_antwort() const { return s_zeit_ohne_antwort; }
 // Pruefwert eines Stands (2026-10-31): die Remote schickt ihn mit der Frage, das Dock antwortet bei Gleichstand leer
 static uint32_t stand_pruef(const std::string &t) {
   uint32_t h = 2166136261u;
@@ -541,7 +556,7 @@ void DockDirekt::loop() {
         s_rtc_ok_magic = RTC_OK_MAGIC;
         ok_ms_ = millis() | 1;
         // Zustands-Anfrage: Funk kurz offen halten, damit die Antwort des Docks ankommt
-        if (aktuell_.paket.size() > 3 && aktuell_.paket[3] == ZUSTAND_FRAGE) antwort_bis_ms_ = millis() + 400;
+        if (aktuell_.paket.size() > 3 && (aktuell_.paket[3] == ZUSTAND_FRAGE || aktuell_.paket[3] == ZEIT_FRAGE)) antwort_bis_ms_ = millis() + 400;
         // Bluetooth ueber das Dock: ist der Platz dort nicht verbunden, antwortet das Dock (typ 11) - kurz zuhoeren
         if (aktuell_.paket.size() > 3 && aktuell_.paket[3] == HID) antwort_abwarten(250);
         unterwegs_ = false;
@@ -820,6 +835,15 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
 #ifdef DD_HID
       if (hid_ != nullptr) hid_->weckruf(text);   // Remote ist gerade aufgewacht -> kurz schnell suchen (Scan-Stufen)
 #endif
+#ifdef DD_HA
+      // Dock ohne HA-Verbindung (2026-11-07): leere Antwort mit Pruefwert 0 - die Remote nimmt dann die Belegung
+      // "Ohne Home Assistant" (z. B. Lautstaerke per Infrarot). Alte Remotes lesen das als "Stand unveraendert".
+      if (api::global_api_server == nullptr || !api::global_api_server->is_connected()) {
+        einreihen_(mac, ZUSTAND, 0, 0, {}, {});
+        ESP_LOGI(TAG, "%s (%s) fragt - Dock ohne HA", von, text.c_str());
+        return;
+      }
+#endif
       auto it = zustaende_.find(text);
       if (it == zustaende_.end()) { ESP_LOGI(TAG, "%s (%s) fragt - noch kein Stand", von, text.c_str()); return; }
       const uint32_t pruef = stand_pruef(it->second);
@@ -834,11 +858,44 @@ void DockDirekt::verarbeiten_(const uint8_t mac[6], const uint8_t *d, size_t n) 
 #else
     if (typ == ZUSTAND) {   // Remote: Stand vom Dock
       antwort_bis_ms_ = 0;
+      // HA ueber das Dock erreichbar? (2026-11-07) Pruefwert 0 + leer = Dock ohne HA-Verbindung
+      dock_ha_ = !(text.empty() && param == 0);
+      dock_ha_ms_ = millis() | 1;
+      // Uhrzeit ueber das Dock (2026-11-06): im Dock-Betrieb kam die Zeit nur per WLAN (SNTP) - nach einem Kaltstart
+      // fehlte die Uhr, im Tiefschlaf laeuft sie ungenau. Ohne gueltige Zeit oder nach 1 h einmal nachfragen.
+      if (::time(nullptr) < 1700000000 || millis_seit_zeit_() > 3600000UL) {
+        if (s_zeit_ohne_antwort < 255) s_zeit_ohne_antwort++;
+        s_zeit_gefragt_t = (uint32_t) ::time(nullptr);
+        einreihen_(mac, ZEIT_FRAGE, 0, 0, {}, {});
+      }
       if (text.empty()) { ESP_LOGD(TAG, "Stand vom Dock %s: unveraendert", von); return; }
       ESP_LOGI(TAG, "Stand vom Dock %s (%u Byte)", von, (unsigned) text.size());
       stand_pruef_ = stand_pruef(text);
       stand_ms_ = millis();
       for (auto &f : zustand_cbs_) f(text);
+    }
+#endif
+    return;
+  }
+  if (typ == ZEIT_FRAGE || typ == ZEIT) {
+#ifdef DD_EMPFANG
+    if (typ == ZEIT_FRAGE) {   // Dock: Remote will die Uhrzeit (das Dock hat sie von HA)
+      struct timeval tv;
+      gettimeofday(&tv, nullptr);
+      if (tv.tv_sec < 1700000000) { ESP_LOGI(TAG, "%s fragt nach der Uhrzeit - hier noch keine", von); return; }
+      einreihen_(mac, ZEIT, (uint32_t) tv.tv_sec, (uint16_t) (tv.tv_usec / 1000), {}, {});
+      ESP_LOGD(TAG, "%s: Uhrzeit geschickt", von);
+    }
+#else
+    if (typ == ZEIT) antwort_bis_ms_ = 0;
+    if (typ == ZEIT && param >= 1700000000u) {   // Remote: Uhrzeit vom Dock (param = s, anzahl = ms)
+      const time_t vorher = ::time(nullptr);
+      struct timeval tv = {(time_t) param, (suseconds_t) (anzahl % 1000) * 1000};
+      settimeofday(&tv, nullptr);
+      s_zeit_ohne_antwort = 0;
+      s_zeit_gesetzt_t = param;
+      if (vorher < 1700000000) ESP_LOGI(TAG, "Uhrzeit vom Dock %s gesetzt", von);
+      else ESP_LOGD(TAG, "Uhrzeit vom Dock %s (Abweichung %d s)", von, (int) (vorher - (time_t) param));
     }
 #endif
     return;

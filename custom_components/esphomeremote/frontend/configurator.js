@@ -1948,6 +1948,17 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       s.durchsage[t.dataset.ds] = t.type === "checkbox" ? t.checked : t.dataset.ds === "lautstaerke" ? Number(t.value) : t.value;
       this._durchsageSpeichern(); return;
     }
+    if (t.dataset.stmh) {   // Menue-Taste gedrueckt halten
+      const m = s.stm[t.dataset.sid];
+      m.halten = { aktion: "none", kamera: "", groesse: "", ...(m.halten || {}), [t.dataset.stmh]: t.value };
+      this._stmSpeichern(t.dataset.sid).then(() => this._render()); return;
+    }
+    if (t.dataset.stmtitel) {   // Ueberschrift = Titel der Startseite (2026-11-06)
+      const m = s.stm[t.dataset.sid], pages = m.menu?.pages || [];
+      const p = pages.find((pg) => pg.id === m.menu?.start) || pages[0];
+      if (p) { p.title = t.value.trim(); this._stmSpeichern(t.dataset.sid).then(() => this._render()); }
+      return;
+    }
     if (t.dataset.stm) {
       const m = s.stm[t.dataset.sid];
       m[t.dataset.stm] = t.type === "checkbox" ? t.checked : ["groesse", "dauer"].includes(t.dataset.stm) ? Number(t.value) : t.value;
@@ -6466,7 +6477,8 @@ const FirmwareTab = {
         ? `<button class="icon sm" data-a="fw_schieben" data-w="hoch" data-job="${esc(x.job_id)}" title="Nach vorn" ${n === 0 ? "disabled" : ""}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
            <button class="icon sm" data-a="fw_schieben" data-w="runter" data-job="${esc(x.job_id)}" title="Nach hinten" ${n === wartend.length - 1 ? "disabled" : ""}><ha-icon icon="mdi:arrow-down"></ha-icon></button>
            <button class="icon sm" data-a="fw_raus" data-job="${esc(x.job_id)}" title="Aus der Warteschlange nehmen"><ha-icon icon="mdi:close"></ha-icon></button>`
-        : art === "fertig" ? `<button class="icon sm" data-a="fw_raus" data-job="${esc(x.job_id)}" title="Aus der Liste nehmen"><ha-icon icon="mdi:close"></ha-icon></button>` : "";
+        : art === "fertig" ? `<button class="icon sm" data-a="fw_raus" data-job="${esc(x.job_id)}" title="Aus der Liste nehmen"><ha-icon icon="mdi:close"></ha-icon></button>`
+        : art === "laeuft" ? `<button class="icon sm" data-a="fw_stopp" data-job="${esc(x.job_id)}" title="Abbrechen"><ha-icon icon="mdi:stop-circle-outline"></ha-icon></button>` : "";
       const stand = art === "laeuft" ? `${esc(x.schritt || "läuft")}${pct != null ? ` · ${pct} %` : ""}`
         : art === "wartet" ? `wartet · Platz ${x.platz}`
         : x.status === "fertig" ? `fertig ${zeit(x.t_ende)}` : `${esc(x.fehler || "Fehler")} ${zeit(x.t_ende)}`;
@@ -6924,6 +6936,11 @@ const FirmwareTab = {
         catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
         await this._fwLaden(); return true;
       }
+      case "fw_stopp":   // laufenden Auftrag abbrechen (2026-11-07)
+        if (!confirm("Laufenden Auftrag abbrechen? Ein halb geflashtes Gerät startet danach evtl. nicht – dann neu flashen.")) return "stop";
+        try { const r = await this._hass.callWS({ type: "esphomeremote/fw_abbrechen", job_id: t.dataset.job }); this._fwSchlangeSetzen(r.jobs, r.fertige); }
+        catch (e) { this.s.msg = { err: true, text: e.message || String(e) }; }
+        return true;
       case "fw_raus":
         try { const r = await this._hass.callWS({ type: "esphomeremote/fw_abbrechen", job_id: t.dataset.job }); this._fwSchlangeSetzen(r.jobs, r.fertige);
           if (fw.logId === t.dataset.job) { fw.logId = null; fw.logJob = null; } }
@@ -7603,8 +7620,10 @@ const EinstTab = {
     return `<details class="appbox" ${m.an ? "open" : ""}><summary><b><ha-icon icon="mdi:menu-open"></ha-icon> Menü auf dem Fernseher</b>${m.an ? " · an" : ""}</summary>
       <small class="note">Dasselbe Menü wie auf der Remote (Seiten mit Kacheln) – über dem laufenden Bild, bedient mit den Pfeilen, OK und Zurück der Fernbedienung. Braucht die Streamer-App ab 1.17.</small>
       <div class="ez"><span>Menü benutzen</span><label class="sw"><input type="checkbox" data-stm="an" data-sid="${esc(x.id)}" ${m.an ? "checked" : ""}></label></div>
-      <div class="ez"><span>Menü-Taste<small class="vtext">Taste der Streamer-Fernbedienung, die das Menü öffnet und schließt – sie gehört dann nur dem Menü. Gedrückt halten meldet das Ereignis <code>esphomeremote_streamer_key</code> (<code>press: long</code>) für eigene Automationen.</small></span>
+      <div class="ez"><span>Überschrift<small class="vtext">Steht oben im Menü (Titel der Startseite – die anderen Seiten unter „Menü bearbeiten“)</small></span><input data-stmtitel="1" data-sid="${esc(x.id)}" value="${esc(((m.menu?.pages || []).find((pg) => pg.id === m.menu?.start) || m.menu?.pages?.[0])?.title || "")}" placeholder="Menü" maxlength="60"></div>
+      <div class="ez"><span>Menü-Taste<small class="vtext">Taste der Streamer-Fernbedienung, die das Menü öffnet und schließt – sie gehört dann nur dem Menü. Gedrückt halten meldet das Ereignis <code>esphomeremote_streamer_key</code> (<code>press: long</code>).</small></span>
         <span>${m.taste ? `<code>${m.taste}</code> ` : ""}<button class="btn small ${lernt ? "primary" : ""}" data-a="stm_lernen" data-sid="${esc(x.id)}"><ha-icon icon="mdi:remote"></ha-icon>${lernt ? "Jetzt die Taste drücken …" : m.taste ? "Neu anlernen" : "Anlernen"}</button></span></div>
+      ${this._stmHaltenHtml(x, m, opt)}
       <div class="ez"><span>Größe<small class="vtext">Anteil des Bildschirms</small></span><select data-stm="groesse" data-sid="${esc(x.id)}">${[30, 40, 50, 60, 70, 80, 90].map((v) => opt(v, v + " %", m.groesse)).join("")}${opt(100, "Ganzer Bildschirm", m.groesse)}</select></div>
       <div class="ez"><span>Lage<small class="vtext">Ecken und Ränder ab Streamer-App 1.19</small></span><select data-stm="position" data-sid="${esc(x.id)}">${ST_LAGEN.map(([v, l]) => opt(v, l, m.position)).join("")}</select></div>
       <div class="ez"><span>Einblenddauer<small class="vtext">Schließt sich, wenn so lange keine Taste kommt</small></span><select data-stm="dauer" data-sid="${esc(x.id)}">${[[15, "15 s"], [30, "30 s"], [45, "45 s"], [60, "1 min"], [120, "2 min"], [300, "5 min"], [0, "Bleibt offen (bis Zurück)"]].map(([v, l]) => opt(v, l, m.dauer ?? 45)).join("")}</select></div>
@@ -7621,6 +7640,19 @@ const EinstTab = {
     } catch (e) { s.msg = { err: true, text: "Menü: " + (e.message || e) }; return false; }
   },
   // Kameras des Fernsehers dieses Streamers fuer die Kamera-Kacheln (statt der Klingeln der Remote)
+  // Menue-Taste gedrueckt halten (2026-11-06): einstellbar statt eigener Automation
+  _stmHaltenHtml(x, m, opt) {
+    const h = m.halten || {}, aktion = h.aktion || "none", sid = esc(x.id);
+    const kam = this._stmKameras(x.id);
+    const tvDa = Object.values(this._hass.states).some((z) => z.entity_id.startsWith("binary_sensor.esphomeremote_camera_tv") && z.attributes.streamer === x.id);
+    let html = `<div class="ez"><span>Menü-Taste gedrückt halten<small class="vtext">Das Ereignis für eigene Automationen kommt in jedem Fall.</small></span><select data-stmh="aktion" data-sid="${sid}">${opt("none", "Nichts weiter", aktion)}${opt("camera", "Kamera zeigen / ausblenden", aktion)}</select></div>`;
+    if (aktion === "camera") {
+      html += `<div class="ez"><span>Kamera<small class="vtext">Läuft schon eine, blendet Halten sie aus</small></span><select data-stmh="kamera" data-sid="${sid}">${opt("", "Zuletzt gezeigte", h.kamera || "")}${kam.map(([k, n]) => opt(esc(k), esc(n), h.kamera || "")).join("")}</select></div>
+      <div class="ez"><span>Größe der Kamera</span><select data-stmh="groesse" data-sid="${sid}">${[["", "Wie eingestellt"], ["small", "Klein"], ["medium", "Mittel"], ["large", "Groß"], ["almost_full", "Fast Vollbild"]].map(([v, l]) => opt(v, l, h.groesse || "")).join("")}</select></div>`
+        + (tvDa ? "" : `<small class="note warnz">Kein Fernseher nutzt diesen Streamer für die Kamera – unter Funktionen › Kamera auf dem Fernseher den Streamer wählen.</small>`);
+    }
+    return html;
+  },
   _stmKameras(sid) {
     const H = this._hass.states;
     const tvs = Object.values(H).filter((z) => z.entity_id.startsWith("binary_sensor.esphomeremote_camera_tv") && (z.attributes.cameras || []).length);
@@ -7633,7 +7665,7 @@ const EinstTab = {
   _stmPageHead(p) {
     const erreichbar = this._mReachable(), x = this.s.strm?.streamer.find((y) => "st:" + y.id === this.s.dev);
     return `<div class="phd">
-      <div class="inl"><input data-mp="title" value="${esc(p.title || "")}" placeholder="Titel"><input data-mp="id" value="${esc(p.id)}" title="Kennung (für Verweise und page: in der Aktion)" style="flex:0 0 30%"></div>
+      <div class="inl"><input data-mp="title" value="${esc(p.title || "")}" placeholder="Überschrift (oben im Menü)" title="Überschrift dieser Seite – steht oben im Menü auf dem Fernseher"><input data-mp="id" value="${esc(p.id)}" title="Kennung (für Verweise und page: in der Aktion)" style="flex:0 0 30%"></div>
       <div class="chk"><label class="sw small"><input type="checkbox" data-mp="flow" ${p.flow !== false ? "checked" : ""}><span>Automatisch anordnen (nach Reihenfolge)</span></label></div>
       <div class="inl btns"><button class="btn small" data-a="madditem"><ha-icon icon="mdi:plus"></ha-icon>Eintrag</button>
         <button class="btn small" data-a="maddsub" title="Neue Seite anlegen und hier verlinken"><ha-icon icon="mdi:file-tree"></ha-icon>Unterseite</button>
@@ -9219,6 +9251,15 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
   .palbg { padding:0; } .pal { max-height:100%; height:100%; border-radius:0; width:100%; border:0; }
   .main.editing .editor, .mmain.editing .editor { z-index:20; }
   .sbw { z-index:25; }
+}
+/* Handy (2026-11-07): nichts breiter als der Bildschirm - Auswahllisten so breit wie ihr laengster Eintrag, lange
+   Entitaets-Namen ohne Umbruch, Knopfzeilen ohne Umbruch schoben die Seite seitlich auf (Uebersicht, Einstellungen ...) */
+@container huelle (max-width: 760px) {
+  select { max-width:100%; min-width:0; }
+  .lbl, .lsensor, .opt, .aopt, .aopt > *, .inl { max-width:100%; min-width:0; }
+  .lbl, .opt, .inl { flex-wrap:wrap; }
+  .inl > .btn, .btn.small { white-space:normal; max-width:100%; }
+  .ht, .ht b, .ht small, .note, .hint, .hw2, small { overflow-wrap:anywhere; min-width:0; }
 }
 `;
 

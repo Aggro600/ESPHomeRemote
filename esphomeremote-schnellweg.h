@@ -44,6 +44,7 @@
 namespace schnellweg {
 
 inline volatile bool laeuft = false;
+inline uint32_t bootzeit_c = 0, bootzeit_e = 0;   // Start/Ende des Schnellwegs (ms, Fehlersuche Startzeit)
 inline uint32_t rail_ms = 0;          // Display-Rail eingeschaltet (millis, on_boot 1100) - Rest der Einschwingzeit vor dem Display
 inline volatile bool stopp = false;   // ESPHome startet seine Komponenten: Abfrage beenden
 inline volatile bool cb_da = false;
@@ -276,8 +277,22 @@ static void task(void *) {
     }
   }
   if (funk) funk_aus();
+  bootzeit_e = (uint32_t) (esp_timer_get_time() / 1000);
   laeuft = false;
   vTaskDelete(nullptr);
+}
+
+inline uint32_t bootzeit_loop = 0;   // ms: loopTask angelegt (= app_main fertig, danach baut setup() die Objekte)
+static void loop_messen(void *) {
+  for (int i = 0; i < 1500 && !bootzeit_loop; i++) {
+    if (xTaskGetHandle("loopTask") != nullptr) bootzeit_loop = (uint32_t) (esp_timer_get_time() / 1000);
+    else vTaskDelay(1);
+  }
+  vTaskDelete(nullptr);
+}
+__attribute__((constructor(103))) static void loop_messen_starten() {
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1)
+    xTaskCreatePinnedToCore(loop_messen, "loop_messen", 2048, nullptr, 2, nullptr, 0);
 }
 
 __attribute__((constructor(102))) static void starten() {
@@ -286,6 +301,9 @@ __attribute__((constructor(102))) static void starten() {
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT1) return;
   if (!(esp_sleep_get_ext1_wakeup_status() & ((1ULL << 8) | (1ULL << 2)))) return;   // Taste oder Bewegung
   laeuft = true;
+  bootzeit_c = (uint32_t) (esp_timer_get_time() / 1000);
+  // Kern 0: ESPHome (loopTask) laeuft auf Kern 1 (esphome/components/esp32/core.cpp) - so bremst der Funkstart hier
+  // dessen Start nicht
   xTaskCreatePinnedToCore(task, "schnellweg", 6144, nullptr, 10, nullptr, 0);
 }
 
@@ -308,3 +326,17 @@ inline std::string text() {
 }
 
 }  // namespace schnellweg
+
+// Startzeiten (2026-11-06, Fehlersuche "Aufwachen dauert 3,5 s"): Marken je on_boot-Stufe, am Ende eine Zeile ins
+// Weckprotokoll. ms seit dem Start der Firmware (esp_timer).
+namespace bootzeit {
+inline char buf[200];
+inline int len = 0;
+inline uint32_t hell_ms = 0;   // Display zum ersten Mal an (ms seit Start)
+inline uint32_t erste = 0;
+inline void mark(const char *n) {
+  if (!erste) erste = (uint32_t) (esp_timer_get_time() / 1000);
+  if (len >= (int) sizeof(buf) - 12) return;
+  len += snprintf(buf + len, sizeof(buf) - len, "%s:%u ", n, (unsigned) (esp_timer_get_time() / 1000));
+}
+}  // namespace bootzeit

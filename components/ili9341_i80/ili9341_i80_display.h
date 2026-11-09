@@ -82,6 +82,7 @@ class ILI9341I80Display : public display::DisplayBuffer {
  protected:
   void draw_absolute_pixel_internal(int x, int y, Color color) override;
   void write_init_sequence_();
+  uint32_t warte_ms_() const;
   void set_addr_window_(int x1, int y1, int x2, int y2);
   void flush_buffer_();
   // Blocks until the panel DMA has finished reading the caller's pixel buffer.

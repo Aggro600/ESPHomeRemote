@@ -215,6 +215,8 @@ class Streamer:
                 "code": taste.get("code"), "name": taste.get("name"),
                 "press": {"kurz": "short", "lang": "long", "lernen": "learn"}.get(taste.get("art"), taste.get("art")),
                 "source": taste.get("quelle"), "cec": bool(taste.get("cec"))})
+            if taste.get("art") == "lang":
+                hass.async_create_task(self._halten(taste.get("code")))
             return None
         # Einfaches Popup-Menue (App 1.16, Menue.java): {"menue": {id, wahl, text}} -> esphomeremote_streamer_menu_choice
         menue = daten.get("menue") if isinstance(daten, dict) else None
@@ -231,6 +233,24 @@ class Streamer:
             return None
         self._melden()
         return None
+
+    async def _halten(self, code) -> None:
+        """Menue-Taste gedrueckt halten -> was im Konfigurator eingestellt ist (Menue auf dem Fernseher)."""
+        sid = self.cfg.get("id")
+        m = (self.kd.data.get("streamer_menue") or {}).get(sid) or {}
+        h = m.get("halten") or {}
+        if not m.get("an") or m.get("taste") is None or str(m.get("taste")) != str(code) or h.get("aktion") != "camera":
+            return
+        f = self.hass.data.get(DOMAIN + "_funktionen")
+        tv = f.tv_fuer_streamer(sid) if f else None
+        if tv is None:
+            _LOGGER.warning("Streamer %s: Taste halten = Kamera, aber kein Fernseher mit diesem Streamer "
+                            "(Konfigurator > Funktionen > Kamera auf dem Fernseher)", self.cfg.get("name"))
+            return
+        data = {"tv": tv, "camera": h.get("kamera") or "last", "toggle": True}
+        if h.get("groesse"):
+            data["size"] = h["groesse"]
+        await self.hass.services.async_call(DOMAIN, "camera_tv", data, blocking=False)
 
     # ---- ADB (androidtv-Integration): HDMI-CEC, App beenden, Neustart
     async def adb(self, befehl: str) -> str:

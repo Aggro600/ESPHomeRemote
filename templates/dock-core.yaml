@@ -18,7 +18,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote-dock
-    version: "2026.11.6.1"
+    version: "2026.11.9.1"
   includes:
     - <esp_mac.h>
     - <esp_heap_caps.h>
@@ -83,6 +83,12 @@ logger:
           else if (t.size() < 200) { if (!t.empty()) t += " | "; t += message; }
           if (t.size() > 250) t.resize(250);
           if (!t.empty()) id(absturz_txt).publish_state(t);
+
+# Uhrzeit von HA (2026-11-06): das Dock gibt sie an Remotes im Dock-Betrieb weiter (dock_direkt typ 13/14) - die haben
+# sonst nur SNTP per WLAN, nach einem Kaltstart fehlte die Uhr.
+time:
+  - platform: homeassistant
+    id: ha_zeit
 
 api:
   id: api_server

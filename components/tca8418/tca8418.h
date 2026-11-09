@@ -48,6 +48,9 @@ class TCA8418Component : public Component, public i2c::I2CDevice {
   // FORK 2026-10-20: Taste, die die Remote aus dem Tiefschlaf geweckt hat (0 = keine/anderer Weckgrund) - gueltig ab
   // dem eigenen setup(). set_weck_verwerfen(true) vor dem ersten loop(): diese Taste weckt nur, wirkt aber nicht.
   uint8_t weck_taste() const { return this->weck_taste_; }
+  // 2026-11-06: gerade wird der beim Aufwachen gespeicherte Druck der Weck-Taste ausgewertet - er gehoert zu einem
+  // dunklen Display, auch wenn es beim Abarbeiten (Ende des Starts) schon an ist
+  bool weck_druck() const { return this->weck_druck_; }
   void set_weck_verwerfen(bool v) { this->weck_verwerfen_ = v; }
   // 2026-10-23: Weck-Taste wurde schon waehrend des Starts gesendet (ueber das Dock) - ihr Druecken und Loslassen
   // fallen in loop() weg wie beim Verwerfen.
@@ -90,6 +93,7 @@ class TCA8418Component : public Component, public i2c::I2CDevice {
   bool weck_erledigt_{false};
   uint8_t loslassen_ignorieren_{0};
   std::vector<uint8_t> weck_ereignisse_;   // FIFO-Inhalt vom Aufwachen, vor dem Einstellen gesichert (FORK 2026-10-20)
+  bool weck_druck_{false};
   bool fifo_wake_{false};   // FIFO vom Aufwachen wird gerade ausgewertet (FORK 2026-10-20)
   uint32_t debounce_ms_{12};
   uint32_t long_press_ms_{500};

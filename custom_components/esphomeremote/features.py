@@ -215,6 +215,13 @@ class Funktionen:
                 return tid, k
         return None
 
+    def tv_fuer_streamer(self, sid: str) -> str | None:
+        """Kennung des Fernsehers, dessen Kamera ueber diesen Streamer laeuft (Konfigurator > Funktionen)."""
+        for tid, k in self._tvs():
+            if str(k.get("streamer") or "") == sid:
+                return tid
+        return None
+
     def _tv_cfg(self, wahl: str) -> dict | None:
         t = self._tv(wahl)
         return t[1] if t else None
@@ -338,6 +345,9 @@ class Funktionen:
         if ov:
             k = {**k, **ov}
         z = self._zst(tid)
+        # toggle (2026-11-06): laeuft schon eine Kamera, blendet derselbe Aufruf sie aus (z. B. eine Taste fuer an/aus)
+        if call.data.get("toggle") and kam != "off" and z.get("sichtbar"):
+            kam = "off"
         if not self._kamera_bereit(k):
             _LOGGER.warning("Kamera auf dem TV: kein Fernseher eingestellt (Konfigurator > Funktionen)")
             return

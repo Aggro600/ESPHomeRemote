@@ -164,6 +164,10 @@
         "seconds": {
           "name": "Display time (this time only)",
           "description": "Optional – hide after this many seconds, 0 = until \"off\". Empty = Configurator setting."
+        },
+        "toggle": {
+          "name": "Toggle",
+          "description": "If a camera is already showing on this TV, hide it instead (one key for on/off)."
         }
       }
     },

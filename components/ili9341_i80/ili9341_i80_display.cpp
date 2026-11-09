@@ -1,3 +1,4 @@
+#include <esp_sleep.h>
 #include "ili9341_i80_display.h"
 #include "esphome/core/defines.h"
 #ifdef USE_LVGL
@@ -54,7 +55,9 @@ void ILI9341I80Display::setup() {
   // init sequence if it arrives before its power-on reset completes.
   // NOTE: pass this pin WITHOUT `inverted:` in YAML - the active-low
   // semantics live here (digital_write(false) = LOW = panel on).
-  if (this->enable_pin_ != nullptr && this->dunkel_starten_) {
+  // 2026-11-06: auch beim normalen Aufwachen aus dem Tiefschlaf nur halten - die Rail ist seit on_boot 1100 an und
+  // 300 ms eingeschwungen (on_boot 245.5). Das Aus/Ein mit 50 + 300 ms kostete beim Wecken ~0,35 s bis zum Display.
+  if (this->enable_pin_ != nullptr && (this->dunkel_starten_ || esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED)) {
     // FORK 2026-10-21: dunkel starten - die Versorgung ist seit on_boot 1100 an und eingeschwungen; das Aus/Ein hier
     // loeste im Panel einen Einschaltvorgang aus, bei dem es ~2 s nach dem Wecken kurz weisslich schimmerte. Nur
     // halten, der Neustart des Panels kommt per SWRESET unten.
@@ -140,7 +143,7 @@ void ILI9341I80Display::setup() {
   // table; SWRESET needs ~5ms but 150 is safe and only runs once at boot.
   if (this->reset_pin_ == nullptr) {
     esp_lcd_panel_io_tx_param(this->io_handle_, ILI9XXX_SWRESET, nullptr, 0);
-    delay(150);
+    delay(this->warte_ms_());
   }
 
   this->write_init_sequence_();
@@ -174,8 +177,15 @@ void ILI9341I80Display::write_init_sequence_() {
     if ((cmd == ILI9XXX_DISPON || cmd == ILI9XXX_SLPOUT) && this->dunkel_starten_) { addr += len; continue; }
     esp_lcd_panel_io_tx_param(this->io_handle_, cmd, len ? addr : nullptr, len);
     addr += len;
-    if (has_delay) delay(150);
+    if (has_delay) delay(this->warte_ms_());
   }
+}
+
+// Wartezeit nach SWRESET/SLPOUT/DISPON. Kaltstart: 150 ms wie bisher. Aufwachen aus dem Tiefschlaf (2026-11-06): 10 ms -
+// das Panel lag im Schlafmodus (SLPIN vor dem Tiefschlaf) bzw. hat seit on_boot 1100 Strom, das Datenblatt verlangt dann
+// 5 ms; die Beleuchtung ist bis zum fertigen Bild aus. Sparte ~0,4 s bis zum Display.
+uint32_t ILI9341I80Display::warte_ms_() const {
+  return esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED ? 10 : 150;
 }
 
 void ILI9341I80Display::set_addr_window_(int x1, int y1, int x2, int y2) {

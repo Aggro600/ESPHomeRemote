@@ -1,5 +1,39 @@
 # What's new · Was ist neu
 
+## 2026.11.9.1 (2026-11-09)
+
+**Clearer voice.** The display and key backlights were dimmed at 1 kHz, which whistled into the microphone (1 to 7 kHz). Now 20 kHz: the whine is gone – for voice search on the TV, the voice assistant and announcements.
+
+**Clock via the dock.** In dock mode the remote gets the time from the dock – even after a cold start without Wi-Fi.
+
+**Dock without Home Assistant.** If the dock has no connection to HA, the remote uses the *Without Home Assistant* key mapping. If HA is reachable through the dock, that counts as connected (before, e.g. the volume fell back to infrared after 15 s instead of using the speaker in HA).
+
+**Wakes up faster.** The display appears noticeably sooner after waking, the backlight no longer flashes briefly, and pressing the wake key again during start-up no longer counts as a double press.
+
+**Streamer.** Holding the menu key is configurable (e.g. show/hide a camera); `esphomeremote.camera_tv` takes `toggle` (if the camera is already showing, it is hidden).
+
+**Firmware workshop.** Running jobs can be cancelled – the build in the ESPHome Device Builder is stopped too.
+
+Update over Wi-Fi as usual: docks first, then the remotes.
+
+<details><summary>Deutsch</summary>
+
+**Klarere Sprache.** Display- und Tastenbeleuchtung wurden mit 1 kHz gedimmt – das pfiff ins Mikrofon (1 bis 7 kHz). Jetzt 20 kHz: das Pfeifen ist weg, bei der Sprachsuche am Fernseher, beim Sprachassistenten und bei Durchsagen.
+
+**Uhrzeit über das Dock.** Im Dock-Betrieb holt sich die Remote die Uhrzeit vom Dock – auch nach einem Kaltstart ohne WLAN.
+
+**Dock ohne Home Assistant.** Hat das Dock keine Verbindung zu HA, nimmt die Remote die Belegung *Ohne Home Assistant*. Ist HA über das Dock erreichbar, gilt das als verbunden (vorher ging z. B. die Lautstärke nach 15 s per Infrarot statt über den Lautsprecher in HA).
+
+**Schneller wach.** Das Display ist beim Aufwachen spürbar früher da, die Beleuchtung blitzt nicht mehr kurz auf, und nochmaliges Drücken der Weck-Taste während des Starts zählt nicht mehr als Doppeldruck.
+
+**Streamer.** Menü-Taste gedrückt halten ist einstellbar (z. B. Kamera zeigen/ausblenden); `esphomeremote.camera_tv` kennt `toggle` (läuft die Kamera schon, wird sie ausgeblendet).
+
+**Firmware-Werkstatt.** Laufende Aufträge lassen sich abbrechen – der Bau im ESPHome Device Builder wird mit beendet.
+
+Update wie gewohnt über WLAN: erst die Docks, dann die Remotes.
+
+</details>
+
 ## 2026.11.6.1 (2026-11-06)
 
 **Announcements.** New remote function *Announcement while held* (long press only): hold the key, speak, release – Home Assistant plays it on a speaker of your choice, e.g. a Chromecast group, with a chime and the volume raised. Settings in the configurator under *Functions → Announcement*: on/off, speaker, volume for the announcement (restored afterwards), chime. Up to about 25 s. The recording is cleaned up: interference from the remote's electronics (whine at 1 kHz and its multiples) is filtered out, and the clicks when the microphone starts and when you release the key are cut off.

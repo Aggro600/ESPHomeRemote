@@ -104,6 +104,169 @@ api:
               id(mic_test_text).publish_state(b);
               id(apply_mic_power).execute();
             });
+    # Mikrofon-Spektrum bei verschiedener Beleuchtungs-PWM (2026-11-08): Pfeifen bei 1, 2, 3 ... kHz kommt evtl. von den
+    # beiden ledc-Ausgaengen (ohne frequency: = 1000 Hz). Setzt beide auf pwm_hz (0 = unveraendert), verwirft 1 s
+    # (Einschwingen), nimmt 2 s auf und loggt den Pegel (dB, Hann-Fenster, 50-ms-Bloecke gemittelt) bei 0,5 ... 7,5 kHz.
+    # Ganze kHz = Pfeifen, halbe = Nachbar zum Vergleich. Ausgabe "10:-62" = 1,0 kHz -62 dB. Display bleibt dabei an.
+    # Stoerton-Suche (2026-11-09): wie mic_spektrum, aber feines Raster (10 Hz, 100-ms-Bloecke) von f_von bis f_bis und
+    # die 6 staerksten Spitzen ueber dem Grundrauschen (Median). wecken=false laesst das Display, wie es ist;
+    # touch_aus=true haelt die Touch-Abfrage waehrend der Aufnahme an. Ausgabe "Grund -106 | 6000:-91 ...".
+    - service: mic_suche
+      variables: {wecken: bool, touch_aus: bool, f_von: int, f_bis: int}
+      then:
+        - lambda: |-
+            struct Such { volatile bool an = false; int32_t *buf = nullptr; volatile uint32_t n = 0, skip = 0; bool touch = false; };
+            static Such *su = new Such();
+            static bool reg = false;
+            if (su->buf == nullptr)
+              su->buf = (int32_t *) heap_caps_malloc(32000 * sizeof(int32_t), MALLOC_CAP_SPIRAM);
+            if (su->buf == nullptr) { ESP_LOGE("suche", "kein PSRAM fuer den Puffer"); return; }
+            if (!reg) {
+              reg = true;
+              id(remote_mic)->add_data_callback([](const std::vector<uint8_t> &d) {
+                if (!su->an) return;
+                for (size_t i = 0; i + 3 < d.size(); i += 4) {
+                  if (su->skip) { su->skip--; continue; }
+                  if (su->n >= 32000) { su->an = false; return; }
+                  int32_t s; memcpy(&s, &d[i], 4);
+                  su->buf[su->n++] = s >> 8;
+                }
+              });
+            }
+            if (wecken) id(wake_backlight).execute();
+            su->touch = touch_aus;
+            if (touch_aus) id(main_touch)->stop_poller();
+            su->n = 0;
+            su->skip = 16000;
+            id(mic_power)->turn_on();
+            su->an = true;
+            id(remote_mic)->start();
+            id(mic_test_text).publish_state("Suche laeuft ...");
+            const int von = std::max(100, (int) f_von);
+            const int bis = std::min(7990, std::max(von + 10, (int) f_bis));
+            App.scheduler.set_timeout(id(remote_mic), "mic_suche", 3800, [von, bis]() {
+              su->an = false;
+              id(remote_mic)->stop();
+              id(apply_mic_power).execute();
+              if (su->touch) id(main_touch)->start_poller();
+              const int B = 1600;
+              static float *win = nullptr;
+              if (win == nullptr) {
+                win = (float *) heap_caps_malloc(B * sizeof(float), MALLOC_CAP_SPIRAM);
+                for (int i = 0; i < B; i++) win[i] = 0.5f - 0.5f * cosf(2.0f * (float) M_PI * i / (B - 1));
+              }
+              const uint32_t n = su->n;
+              const int k = (bis - von) / 10 + 1;
+              std::vector<float> db(k);
+              for (int j = 0; j < k; j++) {
+                const int f = von + j * 10;
+                const float c = 2.0f * cosf(2.0f * (float) M_PI * f / 16000.0f);
+                double sum = 0;
+                int bl = 0;
+                for (uint32_t b0 = 0; b0 + B <= n; b0 += B, bl++) {
+                  float s1 = 0, s2 = 0;
+                  for (int i = 0; i < B; i++) {
+                    const float s0 = su->buf[b0 + i] * (1.0f / 8388608.0f) * win[i] + c * s1 - s2;
+                    s2 = s1;
+                    s1 = s0;
+                  }
+                  sum += (double) s1 * s1 + (double) s2 * s2 - (double) c * s1 * s2;
+                }
+                const double p = bl ? sum / bl / ((B / 2.0) * (B / 2.0)) : 0;
+                db[j] = 10 * log10(p + 1e-15);
+                if ((j & 15) == 0) App.feed_wdt();
+              }
+              std::vector<float> sort = db;
+              std::nth_element(sort.begin(), sort.begin() + k / 2, sort.end());
+              const float grund = sort[k / 2];
+              // lokale Maxima, absteigend; Nachbarn innerhalb 40 Hz zaehlen nicht doppelt
+              std::vector<std::pair<float, int>> sp;
+              for (int j = 1; j + 1 < k; j++)
+                if (db[j] >= db[j - 1] && db[j] >= db[j + 1] && db[j] > grund + 6) sp.push_back({db[j], von + j * 10});
+              std::sort(sp.begin(), sp.end(), [](auto &a, auto &b) { return a.first > b.first; });
+              char out[250];
+              int o = snprintf(out, sizeof(out), "%d-%d Hz, Grund %.0f |", von, bis, grund);
+              std::vector<int> genommen;
+              for (auto &x : sp) {
+                bool nah = false;
+                for (int g : genommen) if (abs(g - x.second) <= 40) nah = true;
+                if (nah) continue;
+                genommen.push_back(x.second);
+                o += snprintf(out + o, sizeof(out) - o, " %d:%.0f", x.second, x.first);
+                if (genommen.size() >= 6 || o > (int) sizeof(out) - 14) break;
+              }
+              ESP_LOGI("suche", "%s", out);
+              id(mic_test_text).publish_state(out);
+            });
+    - service: mic_spektrum
+      variables: {pwm_hz: int}
+      then:
+        - script.execute: wake_backlight
+        - lambda: |-
+            struct Spek { volatile bool an = false; int32_t *buf = nullptr; volatile uint32_t n = 0, skip = 0; };
+            static Spek *sp = new Spek();
+            static bool reg = false;
+            if (sp->buf == nullptr)
+              sp->buf = (int32_t *) heap_caps_malloc(32000 * sizeof(int32_t), MALLOC_CAP_SPIRAM);
+            if (sp->buf == nullptr) { ESP_LOGE("spektrum", "kein PSRAM fuer den Puffer"); return; }
+            if (!reg) {
+              reg = true;
+              id(remote_mic)->add_data_callback([](const std::vector<uint8_t> &d) {
+                if (!sp->an) return;
+                for (size_t i = 0; i + 3 < d.size(); i += 4) {
+                  if (sp->skip) { sp->skip--; continue; }
+                  if (sp->n >= 32000) { sp->an = false; return; }
+                  int32_t s; memcpy(&s, &d[i], 4);
+                  sp->buf[sp->n++] = s >> 8;
+                }
+              });
+            }
+            if (pwm_hz > 0) {
+              id(backlight_pwm)->update_frequency(pwm_hz);
+              id(button_backlight_pwm)->update_frequency(pwm_hz);
+            }
+            sp->n = 0;
+            sp->skip = 16000;
+            id(mic_power)->turn_on();
+            sp->an = true;
+            id(remote_mic)->start();
+            id(mic_test_text).publish_state("Spektrum laeuft ...");
+            App.scheduler.set_timeout(id(remote_mic), "mic_spektrum", 3800, [pwm_hz]() {
+              sp->an = false;
+              id(remote_mic)->stop();
+              id(apply_mic_power).execute();
+              static float win[800];
+              static bool win_ok = false;
+              if (!win_ok) {
+                for (int i = 0; i < 800; i++) win[i] = 0.5f - 0.5f * cosf(2.0f * (float) M_PI * i / 799.0f);
+                win_ok = true;
+              }
+              const uint32_t n = sp->n;
+              double rms = 0;
+              for (uint32_t i = 0; i < n; i++) { const double v = sp->buf[i] / 8388608.0; rms += v * v; }
+              rms = n ? sqrt(rms / n) : 0;
+              char out[250];
+              int o = snprintf(out, sizeof(out), "PWM %d Hz, %u Samples, RMS %.1f dB |", pwm_hz, (unsigned) n,
+                               20 * log10(rms + 1e-12));
+              for (int f = 500; f <= 7500 && o < (int) sizeof(out) - 10; f += 500) {
+                const float c = 2.0f * cosf(2.0f * (float) M_PI * f / 16000.0f);
+                double sum = 0;
+                int bl = 0;
+                for (uint32_t b0 = 0; b0 + 800 <= n; b0 += 800, bl++) {
+                  float s1 = 0, s2 = 0;
+                  for (int i = 0; i < 800; i++) {
+                    const float s0 = sp->buf[b0 + i] * (1.0f / 8388608.0f) * win[i] + c * s1 - s2;
+                    s2 = s1;
+                    s1 = s0;
+                  }
+                  sum += (double) s1 * s1 + (double) s2 * s2 - (double) c * s1 * s2;
+                }
+                const double p = bl ? sum / bl / (400.0 * 400.0) : 0;   // auf Sinus-Amplitude normiert (Hann: Summe 400)
+                o += snprintf(out + o, sizeof(out) - o, " %d:%.0f", f / 100, 10 * log10(p + 1e-15));
+              }
+              ESP_LOGI("spektrum", "%s", out);
+              id(mic_test_text).publish_state(out);
+            });
     - service: ram_messen
       variables: {schritt: string}
       then:
@@ -153,3 +316,29 @@ api:
               if (z.find_first_not_of(" \t\r") != std::string::npos) id(tunnel).meldung(z);
               a = e + 1;
             }
+
+# Dauerhaft online fuer Fernwartung (2026-11-08, Nutzer unterwegs): haelt den Testmodus (kein Tiefschlaf, WLAN an, auch im
+# Dock-Betrieb) ohne das 12-h-Ende aktiv. Mit diesem Schalter abschaltbar; danach endet der Testmodus normal.
+switch:
+  - platform: template
+    id: dev_dauer_online
+    name: "Entwicklung: dauerhaft online"
+    icon: "mdi:wifi-lock"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: 'id(testmodus) = true; id(testmodus_ab) = millis() | 1; ESP_LOGI("test", "Dauerhaft online AN");'
+      - script.execute: apply_power
+    turn_off_action:
+      - lambda: 'ESP_LOGW("test", "Dauerhaft online AUS - Testmodus endet mit seinen 12 h");'
+
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          if (!id(dev_dauer_online).state) return;
+          const bool war = id(testmodus);
+          id(testmodus) = true;
+          id(testmodus_ab) = millis() | 1;
+          if (!war) { ESP_LOGI("test", "Dauerhaft online: Testmodus wieder an"); id(apply_power).execute(); }

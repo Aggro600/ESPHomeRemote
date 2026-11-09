@@ -189,6 +189,12 @@ camera_tv:
           min: 0
           max: 3600
           unit_of_measurement: s
+    toggle:
+      name: Toggle
+      description: If a camera is already showing on this TV, hide it instead (one key for on/off).
+      required: false
+      selector:
+        boolean:
 
 camera_size:
   name: Kamera-Größe auf dem Fernseher

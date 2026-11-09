@@ -61,9 +61,10 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.6.1"
+    version: "2026.11.9.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
+    - <esp_flash.h>
     - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
     - esphomeremote-log-buffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
     - esphomeremote-pm.h
@@ -105,6 +106,7 @@ esphome:
     # I2C freigegeben hat. Danach: beim Aufwachen per Taste/Bewegung nur die Kurzfassung der Belegung laden.
     - priority: 9000
       then:
+        - lambda: 'bootzeit::mark("9000");'
         - lambda: |-
             schnellweg::abwarten();
             const bool taste = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1 &&
@@ -112,6 +114,7 @@ esphome:
             id(tk_cfg).set_schnell_laden(taste);
     - priority: 1100
       then:
+        - lambda: 'bootzeit::mark("1100");'
         - lambda: |-
             gpio_deep_sleep_hold_dis();
             const gpio_num_t held[] = {
@@ -137,6 +140,9 @@ esphome:
             for (auto p : held) gpio_hold_dis(p);
             rtc_gpio_hold_dis(GPIO_NUM_9);
             gpio_set_level(GPIO_NUM_9, 1);
+            // Aufblitzen beim Aufwachen (2026-11-06): ledc (Stufe 800) startet den Pin "an" - bis Stufe 795 ihn ausschaltet,
+            // leuchtete ~70 ms das noch leere Panel. Pin bis dahin festhalten (HIGH = aus): Aenderungen greifen erst beim Loesen.
+            gpio_hold_en(GPIO_NUM_9);
             // Weck-Taste frueh uebers Dock (2026-10-23): bei Tasten-Wecken das WLAN erst NACH dem Versand starten (on_boot
             // 247). Sonst sendet die Remote auf dem Kanal, auf dem sie sich gerade verbindet (FRITZ!Box) - das Dock am
             // Repeater hoert dort nicht, und uebers Heimnetz ging es erst nach ~4 s. So funkt dock_direkt selbst auf dem
@@ -166,6 +172,7 @@ esphome:
     # Taste schickt sie sofort wieder schlafen (Nutzerwunsch 2026-09-28, s. esphomeremote-pm.h).
     - priority: 950
       then:
+        - lambda: 'bootzeit::mark("950");'
         - lambda: |-
             // Tiefentladeschutz: war der Akku leer, nur mit Ladekabel oder erholter Zelle starten.
             if (g_akku_leer == AKKU_LEER_MAGIC) {
@@ -222,6 +229,7 @@ esphome:
             ESP_LOGI("aus", "Eingeschaltet (war heruntergefahren)");
     - priority: 900
       then:
+        - lambda: 'bootzeit::mark("900");'
         # Weckgrund festhalten, bevor irgendetwas anderes laeuft.
         - lambda: |-
             akkustat::aufgewacht();   // Akku-Statistik: Tiefschlaf-Dauer aufsummieren
@@ -262,11 +270,13 @@ esphome:
     # die Remote beim Aufwachen abstuerzen und Kopplungen verlorengehen - die Tastatur startet wieder bei -200.)
     - priority: 795
       then:
+        - lambda: 'bootzeit::mark("795");'
         - lambda: |-
             // Display-Beleuchtung sofort aus (2026-10-21): der PWM-Ausgang (Stufe 800) startet "an", die Licht-Komponente
             // schreibt ihren Zustand erst nach dem kompletten Start (~3,7 s) - bis dahin leuchtete das noch weisse Panel,
             // auch wenn die Remote dunkel aufwachen sollte. An macht sie wake_backlight.
             id(backlight_pwm).set_level(0.0f);
+            gpio_hold_dis(GPIO_NUM_9);   // jetzt ledc ueberlassen (steht auf aus), s. on_boot 1100
             // Bluetooth-Optionen VOR dem fruehen Start der Tastatur (Stufe 790, s. espidf_ble_keyboard: start_prioritaet)
             if (!id(kb_ziffern)) { id(voll_slots) |= 0x0F; id(kb_ziffern) = true; }   // alter Schalter "Buchstaben"
             id(kb).set_kb_digits(true);
@@ -283,33 +293,51 @@ esphome:
     # Bluetooth/Infrarot/433 MHz ueber ein Dock belegt sind (tasten_konfig::weck_frueh); alles andere wie bisher.
     - priority: 248
       then:
+        - lambda: 'bootzeit::mark("248");'
         - script.execute: weck_frueh_pruefen
     # Volle Belegung direkt nach der Weck-Taste (2026-11-05: beim Aufwachen kam zuerst nur die Kurzfassung) - vor dem
     # Menue (-100), das sie braucht
     - priority: 247.9
       then:
+        - lambda: 'bootzeit::mark("247.9");'
         - lambda: 'id(tk_cfg).voll_laden();'
     # Rest der 300 ms Einschwingzeit von Panel-Regler und Touch (s. on_boot 1100) - direkt vor dem Display (245)
     - priority: 245.5
       then:
+        - lambda: 'bootzeit::mark("245.5");'
         - lambda: 'while (millis() - schnellweg::rail_ms < 300) delay(5);'
     # Noch einmal nach Display/Touch und vor dem Ende des Starts: Taste erst nach dem Hochnehmen gedrueckt (2026-10-23)
     - priority: 244.4
       then:
+        - lambda: 'bootzeit::mark("244.4");'
         - script.execute: weck_frueh_pruefen
     - priority: 101
       then:
+        - lambda: 'bootzeit::mark("101");'
         - script.execute: weck_frueh_pruefen
     # WLAN nach dem fruehen Versand der Weck-Taste starten (s. on_boot 1100)
     # Bis dahin funkt dock_direkt auf dem Kanal des Docks (Tasten, Stand, Werte sofort); 4 s nach dem Start.
     # Schnellweg (2026-11-05): Ergebnis ins Weckprotokoll
     - priority: -250
       then:
+        - lambda: 'bootzeit::mark("-250");'
         - lambda: |-
             const std::string t = schnellweg::text();
             if (!t.empty()) { ESP_LOGI("schnellweg", "%s", t.c_str()); weck_log(t.c_str()); }
+            // Startzeiten (2026-11-06): ganze Liste nur ins Log, ins Weckprotokoll nur "Display nach x ms"
+            if (bootzeit::len) ESP_LOGI("bootzeit", "%s (Schnellweg %u-%u ms)", bootzeit::buf, (unsigned) schnellweg::bootzeit_c, (unsigned) schnellweg::bootzeit_e);
+            if (schnellweg::bootzeit_loop) { char b[64]; snprintf(b, sizeof(b), "Start: app_main fertig %u ms, 9000 bei %u ms", (unsigned) schnellweg::bootzeit_loop, (unsigned) bootzeit::erste); weck_log(b); }
+            if (bootzeit::hell_ms) { char b[40]; snprintf(b, sizeof(b), "Display nach %u ms", (unsigned) bootzeit::hell_ms); weck_log(b); }
+            // Flash-Chip (2026-11-07): Remote 2 hing mit Quad, Gast/Remote 1 nicht - Hersteller vergleichen (nur nach echtem Start)
+            if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
+              uint32_t fid = 0;
+              esp_flash_read_id(nullptr, &fid);
+              char b[48]; snprintf(b, sizeof(b), "Flash-Chip %06x", (unsigned) fid);
+              ESP_LOGI("flash", "%s", b); weck_log(b);
+            }
     - priority: -150
       then:
+        - lambda: 'bootzeit::mark("-150");'
         - delay: 4s
         - lambda: |-
             if (!id(wlan_nach_weck)) return;
@@ -324,6 +352,7 @@ esphome:
             wifi::global_wifi_component->enable();
     - priority: 246
       then:
+        - lambda: 'bootzeit::mark("246");'
         # Dunkel aufwachen? VOR dem Display-Start (245) entscheiden (2026-10-21): Tastenchip und Tasten-Konfiguration (DATA)
         # sind schon da. Das Panel startet dann gar nicht erst (set_dunkel_starten) - vorher schimmerte es beim Einrichten
         # ~1 s weiss, und apply_brightness (on_boot 100) schaltete die Beleuchtung ein.
@@ -339,6 +368,7 @@ esphome:
               dunkel = (st & (1u << 2)) && !(st & ((1u << 8) | (1u << 1))) && id(motion_mode) == 0 && !id(klopf_wake);
             }
             id(dunkel_start) = dunkel;
+            { char b[48]; snprintf(b, sizeof(b), "Weck-Taste %u Pins 0x%x dunkel %d @%u", wk, (unsigned) id(weck_pins), dunkel ? 1 : 0, (unsigned) millis()); weck_log(b); }
             if (dunkel) {
               id(disp_off) = true;
               id(panel_schlaeft) = true;   // wake_backlight weckt das Panel dann mit exit_sleep()
@@ -346,7 +376,12 @@ esphome:
             }
     - priority: 244.5
       then:
-        - lambda: 'delay(300);'
+        - lambda: 'bootzeit::mark("244.5");'
+        # Touch braucht 300 ms Strom vor dem Start. Kaltstart: das Display hat die Rail eben aus/ein geschaltet -> 300 ms.
+        # Aufwachen (2026-11-06): die Rail ist seit on_boot 1100 an - nur den Rest abwarten (meist 0, sparte 0,3 s)
+        - lambda: |-
+            if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) delay(300);
+            else while (millis() - schnellweg::rail_ms < 300) delay(5);
     # WLAN-Schnellstart aus: feste IP vor dem WLAN-Start (Prioritaet 250) entfernen -> DHCP.
     # Boot-Zeitplan (Messung 2026-09-30): millis() je Setup-Stufe -> Sensor "Boot-Zeitplan"
     # Flex-Layouts der gemeinsamen Styles st_fx_* / st_grow (siehe lvgl: style_definitions).
@@ -357,6 +392,7 @@ esphome:
     # genau in der Zeit, in der das WLAN schon verbunden war, ESPHome es aber nicht melden konnte.
     - priority: 450
       then:
+        - lambda: 'bootzeit::mark("450");'
         - lambda: |-
             struct Fx { lv_style_t *s; lv_flex_flow_t flow; lv_flex_align_t main, cross; };
             const Fx fx[] = {
@@ -382,6 +418,7 @@ esphome:
     # WLAN-Start, siehe deren setup_priority.)
     - priority: 260
       then:
+        - lambda: 'bootzeit::mark("260");'
         - lambda: |-
             if (!id(wifi_fest)) {
               wlan_zugriff::dhcp_statt_fester_ip();
@@ -389,6 +426,7 @@ esphome:
             }
     - priority: -100
       then:
+        - lambda: 'bootzeit::mark("-100");'
         - script.execute: zustand_holen
         - lambda: |-
             // IR-Kanaele nach dem Start abschalten (nur bei Bedarf an, s. esphomeremote-rmt.h)
@@ -439,6 +477,7 @@ esphome:
             }
     - priority: 100
       then:
+        - lambda: 'bootzeit::mark("100");'
         # Nach dem Setup aller Komponenten. Echter Start (nicht Aufwachen aus dem Tiefschlaf): Testmodus aus.
         - if:
             condition: {lambda: 'return id(boot_grace);'}
@@ -599,6 +638,9 @@ remote_receiver:
 esp32:
   board: esp32-s3-devkitc1-n16r8
   flash_size: 16MB
+  # Flash bleibt Dual (2026-11-07): Quad war bei Gast/Remote 1 ~0,35 s schneller beim Aufwachen, Remote 2 (gleicher Chip
+  # 464018) hing damit bzw. das Display ging staendig an und aus. Alle Remotes gleich -> Dual.
+  flash_mode: dio
   framework:
     type: esp-idf
     # Pflicht fuer espidf_ble_keyboard: der treibt Bluedroid direkt an und
@@ -1620,6 +1662,18 @@ dock_direct:
           wlan_zugriff::fenster(std::max<int>(60, std::min<int>(28800, (int) (d["wd"] | 180))), d["wg"] | "Konfigurator");
           id(wartungsfenster)->execute();
         }
+        // Keine Uhrzeit (2026-11-06): die kommt im Dock-Betrieb vom Dock (dock_direkt typ 13/14). Antwortet es zweimal
+        // nicht (altes Dock, Dock ohne HA-Zeit), kurz ein WLAN-Fenster "Uhrzeit" (90 s, SNTP), hoechstens 3x.
+        {
+          static RTC_DATA_ATTR uint8_t uhr_versuche = 0;
+          if (id(sntp_time).now().is_valid()) uhr_versuche = 0;
+          else if (id(direkt).zeit_ohne_antwort() >= 2 && uhr_versuche < 3 && (int32_t) (millis() - id(wartung_bis)) >= 0) {
+            uhr_versuche++;
+            ESP_LOGI("wartung", "Keine Uhrzeit - WLAN kurz an (Versuch %u)", (unsigned) uhr_versuche);
+            wlan_zugriff::fenster(90, "Uhrzeit");
+            id(wartungsfenster)->execute();
+          }
+        }
         if (!d["wa"].isNull()) {
           static uint32_t wa_nr = 0;
           const uint32_t nr = d["wa"] | 0u;
@@ -1983,12 +2037,16 @@ touchscreen:
           id(stopp_tipp) = false;
           if (id(cur_page) == 36) lv_obj_add_flag(id(tt_ring), LV_OBJ_FLAG_HIDDEN);
 output:
+  # 20 kHz statt ESPHome-Standard 1 kHz (2026-11-08): die 1-kHz-PWM beider Beleuchtungen pfiff ins Mikrofon (1, 2 ... 7 kHz,
+  # bis 37 dB ueber Grund; gemessen mit mic_spektrum auf Remote Gast). Bei 20 kHz ist nichts mehr messbar.
   - platform: ledc
     id: backlight_pwm
     pin: {number: GPIO9, inverted: true}
+    frequency: 20000Hz
   - platform: ledc
     id: button_backlight_pwm
     pin: {number: GPIO46}
+    frequency: 20000Hz
 
 light:
   - platform: monochromatic
@@ -2819,7 +2877,9 @@ script:
           else:
             - delay: !lambda 'return id(sofort_aus) ? 0 : (uint32_t) remote_strom::eff_disp_s(id(disp_timeout_s), id(low_bat)) * 1000;'
       # Von selbst ausgegangen (nicht bewusst ausgeschaltet): die naechsten 3 s weckt jede Taste (2026-10-07)
-      - lambda: 'id(disp_aus_ms) = id(sofort_aus) ? 0 : millis();'
+      - lambda: |-
+          if (millis() < 20000) { char b[40]; snprintf(b, sizeof(b), "Display aus (%s) @%u", id(sofort_aus) ? "sofort" : "Zeit", (unsigned) millis()); weck_log(b); }
+          id(disp_aus_ms) = id(sofort_aus) ? 0 : millis();
       - globals.set: {id: sofort_aus, value: "false"}
       - light.turn_off: display_backlight
       - light.turn_off: button_backlight
@@ -3372,6 +3432,7 @@ script:
       # wieder schnell, damit ein gerade eingeschaltetes Geraet die Remote gleich findet.
       - lambda: |-
           id(kb).adv_fast_again();
+          if (esp_timer_get_time() < 15000000LL && !bootzeit::hell_ms) { bootzeit::mark("hell"); bootzeit::hell_ms = (uint32_t) (esp_timer_get_time() / 1000); }
           if (id(disp_off)) {
             weck_log("Display an");
             // Tastatur & Co. (2026-10-26): den naechsten Stand neu bewerten - ist die Streamer-Tastatur offen, kommt sie
@@ -6522,8 +6583,10 @@ tca8418:
         # Zustand VOR dem Wecken festhalten - wake_backlight setzt disp_off
         # sofort zurueck.
         - lambda: |-
-            id(key_was_dark) = id(disp_off);
-            if (id(disp_off)) { char b[24]; snprintf(b, sizeof(b), "Taste %d", keycode); weck_log(b); }
+            // Der gespeicherte Weck-Druck (2026-11-06) kommt erst am Ende des Starts, wenn das Display schon an ist - er
+            // zaehlt trotzdem als Druck bei dunklem Display (sonst oeffnete das Wecken mit der Menuetaste gleich das Menue)
+            id(key_was_dark) = id(disp_off) || id(keypad).weck_druck();
+            if (id(key_was_dark)) { char b[24]; snprintf(b, sizeof(b), "Taste %d", keycode); weck_log(b); }
         # "Tasten wecken" = Nur Menue-Taste: andere Tasten lassen das Display aus, bekommen aber
         # die schnelle Bluetooth-Verbindung, damit ihr Befehl ohne Verzoegerung ankommt.
         - if:

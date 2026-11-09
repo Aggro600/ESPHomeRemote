@@ -307,6 +307,7 @@ async def _dash_job(hass: HomeAssistant, j: dict, cmd: str, args: dict) -> bool:
     firmware/install legt zwei Auftraege an: bauen (Antwort) und hochladen (depends_on = Bau-Auftrag) - beide verfolgen."""
     async with Dash(hass) as d:
         r = await d.befehl(cmd, args)
+    j["dash_job"] = r["job_id"]
     if not await _folgen(hass, j, r["job_id"], r.get("status")):
         return False
     if cmd != "firmware/install":
@@ -321,6 +322,7 @@ async def _dash_job(hass: HomeAssistant, j: dict, cmd: str, args: dict) -> bool:
     if up is None:
         j["fehler"] = "Hochladen wurde nicht gestartet"
         return False
+    j["dash_job"] = up["job_id"]
     j["schritt"] = j["schritt"].replace("bauen und installieren", "hochladen")
     j["progress"] = None
     return await _folgen(hass, j, up["job_id"], up.get("status"))
@@ -555,6 +557,7 @@ def _offen(datei: str) -> dict | None:
 # (strikt der Reihe nach) wartet jeder Auftrag, bis er vorne steht und nichts laeuft.
 _reihe: list[str] = []
 _lauf: dict = {"id": None}
+_tasks: dict = {}   # job_id -> laufender asyncio-Task (zum Abbrechen)
 _bed: asyncio.Condition | None = None
 _FELDER = ("job_id", "titel", "dateien", "port", "art", "status", "schritt", "progress", "fehler", "t0", "t_start", "t_ende")
 
@@ -601,9 +604,17 @@ async def _ablauf(hass: HomeAssistant, j: dict, geraete: list[dict], port: str) 
             return
         _lauf["id"] = j["job_id"]
     j["status"], j["schritt"], j["t_start"] = "laeuft", "Startet", time.time()
+    _tasks[j["job_id"]] = asyncio.current_task()
     try:
         await _ablauf_jetzt(hass, j, geraete, port)
+    except asyncio.CancelledError:
+        # Laufenden Auftrag abgebrochen (2026-11-07, Konfigurator "Abbrechen") - nur dann schlucken, sonst (HA beendet) weiterreichen
+        if not j.get("abgebrochen"):
+            raise
+        j.update(status="fehler", fehler="Abgebrochen", schritt="Abgebrochen", fertig=True, aktuell=None)
+        _log(j, "Abgebrochen")
     finally:
+        _tasks.pop(j["job_id"], None)
         j["t_ende"] = time.time()
         _aufraeumen()
         async with c:
@@ -842,6 +853,11 @@ async def remote_update(hass: HomeAssistant, geraet: str, quelle: str) -> str | 
         return "gesperrt"
     if (o := _offen(g["datei"])) is not None and o["port"] == "OTA":
         return None   # wartet oder laeuft schon fuer diese Remote
+    if o is not None and o["port"] == "" and o["status"] == "wartet":
+        # Wartender Bau-Auftrag (vorgemerkt) - das Update per WLAN baut selbst: ersetzen statt doppelt (2026-11-06)
+        o.update(fertig=True, status="fertig", schritt="Ersetzt durch das Update per WLAN", t_ende=time.time(), ausgeblendet=True)
+        if o["job_id"] in _reihe:
+            _reihe.remove(o["job_id"])
     if any(not x["fertig"] for x in _jobs.values()):
         await _an_remote(hass, g, "Update ist eingereiht – es laufen noch andere Aufträge davor.", 1)
     _LOGGER.info("Firmware-Update fuer %s (%s)", geraet, quelle)
@@ -932,10 +948,20 @@ async def ws_vormerken(hass: HomeAssistant, connection: websocket_api.ActiveConn
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_abbrechen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
-    """Wartenden Auftrag aus der Warteschlange nehmen (laufende laufen zu Ende); fertigen aus der Liste ausblenden."""
+    """Wartenden Auftrag aus der Warteschlange nehmen, laufenden abbrechen (2026-11-07: auch den Bau im Device Builder
+    beenden); fertigen aus der Liste ausblenden."""
     j = _jobs.get(msg["job_id"])
     if j is not None and j["fertig"]:
         j["ausgeblendet"] = True
+    elif j is not None and j["status"] == "laeuft":
+        j["abgebrochen"] = True
+        if dj := j.get("dash_job"):
+            try:
+                await dash(hass, "firmware/cancel", {"job_id": dj})
+            except Exception as err:  # noqa: BLE001 - schon fertig o. ae.
+                _LOGGER.debug("firmware/cancel %s: %s", dj, err)
+        if (t := _tasks.get(j["job_id"])) is not None:
+            t.cancel()
     elif j is None or j["status"] != "wartet":
         connection.send_error(msg["id"], "job", "Nur wartende Aufträge lassen sich herausnehmen")
         return

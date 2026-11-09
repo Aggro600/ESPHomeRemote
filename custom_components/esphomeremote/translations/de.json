@@ -164,6 +164,10 @@
         "seconds": {
           "name": "Einblenddauer (nur dieses Mal)",
           "description": "Optional – nach so vielen Sekunden ausblenden, 0 = bis \"off\". Leer = Dauer aus dem Konfigurator."
+        },
+        "toggle": {
+          "name": "Umschalten",
+          "description": "Läuft auf diesem Fernseher schon eine Kamera, wird sie stattdessen ausgeblendet (eine Taste für an/aus)."
         }
       }
     },

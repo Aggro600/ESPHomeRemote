@@ -1467,7 +1467,13 @@ static const char *gname_offline(Geste g) { return g == KURZ ? "short_offline" :
 JsonArrayConst TastenKonfig::steps_(JsonObjectConst kc, Geste g) const {
   // "Ohne HA" erst, wenn HA laenger als 15 s fehlt - nicht in den ersten Sekunden nach dem Aufwachen, waehrend die
   // Verbindung noch aufgebaut wird (2026-10-19). api_da_ms_ = zuletzt verbunden (Start zaehlt als verbunden).
-  if (!api_ok_() && millis() - api_da_ms_ > 15000) {
+  // 2026-11-07: im Dock-Betrieb ist die Remote nie selbst mit HA verbunden - HA ueber das Dock zaehlt als "mit HA"
+  // (vorher ging z. B. die Lautstaerke nach 15 s immer per Infrarot statt ueber den Lautsprecher in HA)
+  bool ha_dock = false;
+#ifdef TK_USE_DIREKT
+  ha_dock = direkt_ != nullptr && (ha_dock_modus ? ha_dock_modus() : 0) > 0 && direkt_->ha_ueber_dock();
+#endif
+  if (!api_ok_() && !ha_dock && millis() - api_da_ms_ > 15000) {
     JsonArrayConst o = kc[gname_offline(g)];
     if (!o.isNull() && o.size() > 0) return o;
   }

@@ -76,7 +76,12 @@ def validieren(d: dict) -> dict:
         dauer = max(0, min(3600, int(d.get("dauer", 45))))
     except (TypeError, ValueError):
         dauer = 45
-    return {"an": bool(d.get("an")), "taste": taste, "groesse": groesse, "position": pos, "dauer": dauer,
+    # Menue-Taste gedrueckt halten (2026-11-06): "none" = nur das Ereignis, "camera" = Kamera zeigen/ausblenden
+    h = d.get("halten") if isinstance(d.get("halten"), dict) else {}
+    halten = {"aktion": h.get("aktion") if h.get("aktion") in ("none", "camera") else "none",
+              "kamera": str(h.get("kamera") or "")[:120],
+              "groesse": h.get("groesse") if h.get("groesse") in ("small", "medium", "large", "almost_full") else ""}
+    return {"an": bool(d.get("an")), "taste": taste, "groesse": groesse, "position": pos, "dauer": dauer, "halten": halten,
             "menu": {"start": start, "pages": sauber or STANDARD["menu"]["pages"]}}
 
 

@@ -20,15 +20,27 @@ if (!ip) {
 }
 const ws = new WebSocket(`ws://127.0.0.1:${port}/${mode}`);
 let last = "";
+const alle = [];   // ganze Ausgabe - bei Fehler nach .baufehler-<cfg>.log (2026-11-09: Link-Abbruch beim 1. Bau war sonst nicht nachvollziehbar)
 ws.onopen = () => ws.send(JSON.stringify({ type: "spawn", configuration: cfg, port: ip }));
-ws.onmessage = (e) => {
+ws.onmessage = async (e) => {
   const m = JSON.parse(String(e.data));
   if (m.event === "line") {
     // Nur Meldungen, keine Fortschrittsbalken
     const t = m.data.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r/g, "\n");
     for (const l of t.split("\n")) if (process.env.FULL_LOG === "all" ? (l.trim() && !/^\[\d+\/\d+\]/.test(l)) : process.env.FULL_LOG ? /undefined|multiple definition|overflow|region|cannot find|ld:|error|Error|FAILED/.test(l) : /error|Error|FAILED|Successfully|OTA successful|Flash:|RAM:/.test(l)) console.log(l.slice(0, process.env.FULL_LOG ? 600 : 200));
     last = t;
+    for (const l of t.split("\n")) if (l.trim() && !/^\[\d+\/\d+\]/.test(l)) alle.push(l);
   }
-  if (m.event === "exit") { console.log(`${mode} ${cfg}: Exit ${m.code}`); process.exit(m.code); }
+  if (m.event === "exit") {
+    if (m.code !== 0) {
+      const fs = await import("node:fs").then((x) => x);
+      const datei = `.baufehler-${cfg.replace(/[^\w.-]/g, "_")}.log`;
+      fs.writeFileSync(datei, `${new Date().toISOString()} ${mode} ${cfg} Exit ${m.code}\n` + alle.slice(-400).join("\n") + "\n");
+      for (const l of alle.filter((l) => /undefined reference|multiple definition|cannot open|No such file|Killed|signal|ld:|text file busy/i.test(l)).slice(0, 15))
+        console.log("  > " + l.slice(0, 300));
+      console.log(`Ganze Ausgabe: ${datei}`);
+    }
+    console.log(`${mode} ${cfg}: Exit ${m.code}`); process.exit(m.code);
+  }
 };
 ws.onerror = () => { console.error("WebSocket-Fehler"); process.exit(3); };

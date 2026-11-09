@@ -90,14 +90,33 @@ void TCA8418Component::loop() {
     // gedrueckt, wird das spaetere Loslassen ignoriert. Weitere Druecke derselben Taste zaehlen normal.
     const bool weg = (this->weck_verwerfen_ || this->weck_erledigt_) && this->weck_taste_ != 0;
     bool losgelassen = false;
+    // Weitere Druecke der Weck-Taste waehrend des Starts (2026-11-06): man drueckt nochmal, weil das Display noch nicht
+    // da ist. Sie kommen hier ohne Abstand an und galten als Doppeldruck (bei der Menuetaste "Display aus": an, sofort
+    // wieder aus). Nur das erste Druecken und Loslassen zaehlt, die Wiederholungen fallen weg.
+    bool weck_durch = false, extra_gedrueckt = false;
+    uint8_t extra = 0;
     for (uint8_t e : this->weck_ereignisse_) {
-      if (weg && !losgelassen && (e & 0x7F) == this->weck_taste_) {
+      const uint8_t code = e & 0x7F;
+      if (weg && !losgelassen && code == this->weck_taste_) {
         if (!(e & 0x80)) losgelassen = true;
+        continue;
+      }
+      if (this->weck_taste_ != 0 && code == this->weck_taste_) {
+        if (weck_durch) {
+          if (e & 0x80) { extra_gedrueckt = true; extra++; } else extra_gedrueckt = false;
+          continue;
+        }
+        if (!(e & 0x80)) weck_durch = true;
+        this->weck_druck_ = true;
+        this->handle_event_(e);
+        this->weck_druck_ = false;
         continue;
       }
       this->handle_event_(e);
     }
     if (weg && !losgelassen) this->loslassen_ignorieren_ = this->weck_taste_;
+    else if (extra_gedrueckt) this->loslassen_ignorieren_ = this->weck_taste_;   // haelt sie noch: Loslassen nicht werten
+    if (extra) ESP_LOGI(TAG, "Weck-Taste %u: %u weitere(r) Druck/Druecke beim Start nicht gewertet", this->weck_taste_, extra);
     if (weg) ESP_LOGI(TAG, this->weck_erledigt_ ? "Weck-Taste %u schon beim Start gesendet" : "Weck-Taste %u verworfen (nur wecken)",
                       this->weck_taste_);
     this->weck_ereignisse_.clear();

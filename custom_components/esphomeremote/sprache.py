@@ -99,24 +99,17 @@ _FILTER = ([_biquad("hp", 100, 0.7071)] + [_kerbe(k * 1000.0) for k in range(1, 
 
 
 def _einschwingen_weg(pcm: bytes) -> bytes:
-    """Anfang und Ende saeubern. Das Mikrofon schwingt nach dem Einschalten bis ~0,8 s ein (Gleichanteil bis zum Anschlag) - das knallt und
-    verdirbt die Lautstaerke-Anhebung. Bis zum ersten ruhigen 50-ms-Block wegschneiden (hoechstens 1,5 s)."""
+    """Anfang und Ende saeubern. Das Mikrofon steht nach dem Einschalten ~0,25 s am Anschlag und schwingt danach bis
+    ~0,8 s mit einem grossen Gleichanteil ein (Knall, verdirbt die Lautstaerke-Anhebung). Nur das Stueck am Anschlag
+    wegschneiden, den Gleichanteil danach herausrechnen (2026-11-06: vorher wurde bis zum Ende des Einschwingens
+    geschnitten - wer gleich losredete, verlor den Anfang)."""
     n = len(pcm) // 2
     x = struct.unpack(f"<{n}h", pcm[: n * 2])
-    blk = RATE // 20
     start = 0
-    for i in range(0, min(n, int(RATE * 1.5)) - 2 * blk, blk):
-        ruhig = True
-        for j in (i, i + blk):
-            b = x[j:j + blk]
-            if abs(sum(b) / blk) > 2500 or max(map(abs, b)) > 30000:
-                ruhig = False
-                break
-        if ruhig:
-            start = i
-            break
-    else:
-        start = min(n, int(RATE * 1.5)) if n > RATE * 2 else 0
+    for i in range(min(n, RATE)):   # letzte Probe am Anschlag in der ersten Sekunde
+        if abs(x[i]) >= 32700:
+            start = i + RATE // 100
+    start = min(start, n)
     # Ende: Loslassen der Taste + Mikrofon aus knacken (letzte ~60 ms bis zum Anschlag) - 150 ms abschneiden,
     # bei einem Ausreisser in der letzten halben Sekunde schon dort
     ende = max(start, n - RATE * 15 // 100)
@@ -125,6 +118,14 @@ def _einschwingen_weg(pcm: bytes) -> bytes:
             ende = max(start, j - RATE // 50)
             break
     y = list(x[start:ende])
+    # Gleichanteil nachfuehren (Hochpass 1. Ordnung ~8 Hz, Anfangswert = erster Mittelwert - kein Sprung am Schnitt);
+    # den Rest erledigt der Hochpass 100 Hz in _filtern
+    if y:
+        a = math.exp(-2 * math.pi * 8 / RATE)
+        m = sum(y[:160]) / len(y[:160])
+        for i, v in enumerate(y):
+            m = a * m + (1 - a) * v
+            y[i] = max(-32768, min(32767, int(v - m)))
     ein = min(len(y) // 2, RATE // 50)  # 20 ms ein- und ausblenden
     for i in range(ein):
         y[i] = int(y[i] * i / ein)
@@ -152,6 +153,8 @@ def _lauter(pcm: bytes) -> bytes:
     if len(pcm) < 2:
         return pcm
     werte = _filtern(_einschwingen_weg(pcm))
+    if not werte:   # nach dem Saeubern nichts uebrig (sehr kurze Aufnahme)
+        return b""
     spitze = max(1.0, max(abs(v) for v in werte))
     faktor = max(1.0, min(6.0, 23000 / spitze))
     return struct.pack(f"<{len(werte)}h", *(max(-32768, min(32767, int(v * faktor))) for v in werte))
@@ -330,6 +333,9 @@ async def durchsage(hass: HomeAssistant, kd, dev: str, q: asyncio.Queue, melden)
         return
     await melden(1, f"Durchsage ({sek:.1f} s)".replace(".", ","))
     stimme = await hass.async_add_executor_job(_lauter, bytes(pcm))
+    if len(stimme) < RATE * 2 * 3 // 10:
+        await melden(4, "Zu kurz – Taste halten und sprechen")
+        return
     audio = (_gong() if d["gong"] else b"") + stimme
     kennung = secrets.token_urlsafe(18)
     jetzt = time.time()
