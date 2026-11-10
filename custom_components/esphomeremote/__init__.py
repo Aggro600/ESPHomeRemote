@@ -47,7 +47,23 @@ STORE_VERSION = 1
 PANEL_URL = "remote"
 PANEL_URL_ALT = "fernbedienung"   # bis 2026-11-01 - alte Lesezeichen gehen weiter (ohne Eintrag in der Seitenleiste)
 STATIC_URL = "/esphomeremote_static"
-PANEL_VERSION = "206"  # bei Aenderungen am Panel-JS erhoehen (App-Cache)
+
+
+def _panel_version() -> str:
+    """Kennung fuer die Panel-URL (?v=...), damit Browser und Handy-App nach jeder Aenderung die neue Fassung laden.
+    2026-11-10 (Nutzer sah am Handy noch die alte Hinweis-Ansicht): vorher fest "206" und von Hand zu erhoehen -
+    vergessen = die App zeigte nach einem Update weiter das alte Panel. Jetzt aus dem Inhalt von Panel und Woerterbuch."""
+    import hashlib
+    h = hashlib.sha1()
+    for name in ("configurator.js", "i18n/en.json"):
+        try:
+            h.update((Path(__file__).parent / "frontend" / name).read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:8]
+
+
+PANEL_VERSION = _panel_version()   # beim Laden der Integration (Import laeuft nicht im Event-Loop)
 
 MAX_BYTES = 90000   # Remote: tasten_konfig MAX_BYTES (96 KB), Puffer im PSRAM
 KEYCODES = {2, 3, 4, 5, 11, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 102,

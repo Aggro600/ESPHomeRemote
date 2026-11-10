@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.10.6 (2026-11-10)
+
+Configurator: after an update, browsers and the phone app sometimes kept showing the old version (e.g. 5 notices instead of collapsed) because the panel's version tag wasn't bumped. It is now derived from the content – every update loads the new version. Firmware unchanged – the offered update is optional.
+
+<details><summary>Deutsch</summary>
+
+Konfigurator: Nach einem Update zeigten Browser und Handy-App teils weiter die alte Fassung (z. B. 5 Hinweise statt eingeklappt), weil die Versionskennung des Panels nicht mitgezählt wurde. Jetzt ergibt sie sich aus dem Inhalt – nach jedem Update lädt die neue Fassung. Firmware unverändert – das angebotene Update ist freiwillig.
+
+</details>
+
 ## 2026.11.10.5 (2026-11-10)
 
 Configurator: notices on the overview are collapsed – the header shows how many and how important, one click expands them. “First steps”: “Pair via Bluetooth” was already ticked on a fresh install (default slot names counted as paired). English UI: about 40 remaining German texts translated (streamer guide, features, confirmations when deleting or transferring). Fallback font now also covers → ↑ ↓. Firmware unchanged – the offered update is optional.
