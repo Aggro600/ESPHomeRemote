@@ -185,7 +185,11 @@ async function i18nLaden(sprache, url) {
     // Woerter nur ganz ersetzen (nicht "an" in "Kanal"); Stuecke mit Satzzeichen am Rand duerfen angrenzen
     const teil = (k) => `${/^[\p{L}\p{N}]/u.test(k) ? "(?<![\\p{L}\\p{N}])" : ""}${q(k)}${/[\p{L}\p{N}]$/u.test(k) ? "(?![\\p{L}\\p{N}])" : ""}`;
     I18N.wb = new Map(keys.map((k) => [k, wb[k]]));
-    I18N.re = keys.length ? new RegExp(keys.map(teil).join("|"), "gu") : null;
+    // Bindewoerter nur als ganzer Text (2026-11-10: "Kloß mit Soß" im Liedtitel wurde zu "Kloß with Soß", Kalender-
+    // eintraege ebenso) - Nutzerinhalte bleiben, wie sie sind; Saetze mit "und" stehen ganz im Woerterbuch/in den Regeln
+    const NUR_GANZ = new Set(["mit", "und", "oder", "für", "von", "ist"]);
+    const teile = keys.filter((k) => !NUR_GANZ.has(k));
+    I18N.re = teile.length ? new RegExp(teile.map(teil).join("|"), "gu") : null;
   } catch (e) { I18N.wb = null; I18N.re = null; }
 }
 function tr(s) {
@@ -3993,6 +3997,10 @@ const MENU_CSS = `
 .btplatz .chip.ok { color:var(--success-color,#2e7d32); border-color:currentColor; font-weight:600; } .btplatz .chip.aus { opacity:.6; } .btplatz .chip.warn { color:var(--warning-color,#b26a00); border-color:currentColor; font-weight:600; }
 .btplatz .btzeile { flex-wrap:wrap; gap:8px 12px; } .btplatz .btzeile .akt { flex:1 1 120px; color:var(--sec); }
 .btplatz .aktionen { display:inline-flex; gap:4px; margin-left:auto; }
+/* 2026-11-10 Handy: Auswahl "Eingabe"/"Am Dock" schrumpfte auf den Pfeil - Feld nimmt den Rest der Zeile */
+.btplatz .btzeile .lbl { flex:1 1 160px; flex-wrap:nowrap; min-width:0; } .btplatz .btzeile .lbl select { flex:1 1 auto; min-width:0; width:auto; }
+.msg.block { display:block; }
+@media (max-width:700px) { .btplatz .btzeile .lbl { flex-basis:100%; } .btplatz .btzeile .lbl > select { flex:1 1 auto; } }
 .lbl { display:inline-flex; gap:6px; align-items:center; font-size:13px; color:var(--sec); } .lbl select { width:auto; }
 .btopt { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin:4px 0; }
 details.btprox { margin-top:12px; } details.btprox summary { cursor:pointer; font-weight:600; padding:6px 0; }
@@ -5582,8 +5590,8 @@ const BtEditor = {
       <div class="opts">
         <h3>Geräte</h3>
         <small class="note">Vier Plätze (Kopplungen). Neu koppeln: am Platz <ha-icon icon="mdi:bluetooth-settings" style="--mdc-icon-size:14px"></ha-icon>, dann am Gerät unter Bluetooth nach „${esc(devName(this.s.dev))}“ suchen.</small>
-        ${m.btWlan ? `<div class="msg"><ha-icon icon="mdi:wifi-sync"></ha-icon> ${m.btWlan.weg === "dock" ? "WLAN angefordert – sobald die Remote das Dock das nächste Mal fragt, schaltet sie es für 3 min ein. <b>Remote kurz anfassen oder eine Taste drücken.</b>" : "WLAN wird eingeschaltet …"} Die Plätze erscheinen dann von selbst.</div>`
-          : m.btFehler ? `<div class="msg warn"><b>Die Remote ist gerade nicht direkt mit Home Assistant verbunden</b> – sie läuft über das Dock oder schläft. Die Bluetooth-Plätze lassen sich nur abfragen und ändern, solange ihr WLAN an ist.
+        ${m.btWlan ? `<div class="msg block"><ha-icon icon="mdi:wifi-sync" style="vertical-align:middle"></ha-icon> ${m.btWlan.weg === "dock" ? "WLAN angefordert – sobald die Remote das Dock das nächste Mal fragt, schaltet sie es für 3 min ein. <b>Remote kurz anfassen oder eine Taste drücken.</b>" : "WLAN wird eingeschaltet …"} Die Plätze erscheinen dann von selbst.</div>`
+          : m.btFehler ? `<div class="msg warn block"><b>Die Remote ist gerade nicht direkt mit Home Assistant verbunden</b> – sie läuft über das Dock oder schläft. Die Bluetooth-Plätze lassen sich nur abfragen und ändern, solange ihr WLAN an ist.
             <div class="inl" style="margin-top:6px"><button class="btn small primary" data-a="bt_wlan"><ha-icon icon="mdi:wifi"></ha-icon>WLAN der Remote einschalten</button></div></div>`
           : !bs ? `<small class="note">Frage die Remote nach dem Stand …</small>` : ""}
         ${[0, 1, 2, 3].map(platz).join("")}
@@ -6825,7 +6833,7 @@ const FirmwareTab = {
       ${fw.fehler ? `<div class="msg err">${esc(fw.fehler)}</div>` : ""}
       ${alt.length ? `<div class="neuversion"><ha-icon icon="mdi:gift-outline"></ha-icon><span><b>Neue Version ${esc(fw.version)}</b> – ${alt.length} Gerät${alt.length === 1 ? "" : "e"} haben noch eine ältere Firmware: ${alt.map((g) => `${esc(g.friendly || g.name)} (${esc(g.fw || "ohne Versionsangabe")})`).join(", ")}.
         „Alle aktualisieren“ baut und spielt sie auf – schlafende Remotes kurz anfassen.</span></div>` : fw.version ? `<small class="note">Version ${esc(fw.version)} – alle Geräte aktuell.</small>` : ""}
-      ${fw.altlasten?.length ? `<div class="msg err"><b>Alte Dateien im ESPHome-Ordner gefunden</b> – ESPHome nimmt sie beim Bauen statt der aktuellen aus GitHub, ein Update kann daran scheitern:
+      ${fw.altlasten?.length ? `<div class="msg err block"><b>Alte Dateien im ESPHome-Ordner gefunden</b> – ESPHome nimmt sie beim Bauen statt der aktuellen aus GitHub, ein Update kann daran scheitern:
         ${fw.altlasten.map((f) => `<code>${esc(f)}</code>`).join(", ")}.
         <div class="row" style="margin-top:6px"><button class="btn primary small" data-a="fw_aufraeumen" ${beschaeftigt ? "disabled" : ""}><ha-icon icon="mdi:broom"></ha-icon>Aufräumen (ins Archiv verschieben)</button></div></div>` : ""}
       ${inWerk ? "" : this._fwEntwicklerHtml()}
@@ -6833,7 +6841,7 @@ const FirmwareTab = {
       <div class="dkopf"><h3>Fernbedienungen</h3><span class="grow"></span>
         <button class="btn small" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
       ${rem.map((g) => this._fwKarte(g, g.bruecke ? `<div class="ents">Feste IP <code>${esc(g.bruecke.ip || "per Router")}</code> · Bluetooth-Brücke in HA <code>127.0.0.1:${g.bruecke.port}</code>${g.bruecke.ota ? " · Updates auch über Bluetooth" : ""}${g.bruecke.aktiv ? "" : ` <span class="badge warn">Brücke läuft nicht</span>`}${brueckeFalsch(g) ? ` <span class="badge warn">ESPHome-Eintrag zeigt auf ${esc(g.bruecke.eintrag.host)}:${esc(String(g.bruecke.eintrag.port))}</span>` : ""}</div>` : "")).join("") || `<div class="karte">Keine.</div>`}
-      ${rem.some(brueckeFalsch) ? `<div class="msg"><b>ESPHome-Einträge zeigen nicht auf die Bluetooth-Brücke.</b> Die Integration stellt sie nicht von selbst um.
+      ${rem.some(brueckeFalsch) ? `<div class="msg block"><b>ESPHome-Einträge zeigen nicht auf die Bluetooth-Brücke.</b> Die Integration stellt sie nicht von selbst um.
         <div class="row" style="margin-top:6px"><button class="btn small" data-a="fw_bruecke_eintraege" ${beschaeftigt ? "disabled" : ""}><ha-icon icon="mdi:swap-horizontal"></ha-icon>ESPHome-Einträge auf die Brücke stellen</button></div></div>` : ""}
       ${this._fwDockHtml()}
       ${this._fwStreamerHtml()}
@@ -9054,6 +9062,9 @@ svg .rg { fill:none; stroke:color-mix(in srgb, var(--primary-text-color) 10%, tr
 .aktivl .al.wait > ha-icon, .aktivl .al.warn > ha-icon { color:var(--gelb); }
 .aktivl .al.err { border-color:color-mix(in srgb, var(--fehler) 45%, transparent); } .aktivl .al.err > ha-icon { color:var(--fehler); }
 @media (max-width:700px) { .aktivl { padding:10px 12px 0; } .aktivl .alb { flex-basis:70px; } .aktivl .alt small { white-space:normal; } }
+/* 2026-11-10 Handy: ruhende Zeilen ("wartet", "aktiv", "unterwegs") einzeilig - zwei Remotes fraßen sonst ein Drittel des Bildschirms.
+   Die Erklärung steht weiter im title; Fehler und Laufendes behalten ihren Text. */
+@media (max-width:700px) { .aktivl .al:is(.wait, .ok) .alt small { display:none; } .aktivl .al:is(.wait, .ok) { padding:5px 10px; } }
 .sbw { position:sticky; bottom:18px; z-index:15; display:flex; justify-content:center; pointer-events:none; padding:0 12px; }
 .sbw .savebar { position:relative; left:auto; bottom:auto; transform:none; pointer-events:auto; animation:hoch .2s ease-out; } .sbw .savebar.ruhig { animation:none; }
 .savebar-platz { display:none; }
@@ -11147,6 +11158,8 @@ const IRC_CSS = `
 .irc .irzahl b { display:block; font-size:20px; } .irc .irzahl small { color:var(--sec); font-size:12px; }
 .irc .irsek { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:26px 0 10px; }
 .irc .irsek h3 { margin:0; font-size:17px; display:flex; align-items:center; gap:8px; }
+.irc .irsek .inl2 { flex:1 1 180px; flex-wrap:nowrap; } .irc .irsek .inl2 select { flex:1 1 auto; }   /* Handy: Remote-Name nicht abschneiden */
+@media (max-width:700px) { .irc .irsek .inl2 { flex-basis:100%; } }
 .irc .irsek h3 ha-icon { color:var(--acc); background:var(--acc-s); border-radius:8px; padding:4px; --mdc-icon-size:18px; }
 .irc .qgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:14px; }
 .irc .qkarte { border:1px solid var(--rand); border-radius:18px; background:var(--card); box-shadow:var(--schatten); overflow:hidden; display:flex; flex-direction:column; }

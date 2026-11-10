@@ -300,6 +300,7 @@ Dock, Menü am Fernseher oder weitere Remotes? Unten weiterlesen – oder einfac
 ### Dockingstation (optional)
 Im Konfigurator: **Werkstatt → Neues Dock** legt die Gerätedatei an und spielt sie per USB auf – der Chip wird
 automatisch erkannt. Das Dock nutzt dieselben Secrets wie die Remote.
+IR-LED am Kabel (z. B. in einen Schrank) oder mehr IR-Leistung? Siehe [Dock: externe und zusätzliche IR-LEDs](docs/dock-ir-led.de.md).
 
 ### Streamer-App (optional)
 

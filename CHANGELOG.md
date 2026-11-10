@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.10.7 (2026-11-10)
+
+Configurator on phones: Bluetooth page (notice and selects), IR codes (remote select) and notice boxes on other pages no longer squeezed; 'waiting for the remote' rows are one line on phones. English: song titles and calendar entries are no longer partly translated, missing tooltips added. New guide: external and extra IR LEDs on the dock (docs/dock-ir-led.md).
+
+<details><summary>Deutsch</summary>
+
+Konfigurator am Handy: Bluetooth-Seite (Hinweis und Auswahlfelder), IR-Codes (Remote-Auswahl) und Hinweiskästen in anderen Seiten nicht mehr gequetscht; Zeilen „wartet auf die Remote“ am Handy einzeilig. Englisch: Liedtitel und Kalendereinträge werden nicht mehr teilübersetzt, fehlende Tooltips ergänzt. Neue Anleitung: externe und zusätzliche IR-LEDs am Dock (docs/dock-ir-led.md).
+
+</details>
+
 ## 2026.11.10.6 (2026-11-10)
 
 Configurator: after an update, browsers and the phone app sometimes kept showing the old version (e.g. 5 notices instead of collapsed) because the panel's version tag wasn't bumped. It is now derived from the content – every update loads the new version. Firmware unchanged – the offered update is optional.

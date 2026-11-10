@@ -320,6 +320,7 @@ Want the dock, the TV menu or more remotes? Read on below – or just explore: e
 ### Docking station (optional)
 In the configurator: **Workshop → New dock** creates the device file and flashes it over USB – the chip is detected
 automatically. The dock uses the same secrets as the remote.
+Want an IR LED on a cable (e.g. into a cabinet) or more IR power? See [Dock: external and extra IR LEDs](docs/dock-ir-led.md).
 
 ### Streamer app (optional)
 

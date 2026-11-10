@@ -2475,6 +2475,22 @@
  "_ – minimieren (die Menütaste holt es zurück)": "_ – minimise (the menu key brings it back)",
  "__regeln": [
   [
+   "^1 Entität in (\\d+) Verwendungen",
+   "1 entity in $1 uses"
+  ],
+  [
+   "^(\\d+) Entitäten in (\\d+) Verwendungen",
+   "$1 entities in $2 uses"
+  ],
+  [
+   "^Konfig-Hash auf dem Gerät (\\S+), Datei (\\S+)$",
+   "Config hash on the device $1, file $2"
+  ],
+  [
+   "^Konfig-Hash (\\S+)$",
+   "Config hash $1"
+  ],
+  [
    "^Keine Updates bereit",
    "No updates ready"
   ],
@@ -3533,5 +3549,10 @@
  "und": "and",
  "oder": "or",
  "wird im ESPHome-Add-on gebaut (beim ersten Mal etwa 10 Minuten). Du kannst das Fenster auch schließen – weiter geht es dann in der Werkstatt › „Einrichten fortsetzen“.": "is being built in the ESPHome add-on (about 10 minutes the first time). You can close this window – continue later in Workshop › “Continue setup”.",
- "Firmware, neue Geräte, Hardware-Test": "Firmware, new devices, hardware test"
+ "Firmware, neue Geräte, Hardware-Test": "Firmware, new devices, hardware test",
+ "Dock löschen": "Delete dock",
+ "Remote löschen": "Delete remote",
+ "Kleinere Auflösung direkt von go2rtc – nötig für den MagentaTV Stick (dekodiert keine 5-MP-Hauptstreams).": "Lower resolution straight from go2rtc – needed for the MagentaTV Stick (can't decode 5 MP main streams).",
+ "Für Streamer, die hohe Auflösungen schaffen (Google TV Streamer).": "For streamers that handle high resolutions (Google TV Streamer).",
+ "Name des Fernsehers (frei) – für tv: in den Aktionen": "Name of the TV (free text) – for tv: in the actions"
 }
