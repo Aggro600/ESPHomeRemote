@@ -252,6 +252,18 @@
     "bridge_address": {
       "title": "{name} zeigt nicht auf die Bluetooth-Brücke",
       "description": "Der ESPHome-Eintrag von {name} verbindet sich mit {now}. Im Entwickler-Aufbau (tools/remotes.json) erreicht Home Assistant diese Remote über die Bluetooth-Brücke unter {host}, Port {port}. Entweder im Konfigurator → Firmware „ESPHome-Einträge auf die Brücke stellen“ drücken oder Einstellungen → Geräte & Dienste → ESPHome → {name} → ⋮ → Neu konfigurieren öffnen und Host {host} und Port {port} eintragen. Soll die Remote bei ihrer eigenen Adresse bleiben, nimm sie aus tools/remotes.json heraus."
+    },
+    "battery_low": {
+      "title": "{name}: Akku bei {level} %",
+      "description": "Der Akku der Fernbedienung {name} ist fast leer ({level} %). Stell sie ins Dock oder schließ das Ladekabel an. Der Hinweis verschwindet von selbst, sobald sie lädt oder über 20 % ist."
+    },
+    "not_seen": {
+      "title": "{name} meldet sich seit {hours} Stunden nicht",
+      "description": "Die Fernbedienung {name} hat sich zuletzt am {since} gemeldet. Vielleicht ist der Akku leer, sie ist außer Reichweite von WLAN und Dock oder liegt irgendwo. Drück eine Taste oder stell sie ins Dock. Nutzt du diese Remote nicht mehr, nimm sie unter ESPHomeRemote → Konfigurieren heraus – oder ignoriere den Hinweis."
+    },
+    "not_seen_since_start": {
+      "title": "{name} meldet sich seit {hours} Stunden nicht",
+      "description": "Die Fernbedienung {name} hat sich seit dem Start von Home Assistant ({since}) nicht gemeldet. Vielleicht ist der Akku leer, sie ist außer Reichweite von WLAN und Dock oder liegt irgendwo. Drück eine Taste oder stell sie ins Dock. Nutzt du diese Remote nicht mehr, nimm sie unter ESPHomeRemote → Konfigurieren heraus – oder ignoriere den Hinweis."
     }
   }
 }

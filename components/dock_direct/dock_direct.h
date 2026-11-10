@@ -251,6 +251,7 @@ class DockDirekt : public Component
   int udp_{-1};
   uint32_t n_netz_{0};
   bool netz_gemeldet_{false};
+  bool per_netz_{false};   // aktueller Auftrag ging uebers Heimnetz statt Funk (2026-11-10)
   NetzZiel *netz_ziel_(const uint8_t mac[6]);
   bool udp_bereit_();
   bool udp_senden_(const NetzZiel &z, const std::vector<uint8_t> &p);

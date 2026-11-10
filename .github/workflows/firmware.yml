@@ -1,0 +1,50 @@
+# Testbau der Firmware (2026-11-10): baut bei jedem Push genau das, was Nutzer bauen - esphomeremote.yaml (Remote)
+# und esphomeremote-dock.yaml (Dock) -, aber mit dem Stand dieses Commits statt dem Zweig "stabil"
+# (.github/ci/prepare.py). Schlaegt der Bau fehl, ist das Release kaputt, bevor es jemand installiert.
+# "esphome" = die Version, die auch der ESPHome Device Builder hat; "neu" = neueste ESPHome (nur Hinweis, darf scheitern).
+name: Firmware
+
+on:
+  push:
+    branches: [master, stabil]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.ziel }} (ESPHome ${{ matrix.esphome }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.esphome == 'latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ziel: [ci-remote.yaml, ci-dock.yaml]
+        esphome: ["2026.10.2", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: ESPHome installieren
+        run: |
+          if [ "${{ matrix.esphome }}" = "latest" ]; then pip install esphome; else pip install "esphome==${{ matrix.esphome }}"; fi
+          esphome version
+
+      - name: Build-Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .esphome
+          key: ${{ matrix.ziel }}-${{ matrix.esphome }}-${{ hashFiles('esphomeremote-firmware.yaml', 'esphomeremote-dock-core.yaml', 'esphomeremote-dock-board.yaml') }}
+          restore-keys: ${{ matrix.ziel }}-${{ matrix.esphome }}-
+
+      - name: Testbau vorbereiten
+        run: python3 .github/ci/prepare.py . .
+
+      - name: Kompilieren
+        run: esphome compile ${{ matrix.ziel }}

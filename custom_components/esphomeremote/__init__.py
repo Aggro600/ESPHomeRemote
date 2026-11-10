@@ -1312,6 +1312,8 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     kd = KonfigData(hass, key, devices)
     await kd.load()
     hass.data[DOMAIN] = kd
+    from .warnungen import einrichten as warnungen   # Akku leer / lange nicht gemeldet -> Reparaturen (2026-11-10)
+    warnungen(hass, lambda: kd.devices)
 
     # Neues/entferntes Dock: Remotes bekommen die Funk-Adressen (dmac) mit der naechsten Konfiguration
     @callback

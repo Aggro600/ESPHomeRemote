@@ -27,7 +27,8 @@ from homeassistant.helpers.storage import Store
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote"
-DATEIEN_STORAGE = ("esphomeremote", "esphomeremote_fehler", "esphomeremote_firmware", "esphomeremote_ircodes")
+DATEIEN_STORAGE = ("esphomeremote", "esphomeremote_fehler", "esphomeremote_firmware", "esphomeremote_ircodes",
+                   "esphomeremote_zuletzt")   # warnungen.py (2026-11-10)
 ORDNER_STORAGE = ("esphomeremote_irdb",)
 WWW_MUSTER = ("esphomeremote_*", ".esphomeremote*")
 ORDNER_CONFIG = (".esphomeremote_images",)
@@ -150,6 +151,9 @@ async def alles_entfernen(hass: HomeAssistant) -> None:
     for z in hass.states.async_all():
         if "esphomeremote" in z.entity_id and reg.async_get(z.entity_id) is None:
             hass.states.async_remove(z.entity_id)
+    w = hass.data.get(DOMAIN + "_warnungen")   # Takt der Warnungen beenden, sonst kaemen die Hinweise wieder
+    for ab in getattr(w, "abmelden", []):
+        ab()
     issues = ir.async_get(hass)
     for dom, iid in [k for k in list(issues.issues) if k[0] == DOMAIN]:
         ir.async_delete_issue(hass, dom, iid)

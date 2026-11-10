@@ -538,10 +538,23 @@ void DockDirekt::loop() {
         esp_wifi_get_channel(&k, &sk);
         ESP_LOGD(TAG, "Dock hat es (%u Byte, Kanal %u%s, %u ms)", (unsigned) aktuell_.paket.size(), (unsigned) k,
                  funk_geliehen_ ? ", WLAN war aus" : "", (unsigned) (millis() - gesendet_ms_));
+#ifdef DD_EMPFANG
         if (funk_geliehen_) {   // diesen Kanal fuer das naechste Mal
+#else
+        // Auch mit WLAN an (2026-11-10, Nutzer zwischen zwei Repeatern): hat das Dock auf dem WLAN-Kanal geantwortet,
+        // ist das jetzt sein Kanal. Vorher lernte die Remote ihn nur mit WLAN aus - wechselte der Repeater des Docks den
+        // Kanal (FRITZ!Box-Automatik), ging sie mit WLAN an dauerhaft uebers Heimnetz und probierte mit WLAN aus zuerst
+        // den alten Kanal. Geschrieben wird nur bei Aenderung. Nicht nach dem Heimnetz-Weg (per_netz_).
+        if (funk_geliehen_ || !per_netz_) {
+#endif
           uint8_t k = 0;
           wifi_second_chan_t s;
-          if (esp_wifi_get_channel(&k, &s) == ESP_OK && k != dock_kanal_ && k != 0) { dock_kanal_ = k; dock_kanal_pref_.save(&dock_kanal_); g_schnell.kanal = k; }
+          if (esp_wifi_get_channel(&k, &s) == ESP_OK && k != dock_kanal_ && k != 0) {
+            ESP_LOGI(TAG, "Dock antwortet jetzt auf Kanal %u (vorher %u) - gemerkt", (unsigned) k, (unsigned) dock_kanal_);
+            dock_kanal_ = k;
+            dock_kanal_pref_.save(&dock_kanal_);
+            g_schnell.kanal = k;
+          }
         }
 #ifndef DD_EMPFANG   // nur die Remote (das Dock wechselt laufend zwischen den Remotes)
         if (memcmp(ok_mac_, aktuell_.mac, 6) != 0 || !ok_gueltig_) {   // nur bei Wechsel ins Flash
@@ -622,6 +635,7 @@ void DockDirekt::loop() {
   aktuell_ = std::move(warte_.front());
   warte_.erase(warte_.begin());
   kanaele_.clear();
+  per_netz_ = false;
   if (funk_geliehen_) {
     // Kanal, auf dem das Dock zuletzt geantwortet hat, dann der WLAN-Kanal, dann alle anderen
     if (dock_kanal_ != 0) kanaele_.push_back(dock_kanal_);
@@ -735,6 +749,7 @@ bool DockDirekt::netz_statt_funk_() {
   NetzZiel *nz = netz_ziel_(aktuell_.mac);
   if (nz == nullptr || !udp_senden_(*nz, aktuell_.paket)) return false;
   n_netz_++;
+  per_netz_ = true;   // kein Funk - der WLAN-Kanal sagt nichts ueber den Kanal des Docks
   gesendet_ms_ = millis();
   kanaele_.clear();
   s_ok = true;   // wie eine Funk-Bestaetigung: loop() schliesst den Auftrag ab

@@ -458,7 +458,7 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
                 if ueber_dock:
                     ds.wartung_fertig(dev)
             _log(j, f"{name}: WLAN da ({ip})")
-        # Antwortet unter der IP wirklich dieses Geraet? (2026-10-16: ein neues Dock bekam per DHCP feste von Remote 1
+        # Antwortet unter der IP wirklich dieses Geraet? (2026-10-16: ein neues Dock bekam per DHCP die erste Remote feste
         # IP - ohne Pruefung waere die Remote-Firmware an das Dock gegangen)
         soll = _erwartete_mac(hass, g.get("name") or "")
         if ip and soll:

@@ -4,3 +4,9 @@ secrets.yaml
 __pycache__/
 *.bin
 *.elf
+
+# Testbau (.github/ci/prepare.py)
+*.ci.yaml
+ci-remote.yaml
+ci-dock.yaml
+.esphome/

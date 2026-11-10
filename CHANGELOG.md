@@ -1,5 +1,27 @@
 # What's new · Was ist neu
 
+## 2026.11.10.3 (2026-11-10)
+
+**Warnings in Home Assistant.** Under *Settings → Repairs* you now get a notice when a remote's battery drops below 15 % (unless it is charging; it disappears by itself above 20 %) and when a remote hasn't reported for 24 hours. When it last reported is kept across restarts. Notices can be ignored as usual.
+
+**Between two repeaters.** The remote now also learns the dock's radio channel while its Wi-Fi is on. Before, if the dock's access point changed its channel (e.g. automatic channel selection), the remote kept taking the slower home-network route, and with Wi-Fi off the first key press tried the old channel first.
+
+**Every release is test-built.** GitHub now builds the remote and dock firmware from `esphomeremote.yaml` and `esphomeremote-dock.yaml` on every change – exactly what you build at home.
+
+Update over Wi-Fi as usual: docks first, then the remotes.
+
+<details><summary>Deutsch</summary>
+
+**Warnungen in Home Assistant.** Unter *Einstellungen → Reparaturen* gibt es jetzt einen Hinweis, wenn der Akku einer Remote unter 15 % fällt (außer sie lädt; er verschwindet von selbst über 20 %) und wenn sich eine Remote 24 Stunden nicht gemeldet hat. Wann sie sich zuletzt gemeldet hat, bleibt über Neustarts erhalten. Hinweise lassen sich wie gewohnt ignorieren.
+
+**Zwischen zwei Repeatern.** Die Remote lernt den Funkkanal des Docks jetzt auch bei eingeschaltetem WLAN. Wechselte der Zugangspunkt des Docks seinen Kanal (z. B. automatische Kanalwahl), nahm sie vorher dauerhaft den langsameren Weg übers Heimnetz, und mit WLAN aus probierte der erste Tastendruck zuerst den alten Kanal.
+
+**Jedes Release wird probegebaut.** GitHub baut jetzt bei jeder Änderung die Firmware für Remote und Dock aus `esphomeremote.yaml` und `esphomeremote-dock.yaml` – genau das, was du zu Hause baust.
+
+Update wie gewohnt über WLAN: erst die Docks, dann die Remotes.
+
+</details>
+
 ## 2026.11.10.2 (2026-11-10)
 
 **Easier setup.** The setup dialog now shows a complete, ready-to-copy block for the ESPHome secrets – passwords and the radio key for the dock are generated for you. No more inventing passwords or running `openssl`.

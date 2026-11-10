@@ -192,6 +192,18 @@
     "bridge_address": {
       "title": "{name} does not point to the Bluetooth bridge",
       "description": "The ESPHome entry of {name} connects to {now}. With the developer setup (tools/remotes.json) Home Assistant reaches this remote through the Bluetooth bridge at {host}, port {port}. Either open the ESPHome configurator → Firmware and press \"Point ESPHome entries to the bridge\", or open Settings → Devices & services → ESPHome → {name} → ⋮ → Reconfigure and enter host {host} and port {port}. If you want this remote to stay on its own address, remove it from tools/remotes.json."
+    },
+    "battery_low": {
+      "title": "{name}: battery at {level} %",
+      "description": "The battery of remote {name} is almost empty ({level} %). Put it in the dock or connect the charging cable. This notice disappears by itself once it charges or is above 20 %."
+    },
+    "not_seen": {
+      "title": "{name} hasn't reported for {hours} hours",
+      "description": "Remote {name} last reported on {since}. Maybe the battery is empty, it is out of Wi-Fi and dock range, or it is lying somewhere. Press a key or put it in the dock. If you don't use this remote anymore, remove it under ESPHomeRemote → Configure – or ignore this notice."
+    },
+    "not_seen_since_start": {
+      "title": "{name} hasn't reported for {hours} hours",
+      "description": "Remote {name} hasn't reported since Home Assistant started ({since}). Maybe the battery is empty, it is out of Wi-Fi and dock range, or it is lying somewhere. Press a key or put it in the dock. If you don't use this remote anymore, remove it under ESPHomeRemote → Configure – or ignore this notice."
     }
   }
 }
