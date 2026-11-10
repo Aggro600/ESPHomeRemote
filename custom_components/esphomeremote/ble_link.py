@@ -117,7 +117,7 @@ class Link:
         self.ota_writer: asyncio.StreamWriter | None = None
         self.ota_open, self.ota_closed, self.ota_room = asyncio.Event(), asyncio.Event(), asyncio.Event()
         self.ota_sent = self.ota_acked = 0
-        # Pipeline-Auswahl der Remote ("Remote Remote 2" -> select.remote_wz_wohnzimmer_assistent)
+        # Pipeline-Auswahl der Remote ("Remote 2" -> select.remote_wz_wohnzimmer_assistent)
         self.assistent_select = f"select.remote_wz_{name.split()[-1].lower()}_assistent"
         self.wifi_session: tuple[asyncio.StreamWriter, asyncio.StreamWriter] | None = None
         self.server: asyncio.base_events.Server | None = None
@@ -426,7 +426,7 @@ class Link:
     @callback
     def _on_adv(self, info: bluetooth.BluetoothServiceInfoBleak, _change) -> None:
         if info.manufacturer_data.get(COMPANY, b"")[:6] == self.kennung:
-            # Adresse einer anderen Remote nicht uebernehmen (2026-10-23: "Remote Remote 1 gefunden unter" Remote 2' Adresse -
+            # Adresse einer anderen Remote nicht uebernehmen (2026-10-23: "Remote 1 gefunden unter" Adresse von Remote 2 -
             # vermutlich vermischte Werbedaten eines Proxys; danach verbanden beide Links mit Remote 2, HA meldete
             # "Unexpected device" und die Datenstroeme liefen durcheinander)
             if any(l is not self and l.address == info.address for l in _ALLE):

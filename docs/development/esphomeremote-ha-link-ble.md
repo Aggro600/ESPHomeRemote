@@ -7,7 +7,7 @@ jede Kleinigkeit das WLAN zu wecken? WLAN wird eigentlich selten gebraucht.
 
 - **Technisch machbar.** Die Firmware kann 4 BLE-Verbindungen gleichzeitig; die Bluetooth-Komponente ist in
   einer Testkopie erweitert (zweite Verbindung neben Streamer/TV, ohne die HID-Logik zu stoeren) - kompiliert
-  und laeuft auf die erste Remote Remote.
+  und laeuft auf Remote 1.
 - **Live-Test in der Nacht NICHT gelungen - wegen Reichweite**, nicht wegen der Technik: der naechste aktive
   Proxy (Dunstabzugshaube) empfaengt die Remote am Ladeplatz nur mit **-95 dBm** (vorher -80 dBm, als sie
   woanders lag), der Flur-Proxy gar nicht. Drei Verbindungsversuche liefen in den Timeout.
@@ -130,7 +130,7 @@ Idee: statt jede Funktion einzeln ueber ein eigenes BLE-Protokoll nachzubauen (5
   `esp_ble_get_cur_sendable_packets_num` (Bluedroid meldet sonst OK und verwirft trotzdem).
 - `components/network` (ESPHome 2026.9.1 + eine Zeile): `network::is_connected()` ist auch true, solange eine
   Tunnel-Sitzung offen ist - sonst wirft der API-Server bei WLAN aus alle Clients raus. **Nur in der Test-YAML.**
-- `remote-wz-couch-halink.yaml`: bindet die erste Remote Datei unveraendert als Paket ein + Tunnel + Text-Sensor
+- `remote-wz-couch-halink.yaml`: bindet Datei von Remote 1 unveraendert als Paket ein + Tunnel + Text-Sensor
   "Link Adresse" (aktuelle Werbeadresse, die braucht der Proxy).
 - Gegenstueck zum Messen: `tools/halink_test.py` (verbindet ueber den Proxy co2-sensor-wz, misst, und bietet
   `127.0.0.1:16053` als Bruecke an - darueber verbindet sich ein normaler aioesphomeapi-Client wie HA).
@@ -187,7 +187,7 @@ RAM Remote 1 mit Tunnel-Firmware (WLAN an, ohne Sitzung): intern frei 34,8 KB, g
 
 ### Stand 2026-10-05 ~17:40: Paralleltest (HID + Link) noch offen
 
-- Remote 1 per ADB am Streamer gekoppelt (Zubehoer-Suche, "Remote Remote 1" ausgewaehlt) - HID-Verbindung lief.
+- Remote 1 per ADB am Streamer gekoppelt (Zubehoer-Suche, "Remote 1" ausgewaehlt) - HID-Verbindung lief.
 - Erster Paralleltest scheiterte: Proxy-Verbindung err=133, und die HID-Verbindung zum Streamer riss ziemlich genau
   beim Link-Versuch ab (17:18:39). Ursache noch unklar. Gefunden: neben einem HID-Host warb die Remote gar nicht
   -> Waechter in `loop()` eingebaut (alle 2 s Werbung anstossen, wenn der Link fehlt).
@@ -248,13 +248,13 @@ dann `input keyevent 23`).
   hilft etwas (0/6 -> 2/4 -> 3/4), erklaert es aber nicht allein. Remote 1 (Dock, Laden) verband in 0,4-4 s.
   Offen: Link-Werbeintervall neben HID (500-640 ms) verkuerzen? Proxy-Zustand (esphome#19858)?
 - Wenn verbunden: 12/12 API-Antworten (~300 ms), 12/12 HID-Tasten an den Streamer, 61 Entitaeten, WLAN an.
-- Testskript findet die Remote jetzt ueber die HL-Kennung (`halink_test.py "Remote Remote 2"`), versucht bis zu 5x zu
+- Testskript findet die Remote jetzt ueber die HL-Kennung (`halink_test.py "Remote 2"`), versucht bis zu 5x zu
   verbinden und nutzt Port 16153 (16053 belegt die HA-Bruecke).
 
 ### Fix 2026-10-05 22:25: schnelle Link-Werbung nach Verlust -> Remote 2 6/6
 
 - Ursache der Aufbau-Probleme bei Remote 2: neben einem HID-Host warb die Remote fuer den Link nur alle 500-640 ms,
-  der Proxy scannt passiv mit geringem Tastverhaeltnis -> hoerte Remote 2 nur ~3x in 20 s. die erste Remote Boot-Schleife
+  der Proxy scannt passiv mit geringem Tastverhaeltnis -> hoerte Remote 2 nur ~3x in 20 s. Boot-Schleife von Remote 1
   (Akku jetzt raus) war es nicht: auch ohne sie 1/6.
 - Jetzt: 60 s nach einem Link-Verlust (und nach dem Start) wirbt die Remote alle 100-150 ms, danach wieder 500-640 ms
   (`LINK_ADV_FAST_MS`). HA baut den Link ohnehin sofort nach dem Verlust neu auf.
@@ -292,9 +292,9 @@ dann `input keyevent 23`).
 - Rettung: "Nur Bluetooth" beendet sich selbst, wenn HA 2 min ueber keinen Weg verbunden ist (vorher: nur Link
   geprueft). Schalter zeigt den echten Zustand (`lambda: id(tunnel).ble_only()`).
 - WLAN-Einschalter der Remote (wlan_frueh_an, wake_backlight, Sparschalter) fragen `wlan_zugriff::g_nur_ble`
-  (esphomeremote-wlan.h, in die erste Remote Vorlage; ohne Tunnel immer false). Wartungsfenster darf das WLAN auch bei
+  (esphomeremote-wlan.h, in Vorlage von Remote 1; ohne Tunnel immer false). Wartungsfenster darf das WLAN auch bei
   "Nur Bluetooth" einschalten (`set_wifi_erlaubt`, OTA). Nach dem Boot laeuft ein Wartungsfenster -> WLAN ~3 min an.
-- Remote meldet alle 10 s einen Status ueber den Link, die Bruecke schreibt ihn ins HA-Log ("Remote Remote 2 meldet").
+- Remote meldet alle 10 s einen Status ueber den Link, die Bruecke schreibt ihn ins HA-Log ("Remote 2 meldet").
 - Ergebnis: WLAN aus, Sitzung ueber Bluetooth stabil, Text-Rundlauf HA -> Remote 2 -> HA ~350 ms.
 - Nachttest gestartet 23:57 (`tools/halink_nachttest.py wohnzimmer`, Log `esphomeremote-docs/halink-night-test-wohnzimmer.log`),
   wartet auf TV aus; Bericht `halink-nachttest-wohnzimmer-<datum>.md` + Handy-Nachricht.
@@ -303,7 +303,7 @@ dann `input keyevent 23`).
 
 - Kopfzeile: WLAN-Balken ohne WLAN-Verbindung immer dunkel (vorher alter RSSI + gruen bei HA ueber Bluetooth),
   Aktualisierung auch bei `wifi: on_disconnect`. Neuer gruener Punkt `ha_ble_dot` neben den Bluetooth-Balken =
-  HA verbunden, aber nicht ueber WLAN (also ueber den Tunnel). In die erste Remote Vorlage, ohne Tunnel nie sichtbar.
+  HA verbunden, aber nicht ueber WLAN (also ueber den Tunnel). In Vorlage von Remote 1, ohne Tunnel nie sichtbar.
 - Wartungsfenster schaltet das WLAN jetzt auch bei "Nur Bluetooth" ein (`set_wifi_erlaubt` schaltet beim Fensterbeginn
   selbst ein - vorher kam der Tunnel dem 1-s-Abgleich zuvor und schaltete es sofort wieder aus).
 - Werbe-Merker: jede Verbindung setzt `s_adv_running = false` (gerichtete Werbung meldet kein ADV_TERMINATED) -
@@ -349,7 +349,7 @@ dann `input keyevent 23`).
   (Pipeline wie an der Remote unter "Assistent" gewaehlt). Ergebnisse zurueck (0x53: erkannt, Antwort, TTS-URL,
   Fehler, fertig) -> gleiche Anzeige/Lautsprecher-Ausgabe wie bisher (`on_voice_event` in der -halink-YAML).
   Codec-Test: 29,4 dB Stoerabstand.
-- Mikrofon-Taste (die erste Remote Vorlage): HA verbunden + kein WLAN + Haken gesetzt -> Bluetooth-Weg ("hoert zu (Bluetooth)"),
+- Mikrofon-Taste (Vorlage von Remote 1): HA verbunden + kein WLAN + Haken gesetzt -> Bluetooth-Weg ("hoert zu (Bluetooth)"),
   sonst wie bisher. Loslassen beendet den Audiostrom.
 - Fehler unterwegs: (1) Anfang fehlte - 1-s-Puffer lief ueber, solange der Link noch im Spartakt war -> 6-s-Ringpuffer
   im PSRAM, 0 verworfen. (2) "Nur Bluetooth" ging nach Flash/HA-Neustart verloren - Rettung loeste bei HA-Neustart aus
@@ -375,7 +375,7 @@ dann `input keyevent 23`).
 
 ### 2026-10-06: Parallel-Modus mit allen Hosts + HA-Link
 
-- "4" war kein Hardware-Limit, sondern `CONFIG_BT_ACL_CONNECTIONS: 4` (die erste Remote Vorlage). Remote 2-halink: 6 Verbindungen
+- "4" war kein Hardware-Limit, sondern `CONFIG_BT_ACL_CONNECTIONS: 4` (Vorlage von Remote 1). Remote 2-halink: 6 Verbindungen
   (`CONFIG_BT_ACL_CONNECTIONS: 6`, `CONFIG_BT_CTRL_BLE_MAX_ACT: 8`) und `set_max_parked(2)` (vorher fest 1 geparkter
   Host - Kommentar von 09/2026: "mit zwei geparkten konnte sich das dritte Geraet nicht mehr verbinden").
 - Sony-TV verband sich nach einem Trennen durch die Remote nicht mehr (auch ohne Parallel-Modus) -> am TV entkoppelt,

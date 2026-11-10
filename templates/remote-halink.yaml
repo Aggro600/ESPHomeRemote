@@ -104,7 +104,7 @@ mdns:
 # "Nur Bluetooth": WLAN aus, HA nur ueber den Link (Rettung: Notanker in remote.yaml - 3 min ohne HA -> WLAN 3 min an,
 # der Modus bleibt eingeschaltet).
 # Kein Neustart in den Aktionen! Der Schalter fuehrt beim Start seinen gespeicherten Zustand aus -
-# die erste Remote Notaus-Schalter (Neustart in turn_off_action) hing deshalb in einer Boot-Schleife (2026-10-05).
+# Notaus-Schalter von Remote 1 (Neustart in turn_off_action) hing deshalb in einer Boot-Schleife (2026-10-05).
 switch:
   - platform: template
     # 2026-10-31 umbenannt (war "Nur Bluetooth (WLAN aus)"): HA laeuft nicht ueber Bluetooth, sondern ueber das Dock
@@ -201,7 +201,7 @@ interval:
           id(tunnel).set_wifi_erlaubt((int32_t) (millis() - id(wartung_bis)) < 0 || wlan_zugriff::bedarf_aktiv() || id(testmodus));
 
 # Mehr gleichzeitige Bluetooth-Verbindungen (2026-10-06): HA-Link + aktiver Host + 2 geparkte + 1 Platz fuer den
-# Aufbau beim Wechsel. Standard in die erste Remote Vorlage: 4.
+# Aufbau beim Wechsel. Standard in Vorlage von Remote 1: 4.
 esp32:
   framework:
     sdkconfig_options:

@@ -7233,7 +7233,7 @@ const EINST_GRUPPEN = [
   ], "Für Pflege und Fehlersuche."],
 ];
 // Energiesparmodus (2026-10-18): ein Knopf setzt alle Spar-Einstellungen auf einmal. "mittel" = die Einstellungen,
-// mit denen Remote Remote 2 im Alltag laeuft (Stand 2026-10-18); leicht/stark davon abgeleitet.
+// mit denen Remote 2 im Alltag laeuft (Stand 2026-10-18); leicht/stark davon abgeleitet.
 const ENERGIE_MODI = [
   ["leicht", "Leicht", "mdi:leaf", "Bequem: WLAN bleibt lange an, Display 30 s, Touch weckt, Mikrofon vorgewärmt. Tiefschlaf erst nach 30 min und nur ohne Bluetooth-Gerät.",
     { ps_wifi: true, ps_wifi_max: false, ps_wifi_off: true, ps_wifi_off_s: 1800, ps_wifi_off_tv_s: -1, wlan_frueh: true,

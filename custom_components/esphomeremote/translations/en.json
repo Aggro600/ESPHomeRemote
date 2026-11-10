@@ -10,8 +10,8 @@
         }
       },
       "fertig": {
-        "title": "Almost done – add the key to ESPHome",
-        "description": "Copy this line into the ESPHome **Secrets** (ESPHome add-on → top right \"Secrets\") and flash the remote once more:\n\n`esphomeremote_key: \"{key}\"`\n\nThen open **\"Remote\"** in the sidebar."
+        "title": "Almost done – copy this into ESPHome",
+        "description": "Copy this block into the ESPHome **Secrets** (ESPHome add-on → top right **\"Secrets\"**), below the Wi-Fi lines (`wifi_ssid`, `wifi_password` – add them if they are missing):\n\n```yaml\n{block}\n```\n\nPasswords and radio key were generated for you. Already have `ota_pw`, `ap_password` and `direkt_schluessel`? Then copy only the last line. Next: flash the remote (or install it once more if it already runs this firmware). Afterwards you find **\"Remote\"** in the sidebar."
       }
     },
     "abort": {

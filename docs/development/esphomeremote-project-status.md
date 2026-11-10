@@ -1596,5 +1596,5 @@ Neu in v7-v10:
    48/47/21/14/13/12/11/10) + Steuerpins LOW parken gegen Back-Feed,
    SD_EN GPIO16 HIGH, MIC GPIO45 LOW, `gpio_hold_en` + `gpio_deep_sleep_hold_en`,
    Touch/LIS3DH in Low-Power. Wie die Referenz (`neutraliseRev5DisplayBusForDeepSleep`
-   etc.). RISKANT ohne physische Kontrolle (Ghost-Display, Boot) - fuer Remote 2' Rueckkehr.
+   etc.). RISKANT ohne physische Kontrolle (Ghost-Display, Boot) - fuer Rueckkehr von Remote 2.
 3. g_deep_active-Persistenz-Test laeuft (dstest.log).

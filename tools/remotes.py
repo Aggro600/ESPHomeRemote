@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Alle Fernbedienungs-YAMLs werden aus den Vorlagen in templates/ ERZEUGT (seit 2026-10-16 neutral,
-vorher war die erste Remote Datei die Vorlage).
+vorher war Datei von Remote 1 die Vorlage).
 
   templates/remote.yaml         -> remote-wz-<kennung>.yaml
   templates/remote-halink.yaml  -> remote-wz-<kennung>-halink.yaml (Bluetooth-Schicht, die geflasht wird)

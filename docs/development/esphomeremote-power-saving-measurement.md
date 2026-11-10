@@ -266,7 +266,7 @@ oder Deep-Sleep-Bedingung zusaetzlich auf `akku_rate <= 0` pruefen.
   Einmal eine Taste druecken / die Fernbedienung anheben, waehrend sie schlaeft.
   Hardware laut Schaltplan korrekt (R36-Pull-up auf GPIO8, LIS3DH treibt GPIO2).
 
-## Messung 2026-09-29 (Remote Remote 2, Display aus, WLAN an, BLE-Partner fehlt, ohne Kabel)
+## Messung 2026-09-29 (Remote 2, Display aus, WLAN an, BLE-Partner fehlt, ohne Kabel)
 
 Rate = CRATE des MAX17048 (Mittel ueber die Messdauer, minuetlich aus HA gelesen), 2000 mAh.
 

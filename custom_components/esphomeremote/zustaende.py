@@ -25,6 +25,7 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import discovery, entity_registry as er
+from homeassistant.helpers.restore_state import RestoreEntity
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote"
@@ -33,8 +34,9 @@ PLATTFORMEN = ("sensor", "binary_sensor")
 FREI = ("unavailable", "unknown")
 
 
-class _Basis:
+class _Basis(RestoreEntity):
     _attr_should_poll = False
+    _wiederherstellen = False   # nur beim Start aus der Registry angelegt (Werte ueber das Dock, s. Zustaende.plattform)
 
     def __init__(self, eid: str, zustand: Any, attrs: dict | None) -> None:
         self.entity_id = eid
@@ -52,6 +54,36 @@ class _Basis:
         self._attr_extra_state_attributes = a
         self._zustand = zustand
         self._attr_available = zustand != "unavailable"
+
+    async def async_added_to_hass(self) -> None:
+        """Werte der Remote ueber das Dock nach dem Neustart wiederherstellen (2026-11-10): vorher standen sie bis zur
+        naechsten Meldung des Docks auf "nicht verfuegbar" (9 von 13 Werten je Remote). Attribut wiederhergestellt=true,
+        bis das Dock neu meldet. Nur fuer Zustaende mit quelle=dock - alles andere setzt die Integration selbst neu."""
+        await super().async_added_to_hass()
+        if not self._wiederherstellen or self._zustand is not None:
+            return
+        last = await self.async_get_last_state()
+        if self._zustand is not None:   # inzwischen frisch gemeldet
+            return
+        if last is None or last.state in FREI or last.attributes.get("quelle") != "dock":
+            self.werte("unavailable", {"friendly_name": last.attributes.get("friendly_name")} if last else None)
+        else:
+            a = dict(last.attributes)
+            a["_einheit"] = a.pop("unit_of_measurement", None)
+            a["_klasse"] = a.pop("device_class", None)
+            a.pop("state_class", None)
+            a["wiederhergestellt"] = True
+            wert: Any = last.state
+            if a["_einheit"]:
+                try:
+                    wert = float(wert)
+                except ValueError:
+                    pass
+            self.werte(wert, a)
+            z = self.hass.data.get(DOMAIN + "_zustaende")
+            if z is not None and self.entity_id not in z.stand:
+                z.stand[self.entity_id] = (wert, a)
+        self.async_write_ha_state()
 
 
 class ZustandSensor(_Basis, SensorEntity):
@@ -93,6 +125,29 @@ class Zustaende:
             if eid.startswith(p + "."):
                 del self.offen[eid]
                 self.setzen(eid, z, a)
+        # Werte ueber das Dock aus dem letzten Lauf gleich anlegen und wiederherstellen (2026-11-10, s. _Basis)
+        try:
+            self._dockwerte_anlegen(p, add)
+        except Exception:  # noqa: BLE001 - darf die Plattform nie mitreissen
+            _LOGGER.exception("Werte ueber das Dock nicht wiederhergestellt")
+
+    @callback
+    def _dockwerte_anlegen(self, p: str, add) -> None:
+        from .dockstatus import WERTE   # noqa: PLC0415 (Zirkelbezug)
+        enden = tuple("_" + endung for dom, endung, _ in WERTE.values() if dom == p)
+        neu = []
+        for ent in list(er.async_get(self.hass).entities.values()):
+            uid = ent.unique_id if isinstance(ent.unique_id, str) else ""   # fremde Integrationen: auch Zahlen
+            eid = uid[len(UID):]
+            if (ent.platform != DOMAIN or ent.domain != p or not uid.startswith(UID) or not eid.endswith(enden)
+                    or eid in self.ents or ent.disabled):
+                continue
+            e = (ZustandBinaer if p == "binary_sensor" else ZustandSensor)(eid, None, None)
+            e._wiederherstellen = True
+            self.ents[eid] = e
+            neu.append(e)
+        if neu:
+            add(neu)
 
     @callback
     def setzen(self, eid: str, zustand: Any, attrs: dict | None = None) -> None:

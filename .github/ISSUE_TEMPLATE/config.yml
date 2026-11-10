@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Setup guide & troubleshooting
+    url: https://github.com/Aggro600/ESPHomeRemote#quick-start
+    about: Step-by-step installation and solutions for the most common problems.
+  - name: 💬 OMOTE community on Discord
+    url: https://discord.com/invite/5PnYFAsKsG
+    about: Hardware questions, PCBs, chatting with other OMOTE owners.

@@ -10,7 +10,7 @@
 # GENERIERT aus templates/remote.yaml durch tools/remotes.py - NICHT von Hand bearbeiten (Aenderungen in der Vorlage machen).
 # VORLAGE fuer ALLE Fernbedienungen (seit 2026-10-16) - nur diese Datei von Hand pflegen.
 # tools/remotes.py erzeugt daraus remote-wz-<name>.yaml (Platzhalter remotename/Remotename/REMOTENAME,
-# nur in Code-Zeilen). Kommentare unten stammen teils aus der Zeit, als die erste Remote Datei die Vorlage war.
+# nur in Code-Zeilen). Kommentare unten stammen teils aus der Zeit, als Datei von Remote 1 die Vorlage war.
 # =============================================================================
 #  ESPHomeRemote - Firmware fuer die OMOTE / Open Remote Rev6 (ESP32-S3)
 # =============================================================================
@@ -61,7 +61,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.10.1"
+    version: "2026.11.10.2"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>

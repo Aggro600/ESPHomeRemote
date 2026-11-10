@@ -30,10 +30,6 @@
   <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md"><b>✨ Was ist neu</b></a>
 </p>
 
-> **Update auf 2026.11.5.4 oder neuer:** jede Remote **einmal per USB-Kabel** anschließen und im Konfigurator
-> aufspielen: Seite *Firmware* der Remote → **USB** (Chrome oder Edge am PC). Das schnellere Aufwachen braucht einen neuen Bootloader, und der lässt sich
-> nicht über WLAN aktualisieren. WLAN-Updates gehen auch ohne – die Remote wacht dann nur etwa 0,5 s langsamer auf.
-
 ---
 
 <table>
@@ -225,74 +221,92 @@ Einstellungen gleichen sich in beide Richtungen ab: was du an der Remote umstell
 
 ## Was du brauchst
 
-- Die Fernbedienung: **OMOTE / Open Remote, Platine Rev6** (ESP32-S3).
-  Hardware: https://github.com/OMOTE-Community/OMOTE-Hardware
-  Du bekommst die PCBs evtl. über den Discord buy/sell: https://discord.com/invite/5PnYFAsKsG
-  
-- Ein **USB-C-Kabel** und einen PC mit **Chrome oder Edge** (zum ersten Aufspielen).
-- Für alle Funktionen: **Home Assistant** mit dem **ESPHome**-Add-on (oder „ESPHome Device Builder“)
-  und **HACS** (für den Konfigurator).
+| | |
+|---|---|
+| 🎛️ **Die Fernbedienung** | **OMOTE / Open Remote, Platine Rev6** (ESP32-S3) – Hardware: [OMOTE-Hardware](https://github.com/OMOTE-Community/OMOTE-Hardware). Platinen gibt es manchmal im [Discord](https://discord.com/invite/5PnYFAsKsG) (Kanal buy/sell). |
+| 🏠 **Home Assistant** | 2026.9 oder neuer, mit dem Add-on **ESPHome Device Builder** und **[HACS](https://hacs.xyz)**. |
+| 🔌 **Fürs erste Aufspielen** | Ein **USB-C-Datenkabel** (kein reines Ladekabel) und ein PC mit **Chrome oder Edge**. |
+| 📶 **WLAN** | Ein **2,4-GHz**-Netz (5 GHz kann der ESP32 nicht). |
+| 🧲 **Dockingstation** | *Optional.* Original-Dock oder ein beliebiger ESP32 – siehe [Die Dockingstation](#die-dockingstation). |
 
 ---
 
 ## Schnellstart
 
-> **Web-Installer (ohne Home Assistant):** kommt zurück, sobald es fertig gebaute Firmware zum Herunterladen gibt.
-> Bis dahin geht es über Home Assistant (unten).
+Etwa **30 Minuten**, das meiste davon Warten auf den ersten Bau. Du bearbeitest keinen Code – du kopierst eine Datei und einen Textblock.
 
-### Mit Home Assistant (empfohlen)
-
-**Schritt 1 – ESPHome bereitlegen**
-In Home Assistant: *Einstellungen → Add-ons → Add-on-Store →* **ESPHome Device Builder** installieren
-und starten.
-
-**Schritt 2 – Konfigurator installieren (über HACS)**
-1. Falls noch nicht da: **HACS** installieren (https://hacs.xyz – einmalig, 5 Minuten).
-2. In Home Assistant **HACS** öffnen, nach **„ESPHomeRemote“** suchen → **Herunterladen**
-   (oder [In HACS öffnen](https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration) anklicken).
-   ESPHomeRemote steht in der **Standardliste von HACS** – kein benutzerdefiniertes Repository nötig. *Nicht gefunden?*
-   Liste in HACS neu laden (**⋮** → *Neu laden*) oder HACS aktualisieren.
-3. Home Assistant **neu starten** (*Einstellungen → System → oben rechts ⏻ → Neu starten*).
-4. *Einstellungen → Geräte & Dienste →* **„+ Integration hinzufügen“** → **„ESPHomeRemote“**.
-   Den Namen der Fernbedienung so lassen (`esphomeremote`) → **Absenden**.
-5. Es erscheint eine Zeile wie `esphomeremote_key: "…"` – **kopieren**, die brauchst du gleich.
-
-**Schritt 3 – Passwörter eintragen**
-Im ESPHome-Add-on oben rechts auf **„Secrets“** klicken und diese Zeilen ergänzen
-(WLAN steht meist schon drin, die Passwörter sind frei wählbar):
-```yaml
-ota_pw: "ein-passwort"
-ap_password: "noch-ein-passwort"
-direkt_schluessel: "…"             # 32 Hex-Zeichen, z. B. von  openssl rand -hex 16  (Funkweg zum Dock)
-esphomeremote_key: "…"      # die kopierte Zeile aus Schritt 2
+```mermaid
+flowchart LR
+  A["1 · ESPHome-<br/>Add-on"] --> B["2 · In HACS<br/>herunterladen"] --> C["3 · Integration<br/>hinzufügen"] --> D["4 · Secrets<br/>einfügen"] --> E["5 · Per USB<br/>aufspielen"] --> F["6 · In Home Assistant<br/>übernehmen"]
 ```
 
-*Eigener fester API-Schlüssel statt OTA-Passwort:* Die Firmware schützt Updates mit `ota_pw`, weil Home Assistant den
-API-Schlüssel erst beim Einbinden vergibt. Setzt du selbst einen festen Schlüssel, warnt ESPHome, das Passwort
-„verschwende Flash und RAM“. Dann das hier in die YAML deines Geräts (das Secret `ota_pw` bleibt stehen – `esphomeremote.yaml` verweist noch darauf, der Wert wird nur nicht mehr benutzt):
-```yaml
-api:
-  encryption:
-    key: !secret api_key
-ota:
-  - id: !extend ota_esphome
-    password: !remove
-    encryption: {}
-```
+### 1 · ESPHome installieren
+In Home Assistant: *Einstellungen → Add-ons → Add-on Store* → **ESPHome Device Builder** → **Installieren** → **Starten**.
+Schon installiert? Weiter mit Schritt 2.
 
-**Schritt 4 – Fernbedienung aufspielen**
-1. Im ESPHome-Add-on **„+ Neues Gerät“** → **„Überspringen“** (bzw. „Leer anlegen“).
-2. Den Inhalt von [`esphomeremote.yaml`](https://github.com/Aggro600/ESPHomeRemote/blob/master/esphomeremote.yaml) in den Editor kopieren – anpassen musst du nichts
-   (die Adresse von Home Assistant findet die Fernbedienung selbst).
-3. **Speichern** → **Installieren** → *„An diesen Computer anschließen“* → Fernbedienung per USB-C
-   anstecken und auswählen. Das erste Mal dauert es etwa 10 Minuten.
+### 2 · ESPHomeRemote in HACS herunterladen
+ESPHomeRemote steht in der **offiziellen HACS-Liste** – kein benutzerdefiniertes Repository nötig.
 
-**Schritt 5 – In Home Assistant übernehmen**
-1. Home Assistant meldet *„Neues Gerät gefunden“* (*Einstellungen → Geräte & Dienste*) → **Hinzufügen**.
-2. Beim Gerät auf **„Konfigurieren“** → **„Gerät darf Home-Assistant-Aktionen ausführen“** einschalten.
-3. Fertig! Links in der Seitenleiste ist jetzt **„Fernbedienung“** – dort stellst du alles ein.
+[![In HACS öffnen](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration)
+
+1. Auf den Knopf oben klicken – oder **HACS** öffnen und nach **ESPHomeRemote** suchen.
+2. **Herunterladen** → bestätigen.
+3. Home Assistant **neu starten** (*Einstellungen → System → ⏻ oben rechts → Neu starten*).
+
+> *Nicht gefunden?* In HACS **⋮ → Neu laden**, oder zuerst HACS aktualisieren.
+
+### 3 · Integration hinzufügen
+
+[![Integration hinzufügen](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=esphomeremote)
+
+1. Auf den Knopf klicken – oder *Einstellungen → Geräte & Dienste → **+ Integration hinzufügen*** → **ESPHomeRemote**.
+2. Beide Felder so lassen (Name der Remote `esphomeremote`, der Schlüssel ist erzeugt) → **Absenden**.
+3. Danach erscheint ein **fertiger Block** wie dieser – **kopieren** (Fenster offen lassen):
+   ```yaml
+   ota_pw: "…"
+   ap_password: "…"
+   direkt_schluessel: "…"
+   esphomeremote_key: "…"
+   ```
+   Passwörter und Funkschlüssel fürs Dock sind schon für dich erzeugt.
+
+### 4 · Secrets in ESPHome einfügen
+1. Das **ESPHome**-Add-on öffnen → **Secrets** (oben rechts).
+2. Den Block **unter** die WLAN-Zeilen einfügen. Gibt es die noch nicht, diese auch eintragen:
+   ```yaml
+   wifi_ssid: "Name deines WLANs"
+   wifi_password: "dein WLAN-Passwort"
+   ```
+3. **Speichern**.
+
+### 5 · Fernbedienung aufspielen
+1. In ESPHome: **+ Neues Gerät** → **Weiter** → **Überspringen** (bzw. *Leer anlegen*) – Name egal.
+2. Das neue Gerät mit **Bearbeiten** öffnen, alles löschen und den Inhalt von
+   **[`esphomeremote.yaml`](https://github.com/Aggro600/ESPHomeRemote/blob/master/esphomeremote.yaml)** einfügen (auf GitHub *Copy raw file*).
+   Nichts ändern – die Remote findet Home Assistant von selbst.
+3. **Speichern** → **Installieren** → **Mit diesem Computer verbinden** → Remote per USB-C anstecken → in der Liste auswählen → **Verbinden**.
+4. Der erste Bau dauert etwa **10 Minuten**. ☕ Danach startet die Remote neu.
+
+> **„Mit diesem Computer verbinden“ fehlt oder kein Gerät in der Liste?** Siehe [Probleme lösen](#probleme-lösen).
+
+### 6 · In Home Assistant übernehmen
+1. Home Assistant meldet **Neues Gerät gefunden** (*Einstellungen → Geräte & Dienste*) → **Hinzufügen** → **Absenden**.
+2. Beim ESPHome-Gerät: **Konfigurieren** → **Dem Gerät erlauben, Home-Assistant-Aktionen auszuführen** einschalten → **Absenden**.
+3. 🎉 Fertig. Links in der Seitenleiste steht jetzt **Fernbedienung** – dort stellst du alles Weitere ein.
+
+### Erste Schritte im Konfigurator
+1. **Bluetooth koppeln:** an der Remote *Menü → Einstellungen → Bluetooth* → Platz wählen → *Neu koppeln*, dann am
+   Fernseher/Streamer nach Bluetooth-Geräten suchen und **ESPHomeRemote** wählen.
+2. **Tasten:** im Konfigurator deine Remote öffnen → **Tasten** – auf eine Taste der virtuellen Remote tippen und festlegen, was sie tut.
+3. **Speichern** (oder Strg+S). Eine schlafende Remote holt sich die Änderung beim nächsten Aufwachen.
+
+Dock, Menü am Fernseher oder weitere Remotes? Unten weiterlesen – oder einfach ausprobieren: Jede Seite im Konfigurator erklärt sich selbst.
 
 ---
+
+### Dockingstation (optional)
+Im Konfigurator: **Werkstatt → Neues Dock** legt die Gerätedatei an und spielt sie per USB auf – der Chip wird
+automatisch erkannt. Das Dock nutzt dieselben Secrets wie die Remote.
 
 ### Streamer-App (optional)
 
@@ -319,8 +333,9 @@ Fernseher** (Taste, Größe, Lage, Einblenddauer, **Menü bearbeiten**) und **So
   mit der Liste, was neu ist. Installieren, Home Assistant neu starten – fertig.
 - **Fernbedienungen und Docks:** danach im Konfigurator unter *Firmware* steht „Neue Version …“ –
   **Alle aktualisieren** baut und spielt sie auf (schlafende Remotes kurz anfassen).
-- **Einmal je Remote ab 2026.11.5.4: per USB-Kabel aufspielen** (neuer Bootloader für das schnelle Aufwachen, siehe
-  oben). WLAN-Updates gehen auch ohne.
+- **Vor 2026.11.5.4 installiert?** Jede Remote **einmal per USB-Kabel** aufspielen (*Firmware*-Seite der Remote → **USB**,
+  Chrome oder Edge): Das schnellere Aufwachen braucht einen neuen Bootloader, und der geht nicht per WLAN. WLAN-Updates
+  gehen auch ohne – die Remote wacht dann nur etwa 0,5 s langsamer auf. Neue Installationen haben ihn schon.
 - Die Firmware kommt vom Zweig `stabil` (letzter Release).
 - Was neu ist: [CHANGELOG.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md).
 
@@ -368,19 +383,28 @@ halten, zwei Remotes vergleichen) · **Prüfen & Finden** (alles prüfen, finden
 
 ---
 
+## Probleme lösen
+
+| Problem | Lösung |
+|---|---|
+| **„Mit diesem Computer verbinden“ fehlt oder ist grau** | Der Browser erlaubt USB nur auf einer sicheren (https-)Seite. Home Assistant über https öffnen (z. B. Home Assistant Cloud) – oder **Installieren → Manuell herunterladen** wählen und die Datei unter [web.esphome.io](https://web.esphome.io) in Chrome oder Edge aufspielen. |
+| **Kein Gerät in der USB-Liste** | Ein USB-C-**Datenkabel** und einen anderen Anschluss nehmen. |
+| **Bau bricht ab mit „Secret … not defined“** | In den ESPHome-**Secrets** fehlt eine Zeile – mit Schritt 4 vergleichen. Die Namen müssen genau stimmen. |
+| **Remote wird nach dem Aufspielen nicht gefunden** | Ist das WLAN **2,4 GHz**, stimmen Name und Passwort in den Secrets? Kommt die Remote nicht ins WLAN, öffnet sie nach einer Weile einen eigenen Hotspot (Passwort: `ap_password`). |
+| **Tasten schalten nichts in Home Assistant** | Schritt 6.2: *Dem Gerät erlauben, Home-Assistant-Aktionen auszuführen*. |
+| **Konfigurator zeigt „noch nicht übertragen“** | Die Remote schläft – einmal eine Taste drücken. Klappt es nie? `esphomeremote_key` in den ESPHome-Secrets muss zum Schlüssel unter *ESPHomeRemote → Konfigurieren* passen. |
+| **Block aus Schritt 3 verloren** | *ESPHomeRemote → Konfigurieren* zeigt den Schlüssel wieder. Die anderen drei Zeilen darfst du selbst wählen: zwei Passwörter und für `direkt_schluessel` 32 Zeichen aus `0-9 a-f` (auf allen Remotes und Docks gleich). |
+
+Kommst du nicht weiter? [Issue anlegen](https://github.com/Aggro600/ESPHomeRemote/issues/new/choose) – das Formular fragt alles ab, was für schnelle Hilfe nötig ist.
+
+---
+
 ## Häufige Fragen
 
-**Die Fernbedienung schaltet in Home Assistant nichts.**
-Beim ESPHome-Gerät „Gerät darf Home-Assistant-Aktionen ausführen“ einschalten (Schritt 5).
-
-**Im Konfigurator steht „noch nicht übertragen“.**
-Die Fernbedienung schläft. Einmal eine Taste drücken – sie holt die Belegung dann ab.
-Klappt es nie: Stimmt `esphomeremote_key` in den ESPHome-Secrets mit dem Schlüssel der
-Integration überein (*ESPHomeRemote → Konfigurieren* zeigt ihn)? Die Remote findet Home Assistant selbst – HA kündigt seine Adresse an.
-
 **Mehrere Fernbedienungen?**
-Für jede in ESPHome ein eigenes Gerät mit eigenem `device_name`/`ha_name` anlegen (Schritt 4).
-Dann bei der Integration *ESPHomeRemote* auf **„Konfigurieren“** und den neuen Namen mit Komma ergänzen.
+Am einfachsten im Konfigurator über **Werkstatt → Neue Fernbedienung**. Von Hand: in ESPHome ein weiteres Gerät mit derselben
+`esphomeremote.yaml`, oben aber `device_name`, `friendly_name` und `ha_name` ändern (z. B. `esphomeremote-2`,
+`ESPHomeRemote 2`, `esphomeremote_2`). Dann den neuen Namen unter *ESPHomeRemote →* **Konfigurieren** mit Komma ergänzen.
 
 **Seiten zeigen „nicht verfügbar“.**
 Einige eingebaute Seiten (Startseite-Player, Klingel, Sleeptimer) brauchen Entitäten. Die wählst du im Konfigurator
@@ -394,6 +418,24 @@ Aufruf. Dort stellst du auch den TV-Eingang (für Popups wie „Nur wenn TV-Eing
 
 **Menü auf dem Fernseher von einer Remote-Taste öffnen:** Aktion `esphomeremote.streamer_menu` mit `streamer: <Name>`
 (optional `command: toggle/open/close`, `page:`, `size:`, `position:`).
+
+<details>
+<summary><b>Eigener fester API-Schlüssel statt OTA-Passwort</b> (für Fortgeschrittene)</summary>
+
+Die Firmware schützt Updates mit `ota_pw`, weil Home Assistant den
+API-Schlüssel erst beim Einbinden vergibt. Setzt du selbst einen festen Schlüssel, warnt ESPHome, das Passwort
+„verschwende Flash und RAM“. Dann das hier in die YAML deines Geräts (das Secret `ota_pw` bleibt stehen – `esphomeremote.yaml` verweist noch darauf, der Wert wird nur nicht mehr benutzt):
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+ota:
+  - id: !extend ota_esphome
+    password: !remove
+    encryption: {}
+```
+
+</details>
 
 ---
 

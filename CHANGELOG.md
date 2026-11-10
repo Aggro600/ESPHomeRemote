@@ -1,5 +1,27 @@
 # What's new · Was ist neu
 
+## 2026.11.10.2 (2026-11-10)
+
+**Easier setup.** The setup dialog now shows a complete, ready-to-copy block for the ESPHome secrets – passwords and the radio key for the dock are generated for you. No more inventing passwords or running `openssl`.
+
+**New guide.** Step-by-step quick start with one-click buttons for HACS and the integration, a troubleshooting table for the most common setup problems, and issue forms that ask for everything needed to help.
+
+**Dock values survive a restart.** Battery, charging cable, activity and the other values reported via the dock keep their last state after a Home Assistant restart (attribute `wiederhergestellt: true` until the dock reports again) instead of showing "unavailable".
+
+The firmware itself is unchanged. The configurator still offers the firmware update to this version – optional, nothing changes on the remote or dock.
+
+<details><summary>Deutsch</summary>
+
+**Einfachere Einrichtung.** Der Einrichtungsdialog zeigt jetzt einen kompletten Block zum Kopieren für die ESPHome-Secrets – Passwörter und Funkschlüssel fürs Dock sind schon erzeugt. Kein Ausdenken von Passwörtern und kein `openssl` mehr.
+
+**Neue Anleitung.** Schnellstart Schritt für Schritt mit Knöpfen für HACS und die Integration, eine Tabelle für die häufigsten Probleme bei der Einrichtung und Issue-Formulare, die alles Nötige abfragen.
+
+**Dock-Werte überstehen einen Neustart.** Akku, Ladekabel, Aktivität und die übrigen Werte über das Dock behalten nach einem Neustart von Home Assistant ihren letzten Stand (Attribut `wiederhergestellt: true`, bis das Dock wieder meldet) statt „nicht verfügbar“.
+
+Die Firmware selbst ist unverändert. Der Konfigurator bietet das Firmware-Update auf diese Version trotzdem an – freiwillig, an Remote und Dock ändert sich nichts.
+
+</details>
+
 ## 2026.11.10.1 (2026-11-10)
 
 Fixes, mostly for fresh installs from HACS.

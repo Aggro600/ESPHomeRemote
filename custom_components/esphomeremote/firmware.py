@@ -53,7 +53,7 @@ DOCK_CHIPS = {"esp32c3": ("ESP32-C3", "esp32-c3-devkitm-1"), "esp32": ("ESP32", 
 ESPRESSIF_VID = 0x303A
 _DASH_ENDE = {"completed", "failed", "cancelled", "canceled", "error"}
 # Gesperrt wird nur noch von Hand im Firmware-Bereich (die Vorgabe "Remote 1 gesperrt" vom 13.10. galt der alten,
-# defekten Platine - die erste Remote neue Remote darf geflasht werden)
+# defekten Platine - neue Remote von Remote 1 darf geflasht werden)
 
 _jobs: dict[str, dict] = {}
 
@@ -458,7 +458,7 @@ async def _geraet(hass: HomeAssistant, j: dict, g: dict, port: str, info: dict) 
                 if ueber_dock:
                     ds.wartung_fertig(dev)
             _log(j, f"{name}: WLAN da ({ip})")
-        # Antwortet unter der IP wirklich dieses Geraet? (2026-10-16: ein neues Dock bekam per DHCP die erste Remote feste
+        # Antwortet unter der IP wirklich dieses Geraet? (2026-10-16: ein neues Dock bekam per DHCP feste von Remote 1
         # IP - ohne Pruefung waere die Remote-Firmware an das Dock gegangen)
         soll = _erwartete_mac(hass, g.get("name") or "")
         if ip and soll:

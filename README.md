@@ -34,10 +34,6 @@
 > **English and German** – Home Assistant's language applies. A few screenshots and page names in this guide are
 > still German; the English meaning is given next to them.
 
-> **Updating to 2026.11.5.4 or later:** connect each remote **once via USB cable** and flash it from the
-> configurator: *Firmware* page of the remote → **USB** (Chrome or Edge on a PC). The faster wake-up needs a new bootloader, and the bootloader
-> cannot be updated over Wi-Fi. Wi-Fi updates keep working without it – the remote just wakes about 0.5 s slower.
-
 ---
 
 <table>
@@ -246,72 +242,92 @@ Settings sync both ways: what you change on the remote shows up in the configura
 
 ## What you need
 
-- The remote: **OMOTE / Open Remote, board Rev6** (ESP32-S3).
-  Hardware: https://github.com/OMOTE-Community/OMOTE-Hardware
-  You may get PCBs via the Discord buy/sell channel: https://discord.com/invite/5PnYFAsKsG
-- A **USB-C cable** and a PC with **Chrome or Edge** (for the first flash).
-- For all features: **Home Assistant** with the **ESPHome** add-on ("ESPHome Device Builder")
-  and **HACS** (for the configurator).
+| | |
+|---|---|
+| 🎛️ **The remote** | **OMOTE / Open Remote, board Rev6** (ESP32-S3) – hardware: [OMOTE-Hardware](https://github.com/OMOTE-Community/OMOTE-Hardware). PCBs are sometimes offered in the [Discord](https://discord.com/invite/5PnYFAsKsG) buy/sell channel. |
+| 🏠 **Home Assistant** | 2026.9 or newer, with the **ESPHome Device Builder** add-on and **[HACS](https://hacs.xyz)**. |
+| 🔌 **For the first flash** | A **USB-C data cable** (not a charge-only cable) and a PC with **Chrome or Edge**. |
+| 📶 **Wi-Fi** | A **2.4 GHz** network (the ESP32 can't use 5 GHz). |
+| 🧲 **Docking station** | *Optional.* Original dock or any spare ESP32 – see [The docking station](#the-docking-station). |
 
 ---
 
 ## Quick start
 
-> **Web installer (without Home Assistant):** will return as soon as there is ready-built firmware to download.
-> Until then, use the Home Assistant route below.
+About **30 minutes**, most of it waiting for the first build. You never edit code – you copy one file and one block of text.
 
-### With Home Assistant (recommended)
-
-**Step 1 – Get ESPHome ready**
-In Home Assistant: *Settings → Add-ons → Add-on Store →* install and start **ESPHome Device Builder**.
-
-**Step 2 – Install the configurator (via HACS)**
-1. If you don't have it yet: install **HACS** (https://hacs.xyz – once, 5 minutes).
-2. Open **HACS** in Home Assistant, search for **"ESPHomeRemote"** → **Download**
-   (or click [Open in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration)).
-   ESPHomeRemote is in the **HACS default list** – no custom repository needed. *Not found?* Reload the list in HACS
-   (**⋮** → *Reload*) or update HACS.
-3. **Restart** Home Assistant (*Settings → System → ⏻ at the top right → Restart*).
-4. *Settings → Devices & services →* **"+ Add integration"** → **"ESPHomeRemote"**.
-   Keep the remote's name as it is (`esphomeremote`) → **Submit**.
-5. A line like `esphomeremote_key: "…"` appears – **copy** it, you'll need it in a moment.
-
-**Step 3 – Enter passwords**
-In the ESPHome add-on, click **"Secrets"** at the top right and add these lines
-(Wi-Fi is usually already there; the passwords are up to you):
-```yaml
-ota_pw: "a-password"
-ap_password: "another-password"
-direkt_schluessel: "…"             # 32 hex characters, e.g. from  openssl rand -hex 16  (radio link to the dock)
-esphomeremote_key: "…"      # the line you copied in step 2
+```mermaid
+flowchart LR
+  A["1 · ESPHome<br/>add-on"] --> B["2 · Download<br/>in HACS"] --> C["3 · Add the<br/>integration"] --> D["4 · Paste the<br/>secrets"] --> E["5 · Flash via<br/>USB"] --> F["6 · Adopt in<br/>Home Assistant"]
 ```
 
-*Own fixed API key instead of the OTA password:* the firmware protects updates with `ota_pw`, because Home Assistant
-hands out the API key only when the device is added. If you set a fixed key yourself, ESPHome warns that the password
-"wastes flash and RAM". Then add this to your device YAML (keep the `ota_pw` secret – `esphomeremote.yaml` still references it, the value is just no longer used):
-```yaml
-api:
-  encryption:
-    key: !secret api_key
-ota:
-  - id: !extend ota_esphome
-    password: !remove
-    encryption: {}
-```
+### 1 · Install ESPHome
+In Home Assistant: *Settings → Add-ons → Add-on Store* → **ESPHome Device Builder** → **Install** → **Start**.
+Already installed? Skip ahead.
 
-**Step 4 – Flash the remote**
-1. In the ESPHome add-on: **"+ New device"** → **"Skip"** (or "Create empty").
-2. Copy the contents of [`esphomeremote.yaml`](https://github.com/Aggro600/ESPHomeRemote/blob/master/esphomeremote.yaml) into the editor – no changes needed
-   (the remote finds Home Assistant's address by itself).
-3. **Save** → **Install** → *"Plug into this computer"* → connect the remote via USB-C and select it.
-   The first build takes about 10 minutes.
+### 2 · Download ESPHomeRemote from HACS
+ESPHomeRemote is in the **official HACS list** – no custom repository needed.
 
-**Step 5 – Adopt it in Home Assistant**
-1. Home Assistant reports *"New device discovered"* (*Settings → Devices & services*) → **Add**.
-2. On the device, click **"Configure"** → turn on **"Allow the device to perform Home Assistant actions"**.
-3. Done! In the sidebar you now have **"Fernbedienung"** (remote) – that's where you set up everything.
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration)
+
+1. Click the button above – or open **HACS**, search for **ESPHomeRemote**.
+2. **Download** → confirm.
+3. **Restart** Home Assistant (*Settings → System → ⏻ top right → Restart*).
+
+> *Not found?* In HACS **⋮ → Reload**, or update HACS first.
+
+### 3 · Add the integration
+
+[![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=esphomeremote)
+
+1. Click the button – or *Settings → Devices & services → **+ Add integration*** → **ESPHomeRemote**.
+2. Leave both fields as they are (remote name `esphomeremote`, the key is generated) → **Submit**.
+3. The next screen shows a **ready-made block** like this – **copy it** (keep the window open):
+   ```yaml
+   ota_pw: "…"
+   ap_password: "…"
+   direkt_schluessel: "…"
+   esphomeremote_key: "…"
+   ```
+   The passwords and the radio key for the dock are generated for you.
+
+### 4 · Paste the secrets into ESPHome
+1. Open the **ESPHome** add-on → **Secrets** (top right).
+2. Paste the block **below** your Wi-Fi lines. If there are none yet, add them too:
+   ```yaml
+   wifi_ssid: "your Wi-Fi name"
+   wifi_password: "your Wi-Fi password"
+   ```
+3. **Save**.
+
+### 5 · Flash the remote
+1. In ESPHome: **+ New device** → **Continue** → **Skip** (or *Create empty*) – any name.
+2. Open the new device with **Edit**, delete everything and paste the contents of
+   **[`esphomeremote.yaml`](https://github.com/Aggro600/ESPHomeRemote/blob/master/esphomeremote.yaml)** (use *Copy raw file* on GitHub).
+   Change nothing – the remote finds Home Assistant by itself.
+3. **Save** → **Install** → **Plug into this computer** → connect the remote by USB-C → pick it in the list → **Connect**.
+4. The first build takes about **10 minutes**. ☕ The remote restarts when it's done.
+
+> **"Plug into this computer" isn't offered or no device shows up?** See [Troubleshooting](#troubleshooting).
+
+### 6 · Adopt it in Home Assistant
+1. Home Assistant shows **New device discovered** (*Settings → Devices & services*) → **Add** → **Submit**.
+2. On that ESPHome device: **Configure** → turn on **Allow the device to perform Home Assistant actions** → **Submit**.
+3. 🎉 Done. In the sidebar you now find **Remote** (*Fernbedienung*) – everything else is set up there.
+
+### First steps in the configurator
+1. **Pair Bluetooth:** on the remote *Menu → Settings → Bluetooth* → pick a slot → *Pair new*, then on the TV/streamer
+   search for Bluetooth devices and choose **ESPHomeRemote**.
+2. **Keys:** in the configurator open your remote → **Keys** – tap a key on the virtual remote and choose what it does.
+3. **Save** (or Ctrl+S). A sleeping remote picks up the change the next time it wakes up.
+
+Want the dock, the TV menu or more remotes? Read on below – or just explore: every page in the configurator explains itself.
 
 ---
+
+### Docking station (optional)
+In the configurator: **Workshop → New dock** creates the device file and flashes it over USB – the chip is detected
+automatically. The dock uses the same secrets as the remote.
 
 ### Streamer app (optional)
 
@@ -328,8 +344,9 @@ size, position, display time, **Edit menu**) and **Soundbar / AV receiver via HD
   with the list of what's new. Install, restart Home Assistant – done.
 - **Remotes and docks:** afterwards the configurator shows "Neue Version …" (new version) under *Firmware* –
   **Alle aktualisieren** (update all) builds and flashes them (touch sleeping remotes briefly).
-- **Once per remote from 2026.11.5.4: flash via USB cable** (new bootloader for the fast wake-up, see above).
-  Wi-Fi updates keep working without it.
+- **Installed before 2026.11.5.4?** Flash each remote **once via USB cable** (*Firmware* page of the remote → **USB**,
+  Chrome or Edge): the faster wake-up needs a new bootloader, which can't be updated over Wi-Fi. Wi-Fi updates keep
+  working without it – the remote just wakes about 0.5 s slower. New installations already have it.
 - The firmware comes from the `stabil` branch (latest release).
 - What's new: [CHANGELOG.md](https://github.com/Aggro600/ESPHomeRemote/blob/master/CHANGELOG.md).
 
@@ -378,19 +395,28 @@ wakes up.
 
 ---
 
+## Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| **"Plug into this computer" is missing or greyed out** | The browser only allows USB from a secure (https) page. Open Home Assistant via https (e.g. Home Assistant Cloud) – or choose **Install → Manual download**, then flash the file at [web.esphome.io](https://web.esphome.io) in Chrome or Edge. |
+| **No device in the USB list** | Use a USB-C **data** cable and a different port. |
+| **Build fails with "Secret … not defined"** | A line is missing in the ESPHome **Secrets** – compare with step 4. The names must match exactly. |
+| **Remote isn't discovered after flashing** | Is the Wi-Fi **2.4 GHz**, and are name and password in the secrets correct? If the remote can't connect, it opens its own hotspot after a while (password: `ap_password`). |
+| **Keys don't switch anything in Home Assistant** | Step 6.2: *Allow the device to perform Home Assistant actions*. |
+| **Configurator says "noch nicht übertragen" (not yet transferred)** | The remote is asleep – press a key once. Never works? `esphomeremote_key` in the ESPHome secrets must match the key under *ESPHomeRemote → Configure*. |
+| **Lost the block from step 3** | *ESPHomeRemote → Configure* shows the key again. For the other three lines you can choose your own values: two passwords, and 32 characters from `0-9 a-f` for `direkt_schluessel` (the same on all remotes and docks). |
+
+Still stuck? [Open an issue](https://github.com/Aggro600/ESPHomeRemote/issues/new/choose) – the form asks for everything needed to help quickly.
+
+---
+
 ## FAQ
 
-**The remote doesn't switch anything in Home Assistant.**
-Turn on "Allow the device to perform Home Assistant actions" on the ESPHome device (step 5).
-
-**The configurator says "noch nicht übertragen" (not yet transferred).**
-The remote is asleep. Press a key once – it then fetches the assignment.
-If it never works: does `esphomeremote_key` in the ESPHome secrets match the integration's key
-(*ESPHomeRemote → Configure* shows it)? The remote finds Home Assistant by itself – HA announces its address.
-
 **Several remotes?**
-Create a separate device in ESPHome for each, with its own `device_name`/`ha_name` (step 4).
-Then click **"Configure"** on the *ESPHomeRemote* integration and add the new name, separated by a comma.
+Easiest: in the configurator **Workshop → New remote**. By hand: another device in ESPHome with the same
+`esphomeremote.yaml`, but change `device_name`, `friendly_name` and `ha_name` at the top (e.g. `esphomeremote-2`,
+`ESPHomeRemote 2`, `esphomeremote_2`). Then add the new name under *ESPHomeRemote →* **Configure**, separated by a comma.
 
 **Pages show "nicht verfügbar" (unavailable).**
 Some built-in pages (home screen player, doorbell, sleep timer) need entities. Choose them in the configurator
@@ -405,6 +431,24 @@ TV input is not HDMI 3") and restarts via ADB.
 
 **Open the TV menu from a remote key:** assign the action `esphomeremote.streamer_menu` with `streamer: <name>`
 (optional `command: toggle/open/close`, `page:`, `size:`, `position:`).
+
+<details>
+<summary><b>Own fixed API key instead of the OTA password</b> (advanced)</summary>
+
+The firmware protects updates with `ota_pw`, because Home Assistant
+hands out the API key only when the device is added. If you set a fixed key yourself, ESPHome warns that the password
+"wastes flash and RAM". Then add this to your device YAML (keep the `ota_pw` secret – `esphomeremote.yaml` still references it, the value is just no longer used):
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+ota:
+  - id: !extend ota_esphome
+    password: !remove
+    encryption: {}
+```
+
+</details>
 
 ---
 

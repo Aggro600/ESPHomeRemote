@@ -1,0 +1,20 @@
+name: 💡 Idea / feature request
+description: Suggest something new or an improvement. (Deutsch ist auch okay.)
+labels: [enhancement]
+body:
+  - type: textarea
+    id: wunsch
+    attributes:
+      label: What would you like?
+      placeholder: "A key that … / A widget that shows …"
+    validations:
+      required: true
+  - type: textarea
+    id: wozu
+    attributes:
+      label: What is it for?
+      description: The situation in which you'd use it helps to find the best solution.
+  - type: textarea
+    id: anders
+    attributes:
+      label: How do you do it today (if at all)?

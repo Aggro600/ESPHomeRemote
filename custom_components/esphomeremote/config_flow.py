@@ -22,6 +22,16 @@ def _vorschlag(hass) -> str:
     return ", ".join(namen) or "esphomeremote"
 
 
+def secrets_block(key: str) -> str:
+    """Alles, was die Remote in den ESPHome-Secrets braucht, zum Kopieren (2026-11-10, Nutzer: "jeder ohne Ahnung"):
+    vorher mussten Neue ota_pw/ap_password selbst ausdenken und direkt_schluessel mit openssl erzeugen. Werte sind
+    zufaellig und werden nur hier gezeigt - wer schon Secrets hat, uebernimmt nur esphomeremote_key."""
+    return (f'ota_pw: "{secrets.token_hex(8)}"\n'
+            f'ap_password: "{secrets.token_hex(6)}"\n'
+            f'direkt_schluessel: "{secrets.token_hex(16)}"\n'
+            f'esphomeremote_key: "{key}"')
+
+
 def _liste(text: str) -> list[str]:
     return [x.strip().lower().replace(" ", "-") for x in text.replace(";", ",").split(",") if x.strip()]
 
@@ -56,7 +66,8 @@ class EsphomeremoteFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return self.async_create_entry(title="Fernbedienungen", data=self._daten)
         return self.async_show_form(step_id="fertig", data_schema=vol.Schema({}),
-                                    description_placeholders={"key": self._daten["key"]})
+                                    description_placeholders={"key": self._daten["key"],
+                                                              "block": secrets_block(self._daten["key"])})
 
     @staticmethod
     @callback

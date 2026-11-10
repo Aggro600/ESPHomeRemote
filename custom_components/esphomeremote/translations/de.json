@@ -10,8 +10,8 @@
         }
       },
       "fertig": {
-        "title": "Fast fertig – Schlüssel in ESPHome eintragen",
-        "description": "Kopiere diese Zeile in die **Secrets** von ESPHome (ESPHome-Add-on → oben rechts „Secrets“) und spiele die Fernbedienung danach einmal neu auf:\n\n`esphomeremote_key: \"{key}\"`\n\nDanach findest du links in der Seitenleiste **„Fernbedienung“**."
+        "title": "Fast fertig – das in ESPHome eintragen",
+        "description": "Kopiere diesen Block in die **Secrets** von ESPHome (ESPHome-Add-on → oben rechts **„Secrets“**), unter die WLAN-Zeilen (`wifi_ssid`, `wifi_password` – falls sie fehlen, ergänzen):\n\n```yaml\n{block}\n```\n\nPasswörter und Funkschlüssel sind schon für dich erzeugt. Hast du `ota_pw`, `ap_password` und `direkt_schluessel` schon? Dann nur die letzte Zeile übernehmen. Danach die Fernbedienung aufspielen (läuft sie schon mit dieser Firmware: einmal neu installieren). Anschließend findest du links in der Seitenleiste **„Fernbedienung“**."
       }
     },
     "abort": {

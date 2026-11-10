@@ -12,8 +12,8 @@ Dieser Stand ist gesichert, damit wir zurückkönnen, falls der Umbau nichts tau
 
 | Gerät | Chip | Firmware-Stand |
 |---|---|---|
-| Remote Remote 2 | ESP32-S3, Akku | 2026-10-23 ~16:00 (alles von heute) |
-| Remote Gast, Remote Remote 1 | ESP32-S3, Akku | älter (ohne Heimnetz-Weg, ohne Tunnel-Wiederholung, ohne Dock-Takt) |
+| Remote 2 | ESP32-S3, Akku | 2026-10-23 ~16:00 (alles von heute) |
+| Remote Gast, Remote 1 | ESP32-S3, Akku | älter (ohne Heimnetz-Weg, ohne Tunnel-Wiederholung, ohne Dock-Takt) |
 | Dock WZ Couchtisch | ESP32-C3, Netzteil | 2026-10-23 ~16:30 (Proxy-Takt-Override, 433-MHz-Puffer 2 kB) |
 | Dock WZ Remote 2, Dock WZ Remote 1 | ESP32-C3 | offline, alte Firmware |
 

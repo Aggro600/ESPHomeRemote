@@ -1,0 +1,73 @@
+name: 🐞 Problem / bug
+description: Something doesn't work – setup, remote, dock or configurator. (Deutsch ist auch okay.)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! First have a quick look at **[Troubleshooting](https://github.com/Aggro600/ESPHomeRemote#troubleshooting)** – many setup problems are solved there.
+        You can write in **English or German**.
+  - type: dropdown
+    id: bereich
+    attributes:
+      label: Where does it happen?
+      options:
+        - Setup (HACS, integration, first flash)
+        - Remote (keys, display, sleep, battery)
+        - Docking station
+        - Configurator in Home Assistant
+        - Streamer app / TV menu
+        - Voice / announcements
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: was
+    attributes:
+      label: What happens – and what did you expect?
+      placeholder: "When I press OK in the TV activity, nothing happens. I expected the streamer to …"
+    validations:
+      required: true
+  - type: textarea
+    id: schritte
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+  - type: input
+    id: version
+    attributes:
+      label: ESPHomeRemote version
+      description: "HACS → ESPHomeRemote, or Settings → Devices & services → ESPHomeRemote."
+      placeholder: "2026.11.10.1"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version of the remote / dock
+      description: "Configurator → your remote → Firmware. Not flashed yet? Write \"not flashed\"."
+  - type: input
+    id: ha
+    attributes:
+      label: Home Assistant version
+      description: "Settings → About."
+      placeholder: "2026.11.1"
+    validations:
+      required: true
+  - type: checkboxes
+    id: aufbau
+    attributes:
+      label: Your setup
+      options:
+        - label: I use a docking station (original dock or another ESP32)
+        - label: I use the streamer app on an Android TV device
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Home Assistant: *Settings → System → Logs* → search for `esphomeremote` → copy the lines.
+        Remote/dock: ESPHome add-on → device → **Logs**. Remove passwords and keys before posting.
+      render: text
