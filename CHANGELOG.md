@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.10.5 (2026-11-10)
+
+Configurator: notices on the overview are collapsed – the header shows how many and how important, one click expands them. “First steps”: “Pair via Bluetooth” was already ticked on a fresh install (default slot names counted as paired). English UI: about 40 remaining German texts translated (streamer guide, features, confirmations when deleting or transferring). Fallback font now also covers → ↑ ↓. Firmware unchanged – the offered update is optional.
+
+<details><summary>Deutsch</summary>
+
+Konfigurator: Hinweise in der Übersicht sind eingeklappt – der Kopf zeigt Anzahl und Wichtigkeit, ein Klick klappt auf. „Erste Schritte“: „Bluetooth koppeln“ war bei einer frischen Installation schon abgehakt (Standard-Platznamen zählten als gekoppelt). Englische Oberfläche: rund 40 noch deutsche Texte übersetzt (Streamer-Anleitung, Funktionen, Rückfragen beim Löschen und Übertragen). Ersatzschrift enthält jetzt auch → ↑ ↓. Firmware unverändert – das angebotene Update ist freiwillig.
+
+</details>
+
 ## 2026.11.10.4 (2026-11-10)
 
 **No more inventing secrets.** When you add the integration, it now writes the passwords and keys the remote needs into the ESPHome secrets for you (tick on by default; existing lines are never changed). An `esphomeremote_key` that is already there is taken over, so remote and integration always match. Only Wi-Fi you enter yourself.

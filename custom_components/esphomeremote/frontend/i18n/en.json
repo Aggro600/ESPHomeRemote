@@ -537,7 +537,6 @@
  "Code senden (gelernt oder aus der Datenbank)": "Send code (learned or from the database)",
  "Codes aus den Tasten übernommen.": "codes taken over from the keys.",
  "Codes importiert.": "codes imported.",
- "Codes löschen? Tasten, die diese Codes benutzen, behalten sie.": "Delete codes? Keys using these codes keep them.",
  "Countdown neben der Uhr": "Countdown next to the clock",
  "Cover Player": "Cover player",
  "Cover Startseite": "Cover home screen",
@@ -647,7 +646,6 @@
  "Display im Dock": "Display in the dock",
  "Displayende – ab hier scrollen": "End of display – scrolls from here",
  "Displayglas": "Display glass",
- "Dock 2 Minuten sichtbar: am Gerät unter Bluetooth nach dem Dock suchen und koppeln (Platz": "Dock visible for 2 minutes: search for the dock under Bluetooth on the device and pair (slot",
  "Dock nicht erreichbar": "Dock not reachable",
  "Dock nicht erreichbar –": "Dock not reachable –",
  "Dock nicht erreichbar:": "Dock not reachable:",
@@ -2477,16 +2475,80 @@
  "_ – minimieren (die Menütaste holt es zurück)": "_ – minimise (the menu key brings it back)",
  "__regeln": [
   [
+   "^Keine Updates bereit",
+   "No updates ready"
+  ],
+  [
+   "^In der Aktivität „(.+?)“ öffnet keine Taste das Menü der Remote\\. Trotzdem speichern\\?$",
+   "In the activity “$1” no key opens the remote's menu. Save anyway?"
+  ],
+  [
+   "^Seite „(.+?)“ öffnen \\(bzw\\. das Popup geht auf\\)\\.$",
+   "Open page “$1” (or the popup opens)."
+  ],
+  [
+   "^Belegung und Einstellungen von (.+?) als Werkseinstellung merken\\? Die bisherige Werkseinstellung wird ersetzt\\. Sie bleibt auf deinem Home Assistant\\.$",
+   "Save the key layout and settings of $1 as factory settings? The previous factory settings will be replaced. They stay on your Home Assistant."
+  ],
+  [
+   "^(.+?): (.+?) durch die (.+?) ersetzen\\? Bis zum Speichern holt „Verwerfen“ den alten Stand zurück\\.$",
+   "$1: replace $2 with the $3? Until you save, “Discard” brings back the old state."
+  ],
+  [
+   "^(.+?) wirklich entfernen\\? Weg sind danach: Belegung und Menü, die YAML-Datei im ESPHome-Add-on, die feste IP und der ESPHome-Eintrag in Home Assistant\\. Die Remote selbst behält ihre Firmware, bis sie neu geflasht wird\\.$",
+   "Really remove $1? This removes: key layout and menu, the YAML file in the ESPHome add-on, the fixed IP and the ESPHome entry in Home Assistant. The remote itself keeps its firmware until it is flashed again."
+  ],
+  [
+   "^Kopplung auf Platz (\\d+) \\(„(.+?)“\\) löschen\\? Das Gerät muss danach neu gekoppelt werden\\.$",
+   "Delete the pairing on slot $1 (“$2”)? The device has to be paired again afterwards."
+  ],
+  [
+   "^Platz (\\d+) \\(„(.+?)“\\) neu koppeln\\? Die bisherige Kopplung auf diesem Platz wird gelöscht\\. Danach am Gerät unter Bluetooth nach der Remote suchen\\.$",
+   "Pair slot $1 (“$2”) again? The existing pairing on this slot will be deleted. Then search for the remote under Bluetooth on the device."
+  ],
+  [
+   "^(.+?) wirklich löschen\\? Weg sind danach: der ESPHome-Eintrag in Home Assistant und der Build-Ordner im ESPHome-Add-on\\. Die Datei (\\S+) kommt nach esphome/archive/geloescht/ \\(wiederherstellbar\\)\\. Das Dock selbst behält seine Firmware\\.$",
+   "Really delete $1? This removes: the ESPHome entry in Home Assistant and the build folder in the ESPHome add-on. The file $2 moves to esphome/archive/geloescht/ (restorable). The dock itself keeps its firmware."
+  ],
+  [
+   "^Alles Angehakte von (.+?) an (.+?) übertragen\\? Die bisherige Belegung und die angehakten Einstellungen dort werden ersetzt\\. Der Name bleibt\\.$",
+   "Transfer everything ticked from $1 to $2? The existing key layout and the ticked settings there will be replaced. The name stays."
+  ],
+  [
+   "^(.+?) von (.+?) nach (.+?) übernehmen\\? Der Bereich auf (.+?) wird ersetzt\\.$",
+   "Copy $1 from $2 to $3? The section on $4 will be replaced."
+  ],
+  [
+   "^„(.+?)“ mit (\\d+) Codes löschen\\? Tasten, die diese Codes benutzen, behalten sie\\.$",
+   "Delete “$1” with $2 codes? Keys that use these codes keep them."
+  ],
+  [
+   "^(.+?) aus Home Assistant entfernen\\? Bereits belegte Tasten und Meine Codes bleiben erhalten\\.$",
+   "Remove $1 from Home Assistant? Keys already assigned and My codes are kept."
+  ],
+  [
+   "^Aktivität „(.+?)“ ist in der Zwischenablage – zum Teilen einfügen, z\\. B\\. in ein Issue oder eine Nachricht\\. Importieren: Tasten › Aktivität › Importieren\\.$",
+   "Activity “$1” is on the clipboard – paste it to share, e.g. into an issue or a message. To import: Keys › Activity › Import."
+  ],
+  [
+   "^Aktivität „(.+?)“ importiert – Bluetooth-Gerät und Geräte in Home Assistant prüfen, dann speichern\\.$",
+   "Activity “$1” imported – check the Bluetooth device and the devices in Home Assistant, then save."
+  ],
+  [
+   "^Dock 2 Minuten sichtbar: am Gerät unter Bluetooth nach dem Dock suchen und koppeln \\(Platz (\\d+), „(.+?)“\\)\\.$",
+   "Dock visible for 2 minutes: on the device, search for the dock under Bluetooth and pair it (slot $1, “$2”)."
+  ],
+  [
+   "^Datei, die die Remote lädt \\(höchstens (\\d+) KB\\)$",
+   "File the remote loads (at most $1 KB)"
+  ],
+  [
    "^Aktivität „([^“]+)“$",
    "Activity “$1”"
   ],
   [
    "meldet sich seit (\\d+) Stunden nicht",
    "hasn't reported for $1 hours"
-  ],
-  [
-   "(\\d+) weitere Hinweise",
-   "$1 more notices"
   ],
   [
    "Dazu (\\d+) Einstellungen?\\.",
@@ -2603,6 +2665,30 @@
   [
    "^Komplett kopieren nach (.+)$",
    "Copy everything to $1"
+  ],
+  [
+   "^(\\d+) läuft$",
+   "$1 running"
+  ],
+  [
+   "^1 Warnung$",
+   "1 warning"
+  ],
+  [
+   "^(\\d+) Warnungen$",
+   "$1 warnings"
+  ],
+  [
+   "^(\\d+) Info$",
+   "$1 info"
+  ],
+  [
+   "^1 Fehler$",
+   "1 error"
+  ],
+  [
+   "^(\\d+) Fehler$",
+   "$1 errors"
   ]
  ],
  "aktiv": "active",
@@ -2616,7 +2702,6 @@
  "als Popup anlegen": "create as popup",
  "als Popup-Auslöser) und Knöpfe „App beenden“ / „neu starten“.": "as a popup trigger) and “Close app” / “Restart” buttons.",
  "als Standard für neue Remotes merken?": "remember as default for new remotes?",
- "als Werkseinstellung merken? Die bisherige Werkseinstellung wird ersetzt. Sie bleibt auf deinem Home Assistant.": "remember as factory settings? The current factory settings will be replaced. They stay on your Home Assistant.",
  "als eigene Befehle übernehmen": "take over as own commands",
  "an ab": "on from",
  "an bis": "on until",
@@ -2637,7 +2722,6 @@
  "auch nach dem Tiefschlaf": "also after deep sleep",
  "auf den Standard setzen?": "reset to default?",
  "auf den Wert (z. B. Skript → on, Schalter → on, App → com.netflix.ninja). Ein Knopf mit „Popup schließen“ schließt es nach einer Auswahl.": "to the value (e.g. script → on, switch → on, app → com.netflix.ninja). A button with “Close popup” closes it after a selection.",
- "aus Home Assistant entfernen? Bereits belegte Tasten und Meine Codes bleiben erhalten.": "remove from Home Assistant? Keys already assigned and My codes are kept.",
  "aus den Tasten": "from the keys",
  "aus der": "from the",
  "aus einer Taste": "from a key",
@@ -2705,7 +2789,6 @@
  "einschalten.": "turn on.",
  "entfernt (": "removed (",
  "erkannt.": "detected.",
- "ersetzen? Bis zum Speichern holt „Verwerfen“ den alten Stand zurück.": "replace? Until saving, “Discard” brings back the old state.",
  "ersetzt die vorhandene": "replaces the existing",
  "erster Eintrag": "first entry",
  "fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu": "combines TV, streamer, multiroom music and Chromecast into",
@@ -2942,12 +3025,9 @@
  "wird ersetzt. Weiter?": "will be replaced. Continue?",
  "wird gemerkt": "is remembered",
  "wird gleich gespeichert": "will be saved shortly",
- "wird im ESPHome-Add-on gebaut (beim ersten Mal etwa 10 Minuten). Du kannst das Fenster auch schließen – weiter geht es dann in der Werkstatt › „Einrichten fortsetzen“.": "is built in the ESPHome add-on (about 10 minutes the first time). You can also close the window – it then continues in the Workshop › “Continue setup”.",
  "wird nicht behoben": "won't be fixed",
  "wird nie „": "will never “",
  "wird noch nicht unterstützt": "is not supported yet",
- "wirklich entfernen? Weg sind danach: Belegung und Menü, die YAML-Datei im ESPHome-Add-on, die feste IP und der ESPHome-Eintrag in Home Assistant. Die Remote selbst behält ihre Firmware, bis sie neu geflasht wird.": "really remove? Gone afterwards: key layout and menu, the YAML file in the ESPHome add-on, the fixed IP and the ESPHome entry in Home Assistant. The remote itself keeps its firmware until it is reflashed.",
- "wirklich löschen? Weg sind danach: der ESPHome-Eintrag in Home Assistant und der Build-Ordner im ESPHome-Add-on. Die Datei": "really delete? Gone afterwards: the ESPHome entry in Home Assistant and the build folder in the ESPHome add-on. The file",
  "wählen": "choose",
  "wählen – dann erscheint hier „Einrichten“.": "choose – then “Set up” appears here.",
  "wählen.": "choose.",
@@ -3045,11 +3125,9 @@
  "über dieses Dock": "via this dock",
  "überall, wenn „Doppelt klopfen weckt“ an ist": "everywhere if “Double tap wakes” is on",
  "übernehmen": "take over",
- "übernehmen? Der Bereich auf": "take over? The area on",
  "übernommen – noch nicht gespeichert.": "taken over – not saved yet.",
  "übertragen": "transfer",
  "übertragen.": "transfer.",
- "übertragen? Die bisherige Belegung und die angehakten Einstellungen dort werden ersetzt. Der Name bleibt.": "transfer? The current key layout and the ticked settings there will be replaced. The name stays.",
  "– (noch nicht gemeldet)": "– (not reported yet)",
  "– ESPHome nimmt sie beim Bauen statt der aktuellen aus GitHub, ein Update kann daran scheitern:": "– ESPHome uses them when building instead of the current ones from GitHub, an update can fail because of this:",
  "– Nachbau ohne Platine": "– stand-in without board",
@@ -3161,12 +3239,9 @@
  "“ wird auf": "” is set to",
  "“ zeigt auf eine gelöschte Seite": "” points to a deleted page",
  "“ öffnet keine Taste das Menü": "” no key opens the menu",
- "“ öffnet keine Taste das Menü der Remote. Trotzdem speichern?": "” no key opens the remote's menu. Save anyway?",
  "“ übernehmen? (Abbrechen = alle Tasten leer)": "” take over? (Cancel = all keys empty)",
  "“ übertragen": "” transferred",
  "“ – gilt für alle Wege dorthin, so lange wie „Menü-Position merken für“ in den Einstellungen.": "” – applies to all routes there, for as long as “Remember menu position for” in the settings.",
- "“) löschen? Das Gerät muss danach neu gekoppelt werden.": "”) delete? The device must then be re-paired.",
- "“) neu koppeln? Die bisherige Kopplung auf diesem Platz wird gelöscht. Danach am Gerät unter Bluetooth nach der Remote suchen.": "”) re-pair? The current pairing on this slot will be deleted. Then search for the remote under Bluetooth on the device.",
  "“. Woanders hin: im Baum links auf eine andere Seite ziehen.": "”. Somewhere else: drag onto another page in the tree on the left.",
  "„Aufhellen bei Bewegung“": "“Brighten on motion”",
  "„Aufwecken bei: Bewegung“": "“Wake on: motion”",
@@ -3427,5 +3502,36 @@
  "Eine geteilte Aktivität einfügen": "Paste a shared activity",
  "Geteilte Aktivität hier einfügen:": "Paste the shared activity here:",
  "Das ist keine geteilte ESPHomeRemote-Aktivität.": "This is not a shared ESPHomeRemote activity.",
- "Diesen Text kopieren und weitergeben:": "Copy this text and pass it on:"
+ "Diesen Text kopieren und weitergeben:": "Copy this text and pass it on:",
+ ". Bewegung: jeder Ruck über der Empfindlichkeit startet die Remote. Hochheben: erst, wenn sich die Lage um 12–35° ändert und ca. 0,3 s so bleibt.": ". Motion: any jolt above the sensitivity wakes the remote. Pick up: only once the tilt changes by 12–35° and stays that way for about 0.3 s.",
+ ". Die Remote verbindet sich nur selbst, wenn ein Gerät nicht am Dock gekoppelt ist oder das Dock nicht antwortet (Notweg, endet, sobald es wieder antwortet).": ". The remote only connects by itself if a device isn't paired with the dock or the dock doesn't answer (fallback, ends as soon as it answers again).",
+ ". Die Remotes holen sich den Stand gleich bzw. beim Aufwachen.": ". The remotes pick it up right away or when they wake up.",
+ ". Schlafende Remotes übernehmen es beim Aufwachen.": ". Sleeping remotes take it over when they wake up.",
+ "Unten das ADB-Gerät wählen und bei „Streamer-App“ auf": "Below, choose the ADB device and under “Streamer app” press",
+ "ADB-Gerät wählen und bei „Streamer-App“ auf": "Choose the ADB device and under “Streamer app” press",
+ "Die App zeigt nur das Kamera-Popup – keine Titel, Cover, Tastatur-Meldungen, und Home Assistant fragt den Streamer nicht laufend ab. Weniger Last, z. B. für den MagentaTV Stick.": "The app only shows the camera popup – no titles, covers or keyboard prompts, and Home Assistant doesn't keep polling the streamer. Less load, e.g. for the MagentaTV Stick.",
+ "Die Streamer-App ist für alle dieselbe – das Gerät bestimmt nur die Anleitung": "The streamer app is the same for all – the device only changes the instructions",
+ "Entwickleroptionen freischalten (meist 7× auf die Build-Nummer unter Einstellungen → Info) und": "Unlock developer options (usually tap the build number 7× under Settings → About) and turn on",
+ "Fernseher löschen": "Delete TV",
+ "Hier einfügen:": "Paste here:",
+ "Jetzt auf diesem Fernseher zeigen": "Show on this TV now",
+ "Kamerabilder: Der Stick dekodiert keine Hauptstreams mit 5 MP (2560×1920) – im Fenster bleibt dann nur das Play-Symbol. Für ihn den Substream der Kamera nehmen (go2rtc": "Camera images: the stick can't decode 5 MP main streams (2560×1920) – the window then only shows the play icon. Use the camera's substream for it (go2rtc",
+ "Nur Kamera: meldet nichts an Home Assistant, wird nicht abgefragt": "Camera only: reports nothing to Home Assistant, isn't polled",
+ "Rück": "Back",
+ "Zweiter Fernseher mit eigenem Streamer, eigenen Kameras und eigenem Namen (z. B. MagentaTV Stick am Hisense).": "Second TV with its own streamer, cameras and name (e.g. MagentaTV Stick on the Hisense).",
+ "auf/zu": "open/close",
+ "mit dem Namen. Über die Android-TV-Entität der Integration „Android Debug Bridge“ (ADB-Befehl reboot).": "with the name. Uses the Android TV entity of the “Android Debug Bridge” integration (ADB command reboot).",
+ "mit der IP des Streamers hinzufügen und am Fernseher „Immer zulassen“ bestätigen.": "with the streamer's IP and confirm “Always allow” on the TV.",
+ "mit der IP hinzufügen, am Gerät „Immer zulassen“ bestätigen.": "with the IP, confirm “Always allow” on the device.",
+ "mit dieser IP hinzufügen. Am Stick erscheint": "with this IP. The stick shows",
+ "– die App kommt auf den Stick, Bedienungshilfe und Benachrichtigungszugriff werden freigegeben.": "– the app is installed on the stick, accessibility and notification access are granted.",
+ "), sonst gelten die Einstellungen hier; dauerhaft umstellen:": "), otherwise the settings here apply; to change permanently:",
+ ". Damit gehen Popups wie „Nur wenn TV-Eingang ist nicht HDMI 3“. Entität:": ". This enables popups like “Only if TV input is not HDMI 3”. Entity:",
+ "Name des Fernsehers (z. B. Hisense, Schlafzimmer):": "TV name (e.g. Hisense, Bedroom):",
+ "– am Fernseher erst nach „Ja“ (z. B. Tür öffnen)": "– on the TV only after “Yes” (e.g. open door)",
+ "mit": "with",
+ "und": "and",
+ "oder": "or",
+ "wird im ESPHome-Add-on gebaut (beim ersten Mal etwa 10 Minuten). Du kannst das Fenster auch schließen – weiter geht es dann in der Werkstatt › „Einrichten fortsetzen“.": "is being built in the ESPHome add-on (about 10 minutes the first time). You can close this window – continue later in Workshop › “Continue setup”.",
+ "Firmware, neue Geräte, Hardware-Test": "Firmware, new devices, hardware test"
 }
