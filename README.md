@@ -254,11 +254,11 @@ Settings sync both ways: what you change on the remote shows up in the configura
 
 ## Quick start
 
-About **30 minutes**, most of it waiting for the first build. You never edit code – you copy one file and one block of text.
+About **30 minutes**, most of it waiting for the first build. You never edit code – you copy one file.
 
 ```mermaid
 flowchart LR
-  A["1 · ESPHome<br/>add-on"] --> B["2 · Download<br/>in HACS"] --> C["3 · Add the<br/>integration"] --> D["4 · Paste the<br/>secrets"] --> E["5 · Flash via<br/>USB"] --> F["6 · Adopt in<br/>Home Assistant"]
+  A["1 · ESPHome<br/>add-on"] --> B["2 · Download<br/>in HACS"] --> C["3 · Add the<br/>integration"] --> D["4 · Wi-Fi<br/>in ESPHome"] --> E["5 · Flash via<br/>USB"] --> F["6 · Adopt in<br/>Home Assistant"]
 ```
 
 ### 1 · Install ESPHome
@@ -282,23 +282,15 @@ ESPHomeRemote is in the **official HACS list** – no custom repository needed.
 
 1. Click the button – or *Settings → Devices & services → **+ Add integration*** → **ESPHomeRemote**.
 2. Leave both fields as they are (remote name `esphomeremote`, the key is generated) → **Submit**.
-3. The next screen shows a **ready-made block** like this – **copy it** (keep the window open):
-   ```yaml
-   ota_pw: "…"
-   ap_password: "…"
-   direkt_schluessel: "…"
-   esphomeremote_key: "…"
-   ```
-   The passwords and the radio key for the dock are generated for you.
+3. The next screen lists the passwords and keys the remote needs. Leave the tick **"Add the missing lines to the ESPHome
+   secrets"** on → **Submit**. They are generated and added for you – nothing to invent, nothing to copy.
 
-### 4 · Paste the secrets into ESPHome
-1. Open the **ESPHome** add-on → **Secrets** (top right).
-2. Paste the block **below** your Wi-Fi lines. If there are none yet, add them too:
-   ```yaml
-   wifi_ssid: "your Wi-Fi name"
-   wifi_password: "your Wi-Fi password"
-   ```
-3. **Save**.
+### 4 · Wi-Fi for ESPHome
+Open the **ESPHome** add-on → **Secrets** (top right). If your Wi-Fi isn't there yet, add it and **Save**:
+```yaml
+wifi_ssid: "your Wi-Fi name"
+wifi_password: "your Wi-Fi password"
+```
 
 ### 5 · Flash the remote
 1. In ESPHome: **+ New device** → **Continue** → **Skip** (or *Create empty*) – any name.
@@ -401,11 +393,11 @@ wakes up.
 |---|---|
 | **"Plug into this computer" is missing or greyed out** | The browser only allows USB from a secure (https) page. Open Home Assistant via https (e.g. Home Assistant Cloud) – or choose **Install → Manual download**, then flash the file at [web.esphome.io](https://web.esphome.io) in Chrome or Edge. |
 | **No device in the USB list** | Use a USB-C **data** cable and a different port. |
-| **Build fails with "Secret … not defined"** | A line is missing in the ESPHome **Secrets** – compare with step 4. The names must match exactly. |
+| **Build fails with "Secret … not defined"** | A line is missing in the ESPHome **Secrets**. Wi-Fi: step 4. Everything else: *ESPHomeRemote → Configure* shows the key; see *Lost the setup lines* below. |
 | **Remote isn't discovered after flashing** | Is the Wi-Fi **2.4 GHz**, and are name and password in the secrets correct? If the remote can't connect, it opens its own hotspot after a while (password: `ap_password`). |
 | **Keys don't switch anything in Home Assistant** | Step 6.2: *Allow the device to perform Home Assistant actions*. |
 | **Configurator says "noch nicht übertragen" (not yet transferred)** | The remote is asleep – press a key once. Never works? `esphomeremote_key` in the ESPHome secrets must match the key under *ESPHomeRemote → Configure*. |
-| **Lost the block from step 3** | *ESPHomeRemote → Configure* shows the key again. For the other three lines you can choose your own values: two passwords, and 32 characters from `0-9 a-f` for `direkt_schluessel` (the same on all remotes and docks). |
+| **Lost the setup lines** | *ESPHomeRemote → Configure* shows the key again. For the other three lines you can choose your own values: two passwords, and 32 characters from `0-9 a-f` for `direkt_schluessel` (the same on all remotes and docks). |
 
 Still stuck? [Open an issue](https://github.com/Aggro600/ESPHomeRemote/issues/new/choose) – the form asks for everything needed to help quickly.
 

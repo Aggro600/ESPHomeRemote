@@ -216,6 +216,19 @@ function i18nKnoten(root) {
 }
 // Dialoge der Seite gehen ebenfalls durch das Woerterbuch (Modul-Namen ueberdecken die globalen)
 const confirm = (m) => window.confirm(tr(m));
+// Ersatzschrift fuer seltene Zeichen (2026-11-10, Nutzer: "Symbol in der Schriftart ergaenzen"): Die Schrift kommt aus
+// dem HA-Design und ist je Nutzer anders - fehlte ihr z. B. ⇄, stand dort ein Kasten. Diese Schrift (Teilmengen von
+// Noto Sans Math / Symbols 2, OFL, ca. 6 KB) enthaelt NUR diese Zeichen (unicode-range) und steht HINTEN im Stapel
+// (Nutzer: "hat die auch meinen Stil?"): Hat die Schrift des Designs das Zeichen, kommt es in ihrem Stil; nur fehlende
+// Zeichen nimmt der Browser von hier. @font-face wirkt nur im Dokument, nicht im Shadow DOM.
+const SYMBOL_CSS = "@font-face{font-family:\"ESPHomeRemote Symbole\";src:url(data:font/woff;base64,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) format(\"woff\");unicode-range:U+25B6,U+2194,U+25C0,U+2260,U+21C4,U+2248,U+2713,U+25B2,U+25BC;font-display:swap}@font-face{font-family:\"ESPHomeRemote Symbole\";src:url(data:font/woff;base64,d09GRgABAAAAAAX8AA4AAAAAB1wAAgIMAAAAAAAAAAAAAAAAAAAAAAAAAABHUE9TAAAFhAAAACAAAAAgRHZMdUdTVUIAAAWkAAAAIAAAACBEdkx1T1MvMgAAA+wAAABKAAAAYEdZfH9jbWFwAAAEOAAAAEYAAABabrNviWdseWYAAAFEAAACAwAAAnqS2cp7aGVhZAAAA3QAAAA2AAAANh6uUKpoaGVhAAADzAAAAB8AAAAkB7wBVGhtdHgAAAOsAAAAHwAAACAZUAK0bG9jYQAAA2AAAAASAAAAEgI3AUltYXhwAAADSAAAABgAAAAgABIAc25hbWUAAASAAAAA7wAAAfAp9kLbcG9zdAAABXAAAAATAAAAIP+fADJ2aGVhAAAF2AAAACIAAAAkC1kW2nZtdHgAAAXEAAAAEgAAABIMmwY+eJxljk1rE1EUhs+5ae40H03vzOTOpDZYxpjMTCbJwvmIjlWkxVBqsV9CIYqCLYi7Sn9BfoDFpbpw4zZRF6UWf4FbQRDduongQhB35uqdtCIi95yXyz3vc98DCP6vL2SLvIcMgGljNUQT0/xyDm+Jr/guJ17gpMlwcX4OL6ni89U5SIiDVJMcQG5MYBslggrej3BJHEnBTiSOcCkSb1YiXMblSByORRzKIaQggE6qS24DAZqkVjNE9VULMdUVH9D9+amHN8RHtDs4hbnRkJRGw+QG/5DphGyrqCflqwG6DtrNXoeUxA/x/Y+Ohgm1I6n6SV72hPLHZ0divb2/1HEaSOc3yJJn5KmkFblhsp9skn4iNh5nyaPRbtIgd/Cl+XmqATYswiZswU24A9twDx4A+KEfBlG7HUVhULPtWi0MK6HFK7xIFYXyomkaBuc+r1rH8zCQ3lA6kgkvSg/l7RaRoG1RqhSIooQ+/78DGcTPyZ/W49iZIGTCieN1srs2f96l1L1wcU1M417YcjXN3RYP77q67raCl+m8aVjNHF7JNCyjlKe6XiwapZlTs6df7Z/d9/qNVZMpBWVySlFnrnsDzxvIFzXPWJ4Zq82+5/WdWGOs7k2r7rXBYMVRC406Y1rsvJ0tM5qtOhU3S1m5XNa0yrjO6HpF1193FzKZhS78Bhffg1EAeJxjYGRgYOBgKGLgZAABRgY0AAANGQCGAAAAAAAZADkAVgBxAIsAnwE9AAAAAQAAAAICDH9a2GtfDzz1AAMD6AAAAADU8ECLAAAAAOcYylAAM/+0A1oDLAAAAAYAAgAAAAAAAHicY4pgiGfqYjBmTgDiPgYTKE4B4g9M1xiMAWUsBxoAeJxjYGRgYNH928XAwNzHYMxgzBzFABRBARwAUXUDFwB4nGNgYbZnnMDAysDA1MUUwcDA4A2hGeMYjBidGDDAgQYYy93f353xgPJbdVEW3b9dDAwsukxlQGFGkByTBPNGIKXAwAQAFrcLkwAAeJxjYGBgYmBgYAZiESDJCKZZGNyANA8DB1CORfm98mflH2oL1UX//2dgUH6LzLsjcofvZsKNt0B9PAwIwAI0iRUAuP0SDQAAeJyVkLFOwlAUhr8rIHFhdGDqZGCgNh2MgYmQyGKAqHFgQwNtDVDSWwbexafxCXwk/5ZLUpk0Nyf3O3/++5/TAk3m1DD1K+BTdWTDjbojX9Diy3GNB74d17kz144btM2j40sCs2JEyo4DGQkRMTkeIYEqFL1IWeqeyJWrPGZypnxIfS+9Q/a6Y2kZVn2nzMiVaelzqxMpuXDsecPXq5SN1K1LXKm2IivNao+NXClrcbcy9ZmFXLakqqfY9Um7REpfy5Op97V9wD0Dxkx1xqJT0innd0pI7yzlb5O9s1ev6oq/kJTf5FV2+ef8H8RfTfEAeJxjYGYAg/9zGIwYsAAAKoMB0QAAAQAAAAoAHAAeAAFERkxUAAgABAAAAAD//wAAAAAAAAABAAAACgAcAB4AAURGTFQACAAEAAAAAP//AAAAAAAABqMBYwFZAXkBzwHPAc8BkwEBAAB4nGNgFGBg/PKPh/kF22JGRiYtlkoGBgZGBmTACAB1rgRSAAA=) format(\"woff\");unicode-range:U+23EF,U+23EE,U+23ED,U+23F3,U+23F8,U+2715,U+26A1;font-display:swap}";
+function symbolSchrift() {
+  if (document.getElementById("esphomeremote-symbole")) return;
+  const st = document.createElement("style");
+  st.id = "esphomeremote-symbole";
+  st.textContent = SYMBOL_CSS;
+  document.head.appendChild(st);
+}
 // Wert einer ESPHome-Entitaet der Remote; schlaeft sie (nicht verfuegbar), der zuletzt uebers Dock gemeldete aus der
 // eigenen Entitaet <domain>.esphomeremote_<remote>_<wert> (2026-11-04, dockstatus.py - vorher stand er in der ESPHome-Entitaet)
 const dockId = (id) => { const [d, o] = String(id).split("."); return `${d}.esphomeremote_${o}`; };
@@ -285,6 +298,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    symbolSchrift();
     // ShadowRoot kennt kein onclick/onchange - Listener einmalig anhaengen
     this.shadowRoot.addEventListener("click", (ev) => this._click(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._change(ev));
@@ -543,6 +557,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       let last = null;
       try { last = localStorage.getItem("erk_dev"); } catch (e) { /* egal */ }
       this.s.dev = r.order.includes(last) ? last : r.order[0];
+      try { this.s.aktOffen = localStorage.getItem("erk_aktset") === "1"; } catch (e) { /* egal */ }   // zu = Standard (2026-11-10)
       this.s.einstStandard = r.einst_standard || {};
       this.s.dockEinst = r.docks_einst || { ordnung: [], farben: {} };
       this.s.maxBytes = r.max_bytes || 90000;
@@ -1661,6 +1676,32 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       case "modgeh": s.modus = null; s.act = Number(t.dataset.ai); s.key = Number(t.dataset.k); break;
       case "modgehm": this._geh("remote", "menu"); s.mpage = t.dataset.p; s.mitem = Number(t.dataset.j); break;
       case "modvor": s.modal = { type: "pick", g: "modvor", i: -1, domain: t.dataset.p === "licht" ? "light" : "fan", domains: [t.dataset.p === "licht" ? "light" : "fan"], q: "", modvor: t.dataset.p }; break;
+      // Aktivitaet teilen (2026-11-10, Vorschlag vom Nutzer angenommen): als Text in die Zwischenablage -
+      // ein anderer Nutzer fuegt ihn bei sich ein. Mit Kennung, damit nicht jeder beliebige Text als Aktivitaet gilt.
+      case "act_teilen": {
+        const a = clone(this.activity);
+        delete a.dock; delete a.nochmal;   // Leiste und Popup gehoeren zur eigenen Remote
+        const text = JSON.stringify({ esphomeremote_aktivitaet: 1, aktivitaet: a });
+        const fertig = () => { s.msg = { text: `Aktivität „${a.name}“ ist in der Zwischenablage – zum Teilen einfügen, z. B. in ein Issue oder eine Nachricht. Importieren: Tasten › Aktivität › Importieren.` }; this._render(); };
+        (navigator.clipboard?.writeText(text) || Promise.reject()).then(fertig).catch(() => { prompt("Diesen Text kopieren und weitergeben:", text); });
+        break;
+      }
+      case "act_import": {
+        const acts = this.cfg.activities;
+        if (acts.length >= 16) { alert("Höchstens 16 Aktivitäten."); return; }
+        const roh = prompt("Geteilte Aktivität hier einfügen:", "");
+        if (!roh) return;
+        let a = null;
+        try { const j = JSON.parse(roh); a = j?.esphomeremote_aktivitaet ? j.aktivitaet : null; } catch (e) { a = null; }
+        if (!a || typeof a !== "object" || typeof a.name !== "string" || (a.keys && typeof a.keys !== "object")) { alert("Das ist keine geteilte ESPHomeRemote-Aktivität."); return; }
+        let name = a.name.slice(0, 16) || "Import";
+        for (let n = 2; acts.some((x) => x.name === name); n++) name = `${a.name.slice(0, 12)} (${n})`;
+        acts.forEach((x, i) => { if (x.dock == null) x.dock = i < 4; });
+        acts.push({ ...a, name, slot: [0, 1, 2, 3].includes(a.slot) ? a.slot : this.activity.slot, keys: a.keys || {}, dock: acts.filter((x) => x.dock).length < 4 });
+        s.act = acts.length - 1; s.key = null; this._touch();
+        s.msg = { text: `Aktivität „${name}“ importiert – Bluetooth-Gerät und Geräte in Home Assistant prüfen, dann speichern.` };
+        break;
+      }
       case "actadd": {
         const acts = this.cfg.activities;
         const name = prompt("Name der neuen Aktivität (erscheint in der Leiste der Remote):", "Neu");
@@ -4347,7 +4388,7 @@ const CSS = `
 .addart .opts .opt:hover { border-color:var(--acc, var(--primary-color)); }
 option, optgroup { background:var(--card-background-color, var(--primary-background-color)); color:var(--primary-text-color); }
 :host { display:block; min-height:100vh; background:var(--primary-background-color); color:var(--primary-text-color);
-  font-family:var(--paper-font-body1_-_font-family, Roboto, system-ui, sans-serif); --acc:var(--primary-color,#03a9f4);
+  font-family:var(--paper-font-body1_-_font-family, Roboto, system-ui, sans-serif), "ESPHomeRemote Symbole"; --acc:var(--primary-color,#03a9f4);
   --card:var(--card-background-color,#fff); --div:var(--divider-color,rgba(127,127,127,.25)); --sec:var(--secondary-text-color,#888); }
 * { box-sizing:border-box; }
 ha-icon { --mdc-icon-size:20px; }
@@ -4441,6 +4482,14 @@ ha-icon { --mdc-icon-size:20px; }
 .gest.aus { opacity:.45; }
 .aktset { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding:8px 16px 0; font-size:13px; color:var(--sec); }
 .aktset input { width:140px; } .aktset select { width:auto; }
+/* Aktivitaets-Einstellungen eingeklappt (2026-11-10): eine Zeile, die Remote bleibt oben sichtbar */
+.aktzu { display:flex; align-items:center; gap:10px; width:calc(100% - 48px); margin:10px 24px 0; box-sizing:border-box; padding:6px 12px; border:1px dashed var(--div);
+  border-radius:12px; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.aktzu:hover { border-style:solid; background:var(--card); }
+.aktzu > ha-icon { --mdc-icon-size:18px; color:var(--sec); flex:none; }
+.aktzu .azt { display:flex; flex-direction:column; min-width:0; } .aktzu .azt b { font-weight:500; font-size:13px; }
+.aktzu .azt small { color:var(--sec); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.aktzu .azk { display:flex; align-items:center; gap:2px; color:var(--primary-color); font-size:13px; flex:none; }
 .key.ok .kl { display:none; }
 .key .dots { position:absolute; bottom:3px; display:flex; gap:3px; }
 .key .lock { position:absolute; top:3px; left:5px; --mdc-icon-size:11px; opacity:.45; }
@@ -9134,6 +9183,14 @@ h2.abschn i { font-style:normal; font-size:11px; padding:1px 7px; border-radius:
 .fakt span { display:flex; flex-direction:column; min-width:0; } .fakt small { font-size:10.5px; color:var(--sec); text-transform:uppercase; letter-spacing:.07em; }
 .fakt b { font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .fakt.ok b { color:var(--ok); } .fakt.warn b { color:var(--gelb); } .fakt.err b { color:var(--fehler); } .fakt.busy b { color:var(--acc); }
+.zahlen span { display:inline-flex; align-items:center; gap:4px; } .zahlen span ha-icon { --mdc-icon-size:14px; opacity:.75; }
+.erste .ek { display:flex; align-items:center; } .erste .eliste { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:8px; }
+.erste .es { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--rand); border-radius:12px; background:var(--card); }
+.erste .es.ok { opacity:.6; } .erste .es.ok .ei { color:#43a047; } .erste .ei { color:var(--primary-color); flex:none; display:flex; }
+.erste .et { display:flex; flex-direction:column; flex:1; min-width:0; } .erste .et b { font-weight:500; font-size:13.5px; } .erste .et small { color:var(--sec); font-size:12px; }
+.hwmehr { display:flex; align-items:center; gap:4px; margin:8px auto 0; border:none; background:none; color:var(--primary-color); font:inherit; font-size:13px; cursor:pointer; }
+.kurve .k50 { stroke:currentColor; stroke-opacity:.25; stroke-dasharray:3 4; }
+.kurve .kz rect { fill:transparent; } .kurve .kz rect:hover { fill:currentColor; fill-opacity:.08; }
 .zahlen { display:flex; gap:6px; flex-wrap:wrap; } .zahlen span { font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--rand); color:var(--sec); } .zahlen b { color:var(--primary-text-color); }
 .rkarte footer { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .gesp { color:var(--sec); font-size:11.5px; margin-top:-6px; }
@@ -9359,6 +9416,17 @@ const akkuFarbe = (a) => a == null ? "var(--sec)" : a < 20 ? "var(--fehler)" : a
 
 const OberflaecheTab = {
   // ------------------------------------------------------------- Live-Stand
+  // Wo war die Remote zuletzt? Das Dock, ueber das sie zuletzt Werte gemeldet hat (Attribut "dock" der Dock-Werte,
+  // dockstatus.py) - {name, zeit} oder null (2026-11-10)
+  _letztesDock(slug) {
+    let best = null;
+    for (const [id, st] of Object.entries(this._hass?.states || {})) {
+      if (!id.includes(`.esphomeremote_${slug}_`) || !st.attributes?.dock) continue;
+      const t = new Date(st.last_updated).getTime();
+      if (!best || t > best.zeit) best = { name: devName(String(st.attributes.dock).replace(/_/g, "-")), zeit: t };
+    }
+    return best;
+  },
   _live(d) {
     const m = this.s.meta[d] || {}, slug = m.slug, S = this._hass?.states || {};
     const st = (id) => remZ(S, id);
@@ -9388,7 +9456,7 @@ const OberflaecheTab = {
     if (!akt) akt = (this.s.cfg[d]?.activities || []).find((a) => st(`switch.${slug}_aktivitat_${norm(a.name).replace(/[^a-z0-9]+/g, "_")}`)?.state === "on")?.name || null;
     return { slug, g, akku, rate, laden, zustand, ztext, kurz, restH, akt,
       verbunden: ["unknown", "unavailable", "", undefined].includes(st(`sensor.${slug}_verbunden_mit`)?.state) ? null : st(`sensor.${slug}_verbunden_mit`).state,
-      neustart: st(`sensor.${slug}_letzter_neustart`)?.state, gemeldet: st(`sensor.${slug}_akkustand`)?.last_updated };
+      neustart: ["unknown", "unavailable", ""].includes(st(`sensor.${slug}_letzter_neustart`)?.state) ? null : st(`sensor.${slug}_letzter_neustart`)?.state, gemeldet: st(`sensor.${slug}_akkustand`)?.last_updated };
   },
   // Wie voll ist die Datei, die die Remote laedt? (HA lehnt Speichern ueber max_bytes ab)
   _groesse(d = this.s.dev) {
@@ -9613,10 +9681,15 @@ const OberflaecheTab = {
       if (z.art === "laedt") E.push(["busy", "mdi:upload", `${n}: überträgt`, z.text, z.pct]);
       else if (z.art === "verbinde") E.push(["busy", "mdi:lan-pending", `${n}: verbindet sich`, "Remote baut die Verbindung zu HA auf …", 3]);
       else if (z.art === "fehler") E.push(["err", "mdi:alert", `${n}: Übertragung fehlgeschlagen`, z.text, null, push]);
-      else if (z.art === "wartet") E.push(["wait", "mdi:timer-sand", `${n}: wartet auf die Remote`, "Gespeichert, aber noch nicht drauf – schläft sie? Eine Taste drücken.", null, push]);
+      // Ruhende Zustaende (2026-11-10, "Leiste zu voll"): "wartet" und "Einstellungen unterwegs" je Remote in EINER Zeile;
+      // auf der Seite einer Remote nur sie selbst, in der Uebersicht gar nicht (dort stehen sie unter Hinweise).
+      // Was laeuft oder scheitert (oben), steht weiter immer und ueberall.
+      else if (s.bereich === "start" || (s.bereich === "remote" && !hier)) { /* ruhend: hier nicht */ }
+      else if (z.art === "wartet") E.push(["wait", "mdi:timer-sand", `${n}: wartet auf die Remote`, "Gespeichert, aber noch nicht drauf – schläft sie? Eine Taste drücken."
+        + (offen ? ` Dazu ${offen} Einstellung${offen > 1 ? "en" : ""}.` : ""), null, push]);
       else if (z.art === "dirty" && hier) E.push(["warn", "mdi:content-save-alert-outline", `${n}: nicht gespeichert`, "Erst speichern, dann geht es an die Remote."]);
-      else if (z.art === "ok" && hier && !offen) E.push(["ok", "mdi:check-circle", `${n}: Belegung aktiv`, "Alles Gespeicherte ist auf der Remote."]);
-      if (offen) E.push(["wait", "mdi:tune-variant", `${n}: ${offen} Einstellung${offen > 1 ? "en" : ""} unterwegs`, "Die Remote übernimmt sie beim nächsten Aufwachen."]);
+      else if (offen) E.push(["wait", "mdi:tune-variant", `${n}: ${offen} Einstellung${offen > 1 ? "en" : ""} unterwegs`, "Die Remote übernimmt sie beim nächsten Aufwachen."]);
+      else if (z.art === "ok" && hier) E.push(["ok", "mdi:check-circle", `${n}: Belegung aktiv`, "Alles Gespeicherte ist auf der Remote."]);
     }
     const j = s.fw?.job && !s.fw.job.fertig ? s.fw.job : null;
     if (j) {
@@ -9838,7 +9911,11 @@ const OberflaecheTab = {
       <p class="hint modhint">Solange der Modus läuft, gelten die Tasten unten statt der Aktivität – jede Taste frei belegbar (Taste antippen). Jeder Druck verlängert um die Standard-Dauer (${mo.s || 7} s) oder die eigene Zeit der Taste. Leere Tasten behalten ihre normale Belegung. Oben auf der Remote zeigt eine Leiste den Modus und die Restzeit.</p>`
       : s.act === -1 ? `<div class="aktset">${this._startAktHtml()}<span class="grow"></span></div>
       <p class="hint modhint">Gilt, solange auf der Remote keine Aktivität läuft (z. B. nach „Aktivität beenden“). Belegte Tasten ersetzen die der zuletzt gelaufenen Aktivität, leere Tasten bleiben wie dort. Startseite: unter Startseite. Unter der Remote: Schritte beim Beenden einer Aktivität („Beim Starten“ von „Keine Aktivität“) und beim Start der nächsten („Beim Beenden“).</p>`
+      : !s.aktOffen ? `<button class="aktzu" data-a="o_aktset" title="Name, Symbol, Bluetooth-Gerät, Leiste, Nochmal tippen, Beim Einschalten">
+        <ha-icon icon="mdi:cog-outline"></ha-icon><span class="azt"><b>Aktivität „${esc(akt.name)}“</b><small>${esc(this.slotName(akt.slot))} · ${imDock(akt, s.act) ? "in der Leiste" : "nicht in der Leiste"}${akt.nochmal ? " · Nochmal tippen: Popup" : ""} · Beim Einschalten: ${esc(this.cfg.start_akt === "ohne" ? "Keine Aktivität" : this.cfg.start_akt != null && this.cfg.start_akt !== "" ? (acts[this.cfg.start_akt]?.name || "?") : "Letzte Aktivität")}</small></span>
+        <span class="grow"></span><span class="azk">Bearbeiten<ha-icon icon="mdi:chevron-down"></ha-icon></span></button>`
       : `<div class="aktset">
+      <button class="icon sm" data-a="o_aktset" title="Einklappen"><ha-icon icon="mdi:chevron-up"></ha-icon></button>
       <label class="inl2">Name <input data-akt="name" value="${esc(akt.name)}" maxlength="16"></label>
       <label class="inl2" title="Symbol in der Aktivitäten-Leiste (Startseite → Aktivitäten-Leiste → Symbole)">Symbol <button class="iconpick" data-a="akticon">${akt.icon ? `<ha-icon icon="mdi:${esc(akt.icon)}"></ha-icon>` : "keins"}</button></label>
       <label class="inl2">Bluetooth-Gerät <select data-akt="slot">${[0, 1, 2, 3].map((d) => `<option value="${d}" ${akt.slot === d ? "selected" : ""}>${esc(this.slotName(d))}</option>`).join("")}</select></label>
@@ -9849,6 +9926,8 @@ const OberflaecheTab = {
         ${akt.nochmal && (this.menu?.pages || []).some((p) => p.id === akt.nochmal) ? `<button class="icon sm" data-a="akt_popup_bearb" title="Popup im Menü-Editor bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>`
           : `<button class="btn small ghost" data-a="akt_popup_neu" title="Popup für diese Aktivität anlegen (Apps, Aktivität beenden, Schließen) und im Menü-Editor öffnen"><ha-icon icon="mdi:plus"></ha-icon>Popup anlegen</button>`}</label>` : ""}
       <span class="grow"></span>
+      <button class="btn small ghost" data-a="act_teilen" title="Diese Aktivität als Text kopieren, um sie weiterzugeben"><ha-icon icon="mdi:share-variant-outline"></ha-icon>Teilen</button>
+      <button class="btn small ghost" data-a="act_import" title="Eine geteilte Aktivität einfügen"><ha-icon icon="mdi:import"></ha-icon>Importieren</button>
       <button class="icon sm" data-a="actmove" data-d="-1" ${s.act > 0 ? "" : "disabled"} title="in der Leiste nach links"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
       <button class="icon sm" data-a="actmove" data-d="1" ${s.act < acts.length - 1 ? "" : "disabled"} title="nach rechts"><ha-icon icon="mdi:arrow-right"></ha-icon></button>
       <button class="icon sm" data-a="actdel" ${acts.length > 1 ? "" : "disabled"} title="Aktivität löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>
@@ -9925,6 +10004,12 @@ const OberflaecheTab = {
       else if (["wartet", "verbinde", "laedt"].includes(z.art)) H.push({ stufe: "info", icon: "mdi:timer-sand", text: `${n}: Belegung noch nicht auf der Remote`, sub: z.art === "laedt" ? z.text : "Kommt beim nächsten Aufwachen an – oder jetzt übertragen.", k: [["o_push", d, "Übertragen", "mdi:upload"]] });
       if (!s.enabled[d]) H.push({ stufe: "warn", icon: "mdi:power-plug-off-outline", text: `${n}: Konfigurator-Belegung ist aus`, sub: "Die Remote hat keine Aktivitäten, die Tasten senden nichts.", k: [["o_rem", d, "Ändern", "mdi:arrow-right"]] });
       if (L.akku != null && L.akku < 20 && !L.laden) H.push({ stufe: "warn", icon: "mdi:battery-alert-variant-outline", text: `${n}: Akku fast leer (${Math.round(L.akku)} %)`, sub: "Bitte ins Dock stellen." });
+      // Lange nicht gemeldet (2026-11-10): aus den Reparatur-Hinweisen der Integration (warnungen.py), dazu wo sie zuletzt war
+      const still = (s.warnIssues || []).find((i) => i.issue_id === `not_seen_${L.slug}`);
+      if (still) { const ld = this._letztesDock(L.slug);
+        H.push({ stufe: "warn", icon: "mdi:map-marker-question-outline", text: `${n}: meldet sich seit ${still.translation_placeholders?.hours || 24} Stunden nicht`,
+          sub: `Zuletzt: ${still.translation_placeholders?.since || "?"}${ld ? ` · zuletzt bei ${ld.name}` : ""} – Akku leer oder außer Reichweite? Eine Taste drücken oder ins Dock stellen.`,
+          k: [["o_rem", d, "Akku", "mdi:battery-outline", "akku"]] }); }
       if (g && !g.in_ha) H.push({ stufe: "warn", icon: "mdi:link-variant-off", text: `${n}: nicht in Home Assistant eingebunden`, sub: "Ohne Verbindung kommt keine Belegung an. Einstellungen → Geräte & Dienste → ESPHome → Hinzufügen, dann „Gerät darf Home-Assistant-Aktionen ausführen“.",
         k: [["o_geh", "fw", "Werkstatt", "mdi:toolbox-outline"]] });
       if (g?.update && !g.gesperrt && !g.vorgemerkt) H.push({ stufe: "info", icon: "mdi:update", text: `${n}: Firmware-Update bereit`, sub: L.zustand === "schlaf" ? "Remote schläft – vormerken, dann startet es beim nächsten Aufwachen." : "Kann jetzt installiert werden.",
@@ -9945,8 +10030,36 @@ const OberflaecheTab = {
     for (const g of (s.fw?.geraete || []).filter((x) => x.art === "dock" && x.geflasht && !x.online && !x.gesperrt))
       H.push({ stufe: "info", icon: "mdi:lan-disconnect", text: `${g.friendly || g.name} ist offline`, sub: "Strom oder WLAN prüfen." });
     const job = s.fw?.job && !s.fw.job.fertig ? s.fw.job : null;
+    const RANG = { busy: 0, err: 1, warn: 2, info: 3 };   // Wichtiges zuerst (2026-11-10)
+    H.sort((a, b) => (RANG[a.stufe] ?? 3) - (RANG[b.stufe] ?? 3));
     if (job) H.unshift({ stufe: "busy", icon: "mdi:progress-upload", text: `${job.titel || "Firmware"}: ${job.schritt || "läuft"}${typeof job.progress === "number" ? ` · ${Math.round(job.progress)} %` : ""}`, k: [["o_geh", "fw", "Protokoll", "mdi:console"]] });
     return H;
+  },
+  // Erste Schritte (2026-11-10, Nutzer: "Hinweise/Tutorial, aber kein Zwang"): Karte in der Uebersicht, Erledigtes
+  // bekommt einen Haken; "Ausblenden" merkt sich der Browser, sind alle Pflichtschritte erledigt, verschwindet sie selbst.
+  _ersteSchritteHtml(docks) {
+    const s = this.s;
+    let aus = false;
+    try { aus = localStorage.getItem("erk_erste_aus") === "1"; } catch (e) { /* egal */ }
+    if (aus || !s.order?.length) return "";
+    const L = s.order.map((d) => this._live(d));
+    const d0 = s.dev || s.order[0];
+    const P = [
+      [L.some((l) => l.akku != null || l.zustand !== "schlaf"), "mdi:lan-connect", "Remote mit Home Assistant verbunden", "Sie meldet Akku und Zustand.", null],
+      // gekoppelt: gerade verbunden oder ein Bluetooth-Platz hat einen eigenen Namen (sonst "Platz n")
+      [L.some((l) => l.verbunden && l.verbunden !== "nicht verbunden") || s.order.some((d) => (s.cfg[d]?.slots || []).some((x) => x && !/^Platz \d$/.test(x))), "mdi:bluetooth", "Fernseher oder Streamer per Bluetooth koppeln",
+        "An der Remote: Menü › Einstellungen › Bluetooth › Platz wählen › Neu koppeln.", ["o_rem", d0, "Bluetooth", "bt"]],
+      [s.order.some((d) => s.meta[d]?.saved_at), "mdi:gesture-tap-button", "Eine Taste belegen und speichern",
+        "Tasten › Taste auf der virtuellen Remote antippen › Aktion wählen › Speichern.", ["o_rem", d0, "Tasten", "keys"]],
+      [null, "mdi:view-dashboard-outline", "Startseite einrichten", "Uhr, Wetter, Medien, Kamera – je Aktivität.", ["o_rem", d0, "Startseite", "home"]],
+      [docks.length ? true : null, "mdi:dock-window", "Dockingstation einrichten (optional)", "Schneller aus dem Schlaf, Infrarot und 433 MHz für Home Assistant.", ["o_geh", "werk", "Werkstatt", null]],
+    ];
+    if (P.filter((p) => p[0] !== null).every((p) => p[0])) return "";
+    const n = P.filter((p) => p[0]).length;
+    return `<section class="erste"><div class="ek"><h2 class="abschn">Erste Schritte <i>${n}/${P.length}</i></h2><span class="grow"></span>
+        <button class="btn small ghost" data-a="o_erste_aus" title="Karte ausblenden – alles geht auch ohne"><ha-icon icon="mdi:eye-off-outline"></ha-icon>Ausblenden</button></div>
+      <div class="eliste">${P.map(([ok, ic, t, sub, k]) => `<div class="es ${ok ? "ok" : ""}"><span class="ei"><ha-icon icon="${ok ? "mdi:check-circle" : ic}"></ha-icon></span>
+        <span class="et"><b>${esc(t)}</b><small>${esc(sub)}</small></span>${k && !ok ? `<button class="btn small" data-a="${k[0]}" ${k[0] === "o_geh" ? `data-b="${esc(k[1])}"` : `data-d="${esc(k[1])}"`}${k[3] ? ` data-m="${k[3]}"` : ""}>${esc(k[2])}<ha-icon icon="mdi:chevron-right"></ha-icon></button>` : ""}</div>`).join("")}</div></section>`;
   },
   _uebersichtHtml() {
     const s = this.s;
@@ -9960,15 +10073,18 @@ const OberflaecheTab = {
     const gruss = std < 5 ? "Gute Nacht" : std < 11 ? "Guten Morgen" : std < 18 ? "Hallo" : "Guten Abend";
     const docks = (fw?.geraete || []).filter((g) => g.art === "dock");
     const ernst = H.filter((h) => h.stufe !== "info").length;
-    const hinweise = H.length ? `<section><h2 class="abschn">Hinweise <i>${H.length}</i></h2><div class="hinweise">${H.map((h) => `<div class="hw2 ${h.stufe}">
+    const HZ = H.length > 6 && !s.hwAlle ? H.slice(0, 5) : H;   // 2026-11-10: erst die 5 wichtigsten
+    const hinweise = H.length ? `<section><h2 class="abschn">Hinweise <i>${H.length}</i></h2><div class="hinweise">${HZ.map((h) => `<div class="hw2 ${h.stufe}">
         <span class="hi"><ha-icon icon="${h.icon}"></ha-icon></span><span class="ht"><b>${esc(h.text)}</b>${h.sub ? `<small>${esc(h.sub)}</small>` : ""}</span>
-        ${(h.k || []).map(([a, x, l, i]) => `<button class="btn small" data-a="${a}" ${a === "o_geh" ? `data-b="${esc(x)}"` : a === "o_vormerken" ? `data-datei="${esc(x)}"` : `data-d="${esc(x)}"`}><ha-icon icon="${i}"></ha-icon>${esc(l)}</button>`).join("")}</div>`).join("")}</div></section>` : "";
+        ${(h.k || []).map(([a, x, l, i, m]) => `<button class="btn small" data-a="${a}" ${a === "o_geh" ? `data-b="${esc(x)}"` : a === "o_vormerken" ? `data-datei="${esc(x)}"` : `data-d="${esc(x)}"`}${m ? ` data-m="${esc(m)}"` : ""}><ha-icon icon="${i}"></ha-icon>${esc(l)}</button>`).join("")}</div>`).join("")}</div>
+      ${H.length > 6 ? `<button class="hwmehr" data-a="o_hwalle"><ha-icon icon="mdi:chevron-${s.hwAlle ? "up" : "down"}"></ha-icon>${s.hwAlle ? "Weniger zeigen" : `${H.length - 5} weitere Hinweise`}</button>` : ""}</section>` : "";
     return `<div class="ueber">
       <div class="hero"><div><h1>${gruss}${this._hass.user?.name ? ", " + esc(this._hass.user.name.split(" ")[0]) : ""}</h1>
         <p>${s.order.length} Fernbedienung${s.order.length === 1 ? "" : "en"}${docks.length ? ` · ${docks.length} Docks (${docks.filter((g) => g.online).length} online)` : ""} · ${ernst ? `<b class="warnt">${ernst} ${ernst === 1 ? "Sache braucht" : "Sachen brauchen"} dich</b>` : H.length ? "nichts Dringendes" : `<b class="okt2">alles in Ordnung</b>`}</p></div>
         <span class="grow"></span>
         <button class="btn" data-a="o_pal"><ha-icon icon="mdi:magnify"></ha-icon>Suchen</button>
         <button class="btn primary" data-a="neu"><ha-icon icon="mdi:plus"></ha-icon>Neue Fernbedienung</button></div>
+      ${this._ersteSchritteHtml(docks)}
       ${hinweise}
       <section><h2 class="abschn">Fernbedienungen</h2><div class="rgrid">${s.order.map((d) => this._remKarte(d)).join("")}</div></section>
       ${docks.length ? `<section><h2 class="abschn">Docks</h2><div class="dgrid">${this._docks().map((g) => this._dockKarte(g)).join("")}</div></section>` : ""}
@@ -9990,6 +10106,10 @@ const OberflaecheTab = {
         entity_ids: [...s.order.map(id), ...s.order.map((d) => dockId(id(d)))], minimal_response: true, no_attributes: true, significant_changes_only: false });
       for (const d of s.order) daten[d] = [...(r[id(d)] || []), ...(r[dockId(id(d))] || [])].sort((x, y) => (x.lu ?? x.lc) - (y.lu ?? y.lc)).map((x) => [(x.lu ?? x.lc) * 1000, parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
     } catch (e) { /* ohne Verlauf */ }
+    try {   // Reparatur-Hinweise der Integration (Akku, lange nicht gemeldet - warnungen.py, 2026-11-10)
+      const r = await this._hass.callWS({ type: "repairs/list_issues" });
+      s.warnIssues = (r.issues || []).filter((i) => i.domain === "esphomeremote" && !i.ignored);
+    } catch (e) { s.warnIssues = []; }
     s.verlauf = { zeit: Date.now(), daten };
     this._verlaufHolt = false;
     if (s.bereich === "start" && !s.modal && !s.pal) this._render();
@@ -10003,7 +10123,11 @@ const OberflaecheTab = {
     const werte = pts.map(([, v]) => v);
     const lade = pts.some(([, v], i) => i && v > pts[i - 1][1] + 2);
     return `<div class="kurve" style="color:${farbe}"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".32"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>
-      <path d="${linie}L${W},${H}L${x(pts[0][0])},${H}Z" fill="url(#${id})"/><path d="${linie}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>
+      <line class="k50" x1="0" x2="${W}" y1="${y(50)}" y2="${y(50)}" vector-effect="non-scaling-stroke"/>
+      ${pts.map(([t, v], i) => i && v > pts[i - 1][1] + 2 ? `<rect x="${x(pts[i - 1][0])}" y="0" width="${Math.max(2, x(t) - x(pts[i - 1][0]))}" height="${H}" fill="#43a047" fill-opacity=".12"/>` : "").join("")}
+      <path d="${linie}L${W},${H}L${x(pts[0][0])},${H}Z" fill="url(#${id})"/><path d="${linie}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      <g class="kz">${Array.from({ length: 24 }, (_, i) => { const te = t0 + (i + 1) * 36e5; const p = [...pts].reverse().find(([t]) => t <= te);
+        return p ? `<rect x="${(i * W / 24).toFixed(1)}" y="0" width="${(W / 24).toFixed(1)}" height="${H}"><title>${new Date(te).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${Math.round(p[1])} %</title></rect>` : ""; }).join("")}</g></svg>
       <div class="kl"><span>vor 24 h</span><span>${Math.round(Math.min(...werte))}–${Math.round(Math.max(...werte))} %${lade ? " · geladen" : ""}</span><span>jetzt</span></div></div>`;
   },
   _kachel(a, data, icon, titel, sub, cls = "") {
@@ -10026,8 +10150,10 @@ const OberflaecheTab = {
         ${fakt("mdi:restart", "Letzter Start", L.neustart || "–")}
         ${L.verbunden ? fakt("mdi:bluetooth-connect", "Verbunden mit", L.verbunden) : ""}
       </div>
-      <div class="zahlen">${(() => { const G = this._groesse(d); return G ? `<span class="${G.pct >= 85 ? "voll" : ""}" title="Datei, die die Remote lädt (höchstens ${Math.round(G.max / 1000)} KB)"><b>${G.pct} %</b> Speicher</span>` : ""; })()}<span><b>${st.akt}</b> Aktivitäten</span><span><b>${st.bel}</b> Belegungen</span><span><b>${st.seiten}</b> Menüseiten</span><span><b>${st.eintraege}</b> Einträge</span>
-        ${st.modi ? `<span><b>${st.modi}</b> Folgemodi</span>` : ""}${st.popups ? `<span><b>${st.popups}</b> Popups</span>` : ""}${st.gesten ? `<span><b>${st.gesten}</b> eigene Gesten</span>` : ""}</div>
+      <div class="zahlen">${(() => { const G = this._groesse(d); return G ? `<span class="${G.pct >= 85 ? "voll" : ""}" title="Datei, die die Remote lädt (höchstens ${Math.round(G.max / 1000)} KB)"><ha-icon icon="mdi:memory"></ha-icon><b>${G.pct} %</b> Speicher</span>` : ""; })()}
+        <span title="${esc([`${st.akt} Aktivitäten`, `${st.bel} Belegungen`, `${st.seiten} Menüseiten`, `${st.eintraege} Einträge`, st.modi ? `${st.modi} Folgemodi` : "", st.popups ? `${st.popups} Popups` : "", st.gesten ? `${st.gesten} eigene Gesten` : ""].filter(Boolean).join(" · "))}"><ha-icon icon="mdi:view-grid-outline"></ha-icon><b>${st.akt}</b> Aktivitäten · <b>${st.seiten}</b> Menüseiten</span>
+        ${(() => { const ld = this._letztesDock(L.slug); return ld ? `<span title="Über dieses Dock hat sie zuletzt Werte gemeldet"><ha-icon icon="mdi:map-marker-outline"></ha-icon>zuletzt bei <b>${esc(ld.name)}</b> · ${esc(fmtZeit(new Date(ld.zeit).toISOString()))}</span>` : ""; })()}
+        ${(s.warnIssues || []).some((i) => i.issue_id === `not_seen_${L.slug}`) ? `<span class="voll"><ha-icon icon="mdi:map-marker-question-outline"></ha-icon>meldet sich nicht</span>` : ""}</div>
       <footer>
         <button class="btn" data-a="o_rem" data-d="${esc(d)}" data-m="keys"><ha-icon icon="mdi:gesture-tap-button"></ha-icon>Tasten</button>
         <button class="btn" data-a="o_rem" data-d="${esc(d)}" data-m="menu"><ha-icon icon="mdi:menu-open"></ha-icon>Menü</button>
@@ -10260,6 +10386,9 @@ const OberflaecheTab = {
       case "o_palzu": if (ev.target !== t) return "stop"; s.pal = null; return true;
       case "o_palgo": await this._palAus(Number(t.dataset.n)); return "stop";
       case "o_sync": s.syncOffen = !s.syncOffen; return true;
+      case "o_erste_aus": try { localStorage.setItem("erk_erste_aus", "1"); } catch (e) { /* egal */ } return true;
+      case "o_hwalle": s.hwAlle = !s.hwAlle; return true;   // Hinweise: alle / die 5 wichtigsten (2026-11-10)
+      case "o_aktset": s.aktOffen = !s.aktOffen; try { localStorage.setItem("erk_aktset", s.aktOffen ? "1" : ""); } catch (e) { /* egal */ } return true;   // 2026-11-10
       case "o_ansicht": ev.preventDefault?.(); s.ansicht = t.dataset.v; this._nachOben = !!t.closest(".steckbrief"); return true;
       case "o_zelle": {
         const i = Number(t.dataset.i), k = Number(t.dataset.k);

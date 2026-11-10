@@ -233,11 +233,11 @@ Einstellungen gleichen sich in beide Richtungen ab: was du an der Remote umstell
 
 ## Schnellstart
 
-Etwa **30 Minuten**, das meiste davon Warten auf den ersten Bau. Du bearbeitest keinen Code – du kopierst eine Datei und einen Textblock.
+Etwa **30 Minuten**, das meiste davon Warten auf den ersten Bau. Du bearbeitest keinen Code – du kopierst eine Datei.
 
 ```mermaid
 flowchart LR
-  A["1 · ESPHome-<br/>Add-on"] --> B["2 · In HACS<br/>herunterladen"] --> C["3 · Integration<br/>hinzufügen"] --> D["4 · Secrets<br/>einfügen"] --> E["5 · Per USB<br/>aufspielen"] --> F["6 · In Home Assistant<br/>übernehmen"]
+  A["1 · ESPHome-<br/>Add-on"] --> B["2 · In HACS<br/>herunterladen"] --> C["3 · Integration<br/>hinzufügen"] --> D["4 · WLAN<br/>in ESPHome"] --> E["5 · Per USB<br/>aufspielen"] --> F["6 · In Home Assistant<br/>übernehmen"]
 ```
 
 ### 1 · ESPHome installieren
@@ -261,23 +261,16 @@ ESPHomeRemote steht in der **offiziellen HACS-Liste** – kein benutzerdefiniert
 
 1. Auf den Knopf klicken – oder *Einstellungen → Geräte & Dienste → **+ Integration hinzufügen*** → **ESPHomeRemote**.
 2. Beide Felder so lassen (Name der Remote `esphomeremote`, der Schlüssel ist erzeugt) → **Absenden**.
-3. Danach erscheint ein **fertiger Block** wie dieser – **kopieren** (Fenster offen lassen):
-   ```yaml
-   ota_pw: "…"
-   ap_password: "…"
-   direkt_schluessel: "…"
-   esphomeremote_key: "…"
-   ```
-   Passwörter und Funkschlüssel fürs Dock sind schon für dich erzeugt.
+3. Auf der nächsten Seite stehen die Passwörter und Schlüssel, die die Remote braucht. Den Haken **„Fehlende Zeilen in
+   die ESPHome-Secrets eintragen“** anlassen → **Absenden**. Sie werden für dich erzeugt und eingetragen – nichts
+   ausdenken, nichts kopieren.
 
-### 4 · Secrets in ESPHome einfügen
-1. Das **ESPHome**-Add-on öffnen → **Secrets** (oben rechts).
-2. Den Block **unter** die WLAN-Zeilen einfügen. Gibt es die noch nicht, diese auch eintragen:
-   ```yaml
-   wifi_ssid: "Name deines WLANs"
-   wifi_password: "dein WLAN-Passwort"
-   ```
-3. **Speichern**.
+### 4 · WLAN für ESPHome
+Das **ESPHome**-Add-on öffnen → **Secrets** (oben rechts). Steht dein WLAN noch nicht drin, eintragen und **Speichern**:
+```yaml
+wifi_ssid: "Name deines WLANs"
+wifi_password: "dein WLAN-Passwort"
+```
 
 ### 5 · Fernbedienung aufspielen
 1. In ESPHome: **+ Neues Gerät** → **Weiter** → **Überspringen** (bzw. *Leer anlegen*) – Name egal.
@@ -389,11 +382,11 @@ halten, zwei Remotes vergleichen) · **Prüfen & Finden** (alles prüfen, finden
 |---|---|
 | **„Mit diesem Computer verbinden“ fehlt oder ist grau** | Der Browser erlaubt USB nur auf einer sicheren (https-)Seite. Home Assistant über https öffnen (z. B. Home Assistant Cloud) – oder **Installieren → Manuell herunterladen** wählen und die Datei unter [web.esphome.io](https://web.esphome.io) in Chrome oder Edge aufspielen. |
 | **Kein Gerät in der USB-Liste** | Ein USB-C-**Datenkabel** und einen anderen Anschluss nehmen. |
-| **Bau bricht ab mit „Secret … not defined“** | In den ESPHome-**Secrets** fehlt eine Zeile – mit Schritt 4 vergleichen. Die Namen müssen genau stimmen. |
+| **Bau bricht ab mit „Secret … not defined“** | In den ESPHome-**Secrets** fehlt eine Zeile. WLAN: Schritt 4. Alles andere: siehe *Zeilen aus Schritt 3 fehlen* unten. |
 | **Remote wird nach dem Aufspielen nicht gefunden** | Ist das WLAN **2,4 GHz**, stimmen Name und Passwort in den Secrets? Kommt die Remote nicht ins WLAN, öffnet sie nach einer Weile einen eigenen Hotspot (Passwort: `ap_password`). |
 | **Tasten schalten nichts in Home Assistant** | Schritt 6.2: *Dem Gerät erlauben, Home-Assistant-Aktionen auszuführen*. |
 | **Konfigurator zeigt „noch nicht übertragen“** | Die Remote schläft – einmal eine Taste drücken. Klappt es nie? `esphomeremote_key` in den ESPHome-Secrets muss zum Schlüssel unter *ESPHomeRemote → Konfigurieren* passen. |
-| **Block aus Schritt 3 verloren** | *ESPHomeRemote → Konfigurieren* zeigt den Schlüssel wieder. Die anderen drei Zeilen darfst du selbst wählen: zwei Passwörter und für `direkt_schluessel` 32 Zeichen aus `0-9 a-f` (auf allen Remotes und Docks gleich). |
+| **Zeilen aus Schritt 3 fehlen** | *ESPHomeRemote → Konfigurieren* zeigt den Schlüssel wieder. Die anderen drei Zeilen darfst du selbst wählen: zwei Passwörter und für `direkt_schluessel` 32 Zeichen aus `0-9 a-f` (auf allen Remotes und Docks gleich). |
 
 Kommst du nicht weiter? [Issue anlegen](https://github.com/Aggro600/ESPHomeRemote/issues/new/choose) – das Formular fragt alles ab, was für schnelle Hilfe nötig ist.
 

@@ -5,6 +5,11 @@
   https://github.com/Templarian/MaterialDesign-Webfont
 - **fonts/Audiowide-Regular.ttf** (also showcase/public/fonts/) — Audiowide by Astigmatic,
   SIL Open Font License 1.1, see fonts/OFL.txt.
+- **Symbol fallback font** embedded in custom_components/esphomeremote/frontend/configurator.js — subsets of
+  Noto Sans Math (Copyright 2022 Google LLC) and Noto Sans Symbols 2 (Copyright 2022 The Noto Project Authors,
+  https://github.com/notofonts/symbols),
+  SIL Open Font License 1.1, see fonts/OFL.txt.
+  Only a few glyphs (⇄ ↔ → ↑ ↓ ⏯ ⏮ ⏭ ⏸ ⏳ ✓ ✕ ⚡ ≈ ≠ ▲ ▼ ◀ ▶) for themes whose font lacks them.
 - **components/espidf_ble_keyboard/** — GNU GPL v3.0, see its LICENSE file.
 - **components/network/**, **components/online_image/** — modified copies of ESPHome core components,
   under ESPHome's license (GPL-3.0 for C++ / MIT for Python).

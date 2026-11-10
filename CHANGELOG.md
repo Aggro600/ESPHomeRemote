@@ -1,5 +1,35 @@
 # What's new · Was ist neu
 
+## 2026.11.10.4 (2026-11-10)
+
+**No more inventing secrets.** When you add the integration, it now writes the passwords and keys the remote needs into the ESPHome secrets for you (tick on by default; existing lines are never changed). An `esphomeremote_key` that is already there is taken over, so remote and integration always match. Only Wi-Fi you enter yourself.
+
+**Configurator, tidier:**
+- **Keys page:** the activity settings fold into one line – the remote and the key editor are visible right away.
+- **Status bar:** shows only the remote you are working on; "waiting for the remote" and pending settings share one line. What is running or failing still shows everywhere.
+- **Overview:** the most important notices first (5 shown, the rest on request), a notice when a remote hasn't reported, "last at dock …" on each card, battery chart with a 50 % line, charging marks and values per hour on hover.
+- **First steps:** an optional card for new users (pair Bluetooth, assign a key, home screen, dock) – ticks itself off and can be hidden.
+- **Share activities:** *Share* copies an activity as text, *Import* adds one from someone else.
+- **Symbols:** characters like ⇄ ⏯ ⏮ ⏭ now show in every theme, even if its font lacks them (small built-in fallback font).
+
+Remotes and docks: no firmware change.
+
+<details><summary>Deutsch</summary>
+
+**Keine Secrets mehr ausdenken.** Beim Hinzufügen der Integration trägt sie die Passwörter und Schlüssel, die die Remote braucht, selbst in die ESPHome-Secrets ein (Haken ist an; vorhandene Zeilen bleiben unverändert). Ein schon vorhandener `esphomeremote_key` wird übernommen, damit Remote und Integration immer zusammenpassen. Nur das WLAN trägst du selbst ein.
+
+**Konfigurator aufgeräumt:**
+- **Tasten:** Die Einstellungen der Aktivität klappen zu einer Zeile zusammen – Remote und Tasten-Editor sind sofort zu sehen.
+- **Statusleiste:** zeigt nur die Remote, an der du gerade arbeitest; „wartet auf die Remote“ und offene Einstellungen in einer Zeile. Was läuft oder scheitert, steht weiter überall.
+- **Übersicht:** Wichtiges zuerst (5 Hinweise, der Rest auf Wunsch), ein Hinweis, wenn sich eine Remote nicht meldet, „zuletzt bei Dock …“ auf jeder Karte, Akku-Kurve mit 50-%-Linie, Lade-Markierung und Stundenwerten beim Darüberfahren.
+- **Erste Schritte:** eine freiwillige Karte für Neue (Bluetooth koppeln, Taste belegen, Startseite, Dock) – hakt sich selbst ab und lässt sich ausblenden.
+- **Aktivitäten teilen:** *Teilen* kopiert eine Aktivität als Text, *Importieren* fügt eine von jemand anderem ein.
+- **Symbole:** Zeichen wie ⇄ ⏯ ⏮ ⏭ erscheinen jetzt in jedem Design, auch wenn dessen Schrift sie nicht hat (kleine eingebaute Ersatzschrift).
+
+Remotes und Docks: keine neue Firmware.
+
+</details>
+
 ## 2026.11.10.3 (2026-11-10)
 
 **Warnings in Home Assistant.** Under *Settings → Repairs* you now get a notice when a remote's battery drops below 15 % (unless it is charging; it disappears by itself above 20 %) and when a remote hasn't reported for 24 hours. When it last reported is kept across restarts. Notices can be ignored as usual.

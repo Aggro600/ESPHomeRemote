@@ -10,15 +10,19 @@
         }
       },
       "fertig": {
-        "title": "Fast fertig – das in ESPHome eintragen",
-        "description": "Kopiere diesen Block in die **Secrets** von ESPHome (ESPHome-Add-on → oben rechts **„Secrets“**), unter die WLAN-Zeilen (`wifi_ssid`, `wifi_password` – falls sie fehlen, ergänzen):\n\n```yaml\n{block}\n```\n\nPasswörter und Funkschlüssel sind schon für dich erzeugt. Hast du `ota_pw`, `ap_password` und `direkt_schluessel` schon? Dann nur die letzte Zeile übernehmen. Danach die Fernbedienung aufspielen (läuft sie schon mit dieser Firmware: einmal neu installieren). Anschließend findest du links in der Seitenleiste **„Fernbedienung“**."
+        "title": "Fast fertig – Secrets für ESPHome",
+        "description": "ESPHomeRemote braucht diese Zeilen in den **Secrets** von ESPHome:\n\n```yaml\n{block}\n```\n\nMit dem Haken unten werden sie **für dich eingetragen** – Zeilen, die es schon gibt, bleiben unverändert. Nur das WLAN (`wifi_ssid`, `wifi_password`) trägst du selbst ein, falls es noch fehlt (ESPHome-Add-on → oben rechts **„Secrets“**). Lieber von Hand? Haken entfernen und den Block kopieren.\n\nDanach die Fernbedienung aufspielen (läuft sie schon mit dieser Firmware: einmal neu installieren). Anschließend findest du links in der Seitenleiste **„Fernbedienung“**.",
+        "data": {
+          "eintragen": "Fehlende Zeilen in die ESPHome-Secrets eintragen (empfohlen)"
+        }
       }
     },
     "abort": {
       "single_instance_allowed": "Ist schon eingerichtet. Weitere Fernbedienungen fügst du über „Konfigurieren“ hinzu."
     },
     "error": {
-      "leer": "Bitte mindestens einen Namen eintragen."
+      "leer": "Bitte mindestens einen Namen eintragen.",
+      "schreiben": "Die Secrets-Datei von ESPHome ließ sich nicht schreiben – bitte den Block von Hand kopieren."
     }
   },
   "options": {

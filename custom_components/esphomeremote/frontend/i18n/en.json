@@ -2477,6 +2477,30 @@
  "_ – minimieren (die Menütaste holt es zurück)": "_ – minimise (the menu key brings it back)",
  "__regeln": [
   [
+   "^Aktivität „([^“]+)“$",
+   "Activity “$1”"
+  ],
+  [
+   "meldet sich seit (\\d+) Stunden nicht",
+   "hasn't reported for $1 hours"
+  ],
+  [
+   "(\\d+) weitere Hinweise",
+   "$1 more notices"
+  ],
+  [
+   "Dazu (\\d+) Einstellungen?\\.",
+   "Plus $1 setting(s)."
+  ],
+  [
+   "Aktivität „([^“]+)“ ist in der Zwischenablage – zum Teilen einfügen, z\\. B\\. in ein Issue oder eine Nachricht\\. Importieren: Tasten › Aktivität › Importieren\\.",
+   "Activity “$1” is on the clipboard – paste it to share, e.g. in an issue or a message. To import: Keys › Activity › Import."
+  ],
+  [
+   "Aktivität „([^“]+)“ importiert – Bluetooth-Gerät und Geräte in Home Assistant prüfen, dann speichern\\.",
+   "Activity “$1” imported – check the Bluetooth device and the Home Assistant devices, then save."
+  ],
+  [
    "vor (\\d+(?:[.,]\\d+)?) ?(s|min|h|Std\\.|Tagen?|Wochen?)",
    "$1 $2 ago"
   ],
@@ -3372,5 +3396,36 @@
  "gilt dieser (der erste) Fernseher.": "this (the first) TV is used.",
  "Aus (keine Aktivitäten)": "Off (no activities)",
  "Aus: Die Remote hat keine Aktivitäten, und die Tasten senden nichts. Gilt nach dem Speichern.": "Off: the remote has no activities and the keys send nothing. Applies after saving.",
- "Die Remote hat keine Aktivitäten, die Tasten senden nichts.": "The remote has no activities; the keys send nothing."
+ "Die Remote hat keine Aktivitäten, die Tasten senden nichts.": "The remote has no activities; the keys send nothing.",
+ "in der Leiste": "in the bar",
+ "nicht in der Leiste": "not in the bar",
+ "Nochmal tippen: Popup": "Tap again: popup",
+ "Beim Einschalten:": "On power-up:",
+ "Einklappen": "Collapse",
+ "Name, Symbol, Bluetooth-Gerät, Leiste, Nochmal tippen, Beim Einschalten": "Name, icon, Bluetooth device, bar, tap again, on power-up",
+ "Zuletzt:": "Last:",
+ "zuletzt bei": "last at",
+ "– Akku leer oder außer Reichweite? Eine Taste drücken oder ins Dock stellen.": "– battery empty or out of range? Press a key or put it in the dock.",
+ "Weniger zeigen": "Show less",
+ "Über dieses Dock hat sie zuletzt Werte gemeldet": "It last reported through this dock",
+ "meldet sich nicht": "not reporting",
+ "Erste Schritte": "First steps",
+ "Karte ausblenden – alles geht auch ohne": "Hide this card – everything works without it",
+ "Remote mit Home Assistant verbunden": "Remote connected to Home Assistant",
+ "Sie meldet Akku und Zustand.": "It reports battery and state.",
+ "Fernseher oder Streamer per Bluetooth koppeln": "Pair a TV or streamer via Bluetooth",
+ "An der Remote: Menü › Einstellungen › Bluetooth › Platz wählen › Neu koppeln.": "On the remote: Menu › Settings › Bluetooth › pick a slot › Pair new.",
+ "Bluetooth": "Bluetooth",
+ "Eine Taste belegen und speichern": "Assign a key and save",
+ "Tasten › Taste auf der virtuellen Remote antippen › Aktion wählen › Speichern.": "Keys › tap a key on the virtual remote › choose an action › Save.",
+ "Startseite einrichten": "Set up the home screen",
+ "Uhr, Wetter, Medien, Kamera – je Aktivität.": "Clock, weather, media, camera – per activity.",
+ "Dockingstation einrichten (optional)": "Set up a docking station (optional)",
+ "Schneller aus dem Schlaf, Infrarot und 433 MHz für Home Assistant.": "Faster wake-up, infrared and 433 MHz for Home Assistant.",
+ "Teilen": "Share",
+ "Diese Aktivität als Text kopieren, um sie weiterzugeben": "Copy this activity as text to pass it on",
+ "Eine geteilte Aktivität einfügen": "Paste a shared activity",
+ "Geteilte Aktivität hier einfügen:": "Paste the shared activity here:",
+ "Das ist keine geteilte ESPHomeRemote-Aktivität.": "This is not a shared ESPHomeRemote activity.",
+ "Diesen Text kopieren und weitergeben:": "Copy this text and pass it on:"
 }

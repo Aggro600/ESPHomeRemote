@@ -10,15 +10,19 @@
         }
       },
       "fertig": {
-        "title": "Almost done – copy this into ESPHome",
-        "description": "Copy this block into the ESPHome **Secrets** (ESPHome add-on → top right **\"Secrets\"**), below the Wi-Fi lines (`wifi_ssid`, `wifi_password` – add them if they are missing):\n\n```yaml\n{block}\n```\n\nPasswords and radio key were generated for you. Already have `ota_pw`, `ap_password` and `direkt_schluessel`? Then copy only the last line. Next: flash the remote (or install it once more if it already runs this firmware). Afterwards you find **\"Remote\"** in the sidebar."
+        "title": "Almost done – ESPHome secrets",
+        "description": "ESPHomeRemote needs these lines in the ESPHome **Secrets**:\n\n```yaml\n{block}\n```\n\nWith the tick below they are **added for you** – lines that already exist stay untouched. Only Wi-Fi (`wifi_ssid`, `wifi_password`) you add yourself if it is not there yet (ESPHome add-on → top right **\"Secrets\"**). Prefer doing it by hand? Remove the tick and copy the block.\n\nNext: flash the remote (or install it once more if it already runs this firmware). Afterwards you find **\"Remote\"** in the sidebar.",
+        "data": {
+          "eintragen": "Add the missing lines to the ESPHome secrets (recommended)"
+        }
       }
     },
     "abort": {
       "single_instance_allowed": "Already set up. Add more remotes via \"Configure\"."
     },
     "error": {
-      "leer": "Enter at least one name."
+      "leer": "Enter at least one name.",
+      "schreiben": "Could not write the ESPHome secrets file – copy the block by hand."
     }
   },
   "options": {
