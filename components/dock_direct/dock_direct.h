@@ -166,6 +166,8 @@ class DockDirekt : public Component
   uint8_t zeit_ohne_antwort() const;
   // Remote: HA ist ueber das Dock erreichbar (letzte Antwort des Docks < 2 min alt und das Dock hatte HA)
   bool ha_ueber_dock() const { return dock_ha_ && dock_ha_ms_ != 0 && millis() - dock_ha_ms_ < 120000; }
+  // Dock hat gerade ausdruecklich gemeldet: kein HA (2026-11-09) - dann gleich "Ohne Home Assistant", ohne 15 s Wartezeit
+  bool dock_ohne_ha() const { return !dock_ha_ && dock_ha_ms_ != 0 && millis() - dock_ha_ms_ < 120000; }
   bool letztes_ok(uint8_t out[6]) const { if (!ok_gueltig_) return false; memcpy(out, ok_mac_, 6); return true; }
   uint32_t ok_ms() const { return ok_ms_; }
   // Remote: WLAN verbindet sich gerade - Funk zum Dock kurz gesperrt (kein Zeichen, dass das Dock fehlt)

@@ -18,6 +18,7 @@ in DockStatus.stand (Konfigurator: ws dockstatus_get).
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections import deque
 
@@ -70,6 +71,12 @@ ART = {
 FREI = ("unavailable", "unknown")
 
 
+def _remote_name(geraet: str) -> bool:
+    """Name einer Remote? Vorher nur "remote-..." (2026-11-09): der Standardname der GitHub-Fassung "esphomeremote"
+    fiel durch, Akku/Status/Protokoll ueber das Dock gingen verloren. Docks melden sich nie als Remote."""
+    return bool(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", geraet)) and not geraet.startswith("dock")
+
+
 class DockStatus:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
@@ -82,7 +89,7 @@ class DockStatus:
         "<Alter in 0,1 s> <E|W|I> <tag>: <text>" (esphomeremote-log-buffer.h fuer_dock). Landet im HA-Protokoll unter
         custom_components.esphomeremote.remote und in DockStatus.log (ws remote_log_get)."""
         geraet = str(daten.get("geraet") or "").strip().lower()
-        if not geraet.startswith("remote-"):
+        if not _remote_name(geraet):
             return 0
         jetzt = time.time()
         buch = self.log.setdefault(geraet, deque(maxlen=LOG_ZEILEN))
@@ -105,7 +112,7 @@ class DockStatus:
     @callback
     def melden(self, daten: dict) -> int:
         geraet = str(daten.get("geraet") or "").strip().lower()
-        if not geraet.startswith("remote-"):
+        if not _remote_name(geraet):
             return 0
         slug = geraet.replace("-", "_")
         werte = {k: str(v) for k, v in daten.items() if k in WERTE}

@@ -220,6 +220,11 @@ class Funktionen:
         for tid, k in self._tvs():
             if str(k.get("streamer") or "") == sid:
                 return tid
+        # Standard "erster mit ADB" (2026-11-09): wie die Anzeige im Konfigurator (_kamera_zustand) aufloesen - vorher
+        # fand "Menue-Taste halten = Kamera" so keinen Fernseher, obwohl der Konfigurator alles als eingerichtet zeigte
+        for tid, k in self._tvs():
+            if k.get("weg") == "app" and getattr(self._app_streamer(k), "cfg", {}).get("id", "") == sid:
+                return tid
         return None
 
     def _tv_cfg(self, wahl: str) -> dict | None:
@@ -432,6 +437,7 @@ class Funktionen:
             z["timer"]()
         from homeassistant.helpers.event import async_call_later
 
+        @callback   # im Event-Loop (2026-11-09): ohne lief es im Executor, async_write_ha_state warf, Sensor blieb "on"
         def weg(_now) -> None:
             z["timer"] = None
             z["sichtbar"] = False

@@ -288,7 +288,7 @@ esphomeremote_key: "…"      # the line you copied in step 2
 
 *Own fixed API key instead of the OTA password:* the firmware protects updates with `ota_pw`, because Home Assistant
 hands out the API key only when the device is added. If you set a fixed key yourself, ESPHome warns that the password
-"wastes flash and RAM". Then add this to your device YAML, and `ota_pw` is no longer needed:
+"wastes flash and RAM". Then add this to your device YAML (keep the `ota_pw` secret – `esphomeremote.yaml` still references it, the value is just no longer used):
 ```yaml
 api:
   encryption:
@@ -386,16 +386,15 @@ Turn on "Allow the device to perform Home Assistant actions" on the ESPHome devi
 **The configurator says "noch nicht übertragen" (not yet transferred).**
 The remote is asleep. Press a key once – it then fetches the assignment.
 If it never works: does `esphomeremote_key` in the ESPHome secrets match the integration's key
-(*ESPHomeRemote → Configure* shows it), and is `ha_host` in the YAML correct?
+(*ESPHomeRemote → Configure* shows it)? The remote finds Home Assistant by itself – HA announces its address.
 
 **Several remotes?**
 Create a separate device in ESPHome for each, with its own `device_name`/`ha_name` (step 4).
 Then click **"Configure"** on the *ESPHomeRemote* integration and add the new name, separated by a comma.
 
 **Pages show "nicht verfügbar" (unavailable).**
-Some built-in pages (home screen player, doorbell, sleep timer) use the entities from
-`esphomeremote.yaml` → `substitutions`. Enter yours there or leave them out – you build the menu in the
-configurator anyway.
+Some built-in pages (home screen player, doorbell, sleep timer) need entities. Choose them in the configurator
+under *Verknüpfungen* (links) – no firmware change needed.
 
 **Camera on the TV** (optional):
 in the configurator under **Funktionen → Kamera auf dem Fernseher** (camera on the TV) – shown by the streamer app as

@@ -3,7 +3,7 @@
 # Geflasht wird immer die -halink-Datei.
 packages:
   remotename: !include remote-wz-remotename.yaml
-  # Test- und Diagnosewerkzeuge (Bildschirmfotos, Zeitlupe, Mikrofon-/RAM-Test ...) - auf allen Remotes, nicht veroeffentlicht
+  # Test- und Diagnosewerkzeuge (Bildschirmfotos, Zeitlupe, Mikrofon-/RAM-Test ...) - auf allen Remotes, nicht in der einfachen Firmware
   dev: !include remote-dev-tests.yaml
 
 external_components:
@@ -125,6 +125,11 @@ switch:
 # Haken fuer die Firmware (esphomeremote-wifi.h): Nur-Bluetooth-Schalter, Sprache und HA-Symbol ueber den Tunnel.
 # Prioritaet -90 (nach dem Start der Komponenten): der Knopf "Nur Bluetooth" wird hier sichtbar gemacht.
 esphome:
+  # Eigener Build-Ordner (2026-11-09): remote-wz-<name>.yaml und diese Datei haben denselben Geraetenamen und teilten
+  # sich /data/build/<name>. Nach jeder YAML-Aenderung erzeugt der Device Builder im Hintergrund ("storage regenerate")
+  # die Quellen der einfachen Datei (mDNS an) - lief das waehrend unseres Baus, scheiterte das Linken
+  # ("MDNSComponent" undefined, der "erste Bau nach einer Aenderung"). /data = Datenordner des ESPHome-Add-ons.
+  build_path: /data/build/remote-wz-remotename-halink
   on_boot:
     - priority: -90
       then:

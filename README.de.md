@@ -269,7 +269,7 @@ esphomeremote_key: "…"      # die kopierte Zeile aus Schritt 2
 
 *Eigener fester API-Schlüssel statt OTA-Passwort:* Die Firmware schützt Updates mit `ota_pw`, weil Home Assistant den
 API-Schlüssel erst beim Einbinden vergibt. Setzt du selbst einen festen Schlüssel, warnt ESPHome, das Passwort
-„verschwende Flash und RAM“. Dann das hier in die YAML deines Geräts, und `ota_pw` brauchst du nicht mehr:
+„verschwende Flash und RAM“. Dann das hier in die YAML deines Geräts (das Secret `ota_pw` bleibt stehen – `esphomeremote.yaml` verweist noch darauf, der Wert wird nur nicht mehr benutzt):
 ```yaml
 api:
   encryption:
@@ -376,16 +376,15 @@ Beim ESPHome-Gerät „Gerät darf Home-Assistant-Aktionen ausführen“ einscha
 **Im Konfigurator steht „noch nicht übertragen“.**
 Die Fernbedienung schläft. Einmal eine Taste drücken – sie holt die Belegung dann ab.
 Klappt es nie: Stimmt `esphomeremote_key` in den ESPHome-Secrets mit dem Schlüssel der
-Integration überein (*ESPHomeRemote → Konfigurieren* zeigt ihn) und `ha_host` in der YAML?
+Integration überein (*ESPHomeRemote → Konfigurieren* zeigt ihn)? Die Remote findet Home Assistant selbst – HA kündigt seine Adresse an.
 
 **Mehrere Fernbedienungen?**
 Für jede in ESPHome ein eigenes Gerät mit eigenem `device_name`/`ha_name` anlegen (Schritt 4).
 Dann bei der Integration *ESPHomeRemote* auf **„Konfigurieren“** und den neuen Namen mit Komma ergänzen.
 
 **Seiten zeigen „nicht verfügbar“.**
-Einige eingebaute Seiten (Startseite-Player, Klingel, Sleeptimer) nutzen die Entitäten aus
-`esphomeremote.yaml` → `substitutions`. Trage dort deine ein oder lass sie weg – das Menü baust du
-ohnehin im Konfigurator.
+Einige eingebaute Seiten (Startseite-Player, Klingel, Sleeptimer) brauchen Entitäten. Die wählst du im Konfigurator
+unter *Verknüpfungen* – ohne neue Firmware.
 
 **Kamera auf dem Fernseher** (optional):
 im Konfigurator unter **Funktionen → Kamera auf dem Fernseher** – die Streamer-App blendet sie ein, auf einem oder

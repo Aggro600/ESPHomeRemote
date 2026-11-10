@@ -17,9 +17,10 @@ Easiest via the configurator (the app ships with the integration):
    come the same way later ("Auf ... aktualisieren", update to ...), as does "Deinstallieren" (uninstall).
 
 By hand: `adb install esphomeremote-streamer.apk`, then
-   `adb shell cmd notification allow_listener de.esphomeremote.streamer/.Medien`
-   `adb shell settings put secure enabled_accessibility_services de.esphomeremote.streamer/.Bedienung`
+   `adb shell cmd notification allow_listener de.esphomeremote.streamer/.MediaListener`
+   `adb shell settings put secure enabled_accessibility_services de.esphomeremote.streamer/.AccessibilityHelper`
    `adb shell settings put secure accessibility_enabled 1`
+   `adb shell pm grant de.esphomeremote.streamer android.permission.READ_LOGS` (TV remote keys via HDMI-CEC in the TV menu)
    and in the configurator **Am Streamer eintragen** (register on the streamer).
 
 Build it yourself: `sh build.sh` (JDK 17, Android build-tools 35, platform 35; paths in the script).

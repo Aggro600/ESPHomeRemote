@@ -41,6 +41,7 @@ RAHMEN = 132
 RATE = 16000
 STANDARD = {"ziel": "", "lautstaerke": 0, "gong": True, "an": True}
 _AUDIO: dict[str, tuple[float, bytes]] = {}   # Kennung -> (Zeit, WAV) - fuer den Abruf durch den Lautsprecher
+_ZURUECK: dict[str, tuple] = {}   # Ziel -> (Lautstaerke davor, laufende Ruecksetzung)
 
 
 def daten(kd) -> dict:
@@ -265,6 +266,17 @@ class SpracheView(HomeAssistantView):
         return resp
 
 
+def _pipeline_select(hass: HomeAssistant, dev: str) -> str:
+    """Pipeline-Auswahl der Remote (von HAs ESPHome-Integration angelegt). Ihre ID haengt an der HA-Sprache
+    ("_assistent" deutsch, "_assistant" englisch) - darum ueber die Registry suchen (2026-11-09)."""
+    from homeassistant.helpers import entity_registry as er
+    vorn = f"select.{dev.replace('-', '_')}_"
+    for e in er.async_get(hass).entities.values():
+        if e.domain == "select" and e.platform == "esphome" and e.translation_key == "pipeline" and e.entity_id.startswith(vorn):
+            return e.entity_id
+    return vorn + "assistent"
+
+
 async def assist(hass: HomeAssistant, dev: str, q: asyncio.Queue, melden) -> None:
     """Assist-Pipeline wie ueber den Bluetooth-Link (ble_link._voice_run), Pipeline aus der Auswahl der Remote."""
     from homeassistant.components import assist_pipeline, stt
@@ -272,7 +284,7 @@ async def assist(hass: HomeAssistant, dev: str, q: asyncio.Queue, melden) -> Non
 
     t0 = time.monotonic()
     pid = None
-    sel = hass.states.get(f"select.{dev.replace('-', '_')}_assistent")
+    sel = hass.states.get(_pipeline_select(hass, dev))
     if sel is not None and sel.state not in ("preferred", "unknown", "unavailable"):
         for p in assist_pipeline.async_get_pipelines(hass):
             if p.name == sel.state:
@@ -348,12 +360,32 @@ async def durchsage(hass: HomeAssistant, kd, dev: str, q: asyncio.Queue, melden)
         basis = f"http://{kd.basis()}"
     url = f"{basis}/api/esphomeremote/durchsage/{kennung}.wav"
     st = hass.states.get(ziel)
+    # Lautstaerke davor (2026-11-09): ein ruhender Cast-Lautsprecher ("off") meldet volume_level nicht in den
+    # Attributen - dann vom Entitaets-Objekt. Laeuft noch die Ruecksetzung einer vorigen Durchsage, gilt deren Wert.
     vorher = st.attributes.get("volume_level") if st else None
+    if not isinstance(vorher, (int, float)):
+        komp = hass.data.get("entity_components", {}).get("media_player")
+        ent = komp.get_entity(ziel) if komp is not None else None
+        vorher = getattr(ent, "volume_level", None)
+    if (alt := _ZURUECK.pop(ziel, None)) is not None:
+        alt[1].cancel()
+        vorher = alt[0]
+
+    async def zuruecksetzen() -> None:
+        if d["lautstaerke"] and isinstance(vorher, (int, float)):
+            await hass.services.async_call("media_player", "volume_set", {"entity_id": ziel, "volume_level": vorher})
+
     if d["lautstaerke"]:
         await hass.services.async_call("media_player", "volume_set", {"entity_id": ziel, "volume_level": d["lautstaerke"] / 100},
                                        blocking=True)
-    await hass.services.async_call("media_player", "play_media", {"entity_id": ziel, "media_content_id": url,
-                                                                  "media_content_type": "music"}, blocking=True)
+    try:
+        await hass.services.async_call("media_player", "play_media", {"entity_id": ziel, "media_content_id": url,
+                                                                      "media_content_type": "music"}, blocking=True)
+    except Exception as err:  # noqa: BLE001 - Lautstaerke nicht oben lassen
+        await zuruecksetzen()
+        _LOGGER.warning("%s: Durchsage auf %s ging nicht: %s", dev, ziel, err)
+        await melden(4, "Lautsprecher spielt nicht ab")
+        return
     name = (st.attributes.get("friendly_name") if st else "") or ziel
     await melden(2, f"Läuft auf {name}")
     _LOGGER.info("%s: Durchsage %.1f s auf %s", dev, sek, ziel)
@@ -362,9 +394,10 @@ async def durchsage(hass: HomeAssistant, kd, dev: str, q: asyncio.Queue, melden)
 
         async def zurueck() -> None:
             await asyncio.sleep(dauer)
-            await hass.services.async_call("media_player", "volume_set", {"entity_id": ziel, "volume_level": vorher})
+            _ZURUECK.pop(ziel, None)
+            await zuruecksetzen()
 
-        hass.async_create_task(zurueck())
+        _ZURUECK[ziel] = (vorher, hass.async_create_task(zurueck()))
 
 
 # ---------------------------------------------------------------------------------------------- Konfigurator

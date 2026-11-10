@@ -811,7 +811,9 @@ class KonfigData:
                 self.devices.append(dev)
         for dev in self.devices:
             if dev not in self.data["devices"]:
-                self.data["devices"][dev] = {"config": default_config(), "enabled": False}
+                # An (2026-11-09, Tester: "Aktivitaetsleiste nur eine Linie"): die Firmware hat keine eingebaute Belegung
+                # mehr - aus hiess keine Aktivitaeten, Tasten ohne Wirkung, nur die i-Taste weckte das Display
+                self.data["devices"][dev] = {"config": default_config(), "enabled": True}
             self.data["devices"][dev]["config"].setdefault("menu", default_menu())
         # Einmalige Menue-Umbauten vom 17.10. (menue_rev 3-6) sind gelaufen und seit 2026-10-18 entfernt
         umgebaut = self._timer_popup() | self._vol_aufraeumen()
@@ -940,7 +942,7 @@ class KonfigData:
             self.data["devices"][dev] = {"config": copy.deepcopy(src["config"]), "enabled": bool(src.get("enabled"))}
             werte = self.einst_werte(vorlage)[0]
         else:
-            self.data["devices"][dev] = {"config": default_config(), "enabled": False}
+            self.data["devices"][dev] = {"config": default_config(), "enabled": True}   # an, s. load()
             werte = self.data.get("einst_standard") or EINST_STANDARD
         await self.store.async_save(self.data)
         self.announce(dev)
@@ -1077,9 +1079,16 @@ class KonfigData:
         from yarl import URL
         try:
             u = URL(get_url(self.hass, allow_external=False, allow_cloud=False, prefer_external=False))
+            if u.scheme == "http" and u.host:
+                return f"{u.host}:{u.port}"
         except NoURLAvailableError:
-            return ""
-        return f"{u.host}:{u.port}" if u.scheme == "http" and u.host else ""
+            pass
+        # Interne URL https (Reverse-Proxy, eigene Domain) oder keine (2026-11-09): HA spricht im Heimnetz trotzdem oft
+        # selbst HTTP auf IP:Port - die nehmen, sonst blieb die Remote beim Platzhalter homeassistant.local haengen
+        api = self.hass.config.api
+        if api is not None and not api.use_ssl and api.local_ip and not str(api.local_ip).startswith("127."):
+            return f"{api.local_ip}:{api.port}"
+        return ""
 
     @callback
     def announce(self, dev: str) -> None:

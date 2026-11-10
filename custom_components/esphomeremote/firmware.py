@@ -217,8 +217,12 @@ def _test_stand(hass: HomeAssistant, entry) -> dict:
     return {"werte": werte, "knopf": knopf, "knoepfe": knoepfe}
 
 
-def entwickler() -> bool:
-    """Entwicklermodus (2026-10-18): Testwerkzeuge remote-dev-tests.yaml mitbauen? tools/developer.json, fehlt = an."""
+def entwickler() -> bool | None:
+    """Entwicklermodus (2026-10-18): Testwerkzeuge remote-dev-tests.yaml mitbauen? tools/developer.json, fehlt = an.
+    None ohne Entwickler-Fassung (2026-11-09: tools/remotes.py fehlt) - dann blendet der Konfigurator den Schalter aus,
+    vorher sah ihn jeder HACS-Nutzer und bekam beim Umschalten nur einen Fehler."""
+    if not (ESPHOME_DIR / "tools" / "remotes.py").exists():
+        return None
     try:
         return bool(json.loads((ESPHOME_DIR / "tools" / "developer.json").read_text(encoding="utf-8")).get("an", True))
     except (OSError, ValueError):
@@ -611,6 +615,18 @@ async def _ablauf(hass: HomeAssistant, j: dict, geraete: list[dict], port: str) 
         # Laufenden Auftrag abgebrochen (2026-11-07, Konfigurator "Abbrechen") - nur dann schlucken, sonst (HA beendet) weiterreichen
         if not j.get("abgebrochen"):
             raise
+        # Ergebnis fuer das gerade bearbeitete Geraet (2026-11-09): sonst blieb die Kachel der Remote auf "laeuft", und
+        # ihr Update-WLAN (10 min) lief weiter - beim Abbruch gleich ausschalten
+        d = j.get("aktuell")
+        g = next((x for x in geraete if d and (x["datei"] == d or d.startswith(Path(x["datei"]).stem))), None)
+        if g is not None:
+            j["ergebnisse"][g["datei"]] = "Abgebrochen"
+            if g["art"] == "remote" and port == "OTA" and g.get("name"):
+                from . import wlan_fenster   # noqa: PLC0415
+                try:
+                    await wlan_fenster(hass, g["name"], 0)
+                except Exception as err:  # noqa: BLE001
+                    _log(j, f"WLAN aus nach Abbruch: {err}")
         j.update(status="fehler", fehler="Abgebrochen", schritt="Abgebrochen", fertig=True, aktuell=None)
         _log(j, "Abgebrochen")
     finally:
@@ -853,11 +869,13 @@ async def remote_update(hass: HomeAssistant, geraet: str, quelle: str) -> str | 
         return "gesperrt"
     if (o := _offen(g["datei"])) is not None and o["port"] == "OTA":
         return None   # wartet oder laeuft schon fuer diese Remote
-    if o is not None and o["port"] == "" and o["status"] == "wartet":
+    if o is not None and o["port"] == "" and o["status"] == "wartet" and len(o["dateien"]) == 1:   # nur eigener Bau-Auftrag
         # Wartender Bau-Auftrag (vorgemerkt) - das Update per WLAN baut selbst: ersetzen statt doppelt (2026-11-06)
-        o.update(fertig=True, status="fertig", schritt="Ersetzt durch das Update per WLAN", t_ende=time.time(), ausgeblendet=True)
+        o.update(fertig=True, status="fertig", schritt="Ersetzt durch das Update per WLAN", t_ende=time.time(), ausgeblendet=True,
+                 abgebrochen=True)   # 2026-11-09: sonst wartete sein _ablauf fuer immer
         if o["job_id"] in _reihe:
             _reihe.remove(o["job_id"])
+        await _anstossen()
     if any(not x["fertig"] for x in _jobs.values()):
         await _an_remote(hass, g, "Update ist eingereiht – es laufen noch andere Aufträge davor.", 1)
     _LOGGER.info("Firmware-Update fuer %s (%s)", geraet, quelle)
@@ -1029,6 +1047,9 @@ async def ws_sperren(hass: HomeAssistant, connection: websocket_api.ActiveConnec
 async def ws_entwickler(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Entwicklermodus an/aus: tools/remotes.py --entwickler schreibt die Einstellung und erzeugt die Remote-Dateien neu."""
     skript = ESPHOME_DIR / "tools" / "remotes.py"
+    if not await hass.async_add_executor_job(skript.exists):
+        connection.send_error(msg["id"], "entwickler", "Nur in der Entwickler-Fassung (tools/remotes.py fehlt)")
+        return
     p = await asyncio.create_subprocess_exec("python3", str(skript), "--entwickler", "an" if msg["an"] else "aus",
                                              stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     out = (await p.communicate())[0].decode(errors="replace").strip()

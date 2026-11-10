@@ -334,7 +334,9 @@ class Streamer:
         acc = (await self.adb("settings get secure enabled_accessibility_services")).strip()
         liste = [x for x in acc.split(":") if x and x != "null" and not x.startswith(APP_PKG + "/")]
         liste.append(f"{APP_PKG}/{APP_PKG}.AccessibilityHelper")
-        await self.adb(f"settings put secure enabled_accessibility_services {':'.join(liste)}; settings put secure accessibility_enabled 1")
+        # READ_LOGS (2026-11-09): Tasten der TV-Fernbedienung (HDMI-CEC) im TV-Menue - vorher nur beim Speichern des Menues
+        await self.adb(f"settings put secure enabled_accessibility_services {':'.join(liste)}; settings put secure accessibility_enabled 1; "
+                       f"pm grant {APP_PKG} android.permission.READ_LOGS 2>/dev/null")
         await self.modus_anwenden()
         return await self.app_status()
 
@@ -658,9 +660,19 @@ class CecSchalter(SwitchEntity, RestoreEntity):
                 return str(ist).lower() == soll.lower()
         return self._an
 
-    def umbenennen(self, _sig) -> None:   # dock.py ruft das bei geaendertem Streamer-Namen
+    def umbenennen(self, _sig) -> None:   # dock.py ruft das bei geaendertem Streamer-Namen oder Zustandsquelle
         if self.entity_id and self.hass is not None:
+            self._abonnieren()
             self.async_write_ha_state()
+
+    def _abonnieren(self) -> None:
+        """Zustandsquelle beobachten - neu, wenn sie im Konfigurator geaendert wird (2026-11-09, vorher nur beim Anlegen)."""
+        if self._ab:
+            self._ab()
+            self._ab = None
+        st = self._st
+        if st and st.cfg.get("audio_zustand"):
+            self._ab = async_track_state_change_event(self.hass, [st.cfg["audio_zustand"]], self._quelle_neu)
 
     def merken(self, an: bool) -> None:
         self._an = an
@@ -670,9 +682,8 @@ class CecSchalter(SwitchEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         if (alt := await self.async_get_last_state()) is not None and alt.state in ("on", "off"):
             self._an = alt.state == "on"
-        st = self._st
-        if st and st.cfg.get("audio_zustand"):
-            self.async_on_remove(async_track_state_change_event(self.hass, [st.cfg["audio_zustand"]], self._quelle_neu))
+        self._abonnieren()
+        self.async_on_remove(lambda: self._ab and self._ab())
 
     @callback
     def _quelle_neu(self, _ereignis) -> None:   # im Event-Loop (ohne @callback liefe es im Executor-Thread)

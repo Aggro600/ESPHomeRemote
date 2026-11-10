@@ -271,7 +271,11 @@ class DockStand:
         self._wa_nr += 1
         self._wa[dev] = (self._wa_nr, time.monotonic() + 60)
         self._planen(dev, 0)
-        async_call_later(self.hass, 60.5, lambda _now, d=dev: self._planen(d, 0))
+
+        @callback   # im Event-Loop (2026-11-09; ein Lambda lief im Executor-Thread)
+        def _wa_weg(_now, d=dev) -> None:
+            self._planen(d, 0)
+        async_call_later(self.hass, 60.5, _wa_weg)
 
     def wartung_fertig(self, dev: str) -> None:
         if (ab := self._wartung_abo.pop(dev, None)) is not None:

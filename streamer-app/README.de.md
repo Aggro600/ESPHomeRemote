@@ -17,9 +17,10 @@ Am einfachsten im Konfigurator (die App kommt mit der Integration mit):
    genauso ("Auf ... aktualisieren"), ebenso "Deinstallieren".
 
 Von Hand: `adb install esphomeremote-streamer.apk`, dann
-   `adb shell cmd notification allow_listener de.esphomeremote.streamer/.Medien`
-   `adb shell settings put secure enabled_accessibility_services de.esphomeremote.streamer/.Bedienung`
+   `adb shell cmd notification allow_listener de.esphomeremote.streamer/.MediaListener`
+   `adb shell settings put secure enabled_accessibility_services de.esphomeremote.streamer/.AccessibilityHelper`
    `adb shell settings put secure accessibility_enabled 1`
+   `adb shell pm grant de.esphomeremote.streamer android.permission.READ_LOGS` (Tasten der TV-Fernbedienung per HDMI-CEC im TV-Menue)
    und im Konfigurator **Am Streamer eintragen**.
 
 Selbst bauen: `sh build.sh` (JDK 17, Android build-tools 35, platform 35; Pfade im Skript).

@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.9.1"
+    version: "2026.11.10.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
@@ -72,6 +72,7 @@ esphome:
     - esphomeremote-accent.h   # Akzentfarbe aus dem Konfigurator (2026-11-01)
     - esphomeremote-keys.h   # Tasten-Konfigurator (2026-10-03)
     - esphomeremote-wifi.h
+    - esphomeremote-durchsage.h   # Durchsage per WLAN ohne Bluetooth-Schicht (2026-11-09)
     - esphomeremote-schnellweg.h   # Weck-Taste ganz am Anfang per ESP-NOW ans Dock (2026-11-05)
     - esphomeremote-sd-images.h
     - esphomeremote-levels.h
@@ -2037,14 +2038,20 @@ touchscreen:
 output:
   # 20 kHz statt ESPHome-Standard 1 kHz (2026-11-08): die 1-kHz-PWM beider Beleuchtungen pfiff ins Mikrofon (1, 2 ... 7 kHz,
   # bis 37 dB ueber Grund; gemessen mit mic_spektrum auf Remote Gast). Bei 20 kHz ist nichts mehr messbar.
+  # min_power/zero_means_zero (2026-11-09): bei 20 kHz hat der ledc nur 11 Bit (vorher 14) - mit Gamma 2,8 rundeten 5 %
+  # und das Abdunkeln (3-5 %) auf 0, das Display wurde schwarz. So bleibt jede Stufe ueber 0 mindestens 1 Schritt hell.
   - platform: ledc
     id: backlight_pwm
     pin: {number: GPIO9, inverted: true}
     frequency: 20000Hz
+    min_power: 0.0005
+    zero_means_zero: true
   - platform: ledc
     id: button_backlight_pwm
     pin: {number: GPIO46}
     frequency: 20000Hz
+    min_power: 0.0005
+    zero_means_zero: true
 
 light:
   - platform: monochromatic
@@ -2064,6 +2071,26 @@ light:
     restore_mode: ALWAYS_OFF        # Tastenbeleuchtung standardmaessig aus
 
 interval:
+  # Durchsage per WLAN (esphomeremote-durchsage.h, 2026-11-09): Antworten von HA anzeigen, am Ende Mikrofon aus -
+  # wie on_voice_event der Bluetooth-Schicht
+  - interval: 100ms
+    then:
+      - lambda: |-
+          if (!durchsage_wlan::laeuft && !id(durchsage_laeuft)) return;
+          for (auto &e : durchsage_wlan::ereignisse()) {
+            ESP_LOGI("durchsage", "WLAN: Ereignis %d: %s", e.first, e.second.c_str());
+            if (e.first == 1) lv_label_set_text(id(voice_you), e.second.c_str());
+            else if (e.first == 2) lv_label_set_text(id(voice_answer), e.second.c_str());
+            else if (e.first == 4) lv_label_set_text(id(voice_answer), ("Fehler: " + e.second).c_str());
+            if (e.first == 4 || e.first == 5) {
+              id(durchsage_laeuft) = false;
+              durchsage_wlan::stop();
+              id(voice_active) = false;
+              id(apply_mic_power).execute();
+              id(kb).set_rssi_paused(false);
+              id(voice_power_guard).stop();
+            }
+          }
   # Werte ueber das Dock (2026-10-23): jede Minute, solange wach und ohne eigene HA-Verbindung (s. dock_status_melden)
   - interval: 60s
     then:
@@ -5002,7 +5029,14 @@ script:
           condition: {lambda: "return id(voice_want);"}
           then:
             - if:
-                condition: {lambda: 'return wlan_zugriff::g_http_voice_start && wlan_zugriff::g_http_voice_start("durchsage");'}
+                # Bluetooth-Schicht (-halink): ueber den Tunnel; sonst (einfache Firmware) per WLAN direkt an HA (2026-11-09)
+                condition:
+                  lambda: |-
+                    if (wlan_zugriff::g_http_voice_start) return wlan_zugriff::g_http_voice_start("durchsage");
+                    return wifi::global_wifi_component->is_connected() && api::global_api_server->is_connected() &&
+                           durchsage_wlan::start(id(remote_mic), id(tk_cfg).host(),
+                                                 std::string("/api/esphomeremote/sprache/") + App.get_name() +
+                                                 "?zweck=durchsage&k=" + id(tk_cfg).schluessel());
                 then:
                   - globals.set: {id: durchsage_laeuft, value: "true"}
                   - lvgl.label.update: {id: voice_you,    text: "Durchsage"}
@@ -5022,7 +5056,9 @@ script:
   # Durchsage losgelassen: Aufnahme beenden - der Rest geht an HA, Antwort/Ende kommen als Ereignis (on_voice_event)
   - id: durchsage_ende
     then:
-      - lambda: 'if (wlan_zugriff::g_link_voice_stop) wlan_zugriff::g_link_voice_stop();'
+      - lambda: |-
+          if (wlan_zugriff::g_link_voice_stop) wlan_zugriff::g_link_voice_stop();
+          durchsage_wlan::stop();
       - lvgl.label.update: {id: voice_answer, text: "wird gesendet …"}
 
   - id: voice_power_guard

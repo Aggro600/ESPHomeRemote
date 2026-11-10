@@ -1,5 +1,6 @@
 # =============================================================================
-#  Test- und Diagnosewerkzeuge fuer die Entwicklung (wird NICHT veroeffentlicht)
+#  Test- und Diagnosewerkzeuge fuer die Entwicklung (nicht in der einfachen Firmware esphomeremote-firmware.yaml;
+#  im GitHub-Repo nur als Teil der Entwickler-Fassung, dort ist "dauerhaft online" ab Werk aus - tools/publish.py)
 # =============================================================================
 # Seit 2026-10-16 auf ALLEN Remotes: templates/remote-halink.yaml bindet es ein (packages: dev), damit alle
 # Remotes bis auf den Namen gleich sind. Die Dienste erscheinen in HA als esphome.remote_wz_<name>_<dienst>.
@@ -198,6 +199,22 @@ api:
               ESP_LOGI("suche", "%s", out);
               id(mic_test_text).publish_state(out);
             });
+    # Durchsage-WLAN-Weg testen (2026-11-09, esphomeremote-durchsage.h) - auch auf -halink-Remotes, die sonst den Tunnel
+    # nehmen. zweck "assist" = Stille an den Sprachassistenten (spielt nichts ab), "durchsage" = echte Durchsage.
+    - service: durchsage_wlan_test
+      variables: {sekunden: int, zweck: string, ha: string}   # ha leer = Adresse der Remote (tk_cfg.host)
+      then:
+        - globals.set: {id: voice_active, value: "true"}
+        - script.execute: apply_mic_power
+        - delay: 300ms
+        - lambda: |-
+            const std::string ziel = ha.empty() ? id(tk_cfg).host() : ha;
+            const bool ok = durchsage_wlan::start(id(remote_mic), ziel,
+                std::string("/api/esphomeremote/sprache/") + App.get_name() + "?zweck=" + zweck + "&k=" + id(tk_cfg).schluessel());
+            id(durchsage_laeuft) = ok;
+            ESP_LOGI("test", "Durchsage-WLAN-Test (%s) an %s: %s", zweck.c_str(), ziel.c_str(), ok ? "laeuft" : "abgelehnt");
+        - delay: !lambda 'return std::max(1, std::min(20, (int) sekunden)) * 1000;'
+        - lambda: 'durchsage_wlan::stop();'
     - service: mic_spektrum
       variables: {pwm_hz: int}
       then:
@@ -326,7 +343,7 @@ switch:
     icon: "mdi:wifi-lock"
     entity_category: config
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
+    restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: 'id(testmodus) = true; id(testmodus_ab) = millis() | 1; ESP_LOGI("test", "Dauerhaft online AN");'
       - script.execute: apply_power

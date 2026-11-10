@@ -273,7 +273,10 @@ static void task(void *) {
       }
       bericht.ok = alle ? 1 : 0;
       bericht.ack_ms = (uint16_t) (esp_timer_get_time() / 1000);
-      f.gesendet = alle ? 1 : 0;   // nicht (ganz) angekommen: der normale Weg sendet die Taste
+      // Nichts angekommen: der normale Weg sendet die Taste. Teilweise (2026-11-09, z. B. zweites Dock auf anderem
+      // Kanal): NICHT nochmal - der normale Weg schickte die ganze Taste erneut, das erste Dock fuehrte sie doppelt aus
+      // (Fernseher an und gleich wieder aus). Das unerreichte Dock verpasst dafuer diesen einen Druck.
+      f.gesendet = (alle || bericht.pakete > 0) ? 1 : 0;
     }
   }
   if (funk) funk_aus();
@@ -298,6 +301,9 @@ __attribute__((constructor(103))) static void loop_messen_starten() {
 __attribute__((constructor(102))) static void starten() {
   auto &d = esphome::dock_direkt::g_schnell;
   if (d.magic != esphome::dock_direkt::SCHNELL_MAGIC || d.kanal == 0 || d.nr_benutzt) return;
+  // Ausgeschaltet oder Tiefentladeschutz (2026-11-09): nichts senden und den Tasten-FIFO nicht leeren - on_boot 950
+  // sucht darin die Aus-Taste (102). Vorher leerte der Schnellweg ihn, die Remote liess sich nur noch per Kabel starten.
+  if (g_ausgeschaltet == AUSGESCHALTET_MAGIC || g_akku_leer == AKKU_LEER_MAGIC) return;
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT1) return;
   if (!(esp_sleep_get_ext1_wakeup_status() & ((1ULL << 8) | (1ULL << 2)))) return;   // Taste oder Bewegung
   laeuft = true;

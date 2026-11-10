@@ -106,11 +106,13 @@ void TastenKonfig::weck_tabelle_speichern(int akt, bool erlaubt) {
       if (modus_taste(k)) continue;
       JsonObjectConst kc = taste_cfg_(akt, k);
       if (kc.isNull() || hat_(kc, DOPPELT) || hat_(kc, LANG) || (kc["repeat"] | 0) > 0) continue;
-      if (!frueh_geeignet_(steps_(kc, KURZ), slot)) continue;
+      if (!frueh_geeignet_(steps_(kc, KURZ), slot) || !nur_dock_ir_(steps_(kc, KURZ))) continue;
       auf.clear();
       direkt_->set_aufnahme(&auf);
       frueh_slot_ = slot;
+      aufnahme_ = true;
       ausfuehren_(akt, k, KURZ, true);
+      aufnahme_ = false;
       frueh_slot_ = -1;
       direkt_->set_aufnahme(nullptr);
       if (auf.empty() || auf.size() > 4) continue;
@@ -750,6 +752,7 @@ void TastenKonfig::dock_pruefen_(std::vector<std::string> macs, size_t i) {
 }
 
 void TastenKonfig::ha_senden(const std::string &svc, std::map<std::string, std::string> d) {
+  if (aufnahme_) return;   // Weck-Tabelle: nichts wirklich ausfuehren
   if (api_ok_()) { kb_->call_homeassistant_service(svc, d); return; }
   if (ha_q_.size() < 8) ha_q_.push_back({svc, std::move(d), millis()});
   ESP_LOGI(TAG, "HA-Aufruf %s wartet auf die Verbindung", svc.c_str());
@@ -889,6 +892,10 @@ void TastenKonfig::ble_(JsonObjectConst s, bool halten) {
   std::string dock;
   uint8_t platz = 0;
   const int slot = dev >= 0 ? dev : frueh_slot_ >= 0 ? frueh_slot_ : (int) kb->active_host_slot();
+  if (aufnahme_) {   // Weck-Tabelle (2026-11-09): beim Wecken ist die Remote selbst nie verbunden - nur das Dock-Paket
+    if ((nur_dock || weg != 1) && bt_ziel_(s, slot, dock, platz)) ble_dock_(dock, platz, art, 0, code, mod, [] {}, [] {});
+    return;
+  }
   if ((nur_dock || weg != 1) && bt_ziel_(s, slot, dock, platz)) {
     uint16_t conn;
     const bool selbst_da = !nur_dock && (dev >= 0 ? kb->conn_for_slot(dev, conn) : (kb->is_paired() && kb->is_connected()));
@@ -913,6 +920,18 @@ void TastenKonfig::ble_(JsonObjectConst s, bool halten) {
   }
 #endif
   ble_selbst_(art, code, mod, dev, halten);
+}
+
+// Weck-Tabelle (Schnellweg) nur fuer Infrarot "nur Dock" (2026-11-09): sie enthaelt nur die Dock-Pakete - bei "Remote
+// und Dock" / "Remote, dann Dock" (oder nur selbst) fehlte beim Wecken das eigene Infrarot der Remote
+bool TastenKonfig::nur_dock_ir_(JsonArrayConst steps) const {
+  for (JsonObjectConst s : steps) {
+    if (strcmp(s["t"] | "", "ir") != 0) continue;
+    int route = doc_ != nullptr ? ((*doc_)["ir"]["route"] | 0) : 0;
+    if (!s["r"].isNull()) route = s["r"] | 0;
+    if (route != 2) return false;
+  }
+  return true;
 }
 
 // ---- Weck-Taste beim Start (2026-10-23)
@@ -971,6 +990,7 @@ bool TastenKonfig::weck_frueh(int taste, int aktivitaet, bool dunkel) {
 }
 
 void TastenKonfig::ble_selbst_(uint8_t art, uint16_t code, uint8_t mod, int dev, bool halten) {
+  if (aufnahme_) return;   // Weck-Tabelle: vorher gingen hier beim Einschlafen echte Tasten an den Fernseher
   auto *kb = kb_;
   const bool consumer = art == 0, key = art == 1, button = art == 2;
   if (dev >= 0) {  // anderes Geraet: nur Tap, nur wenn verbunden/geparkt
@@ -1104,6 +1124,7 @@ void TastenKonfig::notweg_() {
 
 // Umweg: ueber HA an das Dock (Aktion esphome.<dock>_bt_senden)
 void TastenKonfig::ble_ha_(const std::string &dock, uint8_t platz, uint8_t art, uint16_t code, uint8_t mod) {
+  if (aufnahme_) return;
   std::map<std::string, std::string> d;
   d["platz"] = std::to_string(platz + 1);
   d["art"] = art == 1 ? "taste" : art == 2 ? "knopf" : "consumer";
@@ -1347,6 +1368,7 @@ void TastenKonfig::ir_(JsonObjectConst s) {
 }
 
 void TastenKonfig::ir_selbst_(const IrTimings &t, uint32_t f) {
+  if (aufnahme_) return;   // Weck-Tabelle: vorher sendete die Remote bei jedem Neustart/OTA echtes Infrarot
 #ifdef TK_USE_IR
   if (tx_ == nullptr) return;
   auto call = tx_->transmit();
@@ -1469,11 +1491,14 @@ JsonArrayConst TastenKonfig::steps_(JsonObjectConst kc, Geste g) const {
   // Verbindung noch aufgebaut wird (2026-10-19). api_da_ms_ = zuletzt verbunden (Start zaehlt als verbunden).
   // 2026-11-07: im Dock-Betrieb ist die Remote nie selbst mit HA verbunden - HA ueber das Dock zaehlt als "mit HA"
   // (vorher ging z. B. die Lautstaerke nach 15 s immer per Infrarot statt ueber den Lautsprecher in HA)
-  bool ha_dock = false;
+  // 2026-11-09: meldet das Dock ausdruecklich "kein HA", gilt "Ohne Home Assistant" sofort (nach dem Aufwachen sonst
+  // erst nach 15 s - die ersten Tasten gingen ans Dock und verfielen dort)
+  bool ha_dock = false, dock_ohne = false;
 #ifdef TK_USE_DIREKT
   ha_dock = direkt_ != nullptr && (ha_dock_modus ? ha_dock_modus() : 0) > 0 && direkt_->ha_ueber_dock();
+  dock_ohne = direkt_ != nullptr && (ha_dock_modus ? ha_dock_modus() : 0) > 0 && direkt_->dock_ohne_ha();
 #endif
-  if (!api_ok_() && !ha_dock && millis() - api_da_ms_ > 15000) {
+  if (!api_ok_() && !ha_dock && (dock_ohne || millis() - api_da_ms_ > 15000)) {
     JsonArrayConst o = kc[gname_offline(g)];
     if (!o.isNull() && o.size() > 0) return o;
   }

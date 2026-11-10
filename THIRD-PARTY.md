@@ -3,8 +3,11 @@
 - **fonts/mdi-subset.ttf** — Material Design Icons (Pictogrammers),
   Apache License 2.0.
   https://github.com/Templarian/MaterialDesign-Webfont
-- **Audiowide** (UI font) — loaded at build time via `gfonts://`
-  from Google Fonts, SIL Open Font License 1.1.
+- **fonts/Audiowide-Regular.ttf** (also showcase/public/fonts/) — Audiowide by Astigmatic,
+  SIL Open Font License 1.1, see fonts/OFL.txt.
+- **components/espidf_ble_keyboard/** — GNU GPL v3.0, see its LICENSE file.
+- **components/network/**, **components/online_image/** — modified copies of ESPHome core components,
+  under ESPHome's license (GPL-3.0 for C++ / MIT for Python).
 - ESP-IDF and the ESPHome core components are subject to their respective
   licenses (Apache-2.0 or GPL-3.0 / MIT).
 - **showcase/public/models/** (3D models of the showcase) — derived from

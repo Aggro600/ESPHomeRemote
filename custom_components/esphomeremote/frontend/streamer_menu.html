@@ -240,7 +240,8 @@ function ok() {
   const k = kacheln[fokus];
   if (!k) return;
   if (navigiert(k.it)) return;
-  if (k.it.confirm) { frageZeigen((k.it.label || T("Run")) + " – " + T("really?"), () => senden(k, "tap")); return; }
+  // "sicher" = Sicherheitsabfrage aus dem Editor (2026-11-09; vorher nur "confirm", das nichts setzt)
+  if (k.it.confirm || k.it.sicher) { frageZeigen((k.it.label || T("Run")) + " – " + T("really?"), () => senden(k, "tap")); return; }
   senden(k, "tap");
 }
 
@@ -281,7 +282,20 @@ async function laden() {
     MENU = j.menu; Z = j.zustaende || {};
     if (j.dauer != null && j.dauer !== DAUER) { DAUER = j.dauer; ruheNeu(); }
     const wunsch = new URLSearchParams(location.search).get("seite");
-    if (erst) zeigeSeite(MENU.pages.some((p) => p.id === wunsch) ? wunsch : MENU.start || MENU.pages[0]?.id); else aktualisieren();
+    if (erst) { zeigeSeite(MENU.pages.some((p) => p.id === wunsch) ? wunsch : MENU.start || MENU.pages[0]?.id); return; }
+    // Menue inzwischen gespeichert (2026-11-09): Seite mit den neuen Eintraegen neu aufbauen - sonst schickten die Kacheln
+    // ihre alten Nummern und der Server fuehrte die falsche aus. Fokus bleibt (begrenzt auf die neue Anzahl).
+    const np = seite && MENU.pages.find((p) => p.id === seite.id);
+    if (!np) { stapel = []; zeigeSeite(MENU.start || MENU.pages[0]?.id, true); return; }
+    if (np !== seite && JSON.stringify(np.items) !== JSON.stringify(seite.items)) {
+      const f = fokus;
+      zeigeSeite(np.id, true);
+      fokus = Math.min(f, Math.max(0, kacheln.length - 1));
+      markieren();
+      return;
+    }
+    seite = np;
+    aktualisieren();
   } catch (e) { if (!MENU) document.getElementById("raster").innerHTML = `<div class="k text">${T("Home Assistant not reachable")}</div>`; }
 }
 

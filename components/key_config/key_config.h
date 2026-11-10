@@ -310,6 +310,7 @@ class TastenKonfig : public Component {
   bool bt_ziel_(JsonObjectConst s, int slot, std::string &dock, uint8_t &platz) const;
   // Ein Ereignis per Funk ans Dock; false = geht gerade nicht (sofort selbst ausweichen).
   // kein_funk: Dock hat nicht bestaetigt; nicht_da: Dock hat das Geraet gerade nicht verbunden.
+  bool nur_dock_ir_(JsonArrayConst steps) const;
   bool ble_dock_(const std::string &dock, uint8_t platz, uint8_t art, uint8_t aktion, uint16_t code, uint8_t mod,
                  std::function<void()> &&kein_funk, std::function<void()> &&nicht_da);
   void ble_ha_(const std::string &dock, uint8_t platz, uint8_t art, uint16_t code, uint8_t mod);
@@ -317,6 +318,7 @@ class TastenKonfig : public Component {
   struct DockHalt { bool an{false}; std::string dock; uint8_t platz{0}, art{0}, mod{0}; uint16_t code{0}; uint32_t naechst{0}; };
   DockHalt dock_halt_;
   int frueh_slot_{-1};
+  bool aufnahme_{false};   // Weck-Tabelle wird aufgezeichnet: nur Dock-Pakete, nichts wirklich senden (2026-11-09)
   uint32_t notweg_bis_{0};
   uint32_t notweg_ab_{0};
   uint32_t einst_dock_ms_{0};   // zuletzt Einstellungen ueber das Dock gemeldet

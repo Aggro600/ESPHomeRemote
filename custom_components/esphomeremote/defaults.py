@@ -144,7 +144,7 @@ EINST_STANDARD: dict = {
     'bt_weg': 2,
     'bt_notweg': 1,
     'clean_s': 120,
-    'ps_log_debug': True,
+    'ps_log_debug': False,   # 2026-11-09: Debug nur zum Entwickeln, nicht fuer neue Remotes
     'dock_disp': 2,
     'dock_von': 7,
     'dock_bis': 24,

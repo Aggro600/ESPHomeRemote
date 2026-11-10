@@ -1,5 +1,59 @@
 # What's new · Was ist neu
 
+## 2026.11.10.1 (2026-11-10)
+
+Fixes, mostly for fresh installs from HACS.
+
+**New remotes work right away.** The configurator key mapping is now on by default. Before, a newly added remote had no activities, the keys did nothing and only the i key woke the display. If it is switched off, the configurator now warns clearly.
+
+**Announcements over Wi-Fi.** The simple firmware from GitHub now sends announcements straight to Home Assistant over Wi-Fi – before it always said "Not possible right now".
+
+**Display no longer goes black when dimmed.** Since the switch to 20 kHz, low brightness levels (3–5 %) rounded down to zero.
+
+**Waking up.** The wake-up table no longer sends real infrared or key presses to the TV on every restart/OTA. It is only used for infrared "dock only"; with "remote and dock" the remote's own infrared was missing on wake-up. If the dock reports "no Home Assistant", the *Without Home Assistant* mapping applies immediately instead of after 15 s.
+
+**Battery and status via the dock** also work with the default device name `esphomeremote` (before only for names starting with `remote-`).
+
+**Home Assistant address.** With an https internal URL (reverse proxy, own domain) or none, the remote uses HA's local IP and port instead of hanging on `homeassistant.local`.
+
+**Voice assistant** finds the remote's pipeline selection in English Home Assistant installations too.
+
+**Streamer and TV menu.** "Hold menu key = camera" finds the TV with the default "first with ADB"; the audio switch picks up a changed state source; the TV menu rebuilds after saving (before, tiles could run the wrong entry); the safety prompt works; options the TV menu does not support are no longer offered; leaving the editor no longer loses unsaved changes.
+
+**Backup.** Announcement and TV menu settings are now restored from a backup (they were skipped silently).
+
+**Configurator.** The announcement settings no longer clash with the dock search speed; the firmware page of remotes and docks shows jobs and the log again; cancelling a job stops the remote's update Wi-Fi; the developer switch and the empty hardware test are hidden in the HACS version; debug logging is off for new remotes.
+
+Update over Wi-Fi as usual: docks first, then the remotes.
+
+<details><summary>Deutsch</summary>
+
+Korrekturen, vor allem für Neuinstallationen über HACS.
+
+**Neue Remotes gehen sofort.** Die Konfigurator-Belegung ist jetzt von Anfang an an. Vorher hatte eine neu hinzugefügte Remote keine Aktivitäten, die Tasten taten nichts, nur die i-Taste weckte das Display. Ist sie aus, warnt der Konfigurator jetzt deutlich.
+
+**Durchsage per WLAN.** Die einfache Firmware von GitHub schickt Durchsagen jetzt per WLAN direkt an Home Assistant – vorher kam immer „Geht gerade nicht“.
+
+**Display wird beim Abdunkeln nicht mehr schwarz.** Seit 20 kHz rundeten niedrige Helligkeiten (3–5 %) auf null.
+
+**Aufwachen.** Die Weck-Tabelle sendet bei Neustart/OTA kein echtes Infrarot und keine Tasten mehr an den Fernseher. Sie gilt nur noch für Infrarot „nur Dock“; bei „Remote und Dock“ fehlte beim Wecken das eigene Infrarot der Remote. Meldet das Dock „kein Home Assistant“, gilt *Ohne Home Assistant* sofort statt nach 15 s.
+
+**Akku und Status über das Dock** gehen auch mit dem Standardnamen `esphomeremote` (vorher nur für Namen mit `remote-`).
+
+**Adresse von Home Assistant.** Bei interner URL mit https (Reverse-Proxy, eigene Domain) oder ohne nimmt die Remote HAs lokale IP und Port, statt bei `homeassistant.local` hängen zu bleiben.
+
+**Sprachassistent** findet die Pipeline-Auswahl der Remote auch in englischen Home-Assistant-Installationen.
+
+**Streamer und Menü am Fernseher.** „Menü-Taste halten = Kamera“ findet den Fernseher mit dem Standard „erster mit ADB“; der Audio-Schalter übernimmt eine geänderte Zustandsquelle; das Menü am Fernseher baut sich nach dem Speichern neu auf (vorher konnten Kacheln den falschen Eintrag ausführen); die Sicherheitsabfrage wirkt; nicht unterstützte Optionen werden dort nicht mehr angeboten; beim Verlassen des Editors gehen ungespeicherte Änderungen nicht mehr verloren.
+
+**Sicherung.** Durchsage und Menü am Fernseher werden beim Einspielen jetzt mit wiederhergestellt (wurden still übergangen).
+
+**Konfigurator.** Die Durchsage-Einstellungen kommen dem Suchtempo der Docks nicht mehr in die Quere; die Firmware-Seite von Remotes und Docks zeigt wieder Aufträge und Protokoll; ein Abbruch schaltet das Update-WLAN der Remote aus; Entwickler-Schalter und leerer Hardware-Test sind in der HACS-Fassung ausgeblendet; Debug-Protokoll ist für neue Remotes aus.
+
+Update wie gewohnt über WLAN: erst die Docks, dann die Remotes.
+
+</details>
+
 ## 2026.11.9.1 (2026-11-09)
 
 **Clearer voice.** The display and key backlights were dimmed at 1 kHz, which whistled into the microphone (1 to 7 kHz). Now 20 kHz: the whine is gone – for voice search on the TV, the voice assistant and announcements.
