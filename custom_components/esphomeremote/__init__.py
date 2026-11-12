@@ -1328,6 +1328,9 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     kd = KonfigData(hass, key, devices)
     await kd.load()
     hass.data[DOMAIN] = kd
+    from . import firmware as _fw, reparaturen
+    _fw.ordner_setzen(hass)   # ESPHome-Ordner aus der HA-Konfiguration (2026-11-12, HA Core/Container)
+    reparaturen.beim_start(hass)   # Hinweise unter Einstellungen -> Reparaturen (kein Supervisor, alte Dateien, USB-Flash)
     from .warnungen import einrichten as warnungen   # Akku leer / lange nicht gemeldet -> Reparaturen (2026-11-10)
     warnungen(hass, lambda: kd.devices)
 

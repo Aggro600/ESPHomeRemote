@@ -21,7 +21,7 @@ import re
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 
-from .firmware import ESPHOME_DIR
+from . import firmware as _fw
 
 _LOGGER = logging.getLogger(__name__)
 PORT_START = 16053
@@ -31,8 +31,8 @@ OTA_PORT = 3232
 def _remotes() -> list[dict]:
     """[{slug, name, ip}] aus remotes.json und secrets.yaml."""
     try:
-        rs = json.loads((ESPHOME_DIR / "tools" / "remotes.json").read_text(encoding="utf-8"))
-        sec = (ESPHOME_DIR / "secrets.yaml").read_text(encoding="utf-8")
+        rs = json.loads((_fw.ESPHOME_DIR / "tools" / "remotes.json").read_text(encoding="utf-8"))
+        sec = (_fw.ESPHOME_DIR / "secrets.yaml").read_text(encoding="utf-8")
     except (OSError, ValueError) as err:
         _LOGGER.warning("Bruecke: Remote-Liste nicht lesbar: %s", err)
         return []

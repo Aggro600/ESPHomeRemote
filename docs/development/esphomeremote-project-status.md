@@ -812,7 +812,7 @@ Wenn nicht, ist es ein echter Fehler und muss separat verfolgt werden.
 ### 9. Voice-Bring-up: Mic-Datenleitung unterbrochen (2026-09-03)
 
 **BLE/ATVV funktioniert vollständig.** Pairing mit dem Google TV erfolgreich
-(Slot 0, Identity AA:BB:CC:DD:EE:01), **MTU 517** (die Referenz-Firmware erreicht
+(Slot 0, Identity AA:BB:CC:DD:EE:02), **MTU 517** (die Referenz-Firmware erreicht
 247), Verbindungsintervall 15 ms, Capability-Handshake sauber (Host meldet
 `codecs 0x0003`), 234 Frames pro Abfrage ohne gemeldete Drops. Der Transport ist
 besser als in der Referenz-Firmware.

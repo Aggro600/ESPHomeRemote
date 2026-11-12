@@ -5599,7 +5599,7 @@ const BtEditor = {
         ${(this.s.meta[this.s.dev]?.einst || {}).ha_link_modus === 3 ? "" : `<details class="btprox"><summary>Home Assistant über Bluetooth (Proxys)</summary>
         <small class="note">Proxys, über die HA die Remote per Bluetooth erreichen darf (HA wählt den mit dem besten Empfang). Das Dock steht direkt am Ladeplatz und ist dafür ideal – seine Adresse steht im Dock unter „Bluetooth-Adresse“.</small>
         ${m.proxies ? zeilen || `<div class="none">Keine Bluetooth-Proxys in Home Assistant gefunden.</div>` : `<div class="none">Lade …</div>`}
-        <div class="inl"><input id="btmac" placeholder="Adresse von Hand, z. B. AA:BB:CC:DD:EE:04" maxlength="17"><button class="btn small" data-a="bt_add"><ha-icon icon="mdi:plus"></ha-icon>Hinzufügen</button></div>
+        <div class="inl"><input id="btmac" placeholder="Adresse von Hand, z. B. AA:BB:CC:DD:EE:05" maxlength="17"><button class="btn small" data-a="bt_add"><ha-icon icon="mdi:plus"></ha-icon>Hinzufügen</button></div>
         <small class="note">Gilt nach dem Speichern. Die fest in der Firmware eingetragenen Proxys bleiben immer erlaubt.</small></details>`}
       </div>
       <div class="dfoot"><button class="btn primary" data-a="modalx">Fertig</button></div>
@@ -5684,7 +5684,7 @@ const BtEditor = {
     }
     if (a === "bt_add") {
       const v = (this.shadowRoot.querySelector("#btmac")?.value || "").trim().toUpperCase();
-      if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(v)) { alert("Bitte eine Bluetooth-Adresse wie AA:BB:CC:DD:EE:04 eingeben."); return true; }
+      if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(v)) { alert("Bitte eine Bluetooth-Adresse wie AA:BB:CC:DD:EE:05 eingeben."); return true; }
       this._btSetProxies(new Set([...(this.cfg.bt?.proxies || []), v]));
       return true;
     }

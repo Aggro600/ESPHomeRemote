@@ -1,5 +1,27 @@
 # What's new · Was ist neu
 
+## 2026.11.12.1 (2026-11-12)
+
+**For bug reports: diagnostics file.** Settings → Devices & services → ESPHomeRemote → ⋮ → Download diagnostics: versions, firmware state per device, connection path, pending settings, last build errors – without names, addresses, keys or key layouts.
+
+**Repairs in Home Assistant:** old ESPHomeRemote files in the ESPHome folder (with a Fix button), remotes that still need one USB flash (firmware before 2026.11.5.4), and Home Assistant without Supervisor now show up under Settings → Repairs.
+
+**Home Assistant Container/Core:** when added, the integration says that it cannot build or flash without the ESPHome add-on and runs anyway; the ESPHome folder comes from the HA configuration instead of a fixed /config/esphome.
+
+**For contributors:** integration tests (start without add-on, diagnostics, backup ⇄ restore, repairs, IR encoder, language files) run on every push on GitHub; CONTRIBUTING.md explains the layout, running without hardware and pull requests; Dependabot keeps the actions current; if the weekly test build fails with the newest ESPHome, GitHub opens an issue. Firmware unchanged – the offered update is optional.
+
+<details><summary>Deutsch</summary>
+
+**Für Fehlerberichte: Diagnose-Datei.** Einstellungen → Geräte & Dienste → ESPHomeRemote → ⋮ → Diagnose herunterladen: Versionen, Firmware-Stand je Gerät, Verbindungsweg, offene Einstellungen, letzte Bau-Fehler – ohne Namen, Adressen, Schlüssel oder Tastenbelegung.
+
+**Reparaturen in Home Assistant:** alte ESPHomeRemote-Dateien im ESPHome-Ordner (mit Beheben-Knopf), Remotes, die noch einmal per USB müssen (Firmware vor 2026.11.5.4), und Home Assistant ohne Supervisor erscheinen jetzt unter Einstellungen → Reparaturen.
+
+**Home Assistant Container/Core:** die Integration sagt beim Hinzufügen, dass sie ohne ESPHome-Add-on nicht bauen und flashen kann, und läuft trotzdem; der ESPHome-Ordner kommt aus der HA-Konfiguration statt fest /config/esphome.
+
+**Für Mitentwickler:** Tests der Integration (Start ohne Add-on, Diagnose, Sicherung ⇄ Einspielen, Reparaturen, IR-Kodierer, Sprachdateien) laufen bei jedem Push auf GitHub; CONTRIBUTING.md erklärt Aufbau, Testlauf ohne Hardware und Pull Requests; Dependabot hält die Actions aktuell; scheitert der wöchentliche Testbau mit der neuesten ESPHome-Version, legt GitHub ein Issue an. Firmware unverändert – das angebotene Update ist freiwillig.
+
+</details>
+
 ## 2026.11.10.7 (2026-11-10)
 
 Configurator on phones: Bluetooth page (notice and selects), IR codes (remote select) and notice boxes on other pages no longer squeezed; 'waiting for the remote' rows are one line on phones. English: song titles and calendar entries are no longer partly translated, missing tooltips added. New guide: external and extra IR LEDs on the dock (docs/dock-ir-led.md).

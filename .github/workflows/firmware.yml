@@ -12,6 +12,10 @@ on:
     - cron: "0 5 * * 1"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   build:
     name: ${{ matrix.ziel }} (ESPHome ${{ matrix.esphome }})
@@ -47,4 +51,19 @@ jobs:
         run: python3 .github/ci/prepare.py . .
 
       - name: Kompilieren
+        id: bau
         run: esphome compile ${{ matrix.ziel }}
+
+      # Schlaegt der Bau mit der NEUESTEN ESPHome-Version fehl (nur beim woechentlichen Lauf), soll das nicht still
+      # bleiben: ein Issue, bevor Nutzer mit frisch aktualisiertem Add-on davorstehen. Ein offenes Issue reicht.
+      - name: Issue bei Bruch mit neuer ESPHome-Version
+        if: failure() && matrix.esphome == 'latest' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(esphome version | head -1)
+          titel="Firmware baut nicht mit $v (${{ matrix.ziel }})"
+          if gh issue list --state open --search "in:title \"$titel\"" --json number --jq 'length' | grep -q '^0$'; then
+            gh issue create --title "$titel" --label firmware \
+              --body "Der woechentliche Testbau von \`${{ matrix.ziel }}\` ist mit der neuesten ESPHome-Version fehlgeschlagen: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nMit ESPHome ${{ matrix.esphome == 'latest' && '2026.10.2' || matrix.esphome }} (Stand des Add-ons) baut sie weiter. Vor dem naechsten Add-on-Update pruefen."
+          fi

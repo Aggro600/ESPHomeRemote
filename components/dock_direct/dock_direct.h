@@ -147,7 +147,7 @@ class DockDirekt : public Component
   void antwort_abwarten(uint32_t ms) { if ((int32_t) (millis() + ms - antwort_bis_ms_) > 0) antwort_bis_ms_ = millis() + ms; }
   // Dock: Stand einer Remote ablegen (HA-Aktion esphome.<dock>_zustand)
   void zustand_setzen(const std::string &remote, const std::string &text);
-  // "AA:BB:CC:DD:EE:05" -> 6 Byte
+  // "AA:BB:CC:DD:EE:06" -> 6 Byte
   static bool mac_lesen(const char *s, uint8_t out[6]);
 
   // ---- Heimnetz als zweiter Weg (2026-10-23)

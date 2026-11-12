@@ -41,7 +41,7 @@ Komponente `espidf_ble_keyboard`:
 - Eigener GATT-Dienst `7e1a0001-5c3d-4f2a-9e61-2d8b4c0a1f00`
   - `7e1a0002-...` CMD: write / write-without-response (HA → Remote), bis 180 Byte
   - `7e1a0003-...` EVT: read/notify (Remote → HA)
-- Die Proxy-Verbindung wird an der **Adresse** erkannt (`add_link_peer("AA:BB:CC:DD:EE:02")`) und im
+- Die Proxy-Verbindung wird an der **Adresse** erkannt (`add_link_peer("AA:BB:CC:DD:EE:03")`) und im
   CONNECT/DISCONNECT/WRITE-Ereignis vorab abgefangen: kein Host-Wechsel, keine Verschluesselung, keine
   MTU-Client-Rolle, kein Einfluss auf ATV-Voice.
 - Solange ein HID-Host verbunden ist, wirbt die Remote **langsam** (500-1000 ms) weiter, damit sich der Link
@@ -319,7 +319,7 @@ dann `input keyevent 23`).
 ### Loesung 2026-10-06 01:00: Remote nimmt den Link von allen HA-Proxys an
 
 - Eigentliche Ursache der Aufbau-Probleme mit HA: HA waehlt den Proxy fuer die Verbindung selbst (bester Empfang:
-  Dunstabzugshaube `AA:BB:CC:DD:EE:02` oder `AA:BB:CC:DD:EE:03`), die Festlegung in der Bruecke greift nicht. Die
+  Dunstabzugshaube `AA:BB:CC:DD:EE:03` oder `AA:BB:CC:DD:EE:04`), die Festlegung in der Bruecke greift nicht. Die
   Remote kannte nur den CO2-Proxy und trennte die Verbindung als "zweite/fremde Verbindung" sofort (Remote 2-Log).
   Jetzt stehen alle drei in `proxy_macs` (Remote 2 + Remote 1), `proxy:` in der Bruecke entfernt.
 - Achtung beim Testen: ein eigenes aioesphomeapi-Werkzeug, das Werbung beim Proxy abonniert, nimmt HA dieses Abo weg

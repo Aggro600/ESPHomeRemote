@@ -16,6 +16,7 @@
   <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration"><img src="https://img.shields.io/badge/HACS-default-41BDF5?style=for-the-badge" alt="HACS"></a>
   <img src="https://img.shields.io/badge/ESPHome-native-1a1a1a?style=for-the-badge&logo=esphome&logoColor=white" alt="ESPHome">
   <img src="https://img.shields.io/badge/Home%20Assistant-integrated-41BDF5?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant">
+  <a href="https://github.com/Aggro600/ESPHomeRemote/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Aggro600/ESPHomeRemote/tests.yml?style=for-the-badge&label=tests" alt="Tests"></a>
   <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
 </p>
 
@@ -245,7 +246,7 @@ Settings sync both ways: what you change on the remote shows up in the configura
 | | |
 |---|---|
 | 🎛️ **The remote** | **OMOTE / Open Remote, board Rev6** (ESP32-S3) – hardware: [OMOTE-Hardware](https://github.com/OMOTE-Community/OMOTE-Hardware). PCBs are sometimes offered in the [Discord](https://discord.com/invite/5PnYFAsKsG) buy/sell channel. |
-| 🏠 **Home Assistant** | 2026.9 or newer, with the **ESPHome Device Builder** add-on and **[HACS](https://hacs.xyz)**. |
+| 🏠 **Home Assistant** | **OS or Supervised**, 2026.9 or newer, with the **ESPHome Device Builder** add-on and **[HACS](https://hacs.xyz)**. Container or Core works too, but then you build and flash the firmware yourself with ESPHome – the integration tells you so when you add it. |
 | 🔌 **For the first flash** | A **USB-C data cable** (not a charge-only cable) and a PC with **Chrome or Edge**. |
 | 📶 **Wi-Fi** | A **2.4 GHz** network (the ESP32 can't use 5 GHz). |
 | 🧲 **Docking station** | *Optional.* Original dock or any spare ESP32 – see [The docking station](#the-docking-station). |
@@ -446,6 +447,8 @@ ota:
 ---
 
 ## For developers
+
+How the project is put together, how to run it without hardware and what a pull request should look like: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports: please attach the diagnostics file (Settings → Devices & services → ESPHomeRemote → ⋮ → Download diagnostics) – it contains versions and firmware state, with names and addresses removed.
 
 - `esphomeremote-firmware.yaml` is generated from the developer version (`tools/publish.py` in the
   developer setup) – please make changes there, not here.

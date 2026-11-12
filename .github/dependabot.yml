@@ -1,0 +1,13 @@
+# Haelt die GitHub-Actions (checkout, setup-python, cache) aktuell - einmal pro Woche ein Pull Request, wenn es
+# eine neue Version gibt. Python-Pakete gibt es keine (die Integration hat keine requirements), ESPHome prueft
+# firmware.yml selbst gegen "latest".
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [ci]
+    commit-message:
+      prefix: "CI"

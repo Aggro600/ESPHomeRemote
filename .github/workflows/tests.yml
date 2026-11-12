@@ -1,0 +1,29 @@
+# Tests der Integration (2026-11-12): Home Assistant ohne Netz, ohne Supervisor, ohne ESPHome-Add-on - so wie bei
+# Nutzern mit HA im Container. Prueft Start, Diagnose, Sicherung/Einspielen, IR-Kodierer und die Sprachdateien.
+name: Tests
+
+on:
+  push:
+    branches: [master, stabil]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Testumgebung
+        run: |
+          pip install --upgrade pip
+          pip install pytest-homeassistant-custom-component
+          pip install $(python3 tests/ha_requirements.py)
+
+      - name: Tests
+        run: pytest tests/ -c tests/pytest.ini -p no:cacheprovider -q

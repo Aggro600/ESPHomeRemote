@@ -43,7 +43,21 @@ from homeassistant.helpers.storage import Store
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote"
 ADDON = os.environ.get("ESPHOME_ADDON", "5c53de3b_esphome")
-ESPHOME_DIR = Path("/config/esphome")
+ESPHOME_DIR = Path("/config/esphome")   # wird beim Start auf hass.config.path("esphome") gesetzt (ordner_setzen)
+
+
+def ordner_setzen(hass: HomeAssistant) -> Path:
+    """ESPHome-Ordner aus der HA-Konfiguration (2026-11-12): bis dahin fest /config/esphome - bei HA Core (~/.homeassistant)
+    oder einem anders eingehaengten Container zeigte alles ins Leere. Andere Module lesen firmware.ESPHOME_DIR zur
+    Laufzeit (nicht per from-import kopiert), damit die Aenderung ueberall ankommt."""
+    global ESPHOME_DIR
+    ESPHOME_DIR = Path(hass.config.path("esphome"))
+    return ESPHOME_DIR
+
+
+def supervisor() -> bool:
+    """Laeuft HA als OS/Supervised (dann gibt es das ESPHome-Add-on, das baut und flasht)?"""
+    return bool(os.environ.get("SUPERVISOR_TOKEN"))
 DOCK_BASIS = "templates/dock-base.yaml"
 # Dock-Nachbau (2026-11-01): anderer ESP32 ohne Platine - nur der Kern (Proxy, Bluetooth-Tastatur, Funk der Remote)
 DOCK_KERN = "templates/dock-core.yaml"
@@ -65,7 +79,9 @@ async def _port(hass: HomeAssistant) -> int:
         return p
     tok = os.environ.get("SUPERVISOR_TOKEN")
     if not tok:
-        raise RuntimeError("Kein Supervisor - ESPHome-Add-on nicht erreichbar")
+        raise RuntimeError(_t("Kein Supervisor (Home Assistant Container oder Core): Bauen und Aufspielen aus dem Konfigurator "
+                              "brauchen Home Assistant OS oder Supervised mit dem ESPHome-Add-on. Die Gerätedateien liegen in "
+                              f"{ESPHOME_DIR} – baue sie mit deinem eigenen ESPHome: esphome run <datei>.yaml"))
     s = async_get_clientsession(hass)
     async with s.get(f"http://supervisor/addons/{ADDON}/info", headers={"Authorization": "Bearer " + tok}) as r:
         d = (await r.json())["data"]
@@ -740,6 +756,8 @@ async def liste(hass: HomeAssistant) -> dict:
                 x["online"] = x["wlan"]
         out.append(x)
     laufend = _schlange_liste()
+    from .reparaturen import nach_liste
+    nach_liste(hass, out, await hass.async_add_executor_job(altlasten))
     return {"geraete": out, "ports": ports, "fehler": fehler, "jobs": laufend, "fertige": _fertige_liste(), "version": soll,
             "lokal": await hass.async_add_executor_job(lambda: (ESPHOME_DIR / "templates" / "remote.yaml").exists()),
             "entwickler": await hass.async_add_executor_job(entwickler),

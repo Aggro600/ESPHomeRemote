@@ -16,6 +16,7 @@
   <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=Aggro600&repository=ESPHomeRemote&category=integration"><img src="https://img.shields.io/badge/HACS-Standard-41BDF5?style=for-the-badge" alt="HACS"></a>
   <img src="https://img.shields.io/badge/ESPHome-nativ-1a1a1a?style=for-the-badge&logo=esphome&logoColor=white" alt="ESPHome">
   <img src="https://img.shields.io/badge/Home%20Assistant-integriert-41BDF5?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant">
+  <a href="https://github.com/Aggro600/ESPHomeRemote/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Aggro600/ESPHomeRemote/tests.yml?style=for-the-badge&label=tests" alt="Tests"></a>
   <a href="https://github.com/Aggro600/ESPHomeRemote/blob/master/LICENSE"><img src="https://img.shields.io/badge/Lizenz-MIT-22c55e?style=for-the-badge" alt="MIT"></a>
 </p>
 
@@ -224,7 +225,7 @@ Einstellungen gleichen sich in beide Richtungen ab: was du an der Remote umstell
 | | |
 |---|---|
 | 🎛️ **Die Fernbedienung** | **OMOTE / Open Remote, Platine Rev6** (ESP32-S3) – Hardware: [OMOTE-Hardware](https://github.com/OMOTE-Community/OMOTE-Hardware). Platinen gibt es manchmal im [Discord](https://discord.com/invite/5PnYFAsKsG) (Kanal buy/sell). |
-| 🏠 **Home Assistant** | 2026.9 oder neuer, mit dem Add-on **ESPHome Device Builder** und **[HACS](https://hacs.xyz)**. |
+| 🏠 **Home Assistant** | **OS oder Supervised**, 2026.9 oder neuer, mit dem Add-on **ESPHome Device Builder** und **[HACS](https://hacs.xyz)**. Container oder Core geht auch, dann baust und flashst du die Firmware aber selbst mit ESPHome – die Integration sagt es dir beim Hinzufügen. |
 | 🔌 **Fürs erste Aufspielen** | Ein **USB-C-Datenkabel** (kein reines Ladekabel) und ein PC mit **Chrome oder Edge**. |
 | 📶 **WLAN** | Ein **2,4-GHz**-Netz (5 GHz kann der ESP32 nicht). |
 | 🧲 **Dockingstation** | *Optional.* Original-Dock oder ein beliebiger ESP32 – siehe [Die Dockingstation](#die-dockingstation). |
@@ -434,6 +435,8 @@ ota:
 ---
 
 ## Für Entwickler
+
+Wie das Projekt aufgebaut ist, wie es ohne Hardware läuft und wie ein Pull Request aussehen sollte: [CONTRIBUTING.md](CONTRIBUTING.md) (Englisch). Fehlerberichte: bitte die Diagnose-Datei anhängen (Einstellungen → Geräte & Dienste → ESPHomeRemote → ⋮ → Diagnose herunterladen) – sie enthält Versionen und Firmware-Stand, ohne Namen und Adressen.
 
 - `esphomeremote-firmware.yaml` wird aus der Entwickler-Fassung erzeugt (`tools/publish.py`
   im Entwickler-Setup) – Änderungen bitte dort, nicht hier.

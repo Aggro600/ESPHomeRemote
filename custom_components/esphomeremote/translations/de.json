@@ -15,6 +15,10 @@
         "data": {
           "eintragen": "Fehlende Zeilen in die ESPHome-Secrets eintragen (empfohlen)"
         }
+      },
+      "hinweis": {
+        "title": "Home Assistant ohne ESPHome-Add-on",
+        "description": "Dieses Home Assistant läuft ohne Supervisor (Container oder Core), es gibt also kein ESPHome-Add-on. ESPHomeRemote funktioniert trotzdem – Konfigurator, Belegung, Menü, Dock, Entitäten –, aber es kann keine Firmware für dich bauen oder aufspielen. Die Gerätedateien in `{ordner}` baust du mit deinem eigenen ESPHome (`esphome run <datei>.yaml`). Weiter richtet die Integration ein."
       }
     },
     "abort": {
@@ -268,6 +272,26 @@
     "not_seen_since_start": {
       "title": "{name} meldet sich seit {hours} Stunden nicht",
       "description": "Die Fernbedienung {name} hat sich seit dem Start von Home Assistant ({since}) nicht gemeldet. Vielleicht ist der Akku leer, sie ist außer Reichweite von WLAN und Dock oder liegt irgendwo. Drück eine Taste oder stell sie ins Dock. Nutzt du diese Remote nicht mehr, nimm sie unter ESPHomeRemote → Konfigurieren heraus – oder ignoriere den Hinweis."
+    },
+    "no_supervisor": {
+      "title": "Kein ESPHome-Add-on: Bauen und Aufspielen aus dem Konfigurator geht nicht",
+      "description": "Dieses Home Assistant läuft ohne Supervisor (Container oder Core). Alles andere funktioniert – Belegung, Menü, Dock, Entitäten –, aber ESPHomeRemote kann keine Firmware für dich bauen oder aufspielen. Baue die Gerätedateien in `{ordner}` mit deinem eigenen ESPHome (`esphome run <datei>.yaml`) oder nutze Home Assistant OS / Supervised mit dem ESPHome-Add-on."
+    },
+    "old_files": {
+      "title": "Alte ESPHomeRemote-Dateien im ESPHome-Ordner",
+      "description": "{anzahl} Datei(en) aus einer früheren Installation von Hand liegen noch im ESPHome-Ordner: {dateien}. ESPHome nimmt sie statt der aktuellen aus GitHub, ein Update kann daran scheitern. Beheben verschiebt sie nach `esphome/archive/` (nichts wird gelöscht).",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Alte Dateien ins Archiv verschieben",
+            "description": "Verschiebt {dateien} nach `esphome/archive/esphomeremote-alt-<datum>/`. Geräte und Einstellungen bleiben unberührt; der nächste Bau nimmt die Dateien aus GitHub."
+          }
+        }
+      }
+    },
+    "usb_flash_needed": {
+      "title": "{name}: einmal per USB flashen",
+      "description": "{name} läuft mit Firmware {version}. Versionen vor 2026.11.5.4 brauchen für das schnellere Aufwachen einen neuen Bootloader, und der lässt sich nicht per WLAN aktualisieren. Remote per USB-Kabel anschließen, Konfigurator → Firmware → {name} → **USB** (Chrome oder Edge). Danach gehen Updates wieder per WLAN."
     }
   }
 }

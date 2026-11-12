@@ -23,7 +23,8 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 
-from .firmware import DOCK_BASIS as BASIS, DOCK_CHIPS, DOCK_KERN, ESPHOME_DIR, Dash, dock_dateien, test_dateien
+from . import firmware as _fw
+from .firmware import DOCK_BASIS as BASIS, DOCK_CHIPS, DOCK_KERN, Dash, dock_dateien, test_dateien
 
 DOMAIN = "esphomeremote"
 _NAME_RE = re.compile(r"^dock-[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -46,7 +47,7 @@ def _dock_text(name: str, friendly: str, chip: str, notiz: str) -> str:
     nachbau = chip != "original"
     if nachbau and chip not in DOCK_CHIPS:
         raise ValueError(f"Chip {chip} geht nicht (moeglich: {', '.join(n for n, _ in DOCK_CHIPS.values())})")
-    lokal = os.path.exists(os.path.join(ESPHOME_DIR, BASIS))   # Entwickler: gemeinsame Basis liegt lokal
+    lokal = os.path.exists(os.path.join(_fw.ESPHOME_DIR, BASIS))   # Entwickler: gemeinsame Basis liegt lokal
     if nachbau:
         art = f"Dock-Nachbau auf {DOCK_CHIPS[chip][0]} (ohne IR, 433 MHz, LEDs, Ladekontakte)"
         quelle = DOCK_KERN if lokal else "esphomeremote-dock-core.yaml"
@@ -76,7 +77,7 @@ def _anlegen(friendly: str, chip: str = "original") -> dict:
     name = _slug(friendly)
     if not _NAME_RE.match(name) or name == "dock":
         raise ValueError("Aus dem Namen laesst sich kein Geraetename bilden")
-    pfad = os.path.join(ESPHOME_DIR, name + ".yaml")
+    pfad = os.path.join(_fw.ESPHOME_DIR, name + ".yaml")
     if os.path.exists(pfad):
         raise ValueError(f"{name}.yaml gibt es schon")
     with open(pfad, "w", encoding="utf-8") as f:
@@ -89,9 +90,9 @@ def _chip_setzen(datei: str, chip: str) -> dict:
     f = next((x for x in dock_dateien() if x["datei"] == datei), None)
     if f is None:
         raise ValueError(f"{datei} ist kein Dock")
-    pfad = Path(ESPHOME_DIR) / datei
+    pfad = Path(_fw.ESPHOME_DIR) / datei
     alt = pfad.read_text(encoding="utf-8")
-    (Path(ESPHOME_DIR) / (datei + ".alt")).write_text(alt, encoding="utf-8")
+    (Path(_fw.ESPHOME_DIR) / (datei + ".alt")).write_text(alt, encoding="utf-8")
     pfad.write_text(_dock_text(f["name"], f["friendly"], chip, "Chip umgestellt im Konfigurator"), encoding="utf-8")
     return {"datei": datei, "chip": chip}
 
@@ -160,11 +161,11 @@ async def ws_einbinden(hass: HomeAssistant, connection: websocket_api.ActiveConn
 
 def _wegraeumen(datei: str) -> str:
     """Dock-Datei nicht loeschen, sondern nach esphome/archive/geloescht/ verschieben (wiederherstellbar)."""
-    ziel = Path(ESPHOME_DIR) / "archive" / "geloescht"
+    ziel = Path(_fw.ESPHOME_DIR) / "archive" / "geloescht"
     ziel.mkdir(parents=True, exist_ok=True)
     neu = ziel / f"{Path(datei).stem}-{time.strftime('%Y%m%d-%H%M%S')}.yaml"
-    shutil.move(os.path.join(ESPHOME_DIR, datei), neu)
-    return str(neu.relative_to(ESPHOME_DIR))
+    shutil.move(os.path.join(_fw.ESPHOME_DIR, datei), neu)
+    return str(neu.relative_to(_fw.ESPHOME_DIR))
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/docks_entfernen", vol.Required("datei"): str})

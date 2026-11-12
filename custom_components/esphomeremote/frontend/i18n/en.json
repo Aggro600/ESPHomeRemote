@@ -185,7 +185,7 @@
  "Achtung: „Sprechen, solange gedrückt“ wirkt nur bei Lang.": "Note: “Talk while pressed” only works with Long.",
  "Adresse": "Address",
  "Adresse für die Streamer-App": "Address for the streamer app",
- "Adresse von Hand, z. B. AA:BB:CC:DD:EE:04": "Address by hand, e.g. AA:BB:CC:DD:EE:04",
+ "Adresse von Hand, z. B. AA:BB:CC:DD:EE:05": "Address by hand, e.g. AA:BB:CC:DD:EE:05",
  "Akku": "Battery",
  "Akku der Remote": "Remote battery",
  "Akku reicht noch ≈": "Battery lasts about ≈",
@@ -492,7 +492,7 @@
  "Bildschirme)": "screens)",
  "Bildschirmtastatur zeigen": "Show on-screen keyboard",
  "Bis zu 4 Geräte am Dock": "Up to 4 devices at the dock",
- "Bitte eine Bluetooth-Adresse wie AA:BB:CC:DD:EE:04 eingeben.": "Please enter a Bluetooth address like AA:BB:CC:DD:EE:04.",
+ "Bitte eine Bluetooth-Adresse wie AA:BB:CC:DD:EE:05 eingeben.": "Please enter a Bluetooth address like AA:BB:CC:DD:EE:05.",
  "Bitte einen Namen eingeben (z. B. „Dock Schlafzimmer“).": "Please enter a name (e.g. “Dock bedroom”).",
  "Bitte einen Namen eingeben.": "Please enter a name.",
  "Bitte ins Dock stellen.": "Please put it in the dock.",
@@ -2474,6 +2474,10 @@
  "Zählt für dieses Dock: fehlt sie, sucht das Dock schnell": "Counts for this dock: if it is missing, the dock scans fast",
  "_ – minimieren (die Menütaste holt es zurück)": "_ – minimise (the menu key brings it back)",
  "__regeln": [
+  [
+   "^Kein Supervisor \\(Home Assistant Container oder Core\\): Bauen und Aufspielen aus dem Konfigurator brauchen Home Assistant OS oder Supervised mit dem ESPHome-Add-on\\. Die Gerätedateien liegen in (.+?) – baue sie mit deinem eigenen ESPHome: esphome run <datei>\\.yaml$",
+   "No Supervisor (Home Assistant Container or Core): building and flashing from the configurator need Home Assistant OS or Supervised with the ESPHome add-on. The device files are in $1 – build them with your own ESPHome: esphome run <file>.yaml"
+  ],
   [
    "^1 Entität in (\\d+) Verwendungen",
    "1 entity in $1 uses"

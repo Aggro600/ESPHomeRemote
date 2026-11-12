@@ -80,6 +80,9 @@ class EsphomeremoteFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         if self._async_current_entries() or DOMAIN in self.hass.data:
             return self.async_abort(reason="single_instance_allowed")
+        # HA Container/Core (2026-11-12): sagen, was ohne ESPHome-Add-on fehlt, statt spaeter unklar zu scheitern
+        if not os.environ.get("SUPERVISOR_TOKEN") and not getattr(self, "_hinweis_gezeigt", False):
+            return await self.async_step_hinweis()
         if not hasattr(self, "_vorhanden"):
             self._pfad = secrets_pfad(self.hass)
             self._vorhanden = await self.hass.async_add_executor_job(secrets_lesen, self._pfad)
@@ -90,6 +93,13 @@ class EsphomeremoteFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._daten = {"key": user_input["key"].strip(), "devices": geraete}
             return await self.async_step_fertig()
         return self.async_show_form(step_id="user", data_schema=self._schema())
+
+    async def async_step_hinweis(self, user_input=None):
+        if user_input is not None:
+            self._hinweis_gezeigt = True
+            return await self.async_step_user()
+        return self.async_show_form(step_id="hinweis", data_schema=vol.Schema({}),
+                                    description_placeholders={"ordner": self.hass.config.path("esphome")})
 
     def _schema(self, vorher=None):
         # Update von esphomeremote_konfig: Schluessel und Remotes uebernehmen, sonst kommen die Remotes nicht mehr durch

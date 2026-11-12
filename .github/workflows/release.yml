@@ -15,6 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Beta oder stabil? (2026-11-12) release.py schiebt erst den Zweig, dann das Tag: liegt der Stand auf "stabil",
+      # ist es ein Release fuer alle - sonst eine Beta (Vorab-Release, HACS zeigt sie nur mit "Betas anzeigen").
+      - name: Kanal bestimmen
+        id: kanal
+        run: |
+          git fetch origin stabil --depth=1 || true
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/stabil 2>/dev/null; then echo "flag=" >> "$GITHUB_OUTPUT"; echo "stabil"
+          else echo "flag=--prerelease" >> "$GITHUB_OUTPUT"; echo "beta"; fi
 
       - name: Beschreibung aus CHANGELOG.md
         run: |
@@ -27,5 +38,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "ESPHomeRemote ${GITHUB_REF_NAME#v}" --notes-file notes.md \
+          gh release create "$GITHUB_REF_NAME" ${{ steps.kanal.outputs.flag }} --title "ESPHomeRemote ${GITHUB_REF_NAME#v}${{ steps.kanal.outputs.flag && ' (Beta)' || '' }}" --notes-file notes.md \
             streamer-app/esphomeremote-streamer.apk

@@ -15,6 +15,10 @@
         "data": {
           "eintragen": "Add the missing lines to the ESPHome secrets (recommended)"
         }
+      },
+      "hinweis": {
+        "title": "Home Assistant without ESPHome add-on",
+        "description": "This Home Assistant runs without Supervisor (Container or Core), so there is no ESPHome add-on. ESPHomeRemote works anyway – configurator, key layouts, menu, dock, entities – but it cannot build or flash firmware for you. You build the device files in `{ordner}` with your own ESPHome (`esphome run <file>.yaml`). Continue to set up the integration."
       }
     },
     "abort": {
@@ -156,6 +160,22 @@
         "camera": {
           "name": "Camera",
           "description": "camera.xyz, \"last\" (last shown) or \"off\""
+        },
+        "size": {
+          "name": "Size (this time only)",
+          "description": "Optional – small, medium, large or almost_full. Empty = Configurator setting."
+        },
+        "position": {
+          "name": "Corner (this time only)",
+          "description": "Optional – top-left, top-right, bottom-right, bottom-left or center."
+        },
+        "seconds": {
+          "name": "Display time (this time only)",
+          "description": "Optional – hide after this many seconds, 0 = until \"off\". Empty = Configurator setting."
+        },
+        "toggle": {
+          "name": "Toggle",
+          "description": "If a camera is already showing on this TV, hide it instead (one key for on/off)."
         }
       }
     },
@@ -186,6 +206,50 @@
           "description": "Name as in the configurator (e.g. Streamer)"
         }
       }
+    },
+    "streamer_cec": {
+      "name": "Switch a TV device via HDMI",
+      "description": "Turns the soundbar/AV receiver (or the TV) on or off via HDMI-CEC through a streamer.",
+      "fields": {
+        "streamer": {
+          "name": "Streamer",
+          "description": "ID or name of the streamer in the Configurator"
+        },
+        "device": {
+          "name": "Device",
+          "description": "soundbar (audio system on HDMI-ARC) or tv"
+        },
+        "command": {
+          "name": "Command",
+          "description": "on or off"
+        }
+      }
+    },
+    "streamer_menu": {
+      "name": "TV menu",
+      "description": "Opens or closes the popup menu of a streamer (Streamer app 1.18+; page, size and position 1.19+).",
+      "fields": {
+        "streamer": {
+          "name": "Streamer",
+          "description": "ID or name of the streamer in the Configurator"
+        },
+        "command": {
+          "name": "Command",
+          "description": "toggle, open or close"
+        },
+        "page": {
+          "name": "Page",
+          "description": "Optional – ID of a menu page to show right away (e.g. camera). Always opens."
+        },
+        "size": {
+          "name": "Size (this time only)",
+          "description": "Optional – percent of the screen (30–100, 100 = full screen). Empty = Configurator setting."
+        },
+        "position": {
+          "name": "Position (this time only)",
+          "description": "Optional – center, left, right, top, bottom or a corner. Empty = Configurator setting."
+        }
+      }
     }
   },
   "issues": {
@@ -208,6 +272,26 @@
     "not_seen_since_start": {
       "title": "{name} hasn't reported for {hours} hours",
       "description": "Remote {name} hasn't reported since Home Assistant started ({since}). Maybe the battery is empty, it is out of Wi-Fi and dock range, or it is lying somewhere. Press a key or put it in the dock. If you don't use this remote anymore, remove it under ESPHomeRemote → Configure – or ignore this notice."
+    },
+    "no_supervisor": {
+      "title": "No ESPHome add-on: building and flashing from the configurator is unavailable",
+      "description": "This Home Assistant runs without Supervisor (Container or Core). Everything else works – key layouts, menu, dock, entities – but ESPHomeRemote cannot build or flash firmware for you. Build the device files in `{ordner}` with your own ESPHome (`esphome run <file>.yaml`), or run Home Assistant OS / Supervised with the ESPHome add-on."
+    },
+    "old_files": {
+      "title": "Old ESPHomeRemote files in the ESPHome folder",
+      "description": "{anzahl} file(s) from an earlier manual installation are still in the ESPHome folder: {dateien}. ESPHome uses them instead of the current ones from GitHub, so an update can fail. Fix moves them to `esphome/archive/` (nothing is deleted).",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Move old files to the archive",
+            "description": "Moves {dateien} to `esphome/archive/esphomeremote-alt-<date>/`. Devices and their settings are not affected; the next build uses the files from GitHub."
+          }
+        }
+      }
+    },
+    "usb_flash_needed": {
+      "title": "{name}: flash once via USB",
+      "description": "{name} runs firmware {version}. Versions before 2026.11.5.4 need a new bootloader for the faster wake-up, and a bootloader cannot be updated over Wi-Fi. Connect the remote with a USB cable, open the configurator → Firmware → {name} → **USB** (Chrome or Edge). After that, updates over Wi-Fi work again."
     }
   }
 }
