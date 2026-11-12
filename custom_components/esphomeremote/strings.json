@@ -283,7 +283,6 @@
     },
     "old_files": {
       "title": "Old ESPHomeRemote files in the ESPHome folder",
-      "description": "{anzahl} file(s) from an earlier manual installation are still in the ESPHome folder: {dateien}. ESPHome uses them instead of the current ones from GitHub, so an update can fail. Fix moves them to `esphome/archive/` (nothing is deleted).",
       "fix_flow": {
         "step": {
           "confirm": {

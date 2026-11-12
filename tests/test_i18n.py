@@ -57,3 +57,13 @@ def test_keine_html_in_ha_texten(integration_pfad):
         text = json.dumps(_json(integration_pfad / name), ensure_ascii=False)
         treffer = re.findall(r"<[a-zA-Z/][^>]{0,40}>", text)
         assert not treffer, f"{name}: {treffer[:5]}"
+
+
+def test_behebbare_hinweise_ohne_description(integration_pfad):
+    """hassfest: ein behebbarer Hinweis hat fix_flow ODER description, nie beides (2026-11-12 durchgefallen)."""
+    for name in ("strings.json", "translations/en.json", "translations/de.json"):
+        for key, issue in _json(integration_pfad / name)["issues"].items():
+            if "fix_flow" in issue:
+                assert "description" not in issue, f"{name}: issues.{key} hat fix_flow und description"
+            else:
+                assert "description" in issue, f"{name}: issues.{key} ohne description"

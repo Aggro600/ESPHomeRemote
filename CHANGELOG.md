@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.12.4 (2026-11-12)
+
+GitHub check only (hassfest): fixable repair “old files” without duplicate description. No change to firmware or UI – update optional.
+
+<details><summary>Deutsch</summary>
+
+Nur GitHub-Prüfung (hassfest): behebbarer Hinweis „alte Dateien“ ohne doppelte Beschreibung. Keine Änderung an Firmware oder Oberfläche – Update freiwillig.
+
+</details>
+
 ## 2026.11.12.3 (2026-11-12)
 
 GitHub checks only: repair texts without angle brackets (hassfest), test workflow without pip cache. No change to firmware or UI – update optional.
