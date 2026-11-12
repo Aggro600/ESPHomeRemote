@@ -48,10 +48,11 @@ esphome:
   friendly_name: Remote WZ Remotename
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.12.1"
+    version: "2026.11.12.2"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
+    - <esp_ota_ops.h>   # vorherige Firmware in der zweiten App-Partition (Rollback, 2026-11-12)
     - esphomeremote-language.h   # Sprache: Uebersetzung der Display-Texte (2026-11-01), als erstes
     - esphomeremote-log-buffer.h   # Protokoll-Puffer (auch fuers Protokoll ueber das Dock), s. logger.on_message
     - esphomeremote-pm.h
@@ -84,6 +85,20 @@ esphome:
         id(tk_cfg).weck_tabelle_speichern(id(tk_cfg).tasten_akt(id(activity), id(akt_an)),
                                           id(weck_dock) == 0 && id(weck_tasten) == 2);
   on_boot:
+    # Vorherige Firmware (2026-11-12): Was in der zweiten App-Partition liegt, als Text-Sensor melden - der Konfigurator
+    # zeigt dazu "Zurueck zur vorherigen" (Knopf btn_fw_vorher). Leer, wenn dort nichts Gueltiges liegt (erster Flash).
+    - priority: -100
+      then:
+        - lambda: |-
+            const esp_partition_t *andere = esp_ota_get_next_update_partition(nullptr);
+            esp_app_desc_t d;
+            if (andere != nullptr && esp_ota_get_partition_description(andere, &d) == ESP_OK) {
+              char b[96];
+              snprintf(b, sizeof(b), "ESPHome %s, gebaut %s %s", d.version, d.date, d.time);
+              id(fw_vorher).publish_state(b);
+            } else {
+              id(fw_vorher).publish_state("");
+            }
     # Prioritaet 1100: laeuft VOR dem I2C-Bus (setup_priority BUS = 1000).
     # Nach einem Deep-Sleep-Wake zuerst die Holds loesen UND die +VSW-Rail
     # (GPIO38 -> Q4) wieder einschalten - sonst scannt der I2C-Bus (Pull-ups
@@ -1002,6 +1017,12 @@ captive_portal:
 # Nur um die ID zu haben (Werte = ESPHome-Standard); gebraucht beim Herunterfahren (on_boot 950).
 safe_mode:
   id: sicherer_start
+
+# Flash-Verschleiss (2026-11-12): Werte mit restore_value (Helligkeit, Zaehler, Einstellungen) schreibt ESPHome sonst
+# jede Minute, sobald sich etwas geaendert hat. 5 Minuten reichen - vor dem Tiefschlaf und vor jedem Neustart wird
+# ohnehin ausdruecklich geschrieben (global_preferences->sync()), ein Stromausfall ist bei einer Akku-Remote kein Thema.
+preferences:
+  flash_write_interval: 5min
 
 time:
   - platform: sntp
@@ -6709,6 +6730,37 @@ button:
     name: "Neu starten"
     id: btn_restart
     icon: "mdi:restart"
+  # Zurueck zur vorherigen Firmware (2026-11-12): Nach einem Update liegt der alte Stand noch in der zweiten
+  # App-Partition. Bootpartition umschalten und neu starten - ohne Bauen, ohne Hochladen. Der Konfigurator zeigt den
+  # Knopf nur, wenn fw_vorher etwas meldet.
+  - platform: template
+    name: "Vorherige Firmware"
+    id: btn_fw_vorher
+    icon: "mdi:undo-variant"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          const esp_partition_t *andere = esp_ota_get_next_update_partition(nullptr);
+          esp_app_desc_t d;
+          if (andere == nullptr || esp_ota_get_partition_description(andere, &d) != ESP_OK) {
+            ESP_LOGW("fw", "Keine vorherige Firmware in der zweiten Partition");
+            return;
+          }
+          if (esp_ota_set_boot_partition(andere) != ESP_OK) {
+            ESP_LOGW("fw", "Umschalten auf %s fehlgeschlagen", andere->label);
+            return;
+          }
+          ESP_LOGI("fw", "Neustart mit vorheriger Firmware (ESPHome %s, gebaut %s %s)", d.version, d.date, d.time);
+          global_preferences->sync();
+          App.safe_reboot();
+  # Werkseinstellungen (2026-11-12): alle gespeicherten Werte loeschen (Einstellungen, Bluetooth-Kopplungen, Zaehler)
+  # und neu starten. Firmware und WLAN bleiben. Wie "Flash loeschen" beim USB-Flashen, nur ohne Kabel - fuer eine
+  # Remote, die sich seltsam verhaelt, oder bevor sie den Besitzer wechselt.
+  - platform: factory_reset
+    name: "Werkseinstellungen"
+    id: btn_werk
+    icon: "mdi:restore-alert"
+    entity_category: diagnostic
   # Protokoll-Puffer ins Protokoll schreiben (s. esphomeremote-log-buffer.h)
   - platform: template
     name: "Protokoll-Puffer ausgeben"
@@ -6971,6 +7023,13 @@ sensor:
 
 
 text_sensor:
+  # Vorherige Firmware in der zweiten App-Partition (2026-11-12, s. on_boot -100 und btn_fw_vorher)
+  - platform: template
+    name: "Vorherige Firmware"
+    id: fw_vorher
+    icon: mdi:history
+    entity_category: diagnostic
+    update_interval: never
   # Tasten-Konfigurator: welcher Stand ist geladen (Hash, "... aus" oder "eingebaut")
   - platform: template
     id: tk_status

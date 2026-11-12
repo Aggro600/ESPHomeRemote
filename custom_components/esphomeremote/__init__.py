@@ -55,7 +55,7 @@ def _panel_version() -> str:
     vergessen = die App zeigte nach einem Update weiter das alte Panel. Jetzt aus dem Inhalt von Panel und Woerterbuch."""
     import hashlib
     h = hashlib.sha1()
-    for name in ("configurator.js", "i18n/en.json"):
+    for name in ("configurator.js", "styles.js", "i18n/en.json"):
         try:
             h.update((Path(__file__).parent / "frontend" / name).read_bytes())
         except OSError:
@@ -1302,6 +1302,18 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         for dev in e.options.get("devices", []):
             if dev not in kd.devices:
                 await kd.geraet_dazu(dev)
+        # Firmware-Kanal (2026-11-12): Geraetedateien auf den Zweig stellen - die naechste Installation holt ihn
+        from . import firmware as _fw
+        neu = e.options.get("kanal", "stabil")
+        if neu != _fw.zweig():
+            _fw.kanal_setzen(neu)
+            dateien = await hass.async_add_executor_job(_fw.kanal_umstellen, neu)
+            _LOGGER.info("Firmware-Kanal %s: %d Geraetedatei(en) umgestellt (%s)", neu, len(dateien), ", ".join(dateien))
+            from homeassistant.components import persistent_notification
+            persistent_notification.async_create(
+                hass, _t(hass, "Firmware-Kanal") + f": {neu}. " + (_t(hass, "Umgestellt: ") + ", ".join(dateien) + ". " if dateien else "")
+                + _t(hass, "Die Geräte bekommen den Kanal mit der nächsten Firmware-Installation (Konfigurator → Werkstatt)."),
+                title="ESPHomeRemote", notification_id="esphomeremote_kanal")
 
     entry.async_on_unload(entry.add_update_listener(geaendert))
     return True
@@ -1330,6 +1342,8 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     hass.data[DOMAIN] = kd
     from . import firmware as _fw, reparaturen
     _fw.ordner_setzen(hass)   # ESPHome-Ordner aus der HA-Konfiguration (2026-11-12, HA Core/Container)
+    for _e in hass.config_entries.async_entries(DOMAIN):
+        _fw.kanal_setzen(_e.options.get("kanal", "stabil"))
     reparaturen.beim_start(hass)   # Hinweise unter Einstellungen -> Reparaturen (kein Supervisor, alte Dateien, USB-Flash)
     from .warnungen import einrichten as warnungen   # Akku leer / lange nicht gemeldet -> Reparaturen (2026-11-10)
     warnungen(hass, lambda: kd.devices)
@@ -1505,6 +1519,9 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .firmware import registrieren as firmware_registrieren
 
     firmware_registrieren(hass)
+    from . import komplett, ladelimit   # Komplett-Sicherung und Ladelimit (2026-11-12)
+    komplett.registrieren(hass)
+    ladelimit.einrichten(hass, kd)
 
     # Bluetooth-Bruecke aus den Remotes (bridge.py) und Helligkeit nach Lichtsensor (light_curve.py), 2026-10-17
     from .bridge import Bruecke
@@ -1951,7 +1968,7 @@ async def wlan_fenster(hass: HomeAssistant, dev: str, sek: int, grund: str = "Ko
 
 # ---- Sicherung (2026-10-26): alles, was der Konfigurator verwaltet, und Einspielen ohne Abgleich ----
 SICHERUNG_GLOBAL = ("jetzt", "streamer", "klingel", "licht", "anzeige", "dock", "dockscan", "funktionen", "docks_einst",
-                    "einst_standard", "werk", "reihenfolge", "durchsage", "streamer_menue")
+                    "einst_standard", "werk", "reihenfolge", "durchsage", "streamer_menue", "ladelimit")
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sicherung"})
@@ -1989,7 +2006,7 @@ async def ws_sicherung_global(hass: HomeAssistant, connection: websocket_api.Act
     try:
         if isinstance(w.get("funktionen"), dict):
             await hass.data[DOMAIN + "_funktionen"].setzen(w["funktionen"])
-        for k in ("docks_einst", "einst_standard", "werk"):
+        for k in ("docks_einst", "einst_standard", "werk", "ladelimit"):
             if isinstance(w.get(k), dict):
                 kd.data[k] = w[k]
         if isinstance(w.get("reihenfolge"), list):

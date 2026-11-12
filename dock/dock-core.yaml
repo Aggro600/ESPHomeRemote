@@ -18,16 +18,28 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote-dock
-    version: "2026.11.12.1"
+    version: "2026.11.12.2"
   includes:
     - <esp_mac.h>
     - <esp_heap_caps.h>
     - <esp_system.h>                                   # TEST Neustartgrund (2026-10-26)
+    - <esp_ota_ops.h>                                  # vorherige Firmware (Rollback, 2026-11-12)
     - <esphome/components/esp32/crash_handler.h>       # TEST Letzter Absturz (2026-10-26)
   on_boot:
     - priority: -100
       then:
         - script.execute: led_status
+        # Vorherige Firmware (2026-11-12): Inhalt der zweiten App-Partition melden (Konfigurator: "Zurueck zur vorherigen")
+        - lambda: |-
+            const esp_partition_t *andere = esp_ota_get_next_update_partition(nullptr);
+            esp_app_desc_t d;
+            if (andere != nullptr && esp_ota_get_partition_description(andere, &d) == ESP_OK) {
+              char b[96];
+              snprintf(b, sizeof(b), "ESPHome %s, gebaut %s %s", d.version, d.date, d.time);
+              id(fw_vorher).publish_state(b);
+            } else {
+              id(fw_vorher).publish_state("");
+            }
         # TEST (2026-10-26, kann evtl. wieder weg): Neustartgrund und Absturz des letzten Laufs als Sensoren - das Dock
         # startete am 26.10. um 05:43 ohne erkennbaren Grund neu. ESPHome schreibt den Absturz nur einmal ins Log und
         # loescht ihn, sobald ein Log-Abo ihn bekommt; hier noch einmal ausgeben, logger on_message faengt ihn ein.
@@ -194,6 +206,32 @@ button:
   - platform: restart
     id: neustart
     name: Neustart
+  # Zurueck zur vorherigen Firmware (2026-11-12): Bootpartition auf die zweite App-Partition, neu starten
+  - platform: template
+    name: Vorherige Firmware
+    id: btn_fw_vorher
+    icon: mdi:undo-variant
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          const esp_partition_t *andere = esp_ota_get_next_update_partition(nullptr);
+          esp_app_desc_t d;
+          if (andere == nullptr || esp_ota_get_partition_description(andere, &d) != ESP_OK) {
+            ESP_LOGW("fw", "Keine vorherige Firmware in der zweiten Partition");
+            return;
+          }
+          if (esp_ota_set_boot_partition(andere) != ESP_OK) {
+            ESP_LOGW("fw", "Umschalten auf %s fehlgeschlagen", andere->label);
+            return;
+          }
+          ESP_LOGI("fw", "Neustart mit vorheriger Firmware (ESPHome %s, gebaut %s %s)", d.version, d.date, d.time);
+          App.safe_reboot();
+  # Werkseinstellungen (2026-11-12): gespeicherte Werte loeschen (auch Bluetooth-Kopplungen) und neu starten
+  - platform: factory_reset
+    name: Werkseinstellungen
+    id: btn_werk
+    icon: mdi:restore-alert
+    entity_category: diagnostic
 
 binary_sensor:
   - platform: status
@@ -237,6 +275,13 @@ sensor:
     lambda: 'return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024.0f;'
 
 text_sensor:
+  # Vorherige Firmware in der zweiten App-Partition (2026-11-12, s. on_boot und btn_fw_vorher)
+  - platform: template
+    name: Vorherige Firmware
+    id: fw_vorher
+    icon: mdi:history
+    entity_category: diagnostic
+    update_interval: never
   # TEST (2026-10-26, kann evtl. wieder weg): warum das Dock zuletzt neu gestartet ist (s. on_boot)
   - platform: template
     id: neustart_grund

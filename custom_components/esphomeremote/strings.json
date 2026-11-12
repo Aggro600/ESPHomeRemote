@@ -35,7 +35,11 @@
         "title": "Remotes",
         "description": "Remote names (device_name, comma separated). Key for the ESPHome secrets: `{key}`",
         "data": {
-          "devices": "Remotes (device_name)"
+          "devices": "Remotes (device_name)",
+          "kanal": "Firmware channel"
+        },
+        "data_description": {
+          "kanal": "stabil: releases for everyone. beta: new versions a few days earlier, for testing – the device files are switched to the beta branch on GitHub, and HACS shows betas only if you enable \"Show beta versions\" for ESPHomeRemote."
         }
       }
     }

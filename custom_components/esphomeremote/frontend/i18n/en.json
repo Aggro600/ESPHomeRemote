@@ -2475,6 +2475,54 @@
  "_ – minimieren (die Menütaste holt es zurück)": "_ – minimise (the menu key brings it back)",
  "__regeln": [
   [
+   "^Ein Dock mit schaltbaren Ladekontakten ist da \\((.+?)\\)\\. Ab dem Limit schaltet Home Assistant die Kontakte des Docks aus, unter (.+?) % oder nach 2 Stunden wieder an\\.(.*)$",
+   "A dock with switchable charging contacts is there ($1). At the limit, Home Assistant switches the dock's contacts off, below $2 % or after 2 hours on again.$3"
+  ],
+  [
+   "^Gerade pausiert an (.+)\\.$",
+   "Currently paused at $1."
+  ],
+  [
+   "^Ladelimit (\\d+) % gesetzt\\.$",
+   "Charge limit $1 % set."
+  ],
+  [
+   "^Ladelimit: (.*)$",
+   "Charge limit: $1"
+  ],
+  [
+   "^(\\d+) Datei\\(en\\) – nur angelegt, was im ESPHome-Ordner noch fehlt; vorhandene bleiben$",
+   "$1 file(s) – only what is still missing in the ESPHome folder is created; existing ones stay"
+  ],
+  [
+   "^(\\d+) Gerätedatei\\(en\\)$",
+   "$1 device file(s)"
+  ],
+  [
+   "^(\\d+) Secrets-Zeile\\(n\\)$",
+   "$1 secrets line(s)"
+  ],
+  [
+   "^(\\d+) Remote\\(s\\) angelegt$",
+   "$1 remote(s) created"
+  ],
+  [
+   "^(.+?) mit der vorherigen Firmware neu starten\\? Das dauert ein paar Sekunden; die aktuelle bleibt in der anderen Partition und lässt sich genauso zurückholen\\.$",
+   "Restart $1 with the previous firmware? This takes a few seconds; the current one stays in the other partition and can be brought back the same way."
+  ],
+  [
+   "^(.+?): startet mit der vorherigen Firmware neu\\.$",
+   "$1: restarting with the previous firmware."
+  ],
+  [
+   "^Ging nicht: (.*) – ist das Gerät online \\(WLAN\\)\\?$",
+   "Didn't work: $1 – is the device online (Wi-Fi)?"
+  ],
+  [
+   "^Firmware-Kanal: (\\w+)\\. (?:Umgestellt: (.*?)\\. )?Die Geräte bekommen den Kanal mit der nächsten Firmware-Installation \\(Konfigurator → Werkstatt\\)\\.$",
+   "Firmware channel: $1. Switched: $2. The devices get the channel with the next firmware installation (configurator → Workshop)."
+  ],
+  [
    "^Kein Supervisor \\(Home Assistant Container oder Core\\): Bauen und Aufspielen aus dem Konfigurator brauchen Home Assistant OS oder Supervised mit dem ESPHome-Add-on\\. Die Gerätedateien liegen in (.+?) – baue sie mit deinem eigenen ESPHome: esphome run <datei>\\.yaml$",
    "No Supervisor (Home Assistant Container or Core): building and flashing from the configurator need Home Assistant OS or Supervised with the ESPHome add-on. The device files are in $1 – build them with your own ESPHome: esphome run <file>.yaml"
   ],
@@ -3558,5 +3606,30 @@
  "Remote löschen": "Delete remote",
  "Kleinere Auflösung direkt von go2rtc – nötig für den MagentaTV Stick (dekodiert keine 5-MP-Hauptstreams).": "Lower resolution straight from go2rtc – needed for the MagentaTV Stick (can't decode 5 MP main streams).",
  "Für Streamer, die hohe Auflösungen schaffen (Google TV Streamer).": "For streamers that handle high resolutions (Google TV Streamer).",
- "Name des Fernsehers (frei) – für tv: in den Aktionen": "Name of the TV (free text) – for tv: in the actions"
+ "Name des Fernsehers (frei) – für tv: in den Aktionen": "Name of the TV (free text) – for tv: in the actions",
+ "Vorherige Firmware auf dem Gerät:": "Previous firmware on the device:",
+ "– liegt noch in der zweiten Partition.": "– still in the second partition.",
+ "Startet das Gerät mit der vorherigen Firmware neu – ohne Bauen und Hochladen. Danach gilt es als „Update bereit“.": "Restarts the device with the previous firmware – no building or uploading. Afterwards it counts as “update ready”.",
+ "Zurück zur vorherigen": "Back to previous",
+ "Beta-Kanal": "Beta channel",
+ "Firmware-Kanal beta: neue Versionen ein paar Tage früher, zum Testen. Umstellen: Einstellungen → Geräte & Dienste → ESPHomeRemote → Konfigurieren.": "Firmware channel beta: new versions a few days earlier, for testing. Change: Settings → Devices & services → ESPHomeRemote → Configure.",
+ "Firmware-Kanal": "Firmware channel",
+ "Umgestellt: ": "Switched: ",
+ "Die Geräte bekommen den Kanal mit der nächsten Firmware-Installation (Konfigurator → Werkstatt).": "The devices get the channel with the next firmware installation (configurator → Workshop).",
+ "Komplett-Sicherung": "Complete backup",
+ "Dazu die ESPHome-Gerätedateien, angelegte Remotes und auf Wunsch die Secrets – eine Datei für Umzug oder Neuinstallation.": "Plus the ESPHome device files, created remotes and, if you want, the secrets – one file for a move or a fresh install.",
+ "Auch die secrets.yaml des ESPHome-Add-ons mitsichern (WLAN-Passwort, Schlüssel)? OK = ja, die Datei enthält dann Passwörter – sicher aufbewahren. Abbrechen = ohne Secrets.": "Also include the ESPHome add-on's secrets.yaml (Wi-Fi password, keys)? OK = yes, the file then contains passwords – keep it safe. Cancel = without secrets.",
+ "ESPHome-Gerätedateien": "ESPHome device files",
+ "Im Konfigurator angelegte Remotes": "Remotes created in the configurator",
+ "– werden hier angelegt, falls sie fehlen": "– are created here if missing",
+ "ESPHome-Secrets": "ESPHome secrets",
+ "fehlende Zeilen werden an die secrets.yaml angehängt; vorhandene Werte bleiben": "missing lines are appended to secrets.yaml; existing values stay",
+ "Ladelimit": "Charge limit",
+ "experimentell": "experimental",
+ "Braucht ein Dock mit schaltbaren Ladekontakten (Nachrüstung GPIO2). Solange die Kontakte aus sind, sieht die Remote „Kabel weg“ – das Dock-Display kann dann ausgehen, bis sie wieder an sind.": "Needs a dock with switchable charging contacts (GPIO2 retrofit). While the contacts are off, the remote sees “cable gone” – the dock display may turn off until they are on again.",
+ "Im Dock laden bis": "Charge in the dock up to",
+ "Aus (immer voll laden)": "Off (always charge fully)",
+ "80 % – schont den Akku am meisten": "80 % – easiest on the battery",
+ "Kein Dock mit schaltbaren Ladekontakten gefunden (switch.<dock>_ladekontakte) – ohne die Nachrüstung am Dock (GPIO2, siehe docs/development/dock-charging-contacts.md) kann das Laden nicht unterbrochen werden.": "No dock with switchable charging contacts found (switch.<dock>_ladekontakte) – without the dock retrofit (GPIO2, see docs/development/dock-charging-contacts.md) charging cannot be paused.",
+ "Ladelimit aus.": "Charge limit off."
 }

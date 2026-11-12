@@ -33,7 +33,8 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .aliases import schema_with_aliases
-from .firmware import ESPHOME_DIR, Dash, _mit_versuch, _port, dash as _befehl   # eine Verbindung zum Device Builder fuer alles
+from . import firmware as _fw
+from .firmware import Dash, _mit_versuch, _port, dash as _befehl   # eine Verbindung zum Device Builder fuer alles
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,19 +43,19 @@ MAX_ZEILEN = 400
 
 def _yaml_info(dev: str) -> dict:
     """IP (aus secrets.yaml) und API-Schluessel der Remote aus ihrer YAML."""
-    y = (ESPHOME_DIR / f"{dev}.yaml").read_text(encoding="utf-8")
+    y = (_fw.ESPHOME_DIR / f"{dev}.yaml").read_text(encoding="utf-8")
     key = re.search(r'^\s+key:\s*"([^"]+)"', y, re.M)
     sec = re.search(r"static_ip:\s*!secret\s+(\S+)", y)
     ip = None
     if sec:
-        m = re.search(rf"^{re.escape(sec.group(1))}:\s*(\S+)", (ESPHOME_DIR / "secrets.yaml").read_text(encoding="utf-8"), re.M)
+        m = re.search(rf"^{re.escape(sec.group(1))}:\s*(\S+)", (_fw.ESPHOME_DIR / "secrets.yaml").read_text(encoding="utf-8"), re.M)
         ip = m.group(1) if m else None
     return {"ip": ip, "key": key.group(1) if key else None}
 
 
 def flash_datei(dev: str) -> str:
     """Die Datei, die gebaut und geflasht wird: <dev>-halink.yaml (Bluetooth-Schicht), sonst <dev>.yaml."""
-    return f"{dev}-halink.yaml" if (ESPHOME_DIR / f"{dev}-halink.yaml").exists() else f"{dev}.yaml"
+    return f"{dev}-halink.yaml" if (_fw.ESPHOME_DIR / f"{dev}-halink.yaml").exists() else f"{dev}.yaml"
 
 
 def _offen(ip: str, port: int, t: float = 1.5) -> bool:
@@ -238,7 +239,7 @@ class Einrichtung:
                 # Die vom Router bekommene IP festschreiben und per WLAN aufspielen (schnellerer Start)
                 self._zeile(dev, f"{text} Schreibe {ip} als feste IP fest ...")
                 p = await asyncio.create_subprocess_exec(
-                    "python3", str(ESPHOME_DIR / "tools" / "remotes.py"), "--fest", dev.replace("remote-wz-", ""), ip,
+                    "python3", str(_fw.ESPHOME_DIR / "tools" / "remotes.py"), "--fest", dev.replace("remote-wz-", ""), ip,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
                 out = (await p.communicate())[0].decode(errors="replace").strip()
                 if p.returncode != 0:
@@ -323,7 +324,7 @@ async def bau_aufraeumen(hass: HomeAssistant, dateien: list[str]) -> None:
     try:
         async with Dash(hass) as d:
             for datei in dateien:
-                if await hass.async_add_executor_job((ESPHOME_DIR / datei).exists):
+                if await hass.async_add_executor_job((_fw.ESPHOME_DIR / datei).exists):
                     await d.befehl("firmware/clean", {"configuration": datei})
             await asyncio.sleep(2)
     except Exception as err:  # noqa: BLE001 - Aufraeumen ist nur nett, kein Muss
@@ -341,11 +342,11 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
         if not slug:
             raise ValueError("Aus dem Namen laesst sich kein Geraetename bilden")
         dev = f"remote-{slug}"[:30].rstrip("-")
-        pfad = ESPHOME_DIR / f"{dev}.yaml"
+        pfad = _fw.ESPHOME_DIR / f"{dev}.yaml"
         if pfad.exists():
             raise ValueError(f"{dev}.yaml gibt es schon")
         try:
-            sec = (ESPHOME_DIR / "secrets.yaml").read_text(encoding="utf-8")
+            sec = (_fw.ESPHOME_DIR / "secrets.yaml").read_text(encoding="utf-8")
         except OSError:
             sec = ""
         fehlt = [k for k in ("wifi_ssid", "wifi_password", "ota_pw", "ap_password", "direkt_schluessel", "esphomeremote_key")
@@ -353,12 +354,12 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
         if fehlt:
             raise ValueError("In der secrets.yaml des ESPHome-Add-ons fehlen: " + ", ".join(fehlt) + " (siehe README, Schritt 3)")
         pfad.write_text(
-            f"# {name} - angelegt im Konfigurator ({time.strftime('%Y-%m-%d')}). Firmware von GitHub (Zweig stabil).\n"
+            f"# {name} - angelegt im Konfigurator ({time.strftime('%Y-%m-%d')}). Firmware von GitHub (Zweig {_fw.zweig()}).\n"
             f"substitutions:\n  device_name:   \"{dev}\"\n  friendly_name: \"{name.strip()[:30]}\"\n  ha_name:       \"{dev.replace('-', '_')}\"\n"
             "  wifi_ssid:         !secret wifi_ssid\n  wifi_password:     !secret wifi_password\n  ota_pw:            !secret ota_pw\n"
             "  ap_password:       !secret ap_password\n  direkt_schluessel: !secret direkt_schluessel\n"
             "  konfig_key:        !secret esphomeremote_key\n\n"
-            "packages:\n  firmware:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: stabil\n"
+            f"packages:\n  firmware:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: {_fw.zweig()}\n"
             "    files: [esphomeremote-firmware.yaml]\n    refresh: 0s\n\n"
             "wifi:\n  ssid: !secret wifi_ssid\n  password: !secret wifi_password\n", encoding="utf-8")
         return dev
@@ -370,7 +371,7 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
     @websocket_api.async_response
     async def ws_neu(hass, connection, msg):
         entwickler_da = await hass.async_add_executor_job(
-            lambda: (ESPHOME_DIR / "tools" / "remotes.py").exists() and (ESPHOME_DIR / "templates" / "remote.yaml").exists())
+            lambda: (_fw.ESPHOME_DIR / "tools" / "remotes.py").exists() and (_fw.ESPHOME_DIR / "templates" / "remote.yaml").exists())
         if not entwickler_da:
             # Ohne Entwickler-Einrichtung (2026-10-26): Datei mit der Firmware als GitHub-Paket (wie esphomeremote.yaml)
             try:
@@ -382,7 +383,7 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
             connection.send_result(msg["id"], {"device": dev})
             return
         p = await asyncio.create_subprocess_exec(
-            "python3", str(ESPHOME_DIR / "tools" / "remotes.py"), "--neu", msg["name"], msg["ip"].strip() or "dhcp",
+            "python3", str(_fw.ESPHOME_DIR / "tools" / "remotes.py"), "--neu", msg["name"], msg["ip"].strip() or "dhcp",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         out = (await p.communicate())[0].decode(errors="replace").strip()
         if p.returncode != 0:
@@ -454,7 +455,7 @@ def registrieren(hass: HomeAssistant, kd) -> Einrichtung:
                 weg.append("HA-Eintrag")
         await bau_aufraeumen(hass, [f"{dev}.yaml", f"{dev}-halink.yaml"])
         p = await asyncio.create_subprocess_exec(
-            "python3", str(ESPHOME_DIR / "tools" / "remotes.py"), "--entfernen", dev.replace("remote-wz-", ""),
+            "python3", str(_fw.ESPHOME_DIR / "tools" / "remotes.py"), "--entfernen", dev.replace("remote-wz-", ""),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         await p.communicate()
         weg.append("YAML/Secret" if p.returncode == 0 else "YAML (Fehler)")

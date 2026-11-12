@@ -211,6 +211,16 @@ Sleeptimer, Bildmodus …). Eine Seite mit einem Klick an deine anderen Remotes 
   Bluetooth-Proxy für die Remote, Bluetooth-Tastatur zum Fernseher und Funkbrücke laufen, IR, 433 MHz, LEDs und
   Ladekontakte fehlen. Geflasht wird aus dem Konfigurator per USB – der Chip wird automatisch erkannt.
 
+**Sicherheitsnetz**
+- **Zurück zur vorherigen Firmware** – nach einem Update liegt der alte Stand noch in der zweiten Partition; ein Tipp in
+  der Werkstatt (oder der Knopf „Vorherige Firmware“) startet das Gerät damit neu. Ohne Bauen, ohne Hochladen.
+- **Firmware-Kanal** – *stabil* für alle, *beta* ein paar Tage früher zum Testen (Einstellungen → Geräte & Dienste →
+  ESPHomeRemote → Konfigurieren; HACS zeigt Betas nur, wenn du sie einschaltest).
+- **Komplett-Sicherung** – eine Datei mit Belegungen, Einstellungen, gemeinsamen Bereichen, den ESPHome-Gerätedateien,
+  angelegten Remotes und auf Wunsch den Secrets; das Einspielen ergänzt nur, was fehlt.
+- **Werkseinstellungen** als Knopf an Remote und Dock (Einstellungen, Bluetooth-Kopplungen, Zähler – Firmware und WLAN bleiben).
+- **Ladelimit** (experimentell) – mit der Ladekontakt-Nachrüstung am Dock nur bis 80/85/90 % laden.
+
 **Konfigurator in Home Assistant** – alles im Browser, am PC und am Handy:
 Übersicht mit Akkuverlauf, **Suche mit Strg+K**, Tabelle aller Tasten, Änderungsliste mit Rückgängig,
 Sicherung, **Firmware-Updates per WLAN** (auch vormerken, wenn die Remote schläft) und **USB-Flashen im Browser**.
@@ -436,7 +446,7 @@ ota:
 
 ## Für Entwickler
 
-Wie das Projekt aufgebaut ist, wie es ohne Hardware läuft und wie ein Pull Request aussehen sollte: [CONTRIBUTING.md](CONTRIBUTING.md) (Englisch). Fehlerberichte: bitte die Diagnose-Datei anhängen (Einstellungen → Geräte & Dienste → ESPHomeRemote → ⋮ → Diagnose herunterladen) – sie enthält Versionen und Firmware-Stand, ohne Namen und Adressen.
+Fragen, Ideen und Fotos deiner Einrichtung: [Discussions](https://github.com/Aggro600/ESPHomeRemote/discussions). Wie das Projekt aufgebaut ist, wie es ohne Hardware läuft und wie ein Pull Request aussehen sollte: [CONTRIBUTING.md](CONTRIBUTING.md) (Englisch). Fehlerberichte: bitte die Diagnose-Datei anhängen (Einstellungen → Geräte & Dienste → ESPHomeRemote → ⋮ → Diagnose herunterladen) – sie enthält Versionen und Firmware-Stand, ohne Namen und Adressen.
 
 - `esphomeremote-firmware.yaml` wird aus der Entwickler-Fassung erzeugt (`tools/publish.py`
   im Entwickler-Setup) – Änderungen bitte dort, nicht hier.

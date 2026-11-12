@@ -55,6 +55,41 @@ def ordner_setzen(hass: HomeAssistant) -> Path:
     return ESPHOME_DIR
 
 
+ZWEIGE = ("stabil", "beta")
+_PAKET_REF = re.compile(r"^(\s+ref:\s*)(stabil|beta)\s*$", re.M)
+
+
+KANAL = "stabil"   # Firmware-Kanal (2026-11-12): Option "kanal" des Eintrags, gesetzt von kanal_setzen()
+
+
+def zweig(hass: HomeAssistant | None = None) -> str:
+    """Zweig auf GitHub, den neue Geraetedateien holen: stabil (alle) oder beta (Vorab)."""
+    return KANAL
+
+
+def kanal_setzen(k: str) -> None:
+    global KANAL
+    KANAL = k if k in ZWEIGE else "stabil"
+
+
+def kanal_umstellen(neu: str) -> list[str]:
+    """Alle Geraetedateien, die die Firmware von GitHub holen, auf den Zweig des Kanals stellen. Gibt die geaenderten
+    Dateien zurueck. Laeuft im Executor."""
+    geaendert = []
+    for f in sorted(ESPHOME_DIR.glob("*.yaml")):
+        try:
+            t = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "github.com/Aggro600/ESPHomeRemote" not in t:
+            continue
+        n = _PAKET_REF.sub(lambda m: m.group(1) + neu, t)
+        if n != t:
+            f.write_text(n, encoding="utf-8")
+            geaendert.append(f.name)
+    return geaendert
+
+
 def supervisor() -> bool:
     """Laeuft HA als OS/Supervised (dann gibt es das ESPHome-Add-on, das baut und flasht)?"""
     return bool(os.environ.get("SUPERVISOR_TOKEN"))
@@ -692,6 +727,24 @@ async def _gesperrt(hass: HomeAssistant) -> tuple[Store, list[str]]:
     return st, d["gesperrt"]
 
 
+def _vorherige(hass: HomeAssistant, e) -> tuple[str, str]:
+    if e is None:
+        return "", ""
+    from homeassistant.helpers import entity_registry as er
+    reg = er.async_get(hass)
+    text = knopf = ""
+    for ent in er.async_entries_for_config_entry(reg, e.entry_id):
+        if not str(ent.unique_id).endswith("vorherige_firmware"):
+            continue
+        if ent.domain == "text_sensor" or ent.domain == "sensor":
+            st = hass.states.get(ent.entity_id)
+            if st and st.state not in ("unavailable", "unknown", ""):
+                text = st.state
+        elif ent.domain == "button":
+            knopf = ent.entity_id
+    return text, (knopf if text else "")
+
+
 async def liste(hass: HomeAssistant) -> dict:
     dateien = await hass.async_add_executor_job(alle_dateien)
     infos, ports, fehler = {}, [], ""
@@ -735,6 +788,9 @@ async def liste(hass: HomeAssistant) -> dict:
              "in_ha": e is not None, "gesperrt": f["datei"] in gesperrt, "vorgemerkt": f["datei"] in vorgemerkt,
              "fw": fw_version(e, f["datei"])}
         x["veraltet"] = bool(soll) and x["geflasht"] and f["art"] in ("remote", "dock") and x["fw"] != soll
+        # Vorherige Firmware (2026-11-12, Rollback): die Firmware meldet, was in der zweiten App-Partition liegt, und hat
+        # einen Knopf, der dorthin zurueckstartet - beides als Entitaeten des ESPHome-Eintrags
+        x["vorher"], x["vorher_knopf"] = _vorherige(hass, e)
         if f["art"] == "test":
             x["test"] = _test_stand(hass, e) if e else None
         elif f["art"] == "dock":
@@ -759,6 +815,7 @@ async def liste(hass: HomeAssistant) -> dict:
     from .reparaturen import nach_liste
     nach_liste(hass, out, await hass.async_add_executor_job(altlasten))
     return {"geraete": out, "ports": ports, "fehler": fehler, "jobs": laufend, "fertige": _fertige_liste(), "version": soll,
+            "kanal": zweig(),
             "lokal": await hass.async_add_executor_job(lambda: (ESPHOME_DIR / "templates" / "remote.yaml").exists()),
             "entwickler": await hass.async_add_executor_job(entwickler),
             "altlasten": await hass.async_add_executor_job(altlasten)}
@@ -1080,11 +1137,11 @@ async def ws_entwickler(hass: HomeAssistant, connection: websocket_api.ActiveCon
 # Paket-Dateien im Repo (2026-10-27 umbenannt; die alten Namen liefert das Repo vorerst weiter mit)
 REMOTE_PAKET, REMOTE_PAKET_ALT = "esphomeremote-firmware.yaml", "open-remote-firmware.yaml"
 DOCK_PAKET, DOCK_PAKET_ALT = "esphomeremote-dock-firmware.yaml", "open-dock-firmware.yaml"
-GITHUB_PAKET = ("packages:\n  {k}:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: stabil\n"
+GITHUB_PAKET = ("packages:\n  {k}:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: {z}\n"
                 "    files: [{f}]\n    refresh: 0s\n")
 
 
-def umstellen(datei: str) -> str:
+def umstellen(datei: str, z: str = "stabil") -> str:
     """Alte Dock-/Remote-Datei auf die Firmware von GitHub umschreiben (2026-10-26). Die alte bleibt als <datei>.alt."""
     pfad = ESPHOME_DIR / datei
     t = pfad.read_text(encoding="utf-8")
@@ -1097,20 +1154,20 @@ def umstellen(datei: str) -> str:
         paket = "esphomeremote-dock-core.yaml" if kern else DOCK_PAKET
         chip = (f"  dock_board: {sub('dock_board', 'esp32-c3-devkitm-1')}\n  dock_variant: {sub('dock_variant', 'esp32c3')}\n"
                 if kern else "")
-        neu = (f"# {fr} - umgestellt im Konfigurator ({datum}): Firmware von GitHub ({paket}, Zweig stabil).\n"
+        neu = (f"# {fr} - umgestellt im Konfigurator ({datum}): Firmware von GitHub ({paket}, Zweig {z}).\n"
                f"substitutions:\n  name: {name}\n  friendly_name: {fr}\n" + chip +
                "  wifi_ssid:         !secret wifi_ssid\n  wifi_password:     !secret wifi_password\n"
                "  ota_pw:            !secret ota_pw\n  direkt_schluessel: !secret direkt_schluessel\n\n"
-               + GITHUB_PAKET.format(k="basis", f=paket))
+               + GITHUB_PAKET.format(k="basis", f=paket, z=z))
     elif REMOTE_PAKET in t or REMOTE_PAKET_ALT in t:
         dev = sub("device_name", pfad.stem)
         fr, ha = sub("friendly_name", dev), sub("ha_name", dev.replace("-", "_"))
-        neu = (f"# {fr} - umgestellt im Konfigurator ({datum}): Firmware von GitHub (Zweig stabil).\n"
+        neu = (f"# {fr} - umgestellt im Konfigurator ({datum}): Firmware von GitHub (Zweig {z}).\n"
                f"substitutions:\n  device_name:   \"{dev}\"\n  friendly_name: \"{fr}\"\n  ha_name:       \"{ha}\"\n"
                "  wifi_ssid:         !secret wifi_ssid\n  wifi_password:     !secret wifi_password\n  ota_pw:            !secret ota_pw\n"
                "  ap_password:       !secret ap_password\n  direkt_schluessel: !secret direkt_schluessel\n"
                "  konfig_key:        !secret esphomeremote_key\n\n"
-               + GITHUB_PAKET.format(k="firmware", f=REMOTE_PAKET)
+               + GITHUB_PAKET.format(k="firmware", f=REMOTE_PAKET, z=z)
                + "\nwifi:\n  ssid: !secret wifi_ssid\n  password: !secret wifi_password\n")
     else:
         raise ValueError("Keine Dock- oder Remote-Datei aus dem Repo")
@@ -1128,7 +1185,7 @@ async def ws_umstellen(hass: HomeAssistant, connection: websocket_api.ActiveConn
         connection.send_error(msg["id"], "datei", "Unbekannte Datei")
         return
     try:
-        await hass.async_add_executor_job(umstellen, msg["datei"])
+        await hass.async_add_executor_job(umstellen, msg["datei"], zweig())
     except (OSError, ValueError) as err:
         connection.send_error(msg["id"], "umstellen", str(err))
         return

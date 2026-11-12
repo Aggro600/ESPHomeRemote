@@ -1,5 +1,31 @@
 # What's new · Was ist neu
 
+## 2026.11.12.2 (2026-11-12)
+
+**Back to the previous firmware.** After an update the old firmware is still in the second partition of remote and dock. The workshop shows it (“Previous firmware on the device”) and offers “Back to previous” – no build, no upload. Plus a **Factory reset** button on remote and dock (settings, Bluetooth pairings, counters; firmware and Wi-Fi stay).
+
+**Firmware channel stable/beta.** Settings → Devices & services → ESPHomeRemote → Configure: *beta* gets new versions a few days earlier (device files are switched to the beta branch; HACS shows betas only with “Show beta versions”). From now on releases go out as beta first and are then released for everyone.
+
+**Complete backup.** Next to the normal backup, one file with the ESPHome device files, the remotes created in the configurator and, if you want, secrets.yaml. Restoring only adds what is missing – nothing is overwritten.
+
+**Charge limit (experimental).** Battery page: charge a remote in the dock only up to 80/85/90 % – needs a dock with the charging-contact retrofit (GPIO2); Home Assistant switches the contacts off at the limit and on again 5 % below, after 2 hours or when the remote is taken out.
+
+**Also:** the remote's flash write interval is 5 min instead of 1 min (less wear; it writes before deep sleep and restarts anyway). Configurator: the styles now live in styles.js (1,400 lines less in configurator.js, no visible change). GitHub Discussions are open for questions, ideas and photos of your setup. The firmware update is optional – it only brings the rollback button, factory reset and the write interval.
+
+<details><summary>Deutsch</summary>
+
+**Zurück zur vorherigen Firmware.** Nach einem Update liegt der alte Stand noch in der zweiten Partition von Remote und Dock. Die Werkstatt zeigt ihn („Vorherige Firmware auf dem Gerät“) und bietet „Zurück zur vorherigen“ – ohne Bauen, ohne Hochladen. Dazu der Knopf **Werkseinstellungen** an Remote und Dock (Einstellungen, Bluetooth-Kopplungen, Zähler; Firmware und WLAN bleiben).
+
+**Firmware-Kanal stabil/beta.** Einstellungen → Geräte & Dienste → ESPHomeRemote → Konfigurieren: *beta* bekommt neue Versionen ein paar Tage früher (Gerätedateien werden auf den Beta-Zweig umgestellt, HACS zeigt Betas nur mit „Beta-Versionen anzeigen“). Releases gehen künftig erst als Beta raus und werden dann für alle freigegeben.
+
+**Komplett-Sicherung.** Neben der normalen Sicherung eine Datei mit den ESPHome-Gerätedateien, den im Konfigurator angelegten Remotes und auf Wunsch der secrets.yaml. Beim Einspielen wird nur ergänzt, was fehlt – nichts überschrieben.
+
+**Ladelimit (experimentell).** Seite Akku: Remote im Dock nur bis 80/85/90 % laden – braucht ein Dock mit der Ladekontakt-Nachrüstung (GPIO2); Home Assistant schaltet die Kontakte ab dem Limit aus und 5 % darunter, nach 2 Stunden oder bei Entnahme wieder an.
+
+**Außerdem:** Flash-Schreibintervall der Remote 5 min statt 1 min (weniger Verschleiß; vor Tiefschlaf und Neustart wird ohnehin geschrieben). Konfigurator: die Stile liegen jetzt in styles.js (1.400 Zeilen weniger in configurator.js, keine Änderung an der Oberfläche). GitHub Discussions sind offen für Fragen, Ideen und Fotos eurer Einrichtung. Firmware-Update ist freiwillig – es bringt nur Rollback-Knopf, Werkseinstellungen und das Schreibintervall.
+
+</details>
+
 ## 2026.11.12.1 (2026-11-12)
 
 **For bug reports: diagnostics file.** Settings → Devices & services → ESPHomeRemote → ⋮ → Download diagnostics: versions, firmware state per device, connection path, pending settings, last build errors – without names, addresses, keys or key layouts.

@@ -9,7 +9,7 @@ texts are German with English in `frontend/i18n/en.json` (see below).
 | Part | Path | What it is |
 |---|---|---|
 | Integration | `custom_components/esphomeremote/` | Home Assistant integration: configurator (sidebar panel), firmware builder, dock bridge, entities |
-| Configurator UI | `custom_components/esphomeremote/frontend/configurator.js` | One web component, plain JavaScript, no build step |
+| Configurator UI | `custom_components/esphomeremote/frontend/configurator.js` + `styles.js` | One web component, plain JavaScript, no build step; the CSS lives in `styles.js` |
 | Remote firmware | `esphomeremote-firmware.yaml` + `esphomeremote-*.h` | ESPHome configuration and C++ parts for the remote (ESP32-S3) |
 | Dock firmware | `esphomeremote-dock-*.yaml` | ESPHome configuration for the dock (ESP32-C3) and for any spare ESP32 |
 | ESPHome components | `components/` | Custom ESPHome components (menu, key configuration, dock radio) |

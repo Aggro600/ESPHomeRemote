@@ -64,7 +64,7 @@ def _dock_text(name: str, friendly: str, chip: str, notiz: str) -> str:
     # vorher kam "templates/dock-base.yaml fehlt"
     return (text + "  wifi_ssid:         !secret wifi_ssid\n  wifi_password:     !secret wifi_password\n"
             "  ota_pw:            !secret ota_pw\n  direkt_schluessel: !secret direkt_schluessel\n\n"
-            "packages:\n  basis:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: stabil\n"
+            f"packages:\n  basis:\n    url: https://github.com/Aggro600/ESPHomeRemote\n    ref: {_fw.zweig()}\n"
             f"    files: [{quelle}]\n    refresh: 0s\n")
 
 

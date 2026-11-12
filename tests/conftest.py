@@ -29,6 +29,20 @@ else:
 INTEGRATION = WURZEL / "custom_components" / "esphomeremote"
 
 
+def _paket_sichtbar() -> None:
+    """custom_components ist ein Namensraum-Paket; Home Assistant haengt beim Start sein (leeres) Konfigurationsverzeichnis
+    davor. Unser Ordner muss im Suchpfad des Pakets bleiben - sonst findet eine einzeln gestartete Testdatei die
+    Integration nicht ("No module named custom_components.esphomeremote")."""
+    import importlib
+    cc = importlib.import_module("custom_components")
+    pfad = str(WURZEL / "custom_components")
+    if pfad not in list(cc.__path__):
+        cc.__path__.append(pfad)
+
+
+_paket_sichtbar()
+
+
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations, monkeypatch):
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)   # Tests laufen immer "ohne Supervisor"
@@ -55,6 +69,8 @@ async def eingerichtet(hass, mock_bluetooth):
     """Integration mit zwei Test-Remotes, wie nach dem Einrichten ueber die Oberflaeche."""
     from unittest.mock import AsyncMock, patch
     from pytest_homeassistant_custom_component.common import MockConfigEntry
+    _paket_sichtbar()
+    import custom_components.esphomeremote.bridge  # noqa: F401 - Ziel des patch() muss geladen sein (auch bei einer einzelnen Testdatei)
 
     entry = MockConfigEntry(domain="esphomeremote", data={"key": "testschluessel", "devices": ["remote-wz-test", "remote-wz-zwei"]},
                             title="ESPHomeRemote")

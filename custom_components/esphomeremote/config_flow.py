@@ -141,11 +141,16 @@ class EsphomeremoteFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return Optionen()
 
 
+KANAELE = ["stabil", "beta"]   # Firmware-/Update-Kanal (2026-11-12): beta = Zweig "beta" + Vorab-Releases in HACS
+
+
 class Optionen(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         e = self.config_entry
         if user_input is not None:
-            return self.async_create_entry(data={"devices": _liste(user_input["devices"])})
+            return self.async_create_entry(data={"devices": _liste(user_input["devices"]), "kanal": user_input.get("kanal", "stabil")})
         jetzt = ", ".join(e.options.get("devices", e.data["devices"]))
-        return self.async_show_form(step_id="init", data_schema=vol.Schema({vol.Required("devices", default=jetzt): str}),
-                                    description_placeholders={"key": e.data["key"]})
+        return self.async_show_form(step_id="init", data_schema=vol.Schema({
+            vol.Required("devices", default=jetzt): str,
+            vol.Required("kanal", default=e.options.get("kanal", "stabil")): vol.In(list(KANAELE)),
+        }), description_placeholders={"key": e.data["key"]})

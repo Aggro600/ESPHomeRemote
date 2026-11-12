@@ -232,6 +232,16 @@ timer, picture mode …). Send a page to your other remotes with one click.</td>
   proxy for the remote, Bluetooth keyboard for the TV and the radio bridge work, IR, 433 MHz, LEDs and charging
   contacts are missing. Flash it from the configurator over USB – the chip is detected automatically.
 
+**Safety net**
+- **Back to the previous firmware** – after an update the old firmware is still in the second partition; one tap in the
+  workshop (or the "Previous firmware" button entity) restarts the device with it. No build, no upload.
+- **Firmware channel** – *stable* for everyone, *beta* a few days earlier for testers (Settings → Devices & services →
+  ESPHomeRemote → Configure; HACS shows betas only if you enable them).
+- **Complete backup** – one file with key layouts, settings, shared areas, the ESPHome device files, created remotes
+  and (optionally) the secrets; restore only adds what is missing.
+- **Factory reset** button entity on remote and dock (settings, Bluetooth pairings, counters – firmware and Wi-Fi stay).
+- **Charge limit** (experimental) – with the dock charging-contact retrofit, charge in the dock only up to 80/85/90 %.
+
 **Configurator in Home Assistant** – everything in the browser, on PC and phone:
 overview with battery history, **search with Ctrl+K**, table of all keys, change list with undo, backup,
 **firmware updates over Wi-Fi** (can be queued while the remote sleeps) and **USB flashing in the browser**.
@@ -448,7 +458,7 @@ ota:
 
 ## For developers
 
-How the project is put together, how to run it without hardware and what a pull request should look like: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports: please attach the diagnostics file (Settings → Devices & services → ESPHomeRemote → ⋮ → Download diagnostics) – it contains versions and firmware state, with names and addresses removed.
+Questions, ideas and photos of your setup: [Discussions](https://github.com/Aggro600/ESPHomeRemote/discussions). How the project is put together, how to run it without hardware and what a pull request should look like: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports: please attach the diagnostics file (Settings → Devices & services → ESPHomeRemote → ⋮ → Download diagnostics) – it contains versions and firmware state, with names and addresses removed.
 
 - `esphomeremote-firmware.yaml` is generated from the developer version (`tools/publish.py` in the
   developer setup) – please make changes there, not here.

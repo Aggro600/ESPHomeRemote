@@ -20,7 +20,7 @@ async def test_panel_version_haengt_am_inhalt(integration_pfad):
     import hashlib
 
     h = hashlib.sha1()
-    for name in ("configurator.js", "i18n/en.json"):
+    for name in ("configurator.js", "styles.js", "i18n/en.json"):
         h.update((integration_pfad / "frontend" / name).read_bytes())
     assert PANEL_VERSION == h.hexdigest()[:8] == _panel_version()
     assert PANEL_VERSION != "206"

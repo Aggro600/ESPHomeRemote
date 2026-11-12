@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: 💡 Questions, ideas, show your setup
+    url: https://github.com/Aggro600/ESPHomeRemote/discussions
+    about: Not a bug? Ask here, share how you use it, or post a photo of your setup.
   - name: 📖 Setup guide & troubleshooting
     url: https://github.com/Aggro600/ESPHomeRemote#quick-start
     about: Step-by-step installation and solutions for the most common problems.

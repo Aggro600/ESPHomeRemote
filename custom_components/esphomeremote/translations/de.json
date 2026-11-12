@@ -35,7 +35,11 @@
         "title": "Fernbedienungen",
         "description": "Namen der Fernbedienungen (device_name, mehrere mit Komma). Schlüssel für die ESPHome-Secrets: `{key}`",
         "data": {
-          "devices": "Fernbedienungen (device_name)"
+          "devices": "Fernbedienungen (device_name)",
+          "kanal": "Firmware-Kanal"
+        },
+        "data_description": {
+          "kanal": "stabil: Releases für alle. beta: neue Versionen ein paar Tage früher, zum Testen – die Gerätedateien werden auf den Beta-Zweig von GitHub umgestellt, und HACS zeigt Betas nur, wenn du bei ESPHomeRemote „Beta-Versionen anzeigen“ einschaltest."
         }
       }
     }
