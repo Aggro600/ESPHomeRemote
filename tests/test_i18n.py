@@ -49,3 +49,11 @@ def test_kein_deutsch_in_englischen_ha_texten(integration_pfad):
     assert not re.search(r"[äöüß]", en), "Umlaute in translations/en.json"
     verdaechtig = re.findall(r"\b(?:nicht|und|oder|Fernbedienung|Einstellungen|Taste|Akku)\b", en)
     assert not verdaechtig, f"deutsche Woerter in translations/en.json: {verdaechtig[:5]}"
+
+
+def test_keine_html_in_ha_texten(integration_pfad):
+    """hassfest lehnt spitze Klammern in strings.json ab (2026-11-12: `<file>.yaml` fiel durch)."""
+    for name in ("strings.json", "translations/en.json", "translations/de.json"):
+        text = json.dumps(_json(integration_pfad / name), ensure_ascii=False)
+        treffer = re.findall(r"<[a-zA-Z/][^>]{0,40}>", text)
+        assert not treffer, f"{name}: {treffer[:5]}"

@@ -18,7 +18,7 @@
       },
       "hinweis": {
         "title": "Home Assistant without ESPHome add-on",
-        "description": "This Home Assistant runs without Supervisor (Container or Core), so there is no ESPHome add-on. ESPHomeRemote works anyway – configurator, key layouts, menu, dock, entities – but it cannot build or flash firmware for you. You build the device files in `{ordner}` with your own ESPHome (`esphome run <file>.yaml`). Continue to set up the integration."
+        "description": "This Home Assistant runs without Supervisor (Container or Core), so there is no ESPHome add-on. ESPHomeRemote works anyway – configurator, key layouts, menu, dock, entities – but it cannot build or flash firmware for you. You build the device files in `{ordner}` with your own ESPHome (`esphome run` with the device file). Continue to set up the integration."
       }
     },
     "abort": {
@@ -279,7 +279,7 @@
     },
     "no_supervisor": {
       "title": "No ESPHome add-on: building and flashing from the configurator is unavailable",
-      "description": "This Home Assistant runs without Supervisor (Container or Core). Everything else works – key layouts, menu, dock, entities – but ESPHomeRemote cannot build or flash firmware for you. Build the device files in `{ordner}` with your own ESPHome (`esphome run <file>.yaml`), or run Home Assistant OS / Supervised with the ESPHome add-on."
+      "description": "This Home Assistant runs without Supervisor (Container or Core). Everything else works – key layouts, menu, dock, entities – but ESPHomeRemote cannot build or flash firmware for you. Build the device files in `{ordner}` with your own ESPHome (`esphome run` with the device file), or run Home Assistant OS / Supervised with the ESPHome add-on."
     },
     "old_files": {
       "title": "Old ESPHomeRemote files in the ESPHome folder",
@@ -288,7 +288,7 @@
         "step": {
           "confirm": {
             "title": "Move old files to the archive",
-            "description": "Moves {dateien} to `esphome/archive/esphomeremote-alt-<date>/`. Devices and their settings are not affected; the next build uses the files from GitHub."
+            "description": "Moves {dateien} to `esphome/archive/esphomeremote-alt-DATE/`. Devices and their settings are not affected; the next build uses the files from GitHub."
           }
         }
       }

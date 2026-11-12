@@ -18,7 +18,7 @@
       },
       "hinweis": {
         "title": "Home Assistant ohne ESPHome-Add-on",
-        "description": "Dieses Home Assistant läuft ohne Supervisor (Container oder Core), es gibt also kein ESPHome-Add-on. ESPHomeRemote funktioniert trotzdem – Konfigurator, Belegung, Menü, Dock, Entitäten –, aber es kann keine Firmware für dich bauen oder aufspielen. Die Gerätedateien in `{ordner}` baust du mit deinem eigenen ESPHome (`esphome run <datei>.yaml`). Weiter richtet die Integration ein."
+        "description": "Dieses Home Assistant läuft ohne Supervisor (Container oder Core), es gibt also kein ESPHome-Add-on. ESPHomeRemote funktioniert trotzdem – Konfigurator, Belegung, Menü, Dock, Entitäten –, aber es kann keine Firmware für dich bauen oder aufspielen. Die Gerätedateien in `{ordner}` baust du mit deinem eigenen ESPHome (`esphome run` mit der Gerätedatei). Weiter richtet die Integration ein."
       }
     },
     "abort": {
@@ -279,7 +279,7 @@
     },
     "no_supervisor": {
       "title": "Kein ESPHome-Add-on: Bauen und Aufspielen aus dem Konfigurator geht nicht",
-      "description": "Dieses Home Assistant läuft ohne Supervisor (Container oder Core). Alles andere funktioniert – Belegung, Menü, Dock, Entitäten –, aber ESPHomeRemote kann keine Firmware für dich bauen oder aufspielen. Baue die Gerätedateien in `{ordner}` mit deinem eigenen ESPHome (`esphome run <datei>.yaml`) oder nutze Home Assistant OS / Supervised mit dem ESPHome-Add-on."
+      "description": "Dieses Home Assistant läuft ohne Supervisor (Container oder Core). Alles andere funktioniert – Belegung, Menü, Dock, Entitäten –, aber ESPHomeRemote kann keine Firmware für dich bauen oder aufspielen. Baue die Gerätedateien in `{ordner}` mit deinem eigenen ESPHome (`esphome run` mit der Gerätedatei) oder nutze Home Assistant OS / Supervised mit dem ESPHome-Add-on."
     },
     "old_files": {
       "title": "Alte ESPHomeRemote-Dateien im ESPHome-Ordner",
@@ -288,7 +288,7 @@
         "step": {
           "confirm": {
             "title": "Alte Dateien ins Archiv verschieben",
-            "description": "Verschiebt {dateien} nach `esphome/archive/esphomeremote-alt-<datum>/`. Geräte und Einstellungen bleiben unberührt; der nächste Bau nimmt die Dateien aus GitHub."
+            "description": "Verschiebt {dateien} nach `esphome/archive/esphomeremote-alt-DATUM/`. Geräte und Einstellungen bleiben unberührt; der nächste Bau nimmt die Dateien aus GitHub."
           }
         }
       }

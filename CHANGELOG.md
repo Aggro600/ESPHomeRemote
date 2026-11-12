@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.12.3 (2026-11-12)
+
+GitHub checks only: repair texts without angle brackets (hassfest), test workflow without pip cache. No change to firmware or UI – update optional.
+
+<details><summary>Deutsch</summary>
+
+Nur GitHub-Prüfungen: Texte der Reparatur-Hinweise ohne spitze Klammern (hassfest), Test-Workflow ohne pip-Cache. Keine Änderung an Firmware oder Oberfläche – Update freiwillig.
+
+</details>
+
 ## 2026.11.12.2 (2026-11-12)
 
 **Back to the previous firmware.** After an update the old firmware is still in the second partition of remote and dock. The workshop shows it (“Previous firmware on the device”) and offers “Back to previous” – no build, no upload. Plus a **Factory reset** button on remote and dock (settings, Bluetooth pairings, counters; firmware and Wi-Fi stay).
