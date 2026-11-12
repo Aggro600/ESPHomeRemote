@@ -27,7 +27,7 @@ jobs:
         run: |
           VERSION=$(python3 -c "import json;print(json.load(open('../custom_components/esphomeremote/streamer_app/version.json'))['code'])")
           BT=$ANDROID_HOME/build-tools/35.0.0 JAR=$ANDROID_HOME/platforms/android-35/android.jar VERSION=$VERSION sh build.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: esphomeremote-streamer-ci
           path: streamer-app/build/esphomeremote-streamer.apk
