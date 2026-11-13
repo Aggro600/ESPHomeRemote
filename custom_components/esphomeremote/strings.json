@@ -295,6 +295,10 @@
     "usb_flash_needed": {
       "title": "{name}: flash once via USB",
       "description": "{name} runs firmware {version}. Versions before 2026.11.5.4 need a new bootloader for the faster wake-up, and a bootloader cannot be updated over Wi-Fi. Connect the remote with a USB cable, open the configurator → Firmware → {name} → **USB** (Chrome or Edge). After that, updates over Wi-Fi work again."
+    },
+    "flash_writes": {
+      "title": "{name}: unusually many flash writes",
+      "description": "Remote {name} currently writes about {rate} times a day to its flash memory – normal is a few hundred (around {normal}). The memory lasts a very long time, but this rate points to a bug that saves something over and over. Please download the diagnostics (Settings → Devices & services → ESPHomeRemote → ⋮) and open an issue on GitHub. The notice disappears by itself once the rate is normal again."
     }
   }
 }

@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.12.4"
+    version: "2026.11.13.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
@@ -770,9 +770,13 @@ logger:
   # Letzte Zeilen ab INFO im PSRAM merken (auch bei WLAN aus): Knopf "Protokoll-Puffer ausgeben", Protokoll ueber das
   # Dock (2026-10-24, s. dock_status_melden)
   on_message:
-    level: INFO
-    then:
-      - lambda: 'logpuffer::merken(level, tag, message);'
+    - level: INFO
+      then:
+        - lambda: 'logpuffer::merken(level, tag, message);'
+    # Flash-Schreibzaehler (2026-11-13): jedes "Writing ... written" von esp32.preferences mitzaehlen
+    - level: DEBUG
+      then:
+        - lambda: 'flashzaehler::zaehlen(tag, message);'
 
 api:
   encryption: {}   # Schluessel vergibt Home Assistant beim Einbinden
@@ -1021,11 +1025,8 @@ captive_portal:
 safe_mode:
   id: sicherer_start
 
-# Flash-Verschleiss (2026-11-12): Werte mit restore_value (Helligkeit, Zaehler, Einstellungen) schreibt ESPHome sonst
-# jede Minute, sobald sich etwas geaendert hat. 5 Minuten reichen - vor dem Tiefschlaf und vor jedem Neustart wird
-# ohnehin ausdruecklich geschrieben (global_preferences->sync()), ein Stromausfall ist bei einer Akku-Remote kein Thema.
-preferences:
-  flash_write_interval: 5min
+# Flash-Schreibintervall: ESPHome-Standard (2026-11-13 zurueck von 5 min). ESPHome schreibt nur GEAENDERTE Werte; der
+# NVS-Bereich (448 KB) verteilt die Abnutzung. Gemessen wird stattdessen: Sensor "Flash-Schreibzugriffe" (flashzaehler).
 
 time:
   - platform: sntp
@@ -2851,12 +2852,13 @@ script:
           if (id(letzter_neustart).has_state()) d["n"] = id(letzter_neustart).state;
           // WLAN-Zustand (2026-10-29): Restzeit aktuell, als Aenderung zaehlt nur der Grund
           d["w"] = wlan_zugriff::g_rest > 0 ? wlan_zugriff::g_zustand + "|" + std::to_string(wlan_zugriff::g_rest) : wlan_zugriff::g_zustand;
+          d["f"] = std::to_string(flashzaehler::summe());   // Flash-Schreibzugriffe seit Strom an (2026-11-13)
           // Nur bei Aenderung, sonst hoechstens alle 10 min; vor dem Tiefschlaf immer (2026-10-25, vorher jede Minute -
           // Funk und Dock-Last). Spannung zaehlt nicht als Aenderung (schwankt staendig).
           static std::string zuletzt;
           static uint32_t zuletzt_ms = 0;
           std::string vergleich;
-          for (auto &kv : d) if (kv.first != "v") vergleich += kv.first + "=" + (kv.first == "w" ? kv.second.substr(0, kv.second.find('|')) : kv.second) + ";";
+          for (auto &kv : d) if (kv.first != "v" && kv.first != "f") vergleich += kv.first + "=" + (kv.first == "w" ? kv.second.substr(0, kv.second.find('|')) : kv.second) + ";";
           if (schlaf || vergleich != zuletzt || zuletzt_ms == 0 || millis() - zuletzt_ms > 600000) {
             zuletzt = vergleich;
             zuletzt_ms = millis() | 1;
@@ -6876,6 +6878,17 @@ binary_sensor:
 
 
 sensor:
+  # Flash-Schreibzugriffe seit Strom an (2026-11-13, s. flashzaehler in esphomeremote-log-buffer.h). Die Integration
+  # rechnet daraus Zugriffe je Tag und meldet einen Reparatur-Hinweis, wenn ein Fehler staendig schreibt.
+  - platform: template
+    name: "Flash-Schreibzugriffe"
+    id: flash_schreib
+    icon: mdi:memory
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: 'return (float) flashzaehler::summe();'
   # Laufende Aktivitaet (Index in der Konfiguration, -1 = keine) fuer die Aktivitaets-Schalter in HA (2026-10-16)
   - platform: template
     id: akt_sensor

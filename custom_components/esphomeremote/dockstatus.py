@@ -55,6 +55,7 @@ WERTE = {
     "t": ("sensor", "tiefschlaf_status", str),
     "n": ("sensor", "letzter_neustart", str),
     "w": ("sensor", "wlan_zustand", str),   # 2026-10-29: aus | immer | Grund|Restsekunden
+    "f": ("sensor", "flash_schreibzugriffe", _zahl),   # 2026-11-13: Flash-Schreibzugriffe seit Strom an
 }
 # Name, Symbol, Einheit, device_class der eigenen Entitaet je Wert
 ART = {
@@ -67,6 +68,7 @@ ART = {
     "t": ("Tiefschlaf-Status", "mdi:sleep", None, None),
     "n": ("Letzter Neustart", "mdi:restart", None, None),
     "w": ("WLAN-Zustand", "mdi:wifi", None, None),
+    "f": ("Flash-Schreibzugriffe", "mdi:memory", None, None),
 }
 FREI = ("unavailable", "unknown")
 

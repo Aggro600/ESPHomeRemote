@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.13.1 (2026-11-13)
+
+**Flash: measure instead of guessing.** The remote's write interval is back to the ESPHome default (the 5 minutes from 2026.11.12.2 saved nothing – ESPHome only writes changed values anyway). New diagnostic value **Flash writes** (also via the dock): the remote counts every actual write. Home Assistant turns it into writes per day (also in the diagnostics file) and raises a repair if a remote writes more than 5,000 times a day – that would be a bug saving something over and over. Normal is a few hundred.
+
+<details><summary>Deutsch</summary>
+
+**Flash: messen statt raten.** Das Schreibintervall der Remote ist wieder der ESPHome-Standard (die 5 Minuten aus 2026.11.12.2 sparten nichts – ESPHome schreibt ohnehin nur geänderte Werte). Neu ist der Diagnosewert **Flash-Schreibzugriffe** (auch über das Dock): die Remote zählt jeden tatsächlichen Schreibvorgang. Home Assistant rechnet daraus Zugriffe je Tag (steht auch in der Diagnose-Datei) und meldet unter Reparaturen, wenn eine Remote mehr als 5.000-mal am Tag schreibt – das wäre ein Fehler, der etwas immer wieder speichert. Normal sind ein paar hundert.
+
+</details>
+
 ## 2026.11.12.4 (2026-11-12)
 
 GitHub check only (hassfest): fixable repair “old files” without duplicate description. No change to firmware or UI – update optional.

@@ -161,6 +161,12 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
                 if st is not None:
                     r[feld] = st.state
                     r[feld + "_vor_s"] = int(time.time() - st.last_reported.timestamp())
+            w = hass.data.get(DOMAIN + "_warnungen")
+            if w is not None and pre in getattr(w, "flash_rate", {}):
+                r["flash_schreibzugriffe_je_tag"] = round(w.flash_rate[pre])
+            st = hass.states.get(f"sensor.{pre}_flash_schreibzugriffe") or hass.states.get(f"sensor.esphomeremote_{pre}_flash_schreibzugriffe")
+            if st is not None:
+                r["flash_schreibzugriffe_seit_start"] = st.state
             rem[an.name(dev, "remote")] = r
         out["remotes"] = rem
         sy = getattr(kd, "sync", None)

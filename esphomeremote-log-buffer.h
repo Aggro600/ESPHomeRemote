@@ -11,6 +11,23 @@
 #include <cstring>
 #include <cstdio>
 
+#include <esp_attr.h>
+
+// Flash-Schreibzaehler (2026-11-12, Nutzer: "ich will keinen kaputten Flash"): ESPHome meldet jedes Speichern mit
+// "Writing N items: C cached, W written, F failed" (Tag esp32.preferences, DEBUG). W = tatsaechlich geschriebene
+// Eintraege. Summe im RTC-Speicher: ueberlebt den Tiefschlaf, startet nach Strom weg/Reset bei 0. Die Integration
+// rechnet daraus Schreibvorgaenge je Tag und warnt, wenn ein Fehler staendig schreibt.
+namespace flashzaehler {
+RTC_DATA_ATTR static uint32_t g_summe = 0;
+inline void zaehlen(const char *tag, const char *msg) {
+  if (tag == nullptr || msg == nullptr || strcmp(tag, "esp32.preferences") != 0) return;
+  const char *p = strstr(msg, "cached, ");
+  int n = 0;
+  if (p != nullptr && sscanf(p, "cached, %d written", &n) == 1 && n > 0) g_summe += (uint32_t) n;
+}
+inline uint32_t summe() { return g_summe; }
+}  // namespace flashzaehler
+
 namespace logpuffer {
 
 static const int ZEILEN = 600;

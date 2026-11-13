@@ -25,6 +25,11 @@ DOMAIN = "esphomeremote"
 AKKU_WARN = 15
 AKKU_OK = 20
 STILL_STUNDEN = 24
+# Flash (2026-11-13): normal sind wenige hundert Schreibzugriffe am Tag (2 je Aufwachen + geaenderte Einstellungen).
+# Ab FLASH_WARN je Tag (gemessen ueber mindestens FLASH_FENSTER) schreibt vermutlich ein Fehler in einer Schleife.
+FLASH_WARN = 5000
+FLASH_OK = 2500
+FLASH_FENSTER = timedelta(hours=6)
 TAKT = timedelta(minutes=10)
 FREI = ("unavailable", "unknown")
 
@@ -47,6 +52,8 @@ class Warnungen:
         from homeassistant.helpers.storage import Store
         self.store = Store(hass, 1, f"{DOMAIN}_zuletzt")
         self.gesehen: dict[str, str] = {}
+        self.flash: dict[str, tuple] = {}   # slug -> (Zeit, Zaehler) am Beginn des Messfensters
+        self.flash_rate: dict[str, float] = {}   # slug -> Schreibzugriffe je Tag (letzte Messung, fuer die Diagnose)
         self.geladen = False
 
     def _zuletzt(self, slug: str):
@@ -71,6 +78,31 @@ class Warnungen:
         return best
 
     @callback
+    def _flash(self, slug: str, name: str, jetzt, st) -> None:
+        """Schreibzugriffe je Tag aus dem Zaehler der Remote (steigt seit Strom an; kleiner = neu gestartet)."""
+        wert = _zahl(st.state) if st is not None and st.state not in ("unavailable", "unknown") else None
+        if wert is None:
+            return
+        basis = self.flash.get(slug)
+        if basis is None or wert < basis[1]:
+            self.flash[slug] = (jetzt, wert)
+            return
+        dauer = jetzt - basis[0]
+        if dauer < FLASH_FENSTER:
+            return
+        rate = (wert - basis[1]) / (dauer.total_seconds() / 86400)
+        self.flash_rate[slug] = rate
+        iid = f"flash_writes_{slug}"
+        if rate > FLASH_WARN:
+            ir.async_create_issue(self.hass, DOMAIN, iid, is_fixable=False, severity=ir.IssueSeverity.WARNING,
+                                  translation_key="flash_writes",
+                                  translation_placeholders={"name": name, "rate": f"{rate:.0f}", "normal": "500"})
+        elif rate < FLASH_OK:
+            ir.async_delete_issue(self.hass, DOMAIN, iid)
+        if dauer > 4 * FLASH_FENSTER:   # gleitendes Fenster: alte Messung durch die halbe Strecke ersetzen
+            self.flash[slug] = (basis[0] + dauer / 2, basis[1] + (wert - basis[1]) / 2)
+
+    @callback
     def pruefen(self, _jetzt=None) -> None:
         from .zustaende import remote_wert
         jetzt = dt_util.utcnow()
@@ -78,7 +110,7 @@ class Warnungen:
         # Hinweise entfernter Remotes aufraeumen
         slugs = {d.replace("-", "_") for d in geraete}
         for dom, iid in list(ir.async_get(self.hass).issues):
-            for vorn in ("battery_low_", "not_seen_"):
+            for vorn in ("battery_low_", "not_seen_", "flash_writes_"):
                 if dom == DOMAIN and iid.startswith(vorn) and iid[len(vorn):] not in slugs:
                     ir.async_delete_issue(self.hass, DOMAIN, iid)
         for dev in geraete:
@@ -101,6 +133,7 @@ class Warnungen:
                 ir.async_delete_issue(self.hass, DOMAIN, iid)
             elif iid not in self.akku_aktiv:
                 ir.async_delete_issue(self.hass, DOMAIN, iid)   # Reste aus dem letzten Lauf
+            self._flash(slug, name, jetzt, remote_wert(self.hass, f"sensor.{slug}_flash_schreibzugriffe"))
             # Nicht gemeldet
             frisch = self._zuletzt(slug)
             alt = dt_util.parse_datetime(self.gesehen.get(slug, "")) if self.gesehen.get(slug) else None
