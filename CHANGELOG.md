@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.15.1 (2026-11-15)
+
+Battery level and voltage reported via the dock now have long-term statistics (statistics graphs work without the remote's Wi-Fi).
+
+<details><summary>Deutsch</summary>
+
+Akkustand und Akkuspannung über das Dock haben jetzt eine Langzeitstatistik (Statistik-Diagramme funktionieren auch ohne WLAN der Remote).
+
+</details>
+
 ## 2026.11.13.1 (2026-11-13)
 
 **Flash: measure instead of guessing.** The remote's write interval is back to the ESPHome default (the 5 minutes from 2026.11.12.2 saved nothing – ESPHome only writes changed values anyway). New diagnostic value **Flash writes** (also via the dock): the remote counts every actual write. Home Assistant turns it into writes per day (also in the diagnostics file) and raises a repair if a remote writes more than 5,000 times a day – that would be a bug saving something over and over. Normal is a few hundred.

@@ -22,7 +22,7 @@ import logging
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import discovery, entity_registry as er
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -98,6 +98,12 @@ class ZustandSensor(_Basis, SensorEntity):
     @property
     def device_class(self):
         return self._klasse
+
+    @property
+    def state_class(self):
+        """Akkustand/-spannung ueber das Dock mit Langzeitstatistik (2026-11-15, Nutzerwunsch): HA rechnet die
+        Stundenwerte selbst aus den Meldungen, die ohnehin kommen - die Remote sendet dafuer nichts zusaetzlich."""
+        return SensorStateClass.MEASUREMENT if self._klasse in ("battery", "voltage") and self._einheit else None
 
 
 class ZustandBinaer(_Basis, BinarySensorEntity):
