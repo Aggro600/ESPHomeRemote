@@ -426,6 +426,21 @@ Easiest: in the configurator **Workshop → New remote**. By hand: another devic
 Some built-in pages (home screen player, doorbell, sleep timer) need entities. Choose them in the configurator
 under *Verknüpfungen* (links) – no firmware change needed.
 
+**Battery level (and other remote sensors) show "nicht verfügbar" (unavailable).**
+With the dock, the remote's Wi-Fi is usually off, so the ESPHome entities of the remote (`sensor.<remote>_akkustand`
+…) are unavailable – that is expected. The remote sends its values through the dock instead, and the integration
+creates its own entities for them automatically (nothing to set up):
+`sensor.esphomeremote_<remote>_akkustand`, `…_akkuspannung`, `binary_sensor.esphomeremote_<remote>_ladekabel`
+(name ending "(über Dock)"). Use these in dashboards and automations; battery level and voltage also have long-term
+statistics. They update when a value changes, otherwise every 10 minutes, and keep the last value while the remote
+sleeps. If your `recorder:` only records listed entities (`include:`), add them:
+```yaml
+recorder:
+  include:
+    entity_globs:
+      - "*.esphomeremote_*"
+```
+
 **Camera on the TV** (optional):
 in the configurator under **Funktionen → Kamera auf dem Fernseher** (camera on the TV) – shown by the streamer app as
 an overlay, on one or several TVs, each with its own camera list, size and corner. From automations:

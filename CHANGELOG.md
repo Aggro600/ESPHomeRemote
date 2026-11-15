@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.15.2 (2026-11-15)
+
+README: FAQ entry on battery level and other values via the dock (entities, recorder).
+
+<details><summary>Deutsch</summary>
+
+README: FAQ-Eintrag zu Akkustand und anderen Werten über das Dock (Entitäten, Recorder).
+
+</details>
+
 ## 2026.11.15.1 (2026-11-15)
 
 Battery level and voltage reported via the dock now have long-term statistics (statistics graphs work without the remote's Wi-Fi).

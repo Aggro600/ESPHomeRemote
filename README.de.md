@@ -415,6 +415,21 @@ Am einfachsten im Konfigurator über **Werkstatt → Neue Fernbedienung**. Von H
 Einige eingebaute Seiten (Startseite-Player, Klingel, Sleeptimer) brauchen Entitäten. Die wählst du im Konfigurator
 unter *Verknüpfungen* – ohne neue Firmware.
 
+**Akkustand (und andere Werte der Remote) zeigen „nicht verfügbar“.**
+Mit Dock ist das WLAN der Remote meist aus, deshalb sind die ESPHome-Entitäten der Remote (`sensor.<remote>_akkustand`
+…) nicht verfügbar – das ist so gewollt. Die Remote schickt ihre Werte stattdessen über das Dock, und die Integration
+legt dafür automatisch eigene Entitäten an (nichts einzurichten):
+`sensor.esphomeremote_<remote>_akkustand`, `…_akkuspannung`, `binary_sensor.esphomeremote_<remote>_ladekabel`
+(Name endet auf „(über Dock)“). Diese in Dashboards und Automationen verwenden; Akkustand und -spannung haben auch eine
+Langzeitstatistik. Sie werden bei jeder Änderung aktualisiert, sonst alle 10 Minuten, und behalten den letzten Wert,
+während die Remote schläft. Zeichnet dein `recorder:` nur ausgewählte Entitäten auf (`include:`), ergänze:
+```yaml
+recorder:
+  include:
+    entity_globs:
+      - "*.esphomeremote_*"
+```
+
 **Kamera auf dem Fernseher** (optional):
 im Konfigurator unter **Funktionen → Kamera auf dem Fernseher** – die Streamer-App blendet sie ein, auf einem oder
 mehreren Fernsehern, je mit eigener Kameraliste, Größe und Ecke. Aus Automationen: `esphomeremote.camera_tv` mit
