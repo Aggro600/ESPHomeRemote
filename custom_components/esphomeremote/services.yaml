@@ -76,6 +76,22 @@ remote_status:
       example: remote-wz-wohnzimmer
       selector:
         text:
+remote_event:
+  name: Remote-Ereignis über das Dock
+  description: "Ruft das Dock auf, wenn eine Remote ohne eigene HA-Verbindung ein Ereignis schickt (Kamerabild, Live-Bild, Gesten geändert, Firmware-Update angefragt). Feuert es in HA, als käme es direkt von der Remote."
+  fields:
+    geraet:
+      name: Gerät
+      required: true
+      example: remote-wz-wohnzimmer
+      selector:
+        text:
+    event:
+      name: Ereignis
+      required: true
+      example: esphome.remote_cam_snapshot
+      selector:
+        text:
 timer_extend:
   name: Timer verlängern
   description: "Startet den zuletzt abgelaufenen Timer (aus der Auswahl der Remotes) neu mit dieser Dauer - für den Knopf „+5 min“ im Timer-Popup."

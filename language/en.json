@@ -577,7 +577,6 @@
 "Fehler:": "Error:",
 "Fehler: HTTP": "Error: HTTP",
 "Fehler: Schlüssel falsch (HTTP 403)": "Error: wrong key (HTTP 403)",
-"Fehler: keine Verbindung zu HA (Versuch": "Error: no connection to HA (attempt",
 "Fehler: ungültige Daten": "Error: invalid data",
 "Fehlerbericht öffnen": "Open bug report",
 "Feineinstellungen": "Advanced settings",
@@ -2209,5 +2208,7 @@
 "„Touch weckt“": "“Touch wakes”",
 "→ 7× auf": "→ 7× at",
 "→ nach „Abdunkeln nach“": "→ after “Dim after”",
-"◀ ▶ ändern um": "◀ ▶ change by"
+"◀ ▶ ändern um": "◀ ▶ change by",
+"Fehler: keine Verbindung zu HA unter": "Error: no connection to HA at",
+"(Versuch": "(attempt"
 }

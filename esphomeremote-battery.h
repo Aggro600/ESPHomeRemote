@@ -6,9 +6,19 @@
 #pragma once
 #include <cstring>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <ctime>
 #include "esp_attr.h"
+
+// Akku ueber das Dock (2026-11-17): neuer Wert melden? Nach dem Start (gemeldet < 0) immer, sonst ab 5 %-Schritten,
+// bei wenig Akku (bis 20 %) ab 2 % - vorher ging jedes Prozent ans Dock.
+inline bool akku_dock_schritt(int pct, int gemeldet) {
+  if (pct < 0) return false;
+  if (gemeldet < 0) return true;
+  const int schritt = (pct <= 20 || gemeldet <= 20) ? 2 : 5;
+  return std::abs(pct - gemeldet) >= schritt;
+}
 
 namespace akkustat {   // nicht "akku": so heisst schon der MAX17048-Sensor
 

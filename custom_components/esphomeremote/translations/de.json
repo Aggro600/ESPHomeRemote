@@ -104,6 +104,18 @@
         }
       }
     },
+    "remote_event": {
+      "name": "Remote-Ereignis über das Dock",
+      "description": "Ruft das Dock auf, wenn eine Remote ohne eigene HA-Verbindung ein Ereignis schickt (Kamerabild, Live-Bild, Gesten geändert, Firmware-Update angefragt). Feuert es in HA, als käme es direkt von der Remote.",
+      "fields": {
+        "geraet": {
+          "name": "Gerät"
+        },
+        "event": {
+          "name": "Ereignis"
+        }
+      }
+    },
     "timer_extend": {
       "name": "Timer verlängern",
       "description": "Startet den zuletzt abgelaufenen Timer (aus der Auswahl der Remotes) neu mit dieser Dauer - für den Knopf „+5 min“ im Timer-Popup.",
@@ -299,6 +311,10 @@
     "flash_writes": {
       "title": "{name}: ungewöhnlich viele Flash-Schreibzugriffe",
       "description": "Die Remote {name} schreibt gerade etwa {rate}-mal am Tag in ihren Flash-Speicher – normal sind ein paar hundert (um {normal}). Der Speicher hält sehr lange, aber diese Rate deutet auf einen Fehler hin, der immer wieder etwas speichert. Bitte die Diagnose herunterladen (Einstellungen → Geräte & Dienste → ESPHomeRemote → ⋮) und auf GitHub ein Issue aufmachen. Der Hinweis verschwindet von selbst, sobald die Rate wieder normal ist."
+    },
+    "ha_address": {
+      "title": "Remotes erreichen Home Assistant nicht per HTTP",
+      "description": "Die Remotes laden ihre Tastenbelegung, Cover und Kamerabilder per HTTP von Home Assistant. Die Adresse dafür wäre `{adresse}` – sie ist leer, ein Name, den die Remote nicht zuverlässig auflösen kann (etwa homeassistant.local), oder eine interne Docker-Adresse. Die ESPHome-Verbindung (grünes Symbol an der Remote) läuft in die andere Richtung und sagt darüber nichts aus.\n\nStelle unter Einstellungen → System → Netzwerk → Home-Assistant-URL → Lokales Netzwerk `http://IP-VON-HOME-ASSISTANT:8123` ein (die LAN-IP, nicht „Automatisch“). Danach die Remote neu starten oder die Aktion `esphome.REMOTE_tasten_neu_laden` ausführen. Steht die Remote in einem eigenen Netz (VLAN/IoT), muss sie Home Assistant auf TCP-Port 8123 erreichen dürfen."
     }
   }
 }

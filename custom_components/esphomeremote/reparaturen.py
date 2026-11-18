@@ -5,6 +5,8 @@ Knopf zum Beheben, wo es einen gibt (repairs.py):
   - no_supervisor        HA Container/Core: kein ESPHome-Add-on, also kein Bauen/Flashen aus dem Konfigurator (Info)
   - old_files            alte ESPHomeRemote-Dateien im ESPHome-Ordner, die ein Update brechen (behebbar: ins Archiv)
   - usb_flash_<name>     Remote mit Firmware vor 2026.11.5.4: braucht einmal USB (neuer Bootloader, nicht per WLAN)
+  - ha_address           Adresse fuer die Remotes (Attribut "basis") fehlt, ist ein Name oder eine Docker-/Loopback-IP:
+                         Belegung und Bilder kommen per HTTP von dort, die gruene ESPHome-Verbindung allein reicht nicht
 Akku leer / lange nicht gemeldet: warnungen.py. Freigabe "Aktionen ausfuehren" und Bruecken-Adresse: __init__.py, bridge.py.
 """
 from __future__ import annotations
@@ -75,3 +77,28 @@ def nach_liste(hass: HomeAssistant, geraete: list[dict], altlasten: list[str]) -
             offen.discard(iid)
     for iid in offen:
         ir.async_delete_issue(hass, DOMAIN, iid)
+
+
+@callback
+def adresse_pruefen(hass: HomeAssistant, basis: str) -> None:
+    """Adresse, unter der die Remotes HA per HTTP erreichen sollen (KonfigData.basis), 2026-11-18."""
+    import ipaddress
+    grund = ""
+    host = basis.rsplit(":", 1)[0] if basis else ""
+    if not basis:
+        grund = "leer"
+    else:
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip.is_loopback or host.startswith("172.17.") or host.startswith("172.30.32."):   # Docker-Bruecke, HA-OS-intern
+                grund = "docker"
+        except ValueError:
+            grund = "name"
+    if grund:
+        _LOGGER.warning("HA-Adresse fuer die Remotes unbrauchbar (%s): %r", grund, basis)
+        ir.async_create_issue(hass, DOMAIN, "ha_address", is_fixable=False, is_persistent=False,
+                              severity=ir.IssueSeverity.ERROR, translation_key="ha_address",
+                              translation_placeholders={"adresse": basis or "-"},
+                              learn_more_url="https://my.home-assistant.io/redirect/network/")
+    else:
+        ir.async_delete_issue(hass, DOMAIN, "ha_address")

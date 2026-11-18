@@ -145,6 +145,10 @@ class DockStand:
         # "Auf der Remote zeigen" (Konfigurator, 2026-10-25): Seite + Zaehler, gilt TEST_S lang ("tp" im Stand)
         self._test: dict[str, tuple[str, int, float]] = {}
         self._test_nr = int(time.time()) % 100000
+        # Aktivitaet aus HA (Schalter/Auswahl, 2026-11-17): Remote ohne eigene HA-Verbindung bekommt sie als "ak"
+        # [nr, zaehler] im Stand und fuehrt sie einmal je Zaehler aus; gilt AK_S lang oder bis die Remote sie meldet
+        self._ak: dict[str, tuple[int, int, float]] = {}
+        self._ak_nr = int(time.time()) % 100000
 
     @callback
     def starten(self) -> None:
@@ -300,6 +304,26 @@ class DockStand:
 
         async_call_later(self.hass, self.TEST_S + 0.1, _weg)
 
+    AK_S = 600.0
+
+    def aktivitaet(self, dev: str, nr: int) -> None:
+        """Aktivitaet ueber das Dock setzen (nr -1 = beenden)."""
+        self._ak_nr += 1
+        self._ak[dev] = (int(nr), self._ak_nr, time.monotonic() + self.AK_S)
+        self._planen(dev, 0)
+
+        @callback
+        def _weg(_now, d=dev, k=self._ak_nr) -> None:
+            if self._ak.get(d, (0, 0, 0))[1] == k:
+                self._ak.pop(d, None)
+                self._planen(d, 0)
+
+        async_call_later(self.hass, self.AK_S + 0.1, _weg)
+
+    def aktivitaet_fertig(self, dev: str) -> None:
+        if self._ak.pop(dev, None) is not None:
+            self._planen(dev, 0.2)
+
     async def senden(self, dev: str, immer: bool = False) -> None:
         self._geplant.pop(dev, None)
         st = _stand(self.hass, dev.replace("-", "_"), self._ausl.get(dev), self._gehalten)
@@ -310,6 +334,13 @@ class DockStand:
             st["wa"] = wa[0]
         if (t := self._test.get(dev)) and t[2] > time.monotonic():
             st["tp"] = [t[0], t[1]]
+        if (ak := self._ak.get(dev)) and ak[2] > time.monotonic():
+            st["ak"] = [ak[0], ak[1]]
+        # Helligkeit nach Lichtsensor (2026-11-17): [Display, Tasten] in %, -1 = lassen (light_curve.py dock_werte)
+        if (licht := self.hass.data.get("esphomeremote_licht")) is not None:
+            hb = licht.dock_werte(dev)
+            if hb != [-1, -1]:
+                st["hb"] = hb
         # Docks, die gerade online sind (2026-10-25): die Remote probiert sie zuerst
         st["do"] = [d for d in self.kd.dock_macs()
                     if (s := self.hass.states.get(f"binary_sensor.{d}_status")) is not None and s.state == "on"]

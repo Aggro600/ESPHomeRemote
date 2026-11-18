@@ -104,6 +104,18 @@
         }
       }
     },
+    "remote_event": {
+      "name": "Remote event via the dock",
+      "description": "Called by the dock when a remote without its own HA connection sends an event (camera image, live image, gestures changed, firmware update requested). Fires it in HA as if it came from the remote directly.",
+      "fields": {
+        "geraet": {
+          "name": "Device"
+        },
+        "event": {
+          "name": "Event"
+        }
+      }
+    },
     "timer_extend": {
       "name": "Extend timer",
       "description": "Restarts the last finished timer (from the remotes' selection) with this duration – for the “+5 min” button in the timer popup.",
@@ -299,6 +311,10 @@
     "flash_writes": {
       "title": "{name}: unusually many flash writes",
       "description": "Remote {name} currently writes about {rate} times a day to its flash memory – normal is a few hundred (around {normal}). The memory lasts a very long time, but this rate points to a bug that saves something over and over. Please download the diagnostics (Settings → Devices & services → ESPHomeRemote → ⋮) and open an issue on GitHub. The notice disappears by itself once the rate is normal again."
+    },
+    "ha_address": {
+      "title": "Remotes cannot reach Home Assistant over HTTP",
+      "description": "Remotes load their key layout, cover art and camera images over HTTP from Home Assistant. The address they would use is `{adresse}` – that is empty, a host name the remote cannot resolve reliably (such as homeassistant.local), or an internal Docker address. The ESPHome connection (green icon on the remote) works the other way round and does not prove this one.\n\nSet Settings → System → Network → Home Assistant URL → Local network to `http://IP-OF-HOME-ASSISTANT:8123` (the LAN IP, not \"Automatic\"). Then restart the remote or run the action `esphome.REMOTE_tasten_neu_laden`. If the remote is in a separate network (VLAN/IoT), allow it to reach Home Assistant on TCP port 8123."
     }
   }
 }

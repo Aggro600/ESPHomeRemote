@@ -1091,20 +1091,35 @@ class KonfigData:
 
     def basis(self) -> str:
         """HA-Adresse fuer die Remote ("IP:Port" im Heimnetz): Bilder und Konfiguration holt sie per HTTP von dort."""
+        b = self._basis_ermitteln()
+        if b != getattr(self, "_basis_geprueft", None):
+            self._basis_geprueft = b
+            from .reparaturen import adresse_pruefen
+            self.hass.loop.call_soon_threadsafe(adresse_pruefen, self.hass, b)   # auch aus Threads sicher
+        return b
+
+    def _basis_ermitteln(self) -> str:
+        import ipaddress
         from homeassistant.helpers.network import NoURLAvailableError, get_url
         from yarl import URL
+        api = self.hass.config.api
+        eigene = (f"{api.local_ip}:{api.port}" if api is not None and not api.use_ssl and api.local_ip
+                  and not str(api.local_ip).startswith("127.") else "")
         try:
             u = URL(get_url(self.hass, allow_external=False, allow_cloud=False, prefer_external=False))
             if u.scheme == "http" and u.host:
-                return f"{u.host}:{u.port}"
+                try:
+                    ipaddress.ip_address(u.host)
+                    return f"{u.host}:{u.port}"
+                except ValueError:
+                    # Hostname (homeassistant.local, eigene Domain; 2026-11-18): den loest der ESP32 nicht zuverlaessig
+                    # auf (mDNS) - die eigene IP von HA nehmen, wenn es sie gibt, sonst den Namen wie bisher
+                    return eigene or f"{u.host}:{u.port}"
         except NoURLAvailableError:
             pass
         # Interne URL https (Reverse-Proxy, eigene Domain) oder keine (2026-11-09): HA spricht im Heimnetz trotzdem oft
-        # selbst HTTP auf IP:Port - die nehmen, sonst blieb die Remote beim Platzhalter homeassistant.local haengen
-        api = self.hass.config.api
-        if api is not None and not api.use_ssl and api.local_ip and not str(api.local_ip).startswith("127."):
-            return f"{api.local_ip}:{api.port}"
-        return ""
+        # selbst HTTP auf IP:Port - die nehmen, sonst blieb die Remote beim Platzhalter haengen
+        return eigene
 
     @callback
     def announce(self, dev: str) -> None:

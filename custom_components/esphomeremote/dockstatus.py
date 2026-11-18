@@ -57,6 +57,10 @@ WERTE = {
     "w": ("sensor", "wlan_zustand", str),   # 2026-10-29: aus | immer | Grund|Restsekunden
     "f": ("sensor", "flash_schreibzugriffe", _zahl),   # 2026-11-13: Flash-Schreibzugriffe seit Strom an
 }
+# Ereignisse, die eine Remote ohne eigene HA-Verbindung ueber das Dock schicken darf (Dienst remote_event, 2026-11-17)
+EREIGNISSE_UEBER_DOCK = frozenset({
+    "esphome.remote_cam_snapshot", "esphome.remote_live_start", "esphome.remote_gesten_aendern", "esphome.remote_update",
+})
 # Name, Symbol, Einheit, device_class der eigenen Entitaet je Wert
 ART = {
     "a": ("Akkustand", "mdi:battery", "%", "battery"),
@@ -211,6 +215,19 @@ def einrichten(hass: HomeAssistant) -> DockStatus:
 
     hass.services.async_register(DOMAIN, "wifi_coming", wlan_kommt,
                                  schema=vol.Schema({vol.Required("geraet"): str}, extra=vol.ALLOW_EXTRA))
+    async def remote_ereignis(call: ServiceCall) -> None:
+        """Ereignis der Remote ueber das Dock (2026-11-17): ohne eigene HA-Verbindung kann die Remote keine Ereignisse
+        feuern - das Dock ruft stattdessen diesen Dienst auf. Nur die Ereignisse, die die Integration selbst auswertet."""
+        daten = {k: v for k, v in call.data.items() if k not in ("event", "d")}
+        ev = str(call.data["event"])
+        if ev not in EREIGNISSE_UEBER_DOCK:
+            _LOGGER.warning("remote_event: %s ist nicht erlaubt", ev)
+            return
+        _LOGGER.debug("Ereignis %s von %s ueber %s", ev, daten.get("geraet"), call.data.get("d") or "Dock")
+        hass.bus.async_fire(ev, daten)
+
+    hass.services.async_register(DOMAIN, "remote_event", remote_ereignis,
+                                 schema=vol.Schema({vol.Required("geraet"): str, vol.Required("event"): str}, extra=vol.ALLOW_EXTRA))
     hass.services.async_register(DOMAIN, "remote_status", remote_status,
                                  schema=vol.Schema({vol.Required("geraet"): str}, extra=vol.ALLOW_EXTRA))
     websocket_api.async_register_command(hass, ws_dockstatus_get)

@@ -63,3 +63,32 @@ async def test_alte_dateien_beheben(hass, eingerichtet, hass_client, tmp_path):
     assert list((tmp_path / "archive").glob("esphomeremote-alt-*/esphomeremote-keys.h"))
     assert (tmp_path / "remote-wz-test.yaml").exists(), "Geraetedateien bleiben"
     assert ir.async_get(hass).async_get_issue(DOMAIN, "old_files") is None
+
+
+async def test_ha_adresse(hass, eingerichtet):
+    """Adresse fuer die Remotes (2026-11-18): leer, Name oder Docker-IP -> Hinweis; LAN-IP -> keiner."""
+    from custom_components.esphomeremote.reparaturen import adresse_pruefen
+
+    reg = ir.async_get(hass)
+    for schlecht in ("", "homeassistant.local:8123", "172.17.0.2:8123", "127.0.0.1:8123"):
+        adresse_pruefen(hass, schlecht)
+        assert reg.async_get_issue(DOMAIN, "ha_address") is not None, schlecht
+    adresse_pruefen(hass, "192.168.1.20:8123")
+    assert reg.async_get_issue(DOMAIN, "ha_address") is None
+
+
+async def test_basis_name_wird_ip(hass, eingerichtet):
+    """Interne URL mit Hostname: die Remote bekommt die eigene IP von HA statt des Namens."""
+    from types import SimpleNamespace
+
+    kd = next(v for v in hass.data.values() if hasattr(v, "_basis_ermitteln"))
+    await hass.config.async_update(internal_url="http://homeassistant.local:8123")
+    hass.config.api = SimpleNamespace(local_ip="192.168.1.20", port=8123, use_ssl=False)
+    assert kd.basis() == "192.168.1.20:8123"
+    await hass.config.async_update(internal_url="http://192.168.1.30:8123")
+    assert kd.basis() == "192.168.1.30:8123"
+    hass.config.api = None
+    await hass.config.async_update(internal_url="https://ha.example.org")
+    assert kd.basis() == ""
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "ha_address") is not None

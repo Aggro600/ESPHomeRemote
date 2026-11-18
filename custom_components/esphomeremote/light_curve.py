@@ -12,6 +12,8 @@ Gespeichert in data["licht"] (Konfigurator-Speicher):
   lernen, ziele: {disp|kbd|dock: {an, punkte: [[lux, pct], ...]}}, aus: [Geraete ohne Automatik],
   docks: {dock-slug: {led, blinkt}}  (Dock-Einstellungen; led = feste Helligkeit, wenn die Automatik dort aus ist)
 Die Remote bekommt die Werte ueber die Aktion helligkeit_auto (Firmware), das Dock ueber seine number-Entitaet.
+Remote ohne eigene HA-Verbindung (nur ueber das Dock, 2026-11-17): dieselben Werte stehen als "hb" [disp, kbd] im Stand,
+den das Dock fuer sie bereithaelt (state.py) - die Remote holt ihn nach dem Aufwachen und jede Minute.
 """
 from __future__ import annotations
 
@@ -82,6 +84,7 @@ class Licht:
         self.kd = kd
         self.gesendet: dict[str, dict] = {}     # Geraet -> {ziel: wert}, zuletzt von hier geschickt
         self.zeit: dict[str, float] = {}
+        self.dock: dict[str, list[int]] = {}   # Geraet -> [disp, kbd] im Dock-Stand ("hb", -1 = lassen)
         self._unsub = None
 
     @property
@@ -170,6 +173,10 @@ class Licht:
                 continue
             if abs(v - self.gesendet.get(dev, {}).get(ziel, -99)) <= 1 or not self._automatik(dev, ziel):
                 continue
+            # Wert aus dem Dock-Stand uebernommen - nicht von Hand verstellt
+            dw = self.dock.get(dev)
+            if dw is not None and abs(v - dw[0 if ziel == "disp" else 1]) <= 1:
+                continue
             self.gesendet.setdefault(dev, {})[ziel] = v
             self.lernen(ziel, v, dev)
 
@@ -193,7 +200,32 @@ class Licht:
         return sorted(s.entity_id[len("number."):-len("_led_helligkeit")] for s in self.hass.states.async_all("number")
                       if s.entity_id.startswith("number.dock_") and s.entity_id.endswith("_led_helligkeit"))
 
+    def dock_werte(self, dev: str) -> list[int]:
+        """[disp, kbd] fuer den Dock-Stand: aendert sich erst ab SCHWELLE (wie ueber die API), -1 = Automatik aus."""
+        aus = dev in self.cfg["aus"]
+        alt = self.dock.get(dev, [-1, -1])
+        neu = []
+        for i, z in enumerate(("disp", "kbd")):
+            v = None if aus else self.wert(z, geraet=dev)
+            if v is None:
+                neu.append(-1)
+            elif alt[i] < 0 or abs(v - alt[i]) >= SCHWELLE:
+                neu.append(max(5, min(100, int(v))))
+            else:
+                neu.append(alt[i])
+        self.dock[dev] = neu
+        return neu
+
+    def _dock_pruefen(self) -> None:
+        """Werte fuer den Dock-Stand neu rechnen; geaendert -> Stand an die Docks (state.py)."""
+        ds = self.hass.data.get("esphomeremote_dockstand")
+        for dev in list(self.kd.devices):
+            alt = list(self.dock.get(dev, [-1, -1]))
+            if self.dock_werte(dev) != alt and ds is not None:
+                ds._planen(dev, 1)
+
     async def alle_senden(self, erzwingen: bool = False) -> None:
+        self._dock_pruefen()
         for dev in list(self.kd.devices):
             await self.remote_senden(dev, erzwingen)
         for dock in self.docks():

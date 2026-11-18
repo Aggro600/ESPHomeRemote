@@ -431,8 +431,8 @@ void TastenKonfig::download_starten_() {
   dl_gelesen_ = 0;
   dl_gesamt_ = -1;
   letzt_pct_ = -2;
-  versuch_++;
-  ESP_LOGI(TAG, "Hole Belegung %s (Versuch %u)", dl_soll_.c_str(), (unsigned) versuch_);
+  if (versuch_ < 250) versuch_++;
+  ESP_LOGI(TAG, "Hole Belegung %s von %s (Versuch %u)", dl_soll_.c_str(), host_.c_str(), (unsigned) versuch_);
   dl_gelesen_ = dl_ab_;
   melden_(1, 0, "Verbinde mit Home Assistant");
   // Arbeits-Task einmalig anlegen, Stapel im PSRAM (2026-10-04): vorher bei jedem Download
@@ -581,15 +581,19 @@ void TastenKonfig::loop() {
       }
     } else {
       ESP_LOGW(TAG, "Download fehlgeschlagen (HTTP %d, %u Byte)", dl_status_, (unsigned) dl_len_);
-      char g[80];
-      if (dl_status_ < 0) snprintf(g, sizeof(g), "Fehler: keine Verbindung zu HA (Versuch %u von 8)", (unsigned) versuch_);
+      // Adresse mit anzeigen (2026-11-18): bei einem Tester stand die ESPHome-Verbindung (gruen), der HTTP-Abruf
+      // ging aber an eine falsche/unerreichbare Adresse - ohne Adresse war das nicht zu erkennen.
+      char g[128];
+      if (dl_status_ < 0) snprintf(g, sizeof(g), "Fehler: keine Verbindung zu HA unter %s (Versuch %u)", host_.c_str(), (unsigned) versuch_);
       else if (dl_status_ == 403) snprintf(g, sizeof(g), "Fehler: Schlüssel falsch (HTTP 403)");
-      else snprintf(g, sizeof(g), "Fehler: HTTP %d (Versuch %u von 8)", dl_status_, (unsigned) versuch_);
+      else snprintf(g, sizeof(g), "Fehler: HTTP %d (Versuch %u)", dl_status_, (unsigned) versuch_);
       melden_(4, 0, g);
     }
     free(dl_buf_);
     dl_buf_ = nullptr;
-    laden_ab_ = millis() + (versuch_ < 3 ? 5000 : 60000);
+    // Nach 8 Fehlversuchen nicht mehr aufgeben (2026-11-18), sondern alle 10 min erneut - aber nur, solange
+    // HA ohnehin verbunden ist (kein WLAN nur dafuer, siehe unten).
+    laden_ab_ = millis() + (versuch_ < 3 ? 5000 : versuch_ < 8 ? 60000 : 600000);
   }
 
   // Neu laden noetig?
@@ -599,7 +603,7 @@ void TastenKonfig::loop() {
   // Laeuft der Download noch (auch ein haengender, bis zum HTTP-Timeout): abwarten - ein zweiter Auftrag wuerde
   // Adresse und Puffer des laufenden ueberschreiben.
   if (dl_laeuft_) grund = millis() - dl_start_ > 30000 ? "Download haengt" : "Download laeuft";
-  else if (versuch_ >= 8) grund = "zu viele Versuche";
+  else if (versuch_ >= 8 && !api_ok_()) grund = "zu viele Versuche";
   else if ((int32_t) (millis() - laden_ab_) < 0) grund = "Wartezeit";
   else if (!api_ok_()) {
     // Dock zuerst (2026-10-31): vorher kam bei jeder neuen Belegung erst das WLAN (60 s, bis 12 s Warten) - in der Zeit

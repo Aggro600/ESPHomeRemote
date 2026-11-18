@@ -68,8 +68,18 @@ class AktBasis:
     async def async_added_to_hass(self) -> None:
         @callback
         def neu(ev: Event) -> None:
-            if self._wunsch is not None and not zustand_unbekannt(ev.data.get("new_state")):
-                self.hass.async_create_task(self._zustellen())
+            st = ev.data.get("new_state")
+            if self._wunsch is not None and not zustand_unbekannt(st):
+                try:
+                    ist = int(float(st.state))
+                except (TypeError, ValueError):
+                    ist = None
+                if ist == self._wunsch:   # angekommen (auch ueber das Dock gemeldet, 2026-11-17)
+                    self._wunsch = None
+                    if (ds := self.hass.data.get("esphomeremote_dockstand")) is not None:
+                        ds.aktivitaet_fertig(self.dev)
+                elif not ev.data["entity_id"].startswith("sensor.esphomeremote_"):   # eigene Verbindung steht
+                    self.hass.async_create_task(self._zustellen())
             self.async_write_ha_state()
 
         @callback
@@ -88,11 +98,16 @@ class AktBasis:
         nr, self._wunsch = self._wunsch, None
         if nr is None:
             return
+        ds = self.hass.data.get("esphomeremote_dockstand")
         try:
             await self.hass.services.async_call("esphome", f"{self.slug}_aktivitaet_setzen", {"nr": nr}, blocking=True)
-        except Exception as err:   # noqa: BLE001 - beim naechsten Verbinden erneut
+            if ds is not None:
+                ds.aktivitaet_fertig(self.dev)
+        except Exception as err:   # noqa: BLE001 - beim naechsten Verbinden erneut, bis dahin ueber das Dock
             self._wunsch = nr
-            raise HomeAssistantError(f"{self.dev}: Aktivität nicht gesetzt ({err})") from err
+            if ds is None:
+                raise HomeAssistantError(f"{self.dev}: Aktivität nicht gesetzt ({err})") from err
+            ds.aktivitaet(self.dev, nr)
         finally:
             self.async_write_ha_state()
 
@@ -103,7 +118,11 @@ class AktBasis:
         s = self._sensor
         st = self.hass.states.get(s) if s else None
         if st is None or st.state == STATE_UNAVAILABLE:
-            self.async_write_ha_state()   # Remote schlaeft: beim naechsten Verbinden
+            # Keine eigene Verbindung: ueber das Dock (2026-11-17) - die Remote holt es nach dem Aufwachen bzw. mit
+            # dem naechsten Stand; verbindet sie sich vorher selbst, stellt neu() es direkt zu
+            if (ds := self.hass.data.get("esphomeremote_dockstand")) is not None:
+                ds.aktivitaet(self.dev, nr)
+            self.async_write_ha_state()
             return
         await self._zustellen()
 

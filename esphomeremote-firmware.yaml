@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.15.2"
+    version: "2026.11.18.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
@@ -928,27 +928,7 @@ api:
     - service: helligkeit_auto
       variables: {disp: int, kbd: int}
       then:
-        - lambda: |-
-            bool geaendert = false;
-            if (disp >= 5 && disp <= 100 && disp != id(disp_bri)) { id(disp_bri) = disp; geaendert = true; }
-            if (kbd >= 5 && kbd <= 100 && kbd != id(kbd_bri)) { id(kbd_bri) = kbd; geaendert = true; }
-            if (!geaendert) return;
-            ESP_LOGI("licht", "Helligkeit nach Lichtsensor: Display %d %%, Tasten %d %%", id(disp_bri), id(kbd_bri));
-            if (id(display_backlight).current_values.is_on()) {
-              float b = id(disp_bri) / 100.0f;
-              if (id(disp_dimmed)) b = fmaxf(0.03f, b * (id(ps_dim_pct) / 100.0f));
-              auto c = id(display_backlight).turn_on(); c.set_brightness(b); c.set_transition_length(1500); c.perform();
-            }
-            if (id(kbd_light_on) && id(button_backlight).current_values.is_on()) {
-              auto c = id(button_backlight).turn_on(); c.set_brightness(id(kbd_bri) / 100.0f); c.set_transition_length(1500); c.perform();
-            }
-            char b[8];
-            snprintf(b, sizeof(b), "%d%%", id(disp_bri)); lv_label_set_text(id(disp_bri_lbl), b); lv_label_set_text(id(qs_bri_pct), b);
-            snprintf(b, sizeof(b), "%d%%", id(kbd_bri));  lv_label_set_text(id(kbd_bri_lbl), b); lv_label_set_text(id(qs_kbd_pct), b);
-            lv_slider_set_value(id(disp_bri_sld), id(disp_bri), LV_ANIM_OFF);
-            lv_slider_set_value(id(kbd_bri_sld), id(kbd_bri), LV_ANIM_OFF);
-            lv_slider_set_value(id(home_bri_sld), id(disp_bri), LV_ANIM_OFF);
-            lv_slider_set_value(id(home_kbd_sld), id(kbd_bri), LV_ANIM_OFF);
+        - script.execute: {id: helligkeit_setzen, disp: !lambda 'return disp;', kbd: !lambda 'return kbd;'}
 
 ota:
   - platform: esphome
@@ -1554,6 +1534,8 @@ globals:
   # in ~2 s - Klingel-Popups kommen weiter), 2 trennen (spart am meisten, HA erreicht die Remote erst nach dem Wecken)
   - {id: ha_link_modus,  type: int,       restore_value: true,  initial_value: "1"}
   - {id: zustand_da,     type: bool,      restore_value: false, initial_value: "false"}   # Stand vom Dock schon da
+  - {id: akku_dock_pct,  type: int,       restore_value: false, initial_value: "-1"}   # zuletzt ueber das Dock gemeldeter Akku (-1 = seit dem Start nicht)
+  - {id: dock_status_ms, type: uint32_t,  restore_value: false, initial_value: "0"}    # letzte Werte-Meldung ans Dock (millis)
   - {id: musik_player,   type: bool,      restore_value: true,  initial_value: "true"}
   # Touchpad (esphomeremote-mouse.h): Bit je Bluetooth-Platz - maus_slots = Maus melden, voll_slots = volle Tastatur
   # trotz kb_ziffern; maus_tempo = Zeigertempo in %
@@ -1708,6 +1690,28 @@ dock_direct:
             const std::string tp = d["tp"][0] | "";
             if (tp == "_smartdisplay") dockanz::vorschau();
             else tasten::menue_popup(tp);
+          }
+        }
+        // Helligkeit nach Lichtsensor ueber das Dock (2026-11-17): [Display, Tasten] - nur bei neuem Wert, nach dem Start
+        // einmal (wie beim Verbinden ueber WLAN). Von Hand verstellt bleibt es so, bis HA einen neuen Wert hat.
+        if (d["hb"].is<JsonArrayConst>()) {
+          static int hb_d = -2, hb_k = -2;
+          const int hd = d["hb"][0] | -1, hk = d["hb"][1] | -1;
+          if (hd != hb_d || hk != hb_k) {
+            hb_d = hd; hb_k = hk;
+            id(helligkeit_setzen)->execute(hd, hk);
+          }
+        }
+        // Aktivitaet aus HA (Schalter/Auswahl, 2026-11-17): einmal je Zaehler, auch ueber einen Tiefschlaf hinweg
+        if (d["ak"].is<JsonArrayConst>()) {
+          static RTC_DATA_ATTR uint32_t ak_nr = 0;
+          const uint32_t nr = d["ak"][1] | 0u;
+          if (nr != 0 && nr != ak_nr) {
+            ak_nr = nr;
+            const int a = d["ak"][0] | -1;
+            ESP_LOGI("dock", "Aktivitaet vom Dock: %d", a);
+            if (a < 0) tasten::aktivitaet_aus(); else tasten::aktivitaet_setzen(a);
+            id(dock_status_melden).execute(false);
           }
         }
         // Docks, die laut HA online sind (2026-10-25): die werden zuerst probiert
@@ -2465,6 +2469,34 @@ interval:
       - script.execute: schlaf_status_melden
 
 script:
+  # Helligkeit nach Lichtsensor (2026-10-17, als Skript seit 2026-11-17): von HA direkt (Aktion helligkeit_auto) oder
+  # ueber das Dock ("hb" im Stand, dock_direkt on_zustand). Werte 5-100 %, sonst lassen.
+  - id: helligkeit_setzen
+    mode: queued
+    max_runs: 3
+    parameters: {disp: int, kbd: int}
+    then:
+      - lambda: |-
+          bool geaendert = false;
+          if (disp >= 5 && disp <= 100 && disp != id(disp_bri)) { id(disp_bri) = disp; geaendert = true; }
+          if (kbd >= 5 && kbd <= 100 && kbd != id(kbd_bri)) { id(kbd_bri) = kbd; geaendert = true; }
+          if (!geaendert) return;
+          ESP_LOGI("licht", "Helligkeit nach Lichtsensor: Display %d %%, Tasten %d %%", id(disp_bri), id(kbd_bri));
+          if (id(display_backlight).current_values.is_on()) {
+            float b = id(disp_bri) / 100.0f;
+            if (id(disp_dimmed)) b = fmaxf(0.03f, b * (id(ps_dim_pct) / 100.0f));
+            auto c = id(display_backlight).turn_on(); c.set_brightness(b); c.set_transition_length(1500); c.perform();
+          }
+          if (id(kbd_light_on) && id(button_backlight).current_values.is_on()) {
+            auto c = id(button_backlight).turn_on(); c.set_brightness(id(kbd_bri) / 100.0f); c.set_transition_length(1500); c.perform();
+          }
+          char b[8];
+          snprintf(b, sizeof(b), "%d%%", id(disp_bri)); lv_label_set_text(id(disp_bri_lbl), b); lv_label_set_text(id(qs_bri_pct), b);
+          snprintf(b, sizeof(b), "%d%%", id(kbd_bri));  lv_label_set_text(id(kbd_bri_lbl), b); lv_label_set_text(id(qs_kbd_pct), b);
+          lv_slider_set_value(id(disp_bri_sld), id(disp_bri), LV_ANIM_OFF);
+          lv_slider_set_value(id(kbd_bri_sld), id(kbd_bri), LV_ANIM_OFF);
+          lv_slider_set_value(id(home_bri_sld), id(disp_bri), LV_ANIM_OFF);
+          lv_slider_set_value(id(home_kbd_sld), id(kbd_bri), LV_ANIM_OFF);
   # IR anlernen (Konfigurator, 2026-10-11): Empfaenger an, Fenster offen halten, danach wieder aus.
   - id: ir_lern_fenster
     mode: restart
@@ -2546,15 +2578,22 @@ script:
     max_runs: 8
     parameters: {aktion: string, gid: string, name: string, wert: string, v: string}
     then:
-      - homeassistant.event:
-          event: esphome.remote_gesten_aendern
-          data:
-            geraet: !lambda 'return App.get_name();'
-            aktion: !lambda 'return aktion;'
-            id: !lambda 'return gid;'
-            name: !lambda 'return name;'
-            wert: !lambda 'return wert;'
-            v: !lambda 'return v;'
+      - if:
+          condition: {lambda: 'return api::global_api_server->is_connected();'}
+          then:
+            - homeassistant.event:
+                event: esphome.remote_gesten_aendern
+                data:
+                  geraet: !lambda 'return App.get_name();'
+                  aktion: !lambda 'return aktion;'
+                  id: !lambda 'return gid;'
+                  name: !lambda 'return name;'
+                  wert: !lambda 'return wert;'
+                  v: !lambda 'return v;'
+          else:   # ohne eigene HA-Verbindung ueber das Dock (2026-11-17)
+            - lambda: |-
+                id(tk_cfg).dock_aufruf("esphomeremote.remote_event", {{"event", "esphome.remote_gesten_aendern"},
+                                       {"aktion", aktion}, {"id", gid}, {"name", name}, {"wert", wert}, {"v", v}});
   - id: geste_lernstand_an_ha
     mode: queued
     max_runs: 6
@@ -2834,6 +2873,15 @@ script:
             weck_log("Taste beim Start uebers Dock gesendet");
           }
 
+  # Akku ueber das Dock (2026-11-17): das Dock reicht je Remote hoechstens alle 20 s Werte weiter (dock_direkt) - kam
+  # gerade eine Meldung (z. B. direkt nach dem Aufwachen), kurz warten, sonst ginge der Akkustand verloren
+  - id: akku_dock_melden
+    mode: single
+    then:
+      - wait_until:
+          condition: {lambda: 'return id(dock_status_ms) == 0 || millis() - id(dock_status_ms) >= 21000;'}
+          timeout: 25s
+      - lambda: 'if (!api::global_api_server->is_connected()) id(dock_status_melden).execute(false);'
   - id: dock_status_melden
     mode: restart
     parameters: {schlaf: bool}
@@ -2853,15 +2901,21 @@ script:
           // WLAN-Zustand (2026-10-29): Restzeit aktuell, als Aenderung zaehlt nur der Grund
           d["w"] = wlan_zugriff::g_rest > 0 ? wlan_zugriff::g_zustand + "|" + std::to_string(wlan_zugriff::g_rest) : wlan_zugriff::g_zustand;
           d["f"] = std::to_string(flashzaehler::summe());   // Flash-Schreibzugriffe seit Strom an (2026-11-13)
-          // Nur bei Aenderung, sonst hoechstens alle 10 min; vor dem Tiefschlaf immer (2026-10-25, vorher jede Minute -
-          // Funk und Dock-Last). Spannung zaehlt nicht als Aenderung (schwankt staendig).
+          // Nur bei Aenderung, sonst hoechstens alle 30 min (2026-11-17, vorher 10); vor dem Tiefschlaf immer (2026-10-25,
+          // vorher jede Minute - Funk und Dock-Last). Spannung zaehlt nicht als Aenderung (schwankt staendig).
+          // Akku (2026-11-17): zaehlt erst ab einem Schritt (akku_dock_schritt: 5 %, bis 20 % 2 %) - vorher jedes Prozent;
+          // nach dem Start (Tiefschlaf, Neustart) einmal, sobald gemessen (akku_level on_value).
           static std::string zuletzt;
           static uint32_t zuletzt_ms = 0;
+          const int a_neu = std::isnan(id(akku_level).state) ? -1 : (int) lroundf(id(akku_level).state);
+          const bool akku_neu = a_neu >= 0 && akku_dock_schritt(a_neu, id(akku_dock_pct));
           std::string vergleich;
-          for (auto &kv : d) if (kv.first != "v" && kv.first != "f") vergleich += kv.first + "=" + (kv.first == "w" ? kv.second.substr(0, kv.second.find('|')) : kv.second) + ";";
-          if (schlaf || vergleich != zuletzt || zuletzt_ms == 0 || millis() - zuletzt_ms > 600000) {
+          for (auto &kv : d) if (kv.first != "v" && kv.first != "f" && kv.first != "a") vergleich += kv.first + "=" + (kv.first == "w" ? kv.second.substr(0, kv.second.find('|')) : kv.second) + ";";
+          if (schlaf || akku_neu || vergleich != zuletzt || zuletzt_ms == 0 || millis() - zuletzt_ms > 1800000) {
             zuletzt = vergleich;
             zuletzt_ms = millis() | 1;
+            if (a_neu >= 0) id(akku_dock_pct) = a_neu;
+            id(dock_status_ms) = millis() | 1;
             id(tk_cfg).status_ueber_dock(d, schlaf);
           }
           // Protokoll ueber das Dock (2026-10-24): mit "Debug-Protokoll" an gehen die gepufferten Zeilen ab INFO mit -
@@ -3208,13 +3262,24 @@ script:
           lv_obj_add_flag(id(cv_img), LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(cv_ph), LV_OBJ_FLAG_HIDDEN);
       - if:
-          condition: {lambda: 'return id(tk_cfg).kameras() > 0;'}
+          condition: {lambda: 'return id(tk_cfg).kameras() > 0 && api::global_api_server->is_connected();'}
           then:
             - homeassistant.event:
                 event: esphome.remote_cam_snapshot
                 data:
                   kamera: !lambda 'return id(tk_cfg).kamera_entitaet(id(cv_idx));'
                   geraet: !lambda 'return App.get_name();'
+      # Ohne eigene HA-Verbindung ueber das Dock (2026-11-17); HA kann dann nicht "Bild fertig" melden - nach 3 s laden
+      - if:
+          condition:
+            lambda: |-
+              return id(tk_cfg).kameras() > 0 &&
+                     id(tk_cfg).dock_aufruf("esphomeremote.remote_event", {{"event", "esphome.remote_cam_snapshot"},
+                                            {"kamera", id(tk_cfg).kamera_entitaet(id(cv_idx))}}, true);
+          then:
+            - delay: 3s
+            - lambda: 'id(cam_try) = 0;'
+            - script.execute: cam_load
 
   # ---- Live-Bild (schnell): Kamera bei HA anfordern, dann Bilder fortlaufend nachladen ----
   - id: live_start
@@ -3231,11 +3296,18 @@ script:
       - if:
           condition: {lambda: 'return id(tk_cfg).kameras() > 0;'}
           then:
-            - homeassistant.event:
-                event: esphome.remote_live_start
-                data:
-                  kamera: !lambda 'return id(tk_cfg).kamera_entitaet(id(cv_idx));'
-                  geraet: !lambda 'return App.get_name();'
+            - if:
+                condition: {lambda: 'return api::global_api_server->is_connected();'}
+                then:
+                  - homeassistant.event:
+                      event: esphome.remote_live_start
+                      data:
+                        kamera: !lambda 'return id(tk_cfg).kamera_entitaet(id(cv_idx));'
+                        geraet: !lambda 'return App.get_name();'
+                else:   # ohne eigene HA-Verbindung ueber das Dock (2026-11-17)
+                  - lambda: |-
+                      id(tk_cfg).dock_aufruf("esphomeremote.remote_event", {{"event", "esphome.remote_live_start"},
+                                             {"kamera", id(tk_cfg).kamera_entitaet(id(cv_idx))}}, true);
             - script.execute: live_loop
   - id: live_loop
     mode: restart
@@ -3757,7 +3829,12 @@ script:
       - if:
           condition: {lambda: 'return !api::global_api_server->is_connected_with_state_subscription();'}
           then:
-            - lambda: 'extras::fw_status("Keine Verbindung zu Home Assistant. Bitte kurz warten und nochmal versuchen.", 3);'
+            # Ohne eigene HA-Verbindung ueber das Dock (2026-11-17): HA baut und fordert dann das Wartungsfenster an
+            - lambda: |-
+                if (id(tk_cfg).dock_aufruf("esphomeremote.remote_event", {{"event", "esphome.remote_update"}}, true))
+                  extras::fw_status("Über das Dock angefragt. Home Assistant baut jetzt die Firmware, danach geht das WLAN kurz an.", 0);
+                else
+                  extras::fw_status("Keine Verbindung zu Home Assistant. Bitte kurz warten und nochmal versuchen.", 3);
           else:
             - lambda: 'extras::fw_status("Angefragt. Home Assistant baut jetzt die Firmware, das dauert einige Minuten.", 1);'
             - script.execute: fw_fenster
@@ -5940,11 +6017,8 @@ script:
           then:
             - lambda: 'ESP_LOGW("adb", "Kein Streamer gewaehlt (Konfigurator > Verknuepfungen)");'
           else:
-            - homeassistant.action:
-                action: androidtv.adb_command
-                data:
-                  entity_id: !lambda 'return id(tk_cfg).ent("adb");'
-                  command: !lambda 'return cmd;'
+            # wie eine Taste: ohne eigene HA-Verbindung ueber das Dock (2026-11-17)
+            - lambda: 'id(tk_cfg).ha_aufruf("androidtv.adb_command", {{"entity_id", id(tk_cfg).ent("adb")}, {"command", cmd}});'
 
   - id: gesture_single
     mode: restart
@@ -7022,6 +7096,10 @@ sensor:
               snprintf(b, sizeof(b), "%d%%", akku_anzeige_pct(x, id(akku_voll)));
               return std::string(b);
         - lambda: 'id(akku_pct) = (int) x;'
+        # Ohne eigene HA-Verbindung (2026-11-17): Akku ueber das Dock - nach dem Start sofort, danach nur ab einem Schritt
+        - lambda: |-
+            if (!api::global_api_server->is_connected() && akku_dock_schritt((int) lroundf(x), id(akku_dock_pct)))
+              id(akku_dock_melden).execute();
         - script.execute: apply_low_bat
         - script.execute: refresh_laden
         # Ohne diesen Aufruf meldet die Fernbedienung dem Fernseher dauerhaft
@@ -8509,9 +8587,8 @@ lvgl:
                   hidden: true
                   styles: [st_ctrlbtn]
                   on_click:
-                    - homeassistant.service:
-                        service: media_player.turn_on
-                        data: {entity_id: !lambda 'return id(tk_cfg).ent("tv");'}
+                    # wie eine Taste: ohne eigene HA-Verbindung ueber das Dock (2026-11-17)
+                    - lambda: 'id(tk_cfg).ha_aufruf("media_player.turn_on", {{"entity_id", id(tk_cfg).ent("tv")}});'
                   widgets: [{label: {align: CENTER, text: "Fernseher einschalten", text_font: a13}}]
         # Bedienleiste ganz am unteren Bildschirmrand, EINE Zeile (Stand
         # 2026-09-16, Nutzerwunsch: Lauter/Leiser sollen weniger vom Cover

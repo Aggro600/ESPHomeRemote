@@ -1,5 +1,19 @@
 # What's new · Was ist neu
 
+## 2026.11.18.1 (2026-11-18)
+
+**Key layout does not load despite the green icon:** the remote now shows the address it uses to reach Home Assistant ("no connection to HA at …") and no longer gives up after 8 failed attempts – it retries every 10 minutes while HA is connected. Home Assistant now hands the remote its IP instead of a name like homeassistant.local and raises a repair if the address is empty, a host name or a Docker address.
+
+**Dock mode:** brightness from the light sensor and activity from Home Assistant also via the dock, "Turn on TV" button, camera, gestures and update request via the dock, battery level to the dock in 5 % steps (below 20 %: 2 %).
+
+<details><summary>Deutsch</summary>
+
+**Belegung lädt nicht trotz grünem Symbol:** Die Remote zeigt jetzt die Adresse, unter der sie Home Assistant sucht ("keine Verbindung zu HA unter …"), und gibt nach 8 Fehlversuchen nicht mehr auf, sondern versucht es alle 10 Minuten erneut, solange HA verbunden ist. Home Assistant gibt der Remote statt eines Namens wie homeassistant.local seine IP und meldet unter Reparaturen, wenn die Adresse leer, ein Name oder eine Docker-Adresse ist.
+
+**Dock-Modus:** Helligkeit nach Lichtsensor und Aktivität aus Home Assistant auch über das Dock, Knopf "Fernseher einschalten", Kamera, Gesten und Update-Anfrage über das Dock, Akkustand ans Dock in 5-%-Schritten (unter 20 %: 2 %).
+
+</details>
+
 ## 2026.11.15.2 (2026-11-15)
 
 README: FAQ entry on battery level and other values via the dock (entities, recorder).
