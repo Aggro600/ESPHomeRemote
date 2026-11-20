@@ -6964,6 +6964,13 @@ const EinstTab = {
       "IP-Adresse nachsehen: <b>Einstellungen → Netzwerk &amp; Internet</b> → WLAN. Am besten im Router fest vergeben.",
       "In Home Assistant die Integration <b>Android TV</b> mit dieser IP hinzufügen. Am Stick erscheint <b>„USB-Debugging zulassen?“</b> → <b>„Immer zulassen“</b> anhaken, OK.",
       "Unten das ADB-Gerät wählen und bei „Streamer-App“ auf <b>Einrichten</b> – die App kommt auf den Stick, Bedienungshilfe und Benachrichtigungszugriff werden freigegeben."]
+      : typ === "tablet" ? [
+      "Am Tablet: <b>Einstellungen → Über das Tablet</b> → 7× auf <b>„Build-Nummer“</b> tippen (Entwickleroptionen frei).",
+      "<b>Einstellungen → System → Entwickleroptionen</b> → <b>„Debugging über WLAN“</b> einschalten (ab Android 11; bei älteren Geräten „USB-Debugging“ und weiter mit dem Kabel).",
+      "Einmalig von einem Rechner mit ADB (Android Platform-Tools): im Tablet <b>„Gerät über einen Kopplungscode koppeln“</b>, dann <code>adb pair IP:Port Code</code>, danach <code>adb connect IP:Port</code> (Port von „Geräteadressen und Port“) und <code>adb tcpip 5555</code>.",
+      "In Home Assistant die Integration <b>Android TV</b> mit der IP des Tablets hinzufügen (Port 5555). Erscheint <b>„USB-Debugging zulassen?“</b> → <b>„Immer zulassen“</b> anhaken, OK.",
+      "Bei „Nur Kamera“ den Haken setzen, unten das ADB-Gerät wählen und bei „Streamer-App“ auf <b>Einrichten</b> – auch die Sperre für Bedienungshilfen (Android 13+) wird dabei aufgehoben.",
+      "Dann unter <b>Funktionen › Kamera auf dem Fernseher</b> einen weiteren Fernseher (z. B. „Tablet“) mit diesem Streamer anlegen."]
       : typ === "google" ? [
       "Am Streamer: <b>Einstellungen → System → Info</b> → 7× auf <b>„Android TV OS-Build“</b> drücken.",
       "<b>Entwickleroptionen → USB-Debugging</b> einschalten.",
@@ -6973,9 +6980,11 @@ const EinstTab = {
       "Entwickleroptionen freischalten (meist 7× auf die Build-Nummer unter Einstellungen → Info) und <b>USB-/ADB-Debugging</b> einschalten.",
       "Integration <b>Android TV</b> mit der IP hinzufügen, am Gerät „Immer zulassen“ bestätigen.",
       "ADB-Gerät wählen und bei „Streamer-App“ auf <b>Einrichten</b>."];
-    const extra = typ === "magenta"
+    const extra = typ === "tablet"
+      ? `<small class="note">Nach einem Neustart des Tablets schließt Android den Port 5555 wieder – dann „Debugging über WLAN“ erneut koppeln und <code>adb tcpip 5555</code>.</small>`
+      : typ === "magenta"
       ? `<small class="note">Kamerabilder: Der Stick dekodiert keine Hauptstreams mit 5 MP (2560×1920) – im Fenster bleibt dann nur das Play-Symbol. Für ihn den Substream der Kamera nehmen (go2rtc <code>…_sub</code>).</small>` : "";
-    return `<details class="appbox"><summary><b><ha-icon icon="mdi:format-list-numbered"></ha-icon> Einrichten am ${typ === "magenta" ? "MagentaTV Stick" : typ === "google" ? "Google TV Streamer" : "Gerät"}</b></summary>
+    return `<details class="appbox"><summary><b><ha-icon icon="mdi:format-list-numbered"></ha-icon> Einrichten am ${typ === "magenta" ? "MagentaTV Stick" : typ === "google" ? "Google TV Streamer" : typ === "tablet" ? "Tablet / Handy" : "Gerät"}</b></summary>
       <ol style="margin:6px 0 4px 18px;padding:0">${schritte.map((z) => `<li style="margin:3px 0">${z}</li>`).join("")}</ol>${extra}</details>`;
   },
   // Popup-Menue auf dem Fernseher (2026-11-05, streamer_menue.py): wie das Menue der Remote, je Streamer
@@ -7064,7 +7073,7 @@ const EinstTab = {
         <button class="icon sm" data-a="st_del" data-si="${si}" title="Löschen"><ha-icon icon="mdi:delete-outline"></ha-icon></button></h3>
       <small>${zul ? `Zuletzt gemeldet: ${new Date(zul).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${d.app?.[x.id] ? ` · ${esc(d.app[x.id])}` : ""}` : "Noch nichts empfangen – Streamer-App installieren und Adresse eintragen."}</small>
       <div class="ez"><span>Gerät<small class="vtext">Die Streamer-App ist für alle dieselbe – das Gerät bestimmt nur die Anleitung</small></span>
-        <select data-st="typ" data-si="${si}">${[["google", "Google TV Streamer"], ["magenta", "MagentaTV Stick (Gen 2, Typ A)"], ["android", "Anderes Android-TV-Gerät"]]
+        <select data-st="typ" data-si="${si}">${[["google", "Google TV Streamer"], ["magenta", "MagentaTV Stick (Gen 2, Typ A)"], ["android", "Anderes Android-TV-Gerät"], ["tablet", "Android-Tablet / Handy"]]
           .map(([k, l]) => `<option value="${k}" ${(x.typ || "google") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       ${this._strmAnleitung(x)}
       <div class="ez"><span>Nur Kamera<small class="vtext">Die App zeigt nur das Kamera-Popup – keine Titel, Cover, Tastatur-Meldungen, und Home Assistant fragt den Streamer nicht laufend ab. Weniger Last, z. B. für den MagentaTV Stick.</small></span>
@@ -7088,7 +7097,7 @@ const EinstTab = {
     return `<h3 style="margin-top:24px"><ha-icon icon="mdi:cast-variant"></ha-icon>Streamer</h3>
       <p class="hint">Android-TV-Streamer mit der App „ESPHomeRemote Streamer“ melden, was läuft (jede App mit Medien-Sitzung, Titel, Cover, Position) und ob die Bildschirmtastatur offen ist. Pro Streamer gibt es Sensoren (z. B. <code>…_tastatur</code> als Popup-Auslöser) und Knöpfe „App beenden“ / „neu starten“.</p>
       <div class="egrid">${karten}</div>
-      ${d.streamer.length < 4 ? `<p><button class="btn" data-a="st_add"><ha-icon icon="mdi:plus"></ha-icon>Streamer anlegen</button></p>` : ""}`;
+      ${d.streamer.length < 8 ? `<p><button class="btn" data-a="st_add"><ha-icon icon="mdi:plus"></ha-icon>Streamer anlegen</button></p>` : ""}`;
   },
   // Seite "Klingel" (klingel.py): zwei Plaetze der Firmware, je Ausloeser + Kamera; Aenderungen gelten sofort
   async _klingelLaden() {
@@ -7750,6 +7759,7 @@ const FunktionenTab = {
         ${ez("Größe", `<select data-tv="${esc(tid)}" data-fk="groesse">${["Klein", "Mittel", "Groß", ...(k.weg === "hatv" ? [] : ["Fast Vollbild"])].map((v) => `<option ${k.groesse === v ? "selected" : ""}>${v}</option>`).join("")}</select>`, k.groesse === "Fast Vollbild" ? "Ganzer Bildschirm mit schmalem Rand" : "")}
         ${k.weg === "hatv" ? "" : ez("Ausblenden nach", `<select data-tv="${esc(tid)}" data-fk="sekunden">${[[0, "nie (bis „aus“)"], [15, "15 s"], [30, "30 s"], [60, "1 min"], [120, "2 min"], [300, "5 min"]].map(([v, l]) => `<option value="${v}" ${Number(k.sekunden || 0) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
         ${k.weg === "hatv" ? "" : ez("Name im Bild", `<label class="sw"><input type="checkbox" data-tv="${esc(tid)}" data-fk="titel" ${k.titel !== false ? "checked" : ""}></label>`)}
+        ${k.weg === "hatv" ? "" : ez("X zum Schließen", `<label class="sw"><input type="checkbox" data-tv="${esc(tid)}" data-fk="schliessen" ${k.schliessen !== false ? "checked" : ""}></label>`, "Nur auf Geräten mit Touchscreen (Tablet, Handy): ein X oben rechts im Kamerafenster. Fernseher zeigen es nie.")}
         <div class="fkams">${kamListe(tid, k) || '<div class="none">Keine Kameras in Home Assistant.</div>'}</div>
         ${k.notify || k.weg !== "hatv" ? `<div class="inl" style="margin-top:8px"><button class="btn small" data-tv="${esc(tid)}" data-a="fk_kam" data-e="aus"><ha-icon icon="mdi:television-off"></ha-icon>Kamera ausblenden</button></div>` : ""}</div>`; };
     const tvKarten = [["", c.kamera_tv], ...(c.kamera_tvs || []).map((x) => [x.id, x])].map(([tid, k]) => tvKarte(tid, k)).join("");
@@ -7764,7 +7774,8 @@ const FunktionenTab = {
         ${t.tv ? `<div class="ez"><span class="zt">Jetzt</span><b>${esc(eingang)}</b></div>` : ""}</div>
       ${tvKarten}
       <div class="karte" style="justify-content:center;align-items:flex-start"><button class="btn" data-a="fk_tv_neu"><ha-icon icon="mdi:television-classic"></ha-icon><ha-icon icon="mdi:plus"></ha-icon>Weiteren Fernseher</button>
-        <small class="note">Zweiter Fernseher mit eigenem Streamer, eigenen Kameras und eigenem Namen (z. B. MagentaTV Stick am Hisense).</small></div>
+        <small class="note">Zweiter Fernseher mit eigenem Streamer, eigenen Kameras und eigenem Namen (z. B. MagentaTV Stick am Hisense) – auch ein Android-Tablet geht (Streamer-Typ „Android-Tablet / Handy“).</small>
+        ${tvKarten ? `<small class="note">Umschaltbares Ziel für eine Taste: <code>esphomeremote.camera_target</code> (tv: next) wählt, <code>camera_tv</code>/<code>camera_size</code> mit <code>tv: target</code> gehen dorthin. Anzeige: <code>sensor.esphomeremote_camera_target</code> und <code>…_camera_target_size</code>.</small>` : ""}</div>
       <div class="karte"><h3><ha-icon icon="mdi:restart"></ha-icon>Neustart per ADB</h3>
         <div class="eintro">Hängt ein Android-Gerät (Streamer, Fernseher), startet es die Remote neu – Aktion <code>esphomeremote.restart</code> mit dem Namen. Über die Android-TV-Entität der Integration „Android Debug Bridge“ (ADB-Befehl reboot).</div>
         ${neu || '<div class="none">Noch kein Gerät.</div>'}
@@ -7791,7 +7802,8 @@ const FunktionenTab = {
       ${!ziel && d.vorschlag ? `<small class="note">Vorschlag: <button class="linkbtn" data-a="ds_vorschlag" data-e="${esc(d.vorschlag)}">${esc(H[d.vorschlag]?.attributes.friendly_name || d.vorschlag)}</button></small>` : ""}
       <div class="ez"><span class="zt">Lautstärke<small class="vtext">Für die Durchsage setzen und danach zurück – „wie eingestellt“ lässt sie, wie sie ist</small></span><select data-dsg="lautstaerke">${[[0, "wie eingestellt"], [30, "30 %"], [40, "40 %"], [50, "50 %"], [60, "60 %"], [70, "70 %"], [80, "80 %"]].map(([v, l]) => `<option value="${v}" ${Number(d.lautstaerke) === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div class="ez"><span class="zt">Gong davor</span><label class="sw"><input type="checkbox" data-dsg="gong" ${d.gong ? "checked" : ""}></label></div>
-      <small class="note">Auf der Remote: Bluetooth-Schicht (Firmware ab 2026.11.6.1). Höchstens etwa 25 s je Durchsage.</small></div>`;
+      <small class="note">Auf der Remote: Bluetooth-Schicht (Firmware ab 2026.11.6.1). Höchstens etwa 25 s je Durchsage.</small>
+      <small class="note">Auch vom Dashboard (z. B. Wand-Tablet) mit dessen Mikrofon: Karte <code>type: custom:esphomeremote-durchsage-card</code> – optional <code>name</code>, <code>entity</code> (anderer Lautsprecher) und <code>max_seconds</code>. Das Mikrofon geht nur über HTTPS; in Fully Kiosk zusätzlich „Enable Microphone Access“ einschalten.</small></div>`;
   },
   async _durchsageSpeichern() {
     try { this.s.durchsage = await this._hass.callWS({ type: "esphomeremote/durchsage_save", daten: this.s.durchsage }); this.s.msg = { text: "Durchsage gespeichert." }; }
@@ -7803,7 +7815,7 @@ const FunktionenTab = {
     if (!f || !c) return false;
     if (["tv", "streamer", "cec"].includes(f)) await this._fktSetzen({ tv_eingang: { [f]: t.value } });
     // Kamera auf dem Fernseher: tv = Kennung des Fernsehers ("" = der erste)
-    else if (t.dataset.tv != null && ["notify", "go2rtc", "position", "groesse", "weg", "quelle", "kstreamer", "sekunden", "titel", "tvname", "kam_an", "kam_name", "kam_src"].includes(f)) {
+    else if (t.dataset.tv != null && ["notify", "go2rtc", "position", "groesse", "weg", "quelle", "kstreamer", "sekunden", "titel", "schliessen", "tvname", "kam_an", "kam_name", "kam_src"].includes(f)) {
       const tv = t.dataset.tv, k = tv ? (c.kamera_tvs || []).find((x) => x.id === tv) : c.kamera_tv;
       if (!k) return true;
       let w;
@@ -7814,6 +7826,7 @@ const FunktionenTab = {
         if ((F_STREAMER(this.s.fkt).find((x) => x.id === t.value) || {}).typ === "magenta") w.quelle = "sub";
       } else if (f === "sekunden") w = { sekunden: Number(t.value) };
       else if (f === "titel") w = { titel: t.checked };
+      else if (f === "schliessen") w = { schliessen: t.checked };
       else if (f === "kam_an") w = { kameras: { [t.dataset.e]: t.checked ? { name: "", src: "" } : null } };
       else { const v = { ...(k.kameras[t.dataset.e] || {}) }; v[f === "kam_name" ? "name" : "src"] = t.value; w = { kameras: { [t.dataset.e]: v } }; }
       await this._fktSetzen({ kamera_tv: { tv, ...w } });

@@ -3,21 +3,30 @@ package de.esphomeremote.streamer;
 import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.View;
 import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 
 import org.json.JSONObject;
+
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 // Kamera als Overlay ueber allem (2026-11-01). Nutzer: "nur als Overlay, keine App, die sich oeffnet - das laufende
 // Video (YouTube ...) soll nicht pausieren", verschiedene Groessen und (fast) Vollbild.
@@ -31,13 +40,20 @@ import org.json.JSONObject;
 //      --es kamera camera.x --es name 'Haustuer' --es basis http://<ha>/api/esphomeremote/tvkamera/<geheim>
 //      --es groesse Klein|Mittel|Groß|'Fast Vollbild' --es position top-right|top-left|bottom-right|bottom-left|center
 //      --ei sekunden 0   (0 = bleibt, bis "aus")
+//      --ez schliessen true   (X auf Touch-Geraeten, Konfigurator "X zum Schliessen"; 1.20)
 //   ... --es aktion aus
+//
+// Tablets (1.20, 2026-11-20, Nutzer: "beim Pop-up auf dem Tablet ... schliessen mit einem X oben rechts im Fenster"):
+// mit Touchscreen nimmt das Fenster Beruehrungen an (nur innerhalb, FLAG_NOT_TOUCH_MODAL - daneben bedient man die App
+// wie gewohnt) und zeigt oben rechts ein X. Antippen schliesst das Overlay und meldet es an den Webhook der Integration
+// ({"kamera": {"aktion": "zu"}}), damit der Kamera-Sensor in HA auf "aus" geht. Fernseher (ohne Touch) wie bisher.
 final class Camera {
     static final String AKTION = "de.esphomeremote.streamer.CAMERA";
     private static final Handler h = new Handler(Looper.getMainLooper());
     private static FrameLayout rahmen;
     private static WebView web;
     private static String kamera = "", basis = "";
+    private static boolean mitX;
     private static final Runnable schliessen = Camera::aus;
 
     static void befehl(AccessibilityService s, Intent i) {
@@ -50,7 +66,8 @@ final class Camera {
         final String k = nz(i.getStringExtra("kamera")), b = nz(i.getStringExtra("basis"));
         if (!k.startsWith("camera.") || !b.startsWith("http")) return;
         try {
-            zeigen(s, k, nz(i.getStringExtra("name")), b, nz(i.getStringExtra("groesse")), nz(i.getStringExtra("position")));
+            zeigen(s, k, nz(i.getStringExtra("name")), b, nz(i.getStringExtra("groesse")), nz(i.getStringExtra("position")),
+                    i.getBooleanExtra("schliessen", true) && touch(s));
         } catch (Exception ex) {
             Log.w(State.TAG, "Kamera: " + ex);
         }
@@ -61,7 +78,56 @@ final class Camera {
 
     private static String nz(String s) { return s == null ? "" : s.trim(); }
 
-    private static WindowManager.LayoutParams lage(Context c, String groesse, String position) {
+    private static boolean touch(Context c) {
+        return c.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
+    }
+
+    // X oben rechts (nur mit Touchscreen)
+    private static void schliessKnopf(Context s, FrameLayout ziel, float dp) {
+        TextView x = new TextView(s);
+        x.setText("\u2715");
+        x.setTextColor(Color.WHITE);
+        x.setTextSize(18);
+        x.setGravity(Gravity.CENTER);
+        GradientDrawable kreis = new GradientDrawable();
+        kreis.setShape(GradientDrawable.OVAL);
+        kreis.setColor(0xB0000000);
+        kreis.setStroke(Math.max(1, Math.round(1.2f * dp)), 0x80FFFFFF);
+        x.setBackground(kreis);
+        x.setContentDescription("Schließen");
+        final int gr = Math.round(40 * dp);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(gr, gr, Gravity.TOP | Gravity.END);
+        lp.topMargin = lp.rightMargin = Math.round(6 * dp);
+        x.setOnClickListener((View v) -> {
+            aus();
+            new Thread(() -> zuMelden(s), "kamera-zu").start();
+        });
+        ziel.addView(x, lp);
+    }
+
+    private static void zuMelden(Context c) {
+        final String url = Settings.Global.getString(c.getContentResolver(), "esphomeremote_webhook");
+        if (url == null || url.isEmpty()) return;
+        HttpURLConnection k = null;
+        try {
+            byte[] d = new JSONObject().put("kamera", new JSONObject().put("aktion", "zu")).toString().getBytes(StandardCharsets.UTF_8);
+            k = (HttpURLConnection) new URL(url).openConnection();
+            k.setConnectTimeout(3000);
+            k.setReadTimeout(3000);
+            k.setDoOutput(true);
+            k.setRequestMethod("POST");
+            k.setRequestProperty("Content-Type", "application/json");
+            k.setFixedLengthStreamingMode(d.length);
+            try (OutputStream o = k.getOutputStream()) { o.write(d); }
+            k.getResponseCode();
+        } catch (Exception ex) {
+            Log.w(State.TAG, "Kamera zu nicht gemeldet: " + ex);
+        } finally {
+            if (k != null) k.disconnect();
+        }
+    }
+
+    private static WindowManager.LayoutParams lage(Context c, String groesse, String position, boolean x) {
         DisplayMetrics m = c.getResources().getDisplayMetrics();
         final int W = m.widthPixels, H = m.heightPixels, rand = Math.round(W * 0.025f);
         int w, hh;
@@ -75,7 +141,8 @@ final class Camera {
         }
         WindowManager.LayoutParams p = new WindowManager.LayoutParams(w, hh,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | (x ? WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL : WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
         int g;
@@ -93,10 +160,10 @@ final class Camera {
         return p;
     }
 
-    private static void zeigen(AccessibilityService s, String k, String name, String b, String groesse, String position) throws Exception {
+    private static void zeigen(AccessibilityService s, String k, String name, String b, String groesse, String position, boolean x) throws Exception {
         WindowManager wm = (WindowManager) s.getSystemService(Context.WINDOW_SERVICE);
-        WindowManager.LayoutParams p = lage(s, groesse, position);
-        if (rahmen != null && k.equals(kamera) && b.equals(basis)) {   // dieselbe Kamera: nur Groesse/Ecke/Name
+        WindowManager.LayoutParams p = lage(s, groesse, position, x);
+        if (rahmen != null && k.equals(kamera) && b.equals(basis) && x == mitX) {   // dieselbe Kamera: nur Groesse/Ecke/Name
             wm.updateViewLayout(rahmen, p);
             web.evaluateJavascript("titel(" + JSONObject.quote(name) + ")", null);
             return;
@@ -137,6 +204,8 @@ final class Camera {
         web.setFocusable(false);
         innen.addView(web, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         rahmen.addView(innen, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        mitX = x;
+        if (x) schliessKnopf(s, rahmen, dp);
         wm.addView(rahmen, p);
         // Basis = HA: Anfragen der Seite gehen an denselben Ursprung (kein CORS noetig)
         final int i = b.indexOf("/api/");

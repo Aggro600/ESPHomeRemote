@@ -26,11 +26,15 @@ namespace eingabewahl {
 enum { MAUS = 0, TASTATUR = 1, ZIFFERN = 2 };
 static const uint32_t ICON[3] = {0xF037D, 0xF097B, 0xF03A0};   // mouse, keyboard-outline, numeric
 
-struct Wahl { lv_obj_t *box{nullptr}; lv_obj_t *kn[3]{}; };
+// geraet (2026-11-19, Nutzer: "auch meine 4 Geraete umschalten ... auswaehlen, was ich bedienen moechte"): vierter
+// Knopf mit dem Namen des aktiven Bluetooth-Platzes, Antippen = naechstes Geraet
+struct Wahl { lv_obj_t *box{nullptr}; lv_obj_t *kn[3]{}; lv_obj_t *geraet{nullptr}; lv_obj_t *geraet_lbl{nullptr}; };
 inline Wahl &kbd() { static Wahl w; return w; }    // Kopfzeile der Tastatur-Seite
 inline Wahl &maus() { static Wahl w; return w; }   // Kopfzeile des Touchpads
 
 inline void wechseln(int ziel);
+inline void geraet_weiter();
+inline void geraet_zeigen(Wahl &w);
 
 inline std::string utf8(uint32_t cp) {
   std::string s;
@@ -67,6 +71,59 @@ inline void aufbauen(lv_obj_t *kopf, Wahl &w) {
     }, LV_EVENT_CLICKED, (void *) (intptr_t) i);
     w.kn[i] = b;
   }
+  // Geraet: Name des aktiven Platzes, Breite nach Inhalt (hoechstens 78 px)
+  lv_obj_t *g = lv_button_create(w.box);
+  lv_obj_set_size(g, LV_SIZE_CONTENT, 30);
+  lv_obj_set_style_min_width(g, 40, 0);
+  lv_obj_set_style_radius(g, 10, 0);
+  lv_obj_set_style_shadow_width(g, 0, 0);
+  lv_obj_set_style_pad_all(g, 0, 0);
+  lv_obj_set_style_pad_hor(g, 6, 0);
+  lv_obj_set_style_border_width(g, 2, 0);
+  lv_obj_set_style_bg_color(g, lv_color_hex(0x232A35), 0);
+  lv_obj_set_style_border_color(g, lv_color_hex(0x3A4452), 0);
+  lv_obj_set_style_border_color(g, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
+  lv_obj_t *gl = lv_label_create(g);
+  lv_obj_set_style_text_font(gl, a15->get_lv_font(), 0);
+  lv_obj_set_style_text_color(gl, lv_color_hex(0xF1F3F5), 0);
+  lv_obj_set_style_max_width(gl, 66, 0);
+  lv_label_set_long_mode(gl, LV_LABEL_LONG_DOT);
+  lv_obj_center(gl);
+  lv_obj_add_event_cb(g, [](lv_event_t *e) {
+    last_input_ms->value() = millis();
+    geraet_weiter();
+  }, LV_EVENT_CLICKED, nullptr);
+  w.geraet = g;
+  w.geraet_lbl = gl;
+  geraet_zeigen(w);
+}
+
+// Geraete = Plaetze mit Namen aus dem Konfigurator, am Remote gekoppelt oder ueber ein Dock erreichbar
+inline bool geraet_da(int k) {
+  if (!tk_cfg->slot_name(k).empty() || kb->get_host_slot(k).occupied) return true;
+  std::string dock;
+  uint8_t platz = 0;
+  return tk_cfg->dock_ziel(k, dock, platz);
+}
+inline std::string geraet_name(int k) {
+  std::string n = tk_cfg->slot_name(k);
+  return n.empty() ? "Platz " + std::to_string(k + 1) : n;
+}
+inline void geraet_zeigen(Wahl &w) {
+  if (w.geraet_lbl == nullptr) return;
+  lv_label_set_text(w.geraet_lbl, geraet_name(kb->active_host_slot()).c_str());
+}
+// Naechstes Geraet: wie "Verbinden" auf der Bluetooth-Seite (Platz wechseln, Aktivitaet dieses Platzes mitziehen)
+inline void geraet_weiter() {
+  const int jetzt = kb->active_host_slot();
+  for (int i = 1; i <= 4; i++) {
+    const int k = (jetzt + i) & 3;
+    if (k == jetzt || !geraet_da(k)) continue;
+    bt_platz_aktion->execute(std::string("verbinden"), k);
+    break;
+  }
+  geraet_zeigen(kbd());
+  geraet_zeigen(maus());
 }
 
 // Aktive Ansicht blau, die anderen dunkel (Rahmen in Feldfarbe, Fokus = weisser Rahmen)
@@ -78,6 +135,8 @@ inline void markieren(Wahl &w, int aktiv) {
     lv_obj_set_style_border_color(w.kn[i], lv_color_hex(f), 0);
     lv_obj_remove_state(w.kn[i], LV_STATE_FOCUSED);
   }
+  if (w.geraet != nullptr) lv_obj_remove_state(w.geraet, LV_STATE_FOCUSED);
+  geraet_zeigen(w);
 }
 
 // Tastatur-Seite: Umschalter in die YAML-Kopfzeile (Eltern von back_keyboard). Beim Namen-Eintippen der

@@ -1,5 +1,27 @@
 # What's new · Was ist neu
 
+## 2026.11.20.1 (2026-11-20)
+
+- Camera on tablets: new streamer type "Android tablet / phone" with a setup guide (wireless debugging, ADB). The camera overlay floats above all apps, just like on the TV.
+- Camera target: new service `esphomeremote.camera_target` (name, `next`/`previous` or a list like "Living room, Tablet") and `tv: target` for `camera_tv`, `camera_size` and `camera_position`. New sensors `sensor.esphomeremote_camera_target` and `…_camera_target_size` when there is more than one TV.
+- Streamer app 1.20: on touch devices an X in the top right closes the camera (Configurator › Functions › "X to close"). HA is told when it is closed.
+- Android 13+: the accessibility service is now allowed (restricted settings) and re-bound instead of hanging in "Binding". Stray output no longer ends up in the accessibility list.
+- Up to 8 streamers instead of 4.
+- Announcements from a dashboard: card `custom:esphomeremote-durchsage-card` records with the device's microphone (needs HTTPS).
+- Firmware: the keyboard/number pad/touchpad header has a device button that switches to the next Bluetooth device.
+
+<details><summary>Deutsch</summary>
+
+- Kamera auf Tablets: neuer Streamer-Typ „Android-Tablet / Handy“ mit Anleitung (Debugging über WLAN, ADB). Das Kamera-Overlay schwebt dort über allen Apps, wie am Fernseher.
+- Kamera-Ziel: neuer Dienst `esphomeremote.camera_target` (Name, `next`/`previous` oder eine Liste wie „Wohnzimmer, Tablet“) und `tv: target` bei `camera_tv`, `camera_size` und `camera_position`. Neue Sensoren `sensor.esphomeremote_camera_target` und `…_camera_target_size`, sobald es mehr als einen Fernseher gibt.
+- Streamer-App 1.20: auf Touch-Geräten ein X oben rechts zum Schließen der Kamera (Konfigurator › Funktionen › „X zum Schließen“). HA bekommt das Schließen gemeldet.
+- Android 13+: Bedienungshilfe wird jetzt freigegeben (eingeschränkte Einstellungen) und neu gebunden, statt in „Binding“ hängen zu bleiben. Fremde Ausgaben landen nicht mehr in der Liste der Bedienungshilfen.
+- Bis zu 8 Streamer statt 4.
+- Durchsage vom Dashboard: Karte `custom:esphomeremote-durchsage-card` nimmt mit dem Mikrofon des Geräts auf (HTTPS nötig).
+- Firmware: In der Kopfzeile von Tastatur/Ziffern/Touchpad gibt es einen Geräte-Knopf, der zum nächsten Bluetooth-Gerät wechselt.
+
+</details>
+
 ## 2026.11.18.1 (2026-11-18)
 
 **Key layout does not load despite the green icon:** the remote now shows the address it uses to reach Home Assistant ("no connection to HA at …") and no longer gives up after 8 failed attempts – it retries every 10 minutes while HA is connected. Home Assistant now hands the remote its IP instead of a name like homeassistant.local and raises a repair if the address is empty, a host name or a Docker address.

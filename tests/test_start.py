@@ -20,7 +20,7 @@ async def test_panel_version_haengt_am_inhalt(integration_pfad):
     import hashlib
 
     h = hashlib.sha1()
-    for name in ("configurator.js", "styles.js", "i18n/en.json"):
+    for name in ("configurator.js", "styles.js", "i18n/en.json", "durchsage-card.js"):
         h.update((integration_pfad / "frontend" / name).read_bytes())
     assert PANEL_VERSION == h.hexdigest()[:8] == _panel_version()
     assert PANEL_VERSION != "206"
@@ -35,3 +35,16 @@ async def test_ws_get_liefert_alle_remotes(hass, eingerichtet, hass_ws_client):
     assert r["result"]["order"]
     for d in r["result"]["devices"].values():
         assert "hash" in d and "config" in d and "einst" in d
+
+
+async def test_durchsage_web_zu_kurz_und_ohne_login(hass, eingerichtet, hass_client, hass_client_no_auth):
+    """Durchsage-Karte (2026-11-19): ohne Login 401, eine zu kurze Aufnahme gibt die Meldung der Remote zurueck."""
+    anon = await hass_client_no_auth()
+    r = await anon.post("/api/esphomeremote/durchsage_web?rate=16000", data=b"\0" * 3200)
+    assert r.status == 401
+    c = await hass_client()
+    r = await c.post("/api/esphomeremote/durchsage_web?rate=16000", data=b"\0" * 3200)
+    j = await r.json()
+    assert r.status == 200 and j["ok"] is False and j["text"]
+    r = await c.post("/api/esphomeremote/durchsage_web?rate=44100", data=b"\0" * 3200)
+    assert r.status == 400

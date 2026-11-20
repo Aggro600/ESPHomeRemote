@@ -213,6 +213,16 @@
         }
       }
     },
+    "camera_target": {
+      "name": "Kamera-Ziel wählen",
+      "description": "Wählt, wohin Kameras mit tv \"target\" gehen (z. B. Fernseher oder Tablet). Zustand in sensor.esphomeremote_camera_target.",
+      "fields": {
+        "tv": {
+          "name": "Ziel",
+          "description": "Name oder Kennung aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher), \"next\"/\"previous\" zum Durchschalten, oder eine Liste mit Komma (z. B. \"Wohnzimmer, Tablet\") – schaltet nur zwischen diesen."
+        }
+      }
+    },
     "restart": {
       "name": "Gerät neu starten (ADB)",
       "description": "Startet ein Android-Gerät neu, das im Konfigurator unter Funktionen eingetragen ist.",

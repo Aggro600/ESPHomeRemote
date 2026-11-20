@@ -171,7 +171,7 @@ camera_tv:
   fields:
     tv:
       name: Fernseher
-      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste.
+      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste, "target" = das gewählte Kamera-Ziel (camera_target).
       required: false
       example: Hisense
       selector:
@@ -218,7 +218,7 @@ camera_size:
   fields:
     tv:
       name: Fernseher
-      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste.
+      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste, "target" = das gewählte Kamera-Ziel (camera_target).
       required: false
       example: Hisense
       selector:
@@ -236,7 +236,7 @@ camera_position:
   fields:
     tv:
       name: Fernseher
-      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste.
+      description: Name des Fernsehers aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher). Leer = der erste, "target" = das gewählte Kamera-Ziel (camera_target).
       required: false
       example: Hisense
       selector:
@@ -247,6 +247,18 @@ camera_position:
       selector:
         select:
           options: [top-left, top-right, bottom-right, bottom-left, center, next]
+
+camera_target:
+  name: Kamera-Ziel wählen
+  description: Wählt, wohin Kameras mit tv "target" gehen (z. B. Fernseher oder Tablet). Zustand in sensor.esphomeremote_camera_target.
+  fields:
+    tv:
+      name: Ziel
+      description: Name oder Kennung aus dem Konfigurator (Funktionen › Kamera auf dem Fernseher), "next"/"previous" zum Durchschalten, oder eine Liste mit Komma (z. B. "Wohnzimmer, Tablet") – schaltet nur zwischen diesen.
+      required: false
+      example: next
+      selector:
+        text:
 
 restart:
   name: Gerät neu starten (ADB)

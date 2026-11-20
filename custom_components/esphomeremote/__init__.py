@@ -55,7 +55,7 @@ def _panel_version() -> str:
     vergessen = die App zeigte nach einem Update weiter das alte Panel. Jetzt aus dem Inhalt von Panel und Woerterbuch."""
     import hashlib
     h = hashlib.sha1()
-    for name in ("configurator.js", "styles.js", "i18n/en.json"):
+    for name in ("configurator.js", "styles.js", "i18n/en.json", "durchsage-card.js"):
         try:
             h.update((Path(__file__).parent / "frontend" / name).read_bytes())
         except OSError:
@@ -1415,6 +1415,9 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     await hass.http.async_register_static_paths(
         [StaticPathConfig(STATIC_URL, str(Path(__file__).parent / "frontend"), False)]
     )
+    # Dashboard-Karte "Durchsage" (2026-11-19): in jedem Dashboard verfuegbar, ohne Ressource von Hand
+    from homeassistant.components.frontend import add_extra_js_url
+    add_extra_js_url(hass, f"{STATIC_URL}/durchsage-card.js?v={PANEL_VERSION}")
     await panel_custom.async_register_panel(
         hass,
         frontend_url_path=PANEL_URL,

@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.18.1"
+    version: "2026.11.20.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
@@ -5634,8 +5634,8 @@ script:
             // Kopfzeile: aus der obersten Reihe "hoch" -> Zurueck und Umschalter Maus | Tastatur | Ziffern
             // (2026-10-18); links/rechts wechselt, OK drueckt, "runter" zurueck in die Tasten
             const auto &W = eingabewahl::kbd();
-            lv_obj_t *kopf[4] = {id(back_keyboard), W.kn[0], W.kn[1], W.kn[2]};
-            const int nk = eingabewahl::kbd_umschalter_da() ? 4 : 1;
+            lv_obj_t *kopf[5] = {id(back_keyboard), W.kn[0], W.kn[1], W.kn[2], W.geraet};
+            const int nk = eingabewahl::kbd_umschalter_da() ? (W.geraet != nullptr ? 5 : 4) : 1;
             if (id(kbd_kopf) >= 0) {
               if (keycode == 15) id(kbd_kopf) = (id(kbd_kopf) + nk - 1) % nk;
               else if (keycode == 32) id(kbd_kopf) = (id(kbd_kopf) + 1) % nk;
@@ -10476,7 +10476,7 @@ lvgl:
                         then: [{script.execute: nav_back}]
                   widgets: [{label: {id: back_kbd_lbl, align: CENTER, text: "<", text_font: a15}}]
               - label: {id: kbd_title, text: "Tastatur", styles: [st_title, st_grow], pad_bottom: 0, height: 22, long_mode: DOT}
-              # Rechts: Umschalter Maus | Tastatur | Ziffern (esphomeremote-mouse.h, eingabewahl - wird beim Laden angehaengt)
+              # Rechts: Umschalter Maus | Tastatur | Ziffern | Geraet (esphomeremote-mouse.h, eingabewahl - wird beim Laden angehaengt)
         - buttonmatrix:
             id: kbd_matrix
             width: 100%

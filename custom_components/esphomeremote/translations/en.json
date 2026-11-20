@@ -213,6 +213,16 @@
         }
       }
     },
+    "camera_target": {
+      "name": "Choose camera target",
+      "description": "Chooses where cameras with tv \"target\" go (e.g. TV or tablet). State in sensor.esphomeremote_camera_target.",
+      "fields": {
+        "tv": {
+          "name": "Target",
+          "description": "Name or ID from the configurator (Features > Camera on the TV), \"next\"/\"previous\" to cycle, or a comma list (e.g. \"Living room, Tablet\") to cycle only between these."
+        }
+      }
+    },
     "restart": {
       "name": "Restart device (ADB)",
       "description": "Restarts an Android device that is entered in the configurator under Features.",

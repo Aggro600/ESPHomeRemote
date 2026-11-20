@@ -325,10 +325,12 @@ async def assist(hass: HomeAssistant, dev: str, q: asyncio.Queue, melden) -> Non
     await asyncio.sleep(0.05)
 
 
-async def durchsage(hass: HomeAssistant, kd, dev: str, q: asyncio.Queue, melden) -> None:
+async def durchsage(hass: HomeAssistant, kd, dev: str, q: asyncio.Queue, melden, ziel_anders: str = "") -> None:
     from homeassistant.helpers.network import NoURLAvailableError, get_url
 
     d = daten(kd)
+    if ziel_anders:   # Dashboard-Karte mit eigenem Lautsprecher (2026-11-19)
+        d = {**d, "ziel": ziel_anders}
     pcm = bytearray()
     while (chunk := await q.get()) is not None:
         pcm += chunk
@@ -400,6 +402,49 @@ async def durchsage(hass: HomeAssistant, kd, dev: str, q: asyncio.Queue, melden)
         _ZURUECK[ziel] = (vorher, hass.async_create_task(zurueck()))
 
 
+# ---------------------------------------------------------------------------------------------- Dashboard-Karte
+class DurchsageWebView(HomeAssistantView):
+    """Durchsage vom Dashboard (2026-11-19, Nutzer: "am Tablet im Bad einen Button wie auf der Remote ... per Tablet-
+    Mikrofon einsprechen"): Karte custom:esphomeremote-durchsage-card nimmt im Browser auf (braucht HTTPS) und schickt
+    16 kHz/16 Bit mono PCM; danach derselbe Weg wie bei der Remote (Gong, lauter, Lautstaerke, Ziel aus dem Konfigurator)."""
+
+    url = "/api/esphomeremote/durchsage_web"
+    name = "api:esphomeremote:durchsage_web"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant, kd) -> None:
+        self.hass, self.kd = hass, kd
+
+    async def post(self, request: web.Request) -> web.Response:
+        if int(request.query.get("rate") or RATE) != RATE:
+            return self.json({"ok": False, "text": "16 kHz erwartet"}, 400)
+        ziel = str(request.query.get("ziel") or "").strip()
+        if ziel and not ziel.startswith("media_player."):
+            return self.json({"ok": False, "text": "ziel: media_player.…"}, 400)
+        pcm = await request.read()
+        if len(pcm) > RATE * 2 * 65:   # hoechstens etwa eine Minute
+            return self.json({"ok": False, "text": "Zu lang (höchstens 60 s)"}, 400)
+        q: asyncio.Queue = asyncio.Queue()
+        for i in range(0, len(pcm) - len(pcm) % 2, 8192):
+            q.put_nowait(pcm[i:i + 8192])
+        q.put_nowait(None)
+        meldungen: list[tuple[int, str]] = []
+
+        async def melden(typ: int, text: str = "") -> None:
+            meldungen.append((typ, text))
+
+        user = request.get("hass_user")
+        dev = "dashboard" + (f" ({user.name})" if user is not None and user.name else "")
+        try:
+            await durchsage(self.hass, self.kd, dev, q, melden, ziel)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("%s: Durchsage: %r", dev, err)
+            return self.json({"ok": False, "text": str(err)})
+        fehler = [t for typ, t in meldungen if typ == 4]
+        text = fehler[0] if fehler else next((t for typ, t in meldungen if typ == 2), "")
+        return self.json({"ok": not fehler, "text": text})
+
+
 # ---------------------------------------------------------------------------------------------- Konfigurator
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/durchsage_get"})
 @websocket_api.require_admin
@@ -433,5 +478,6 @@ def einrichten(hass: HomeAssistant, kd) -> None:
     hass.data[DOMAIN + "_kd"] = kd
     hass.http.register_view(SpracheView(hass, kd))
     hass.http.register_view(AudioView())
+    hass.http.register_view(DurchsageWebView(hass, kd))
     for fn in (ws_get, ws_save):
         websocket_api.async_register_command(hass, fn)

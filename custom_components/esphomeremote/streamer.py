@@ -57,14 +57,15 @@ RE_TOP = re.compile(r"topResumedActivity=ActivityRecord[{][0-9a-f]+ u[0-9]+ ([A-
 LEER, NETFLIX = "/local/esphomeremote_cover_leer.png", "/local/esphomeremote_netflix_n.png"
 
 
-GERAETE = ("google", "magenta", "android")   # Google TV Streamer, MagentaTV Stick (Gen 2, Typ A), anderes Android-TV
+GERAETE = ("google", "magenta", "android", "tablet")   # Google TV Streamer, MagentaTV Stick (Gen 2, Typ A), anderes Android-TV,
+# Tablet/Handy (2026-11-19: Pixel Tablet als Kamera-Ziel - ADB ueber "Debugging ueber WLAN" + adb tcpip 5555)
 
 
 def validate_streamer(liste) -> list[dict]:
     if not isinstance(liste, list):
         raise vol.Invalid("Streamer: Liste erwartet")
     out, ids = [], set()
-    for st in liste[:4]:
+    for st in liste[:8]:   # 8 statt 4 (2026-11-20: TV-Streamer + drei Tablets als Kamera-Ziele)
         sid = str(st.get("id") or "").strip()
         if not re.fullmatch(r"[a-z0-9_]{1,24}", sid) or sid in ids:
             raise vol.Invalid(f"Streamer: Kennung '{sid}' ungültig oder doppelt")
@@ -225,6 +226,12 @@ class Streamer:
                 "streamer": self.cfg.get("id"), "streamer_name": self.cfg.get("name"),
                 "id": menue.get("id"), "choice": menue.get("wahl"), "text": menue.get("text")})
             return None
+        # X am Kamera-Overlay angetippt (App 1.20, Tablets mit Touchscreen): {"kamera": {"aktion": "zu"}} -> Kamera-Sensor aus
+        kam = daten.get("kamera") if isinstance(daten, dict) else None
+        if isinstance(kam, dict):
+            if kam.get("aktion") == "zu" and (f := hass.data.get(DOMAIN + "_funktionen")) is not None:
+                f.kamera_vom_streamer_zu(self.cfg.get("id"))
+            return None
         text = str(daten.get("text") or "") if isinstance(daten, dict) else ""
         try:
             self.daten = auswerten(text, self.daten, self.kd.basis() or "homeassistant.local:8123")
@@ -331,8 +338,16 @@ class Streamer:
             if ist["code"] != (await self.hass.async_add_executor_job(app_mitgeliefert)).get("code"):
                 raise vol.Invalid(f"Installieren ging nicht: {r.strip()[:200] or 'keine Antwort'}")
         # Dienste freigeben: Bedienungshilfe an die vorhandenen anhaengen (andere Apps behalten ihre), Benachrichtigungen
+        # Android 13+ (2026-11-19, Pixel Tablet): Bedienungshilfen nachinstallierter Apps sind "eingeschraenkte
+        # Einstellungen" - der Dienst stand in der Liste, wurde aber nie gebunden (Overlay blieb aus). Freigeben und den
+        # Dienst einmal ohne, dann mit uns eintragen, damit Android ihn neu bindet.
+        await self.adb(f"appops set {APP_PKG} ACCESS_RESTRICTED_SETTINGS allow 2>/dev/null")
         acc = (await self.adb("settings get secure enabled_accessibility_services")).strip()
-        liste = [x for x in acc.split(":") if x and x != "null" and not x.startswith(APP_PKG + "/")]
+        liste = [x for x in acc.split(":") if re.fullmatch(r"[\w.]+/[\w.$]+", x) and not x.startswith(APP_PKG + "/")]   # nur "paket/klasse" (2026-11-20: geteilte ADB-Antwort brachte "Success" vom pm install hinein)
+        # immer erst ohne uns eintragen, kurz warten, dann mit uns - auch bei einer frischen Installation (2026-11-20,
+        # Tablet Kueche: direkt eingetragen blieb der Dienst nach der Freigabe in "Binding" haengen)
+        await self.adb((f"settings put secure enabled_accessibility_services {':'.join(liste)}" if liste
+                        else "settings delete secure enabled_accessibility_services") + "; sleep 1")
         liste.append(f"{APP_PKG}/{APP_PKG}.AccessibilityHelper")
         # READ_LOGS (2026-11-09): Tasten der TV-Fernbedienung (HDMI-CEC) im TV-Menue - vorher nur beim Speichern des Menues
         await self.adb(f"settings put secure enabled_accessibility_services {':'.join(liste)}; settings put secure accessibility_enabled 1; "
@@ -373,7 +388,7 @@ class Streamer:
 
     async def app_entfernen(self) -> dict:
         acc = (await self.adb("settings get secure enabled_accessibility_services")).strip()
-        liste = [x for x in acc.split(":") if x and x != "null" and not x.startswith(APP_PKG + "/")]
+        liste = [x for x in acc.split(":") if re.fullmatch(r"[\w.]+/[\w.$]+", x) and not x.startswith(APP_PKG + "/")]   # nur "paket/klasse" (2026-11-20: geteilte ADB-Antwort brachte "Success" vom pm install hinein)
         befehl = f"settings put secure enabled_accessibility_services {':'.join(liste)}" if liste else "settings delete secure enabled_accessibility_services"
         r = await self.adb(f"{befehl}; settings delete global esphomeremote_webhook; settings delete global esphomeremote_modus; "
                            f"pm uninstall {APP_PKG} 2>&1")
@@ -483,7 +498,8 @@ async def ws_streamer_app(hass, connection, msg) -> None:
         connection.send_error(msg["id"], "ungueltig", "Unbekannter Streamer")
         return
     adb = hass.states.get(st.cfg["adb"]) if st.cfg["adb"] else None
-    if adb is None or adb.state in ("unavailable", "unknown"):
+    # "unknown" (2026-11-20): gleich nach dem Hinzufuegen der Android-TV-Integration - ADB geht da schon
+    if adb is None or adb.state == "unavailable":
         connection.send_error(msg["id"], "kein_adb", "Keine ADB-Verbindung zum Streamer")
         return
     try:
