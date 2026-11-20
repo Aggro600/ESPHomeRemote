@@ -23,6 +23,23 @@
 <p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/remote-echt.png" alt="The remote in its dock showing the smart display, a second remote showing the menu" width="100%"><br>
 <sub>Rendered from the 3D model of the hardware (<a href="https://github.com/LORDSn1per/OpenRemote-Hardware">OpenRemote Rev6</a>, GPL-3.0) – the screens show this firmware.</sub></p>
 
+<p align="center">
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-startseite.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-startseite.jpg" alt="Home screen" title="Home screen" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-menue.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-menue.jpg" alt="Menu" title="Menu" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-apps.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-apps.jpg" alt="Apps" title="Apps" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-musik-player.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-musik-player.jpg" alt="Music player" title="Music player" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-kamera.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-kamera.jpg" alt="Camera" title="Camera" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-live-bild.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-live-bild.jpg" alt="Live camera view" title="Live camera view" width="100"></a>
+  <br>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-bildmodus.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-bildmodus.jpg" alt="Picture mode" title="Picture mode" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-tv-eingang.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-tv-eingang.jpg" alt="TV input" title="TV input" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-ziffern.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-ziffern.jpg" alt="Number pad" title="Number pad" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-tastatur.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-tastatur.jpg" alt="Keyboard" title="Keyboard" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-touchpad.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-touchpad.jpg" alt="Touchpad" title="Touchpad" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-display-aus.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-display-aus.jpg" alt="Display off" title="Display off" width="100"></a>
+  <br><sub>Photos of the real remote – click to enlarge.</sub>
+</p>
+
 <p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/hero.png" alt="ESPHomeRemote: remote with touch display and the configurator in Home Assistant" width="100%"></p>
 
 <p align="center">
