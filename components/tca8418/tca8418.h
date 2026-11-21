@@ -68,6 +68,11 @@ class TCA8418Component : public Component, public i2c::I2CDevice {
 
   void register_listener(TCA8418Listener *listener) { this->listeners_.push_back(listener); }
   void add_on_key_trigger(TCA8418KeyTrigger *trigger) { this->key_triggers_.push_back(trigger); }
+  // FORK 2026-11-20: zurueckgehaltenen Tastendruck nachreichen (Umschalttaste Display/Geraet in Touchpad/Tastatur,
+  // esphomeremote-mouse.h eingabewahl::umschalt_ereignis) - nur die on_key-Trigger, Listener gibt es keine
+  void nachspielen(uint8_t keycode, bool pressed) {
+    for (auto *trigger : this->key_triggers_) trigger->trigger(keycode, 0xFF, 0xFF, pressed, false);
+  }
 
   void setup() override;
   void loop() override;

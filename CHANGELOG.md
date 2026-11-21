@@ -1,5 +1,25 @@
 # What's new · Was ist neu
 
+## 2026.11.21.1 (2026-11-21)
+
+- **ESPHome 2026.11:** the firmware builds again with ESPHome 2026.11 (network/HALINK, atv_voice, online_image, header layout).
+- **Missed popups:** if the remote sleeps when a popup should open, it shows it after waking up (per popup, can be turned off, with a maximum age).
+- **Keyboard/number pad/touchpad:** device selection as a drop-down in the title; key mode toggle display ↔ device, also by key (default: long OK).
+- **Update page:** turning Wi-Fi off needs a second tap within 3 s.
+- **Streamer app 1.21:** drawn X to close the camera.
+- **Doorbell calls** are now a separate integration: [DoorCall Intercom](https://github.com/Aggro600/DoorCall-Intercom).
+
+<details><summary>Deutsch</summary>
+
+- **ESPHome 2026.11:** Die Firmware baut wieder mit ESPHome 2026.11 (Netzwerk/HALINK, atv_voice, online_image, Kopfzeilen-Layout).
+- **Verpasste Popups:** Schläft die Remote, wenn ein Popup aufgehen soll, zeigt sie es nach dem Aufwachen (je Popup abschaltbar, mit Höchstalter).
+- **Tastatur/Ziffern/Touchpad:** Geräteauswahl als Aufklappliste im Titel; Umschalter Tastenmodus Display ↔ Gerät, auch per Taste (Standard: OK lang).
+- **Update-Seite:** WLAN ausschalten braucht einen zweiten Tipp binnen 3 s.
+- **Streamer-App 1.21:** gezeichnetes X zum Schließen der Kamera.
+- **Anruf aufs Handy** ist jetzt eine eigene Integration: [DoorCall Intercom](https://github.com/Aggro600/DoorCall-Intercom).
+
+</details>
+
 ## 2026.11.20.1 (2026-11-20)
 
 - Camera on tablets: new streamer type "Android tablet / phone" with a setup guide (wireless debugging, ADB). The camera overlay floats above all apps, just like on the TV.

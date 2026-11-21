@@ -18,15 +18,23 @@
 #ifdef USE_OPENTHREAD
 #include "esphome/components/openthread/openthread.h"
 #endif
+#ifdef USE_ESP32
+#include "esp_netif.h"
+#endif
 
 namespace esphome::network {
 
+#if defined(USE_ESP32) && USE_NETWORK_IPV6
+/// Copies the IPv6 addresses of an esp_netif into `addresses[1..]`, warning once when some do not fit.
+void fill_ip6_addresses(esp_netif_t *netif, IPAddresses &addresses);
+#endif
+
+/// HALINK (2026-10-05, lokale Aenderung, 2026-11-20 auf ESPHome 2026.11.0 uebertragen): true, solange eine API-Sitzung
+/// ueber den Bluetooth-Tunnel (components/ha_tunnel) offen ist - sonst wirft der API-Server bei WLAN aus alle Clients raus.
+extern bool g_link_session;
+
 // The order of the components is important: WiFi should come after any possible main interfaces (it may be used as
 // an AP that uses a previous interface for NAT).
-
-/// HALINK (2026-10-05, lokale Aenderung an ESPHome 2026.9.1): true, solange eine API-Sitzung ueber den
-/// Bluetooth-Tunnel (components/ha_tunnel) offen ist - sonst wirft der API-Server bei WLAN aus alle Clients raus.
-extern bool g_link_session;
 
 /// Return whether the node is connected to the network (through wifi, eth, ...)
 ESPHOME_ALWAYS_INLINE inline bool is_connected() {
@@ -50,7 +58,8 @@ ESPHOME_ALWAYS_INLINE inline bool is_connected() {
     return true;
 #endif
 
-#ifdef USE_OPENTHREAD
+#if defined(USE_OPENTHREAD) && !defined(USE_OPENTHREAD_BORDER_ROUTER)
+  // A border router is reached over its Wi-Fi backbone, so the Thread link alone does not count
   if (openthread::global_openthread_component != nullptr && openthread::global_openthread_component->is_connected())
     return true;
 #endif

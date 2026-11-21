@@ -41,6 +41,7 @@ inline void einrichten() {
   EINST_B(bewegung_haelt);   // Bewegung verlaengert die Tiefschlaf-Zeit (2026-10-21)   // Aufwecken aus dem Tiefschlaf bei (2026-10-21)   // Tasten beim Aufwachen (2026-10-20)   // Bilder/Konfiguration ueber das Dock (2026-10-20)   // HA-Befehle ueber das Dock, HA-Link im Ruhezustand (2026-10-19)
   EINST_I(maus_slots); EINST_I(voll_slots); EINST_I(maus_tempo);
   EINST_B(maus_dpad); EINST_I(maus_dpad_tempo); EINST_I(maus_zurueck);
+  EINST_I(eingabe_taste); EINST_I(eingabe_geste);   // Umschalttaste Tastenmodus (2026-11-20)
   EINST_B(gesten_an); EINST_B(gesten_dunkel); EINST_I(gesten_sens);
   EINST_B(linkshaender);   // 2026-11-01, laeuft im Abgleich standardmaessig nicht mit (je Person)
   // X-Knopf rechts (2026-11-01): die Kopfzeilen werden einmal aufgebaut - nach einer Aenderung kurz neu starten

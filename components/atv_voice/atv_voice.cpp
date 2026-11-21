@@ -12,6 +12,14 @@ namespace atv_voice {
 
 static const char *const TAG = "atv_voice";
 
+// ESPHome 2026.11 hat format_hex_pretty(ptr, len) entfernt - eigener kleiner Ersatz fuers Log (2026-11-20)
+static std::string hex_log(const uint8_t *d, size_t n) {
+  std::string s;
+  char b[4];
+  for (size_t i = 0; i < n; i++) { snprintf(b, sizeof(b), i ? ".%02X" : "%02X", d[i]); s += b; }
+  return s;
+}
+
 // Kleiner RAII-Helfer, damit ein Mutex auf jedem Rueckgabepfad wieder
 // freigegeben wird - send_ctl_/send_audio_frame_ haben mehrere davon.
 namespace {
@@ -390,8 +398,8 @@ void AtvVoice::handle_get_caps_(const uint8_t *value, uint16_t len) {
   resp[3] = (uint8_t) (codec & 0xFF);  // 0x01 = ADPCM 8k, 0x02 = ADPCM 16k
   resp[4] = 0x03;                      // bei Sony und Google-Original identisch
   resp[6] = this->max_notify_len_;
-  ESP_LOGD(TAG, "GET_CAPS in : %s", format_hex_pretty(value, len).c_str());
-  ESP_LOGD(TAG, "CAPS_RESP out: %s", format_hex_pretty(resp, sizeof(resp)).c_str());
+  ESP_LOGD(TAG, "GET_CAPS in : %s", hex_log(value, len).c_str());
+  ESP_LOGD(TAG, "CAPS_RESP out: %s", hex_log(resp, sizeof(resp)).c_str());
   this->send_ctl_(resp, sizeof(resp));
 }
 
@@ -599,7 +607,7 @@ void AtvVoice::start_streaming_() {
   msg[1] = this->host_opened_ ? 0x00 : ATVV_STREAM_TYPE;
   msg[2] = (uint8_t) (this->codec_ & 0xFF);
   msg[3] = this->host_opened_ ? 0x00 : ++this->audio_seq_;
-  ESP_LOGD(TAG, "AUDIO_START out: %s", format_hex_pretty(msg, sizeof(msg)).c_str());
+  ESP_LOGD(TAG, "AUDIO_START out: %s", hex_log(msg, sizeof(msg)).c_str());
   this->send_ctl_(msg, sizeof(msg));
   this->state_ = ATVV_STREAMING;
   this->state_since_ = millis();

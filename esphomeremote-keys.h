@@ -16,7 +16,7 @@ namespace musik { inline void zeigen(bool vom_dock); }
 //   text_sensor HA:  tk_cfg->angekuendigt(x);
 
 namespace touchpad { inline void oeffnen(); inline bool taste(int k, bool gedrueckt); }   // esphomeremote-mouse.h
-namespace eingabewahl { inline void wechseln(int ziel); }   // esphomeremote-mouse.h: 0 Maus, 1 Tastatur, 2 Ziffern
+namespace eingabewahl { inline void wechseln(int ziel); inline void tasten_umschalten(); }   // tasten_umschalten: esphomeremote-extras.h   // esphomeremote-mouse.h: 0 Maus, 1 Tastatur, 2 Ziffern
 namespace gesten { inline bool taste(int keycode, bool pressed); }   // esphomeremote-gestures.h: Ausloese-Taste
 
 // Popup geht auf (2026-10-03): Herkunft merken, damit Schliessen dorthin zurueckfuehrt.
@@ -670,6 +670,7 @@ inline void intern(const char *fn, int arg, const Ctx &c) {
     if (!begruessung_sperrt(d) && !d) { sofort_aus->value() = true; backlight_idle_timeout->execute(); }
   }
   else if (!strcmp(fn, "display_wake")) wake_backlight->execute();
+  else if (!strcmp(fn, "eingabe_tasten")) eingabewahl::tasten_umschalten();   // Touchpad/Tastatur: Display <-> Geraet
   else if (!strcmp(fn, "voice_ptt")) { if (c.geste == tasten_konfig::LANG) voice_start->execute(); }
   else if (!strcmp(fn, "announce")) { if (c.geste == tasten_konfig::LANG) durchsage_start->execute(); }
   else if (!strcmp(fn, "assistant_toggle")) toggle_assistant->execute();
@@ -1033,6 +1034,7 @@ inline void einrichten() {
     if (cur_page->value() == 98 && mn->ist_popup() && mn->popup_seite() == s) return;
     menue_popup(s, true);
   };
+  mn->popup_gezeigt = [](const std::string &s) { popup_gezeigt_melden->execute(s); };   // verpasste Popups (2026-11-20)
   mn->popup_zu = [](const std::string &s) {
     if (mn->ist_popup() && mn->popup_seite() == s) menue_popup_zu();
     else if (popup_min->value() == 98 && mn->popup_seite() == s) popup_min->value() = -1;

@@ -313,6 +313,7 @@ void Menue::popup_ausloesen_(const Seite &s, bool auf, const std::string &wert) 
   if (!inhalt.empty()) inhalt_knopf_min_ = !strcmp(s.j["pknopf"] | "", "min");
   if (!inhalt.empty()) { if (inhalt_auf) inhalt_auf(inhalt, wert, wecken); }
   else if (popup_auf) popup_auf(id, wecken);
+  if (inhalt.empty() && popup_gezeigt) popup_gezeigt(id);
   const uint32_t sek = pp["timeout"] | 0;
   if (sek > 0) {
     set_timeout("popup_zeit", sek * 1000, [this, id, inhalt]() {
@@ -322,6 +323,16 @@ void Menue::popup_ausloesen_(const Seite &s, bool auf, const std::string &wert) 
   } else {
     cancel_timeout("popup_zeit");
   }
+}
+
+bool Menue::nachholen(const std::string &id) {
+  const int si = seite_index_(id);
+  if (si < 0) return false;
+  const Seite &s = seiten_[si];
+  if (s.j["popup"].isNull() || *(s.j["inhalt"] | "") || !bedingungen_ok_(s.j["popup"])) return false;
+  ESP_LOGI(TAG, "Verpasstes Popup '%s' nachholen", id.c_str());
+  popup_ausloesen_(s, true, "");
+  return true;
 }
 
 // ------------------------------------------------------------------ Zustaende per HTTP

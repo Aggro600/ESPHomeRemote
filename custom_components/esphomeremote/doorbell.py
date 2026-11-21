@@ -60,6 +60,7 @@ def validate_klingel(liste) -> list[dict]:
             n += 1
         ids.add(kid)
         out.append({"id": kid, "name": name, "ausloeser": a, "kamera": c, "warten": max(0, min(30, int(k.get("warten") or 0)))})
+        # "Anruf aufs Handy" ist seit 2026-11-21 die eigene Integration DoorCall Intercom (custom_components/doorcall)
     return out
 
 

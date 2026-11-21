@@ -160,6 +160,8 @@ EINST_STANDARD: dict = {
     'maus_dpad': True,
     'maus_dpad_tempo': 100,
     'maus_zurueck': 1,
+    'eingabe_taste': 34,   # Umschalttaste Tastenmodus Touchpad/Tastatur (OK)
+    'eingabe_geste': 2,    # 0 aus, 1 kurz, 2 lang, 3 doppelt
     'gesten_an': False,
     'gesten_dunkel': False,
     'gesten_sens': 2

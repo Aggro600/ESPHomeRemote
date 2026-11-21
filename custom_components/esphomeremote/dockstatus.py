@@ -60,6 +60,7 @@ WERTE = {
 # Ereignisse, die eine Remote ohne eigene HA-Verbindung ueber das Dock schicken darf (Dienst remote_event, 2026-11-17)
 EREIGNISSE_UEBER_DOCK = frozenset({
     "esphome.remote_cam_snapshot", "esphome.remote_live_start", "esphome.remote_gesten_aendern", "esphome.remote_update",
+    "esphome.remote_popup_gezeigt",   # verpasste Popups (2026-11-20, state.py DockStand)
 })
 # Name, Symbol, Einheit, device_class der eigenen Entitaet je Wert
 ART = {

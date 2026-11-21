@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.20.1"
+    version: "2026.11.21.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
@@ -426,6 +426,10 @@ esphome:
             lv_style_remove_prop(id(st_fx_sb), LV_STYLE_PAD_COLUMN);   // hatte kein pad_column
             lv_style_remove_prop(id(st_grow), LV_STYLE_PAD_COLUMN);    // nur Platzhalter im YAML
             lv_style_set_flex_grow(id(st_grow), 1);
+            // ESPHome 2026.11 (2026-11-20): Widgets gibt es hier schon - ohne Meldung blieben alle Zeilen ohne Flex
+            // (Kopfzeilen verschoben). Gibt es noch keine Widgets (alte Reihenfolge), kostet das fast nichts.
+            for (const Fx &f : fx) lv_obj_report_style_change(f.s);
+            lv_obj_report_style_change(id(st_grow));
     # WLAN-Schnellstart-Schalter: vor dem WLAN-Start (Stufe 250) - AUS = feste IP entfernen -> DHCP.
     # (Versuch 2026-09-30, das WLAN hier per wifi->call() bei 940 selbst zu starten: Absturz beim Booten,
     # automatische Rueckkehr zur alten Firmware. Stattdessen laufen Display/LVGL/LIS3DH jetzt NACH dem
@@ -854,6 +858,18 @@ api:
             // "_smartdisplay" (2026-10-31): Konfigurator "Auf der Remote zeigen" fuer das Smart Display
             if (seite == "_smartdisplay") { dockanz::vorschau(); return; }
             if (seite == "_smartdisplay_leiste" || seite == "_musik_leiste") { dockanz::vorschau_leiste(seite == "_musik_leiste"); return; }
+            // "_eingabe_0/1/2" = Touchpad/Tastatur/Ziffern, "_eingabe_geraete" = Geraete-Liste (zum Pruefen per Bildschirmfoto)
+            const std::string sn(seite.c_str(), seite.size());
+            if (sn != "_eingabe_geraete") eingabewahl::dd_zu();   // Popup von HA (z. B. Klingel): Geraete-Liste weg
+            if (sn.rfind("_eingabe_", 0) == 0) {
+              id(wake_backlight).execute();
+              if (sn == "_eingabe_geraete") eingabewahl::dd_auf(); else eingabewahl::wechseln(atoi(sn.c_str() + 9));
+              return;
+            }
+            if (sn == "_home") { id(wake_backlight).execute(); id(go_home).execute();
+              return;
+            }
+            if (sn == "_menue") { id(wake_backlight).execute(); id(open_menu).execute(); return; }   // Testhaken: Menue oeffnen
             tasten::menue_popup(std::string(seite.c_str(), seite.size()));
     # Schnelleinstellungen oeffnen (2026-10-31, zum Pruefen per Bildschirmfoto): liste = Geraete am Dock aufgeklappt
     - service: schnell_zeigen
@@ -1131,7 +1147,7 @@ font:
     id: mdi_klein
     size: 18
     bpp: 4
-    glyphs: ["\U000F050F", "\U000F058E", "\U000F12A6", "\U000F12A3", "\U000F01BE", "\U000F0E79", "\U000F1D08", "\U000F1D0B", "\U000F097B", "\U000F0279", "\U000F037D", "\U000F03A0"]   # F03A0 numeric: Umschalter Ziffern (2026-10-18)
+    glyphs: ["\U000F050F", "\U000F058E", "\U000F12A6", "\U000F12A3", "\U000F01BE", "\U000F0E79", "\U000F1D08", "\U000F1D0B", "\U000F097B", "\U000F0279", "\U000F037D", "\U000F03A0", "\U000F0140", "\U000F0379", "\U000F0454"]   # F0379 monitor / F0454 remote: Tastenmodus (2026-11-20), F03A0 numeric: Umschalter Ziffern (2026-10-18), F0140 chevron-down: Geraete-Feld (2026-11-20)
   # Sanduhr (mdi:timer-sand) fuer die Countdown-Anzeige neben der Uhr, wenn
   # der gewaehlte Timer (Verknuepfung "timer") laeuft (Nutzerwunsch 2026-09-17).
   - file: 'fonts/mdi-subset.ttf'
@@ -1548,6 +1564,10 @@ globals:
   - {id: maus_dpad,      type: bool,      restore_value: true,  initial_value: "true"}
   - {id: maus_dpad_tempo, type: int,      restore_value: true,  initial_value: "100"}
   - {id: maus_zurueck,   type: int,       restore_value: true,  initial_value: "1"}
+  # Tastenmodus Touchpad/Tastatur/Ziffern (2026-11-20): maus_dpad gilt fuer alle drei (true Display, false Geraet).
+  # Umschalttaste: eingabe_taste (Tastencode, 34 = OK), eingabe_geste 0 aus, 1 kurz, 2 lang, 3 doppelt
+  - {id: eingabe_taste,  type: int,       restore_value: true,  initial_value: "34"}
+  - {id: eingabe_geste,  type: int,       restore_value: true,  initial_value: "2"}
   # Bewegungsgesten (esphomeremote-gestures.h): an, auch bei dunklem Display, Empfindlichkeit 0 streng .. 2 empfindlich
   - {id: gesten_an,      type: bool,      restore_value: true,  initial_value: "false"}
   - {id: gesten_dunkel,  type: bool,      restore_value: true,  initial_value: "true"}
@@ -1654,6 +1674,24 @@ dock_direct:
             for (JsonArrayConst p : kv.value().as<JsonArrayConst>()) v.emplace_back(p[0] | "", (p[1] | 0) != 0);
           }
           funkweg::g_bt_ms = millis() | 1;
+        }
+        // Verpasste Popups (2026-11-20): "pv" [[seite, nr], ...] - Ausloeser ging los, waehrend die Remote schlief. Vor
+        // dem Abbruch unten (auch mit eigener HA-Verbindung: nach dem Aufwachen zaehlt deren erster Wert nicht als
+        // Wechsel). Einmal je nr; geoeffnet merkt es sich das RTC-RAM (ueber den Tiefschlaf), sonst nur bis zum Schlaf.
+        if (d["pv"].is<JsonArrayConst>()) {
+          static RTC_DATA_ATTR uint32_t pv_offen[8] = {0};
+          static std::set<uint32_t> pv_versucht;
+          for (JsonArrayConst e : d["pv"].as<JsonArrayConst>()) {
+            const uint32_t nr = e[1] | 0u;
+            const std::string sid = e[0] | "";
+            if (nr == 0 || sid.empty() || pv_versucht.count(nr)) continue;
+            if (std::find(std::begin(pv_offen), std::end(pv_offen), nr) != std::end(pv_offen)) continue;
+            pv_versucht.insert(nr);
+            if (id(mn)->nachholen(sid)) {
+              std::copy_backward(std::begin(pv_offen), std::end(pv_offen) - 1, std::end(pv_offen));
+              pv_offen[0] = nr;
+            }
+          }
         }
         if (api::global_api_server->is_connected()) return;
         id(zustand_da) = true;
@@ -2882,6 +2920,22 @@ script:
           condition: {lambda: 'return id(dock_status_ms) == 0 || millis() - id(dock_status_ms) >= 21000;'}
           timeout: 25s
       - lambda: 'if (!api::global_api_server->is_connected()) id(dock_status_melden).execute(false);'
+  # Verpasste Popups (2026-11-20): ein per Ausloeser geoeffnetes Popup an HA melden (state.py DockStand loescht den Merker)
+  - id: popup_gezeigt_melden
+    mode: queued
+    max_runs: 4
+    parameters: {seite: string}
+    then:
+      - if:
+          condition: {lambda: 'return api::global_api_server->is_connected();'}
+          then:
+            - homeassistant.event:
+                event: esphome.remote_popup_gezeigt
+                data:
+                  seite: !lambda 'return seite;'
+                  geraet: !lambda 'return App.get_name();'
+          else:
+            - lambda: 'id(tk_cfg).dock_aufruf("esphomeremote.remote_event", {{"event", "esphome.remote_popup_gezeigt"}, {"seite", seite}}, true);'
   - id: dock_status_melden
     mode: restart
     parameters: {schlaf: bool}
@@ -4189,6 +4243,12 @@ script:
             l1 = l2 = bt_aus ? GRAU : bt_selbst ? (nw > 0 ? GELB : BLAU) : OFFEN;
             i1 = nw > 0 ? ROT : MATT;
           }
+          // Remote -> Dock immer ESP-NOW (dock_direct), Dock -> Geraet Bluetooth; ohne Dock direkt Bluetooth
+          const bool direkt_bt = !ueber_dock && slot >= 0 && !geraet.empty();
+          lv_label_set_text(id(qs_w_t1), ueber_dock ? "ESP-NOW" : direkt_bt ? "Bluetooth" : "");
+          lv_label_set_text(id(qs_w_t2), ueber_dock || direkt_bt ? "Bluetooth" : "");
+          text(id(qs_w_t1), l1 == GRAU ? 0x5B6472 : 0x8B94A3);
+          text(id(qs_w_t2), l2 == GRAU ? 0x5B6472 : 0x8B94A3);
           farbe(id(qs_w_l1), l1);
           farbe(id(qs_w_l2), l2);
           text(id(qs_w_i1), i1);
@@ -4203,7 +4263,7 @@ script:
           else if (nw > 0) { snprintf(b, sizeof(b), "Dock weg – Notweg %u:%02u", (unsigned) (nw / 60), (unsigned) (nw % 60)); info = b; ic = 0xFCD34D; }
           else if (ueber_dock && dock_rot) { info = "Dock nicht erreicht"; ic = 0xFCA5A5; }
           else if (ueber_dock && am_dock == 0) { info = "Gerät am Dock getrennt"; ic = 0xFCA5A5; }
-          else if (ueber_dock) info = "Übers Dock per Bluetooth";
+          else if (ueber_dock) info = "Über das Dock";
           else if (slot < 0 || tk.slot_name(slot).empty()) { info = "Ohne Bluetooth-Gerät"; ic = 0x8B94A3; }
           else if (bt_aus) { info = "Bluetooth der Remote aus"; ic = 0xFCA5A5; }
           else info = bt_selbst ? "Direkt per Bluetooth" : "Bluetooth verbindet …";
@@ -4240,7 +4300,11 @@ script:
           else kachel(id(qs_bt_btn), id(qs_bt_lbl), 1, "bereit");
           const std::string &z = wlan_zugriff::g_zustand;
           if (!dockbetrieb) kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, wlan_ok ? "immer" : "sucht");
-          else if (z == "Update") kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, "Update");
+          else if (z == "Update") {
+            const bool ws = funkweg::g_wlan_scharf != 0 && millis() - funkweg::g_wlan_scharf < 3000;
+            kachel(id(qs_wlan_btn), id(qs_wlan_lbl), ws ? 2 : 1, ws ? "nochmal" : "Update");
+          }
+          else if (z == "Dauer") kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, "Dauer");
           else if (!wlan_an || z == "aus") kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 0, "aus");
           else if (wlan_zugriff::g_rest > 0) {
             snprintf(b, sizeof(b), "%u:%02u", (unsigned) (wlan_zugriff::g_rest / 60), (unsigned) (wlan_zugriff::g_rest % 60));
@@ -4257,9 +4321,11 @@ script:
             - lambda: |-
                 lv_slider_set_value(id(home_bri_sld), id(disp_bri), LV_ANIM_OFF);
                 lv_slider_set_value(id(home_kbd_sld), id(kbd_bri), LV_ANIM_OFF);
-                // Reihenfolge = Stapel: Schleier unten, darueber das Panel
+                // Reihenfolge = Stapel: Schleier unten, darueber das Panel, ganz oben die Kopfzeile
                 lv_obj_t *o[2] = {id(qs_scrim), id(qs_panel)};
                 for (auto *x : o) { lv_obj_remove_flag(x, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(x); }
+                tasten::kopf_linie(id(qs_kopf), id(qs_zu), 0x0E1116);   // einmal; blaues X-Feld + Linie wie auf allen Seiten
+                lv_obj_set_style_border_color(id(qs_panel), lv_color_hex(akzent::farbe()), 0);   // Rahmen im Blau des X-Felds (Nutzer 2026-11-20)
                 char b[8];
                 snprintf(b, sizeof(b), "%d%%", id(disp_bri)); lv_label_set_text(id(qs_bri_pct), b);
                 snprintf(b, sizeof(b), "%d%%", id(kbd_bri));  lv_label_set_text(id(qs_kbd_pct), b);
@@ -4270,19 +4336,32 @@ script:
     then: [{script.execute: toggle_bri_overlay}]
   # WLAN-Kachel (2026-10-31, getrennt vom Dock-Betrieb): an -> sofort aus, aus -> 10 min an ("von Hand").
   # Bei "Nur WLAN" ist es ohnehin immer an - dann nichts.
+  # WLAN-Kachel (2026-11-20, Nutzer: "Countdown weg und auf Dauer WLAN an. Und erst danach ausschalten ... vom Update
+  # zweimal druecken wie beim Dock"): aus -> 10 min | Countdown -> Dauer (12 h, ohne Anzeige der Zeit) | Dauer -> aus |
+  # Update (Firmware-Fenster oder Konfig-Modus) -> erst "nochmal", zweiter Tipp binnen 3 s -> aus.
   - id: qs_wlan_toggle
     then:
-      - if:
-          condition: {lambda: 'return wlan_zugriff::g_nur_ble;'}
-          then:
-            - if:
-                condition: {lambda: 'return !wifi::global_wifi_component->is_disabled();'}
-                then:
-                  - script.execute: wlan_jetzt_aus
-                  - delay: 100ms
-                else:
-                  - lambda: 'wlan_zugriff::fenster(600, "von Hand");'
-                  - script.execute: wartungsfenster
+      - lambda: |-
+          if (!wlan_zugriff::g_nur_ble) return;   // "Nur WLAN": immer an
+          const std::string z = wlan_zugriff::g_zustand;
+          const bool an = !wifi::global_wifi_component->is_disabled();
+          if (!an || z == "aus") {
+            wlan_zugriff::fenster(600, "von Hand");
+            id(wartungsfenster)->execute();
+          } else if (z == "Update") {
+            if (funkweg::g_wlan_scharf == 0 || millis() - funkweg::g_wlan_scharf >= 3000) { funkweg::g_wlan_scharf = millis() | 1; }
+            else {
+              funkweg::g_wlan_scharf = 0;
+              if (id(sdkarte)->http_active()) id(konfig_http_sw).turn_off();   // Konfig-Modus haelt sonst ota_aktiv
+              id(wlan_jetzt_aus)->execute();
+            }
+          } else if (z != "Dauer" && wlan_zugriff::g_rest > 0) {
+            wlan_zugriff::fenster(43200, "Dauer");
+            id(wartungsfenster)->execute();
+          } else {
+            id(wlan_jetzt_aus)->execute();
+          }
+      - delay: 100ms
       - script.execute: qs_refresh
       - script.execute: hide_bri_overlay
   # Dock-Kachel: Dock-Betrieb an/aus. Aus (= "Nur WLAN", mehr Strom) erst beim zweiten Tippen binnen 3 s.
@@ -5634,8 +5713,8 @@ script:
             // Kopfzeile: aus der obersten Reihe "hoch" -> Zurueck und Umschalter Maus | Tastatur | Ziffern
             // (2026-10-18); links/rechts wechselt, OK drueckt, "runter" zurueck in die Tasten
             const auto &W = eingabewahl::kbd();
-            lv_obj_t *kopf[5] = {id(back_keyboard), W.kn[0], W.kn[1], W.kn[2], W.geraet};
-            const int nk = eingabewahl::kbd_umschalter_da() ? (W.geraet != nullptr ? 5 : 4) : 1;
+            lv_obj_t *kopf[6] = {id(back_keyboard), W.feld, W.kn[0], W.kn[1], W.kn[2], W.kn[3]};   // X | Geraet | Umschalter | Tastenmodus
+            const int nk = eingabewahl::kbd_umschalter_da() && W.feld != nullptr ? 6 : 1;
             if (id(kbd_kopf) >= 0) {
               if (keycode == 15) id(kbd_kopf) = (id(kbd_kopf) + nk - 1) % nk;
               else if (keycode == 32) id(kbd_kopf) = (id(kbd_kopf) + 1) % nk;
@@ -5819,7 +5898,10 @@ script:
           id(kbd_mode) = id(kbd_popup_mode);
           id(kbd_popup) = true;
           popup_oeffnet(41);
-      - lambda: 'tasten::seite_zeigen(id(page_keyboard), LV_SCR_LOAD_ANIM_MOVE_LEFT);'
+      - lambda: |-
+          // vom Touchpad in der Gruppe: ohne Seitenanimation, nur die Tasten schieben (eingabewahl::still)
+          if (eingabewahl::still()) eingabewahl::still_zeigen(id(page_keyboard));
+          else tasten::seite_zeigen(id(page_keyboard), LV_SCR_LOAD_ANIM_MOVE_LEFT);
   - id: kbd_popup_weg
     then:
       - lambda: 'id(kbd_popup) = false;'
@@ -6083,7 +6165,8 @@ script:
   # Kopf der Tastatur-Seite: "X" als Popup (schliessen), sonst "<" (zurueck ins Menue)
   - id: popup_kopf
     then:
-      - lambda: 'lv_label_set_text(id(back_kbd_lbl), id(popup_seite) == 41 ? (id(mn)->inhalt_knopf_min() ? "_" : "X") : "<");'
+      # 2026-11-20: "<" auch als Popup, wenn die Gruppe aus dem Menue kam (eingabewahl::pfeil, gleich wie am Touchpad)
+      - lambda: 'lv_label_set_text(id(back_kbd_lbl), eingabewahl::pfeil() ? "<" : (id(mn)->inhalt_knopf_min() ? "_" : "X"));'
 
   # Zurueck: im Menue eine Seite hoch (oben: Startseite); eine aus dem Menue geoeffnete eingebaute Seite
   # fuehrt zurueck ins Menue.
@@ -6743,6 +6826,11 @@ tca8418:
             }
             // ---- Tasten-Konfigurator (HA-Panel "Fernbedienung"): die Belegung uebernimmt alle Tasten -
             // ausser im Tasten-Test und der Navigation (D-Pad/OK/Zurueck) auf den Seiten der Remote.
+            // Geraete-Liste von Tastatur/Touchpad offen (2026-11-20): Steuerkreuz, OK, Zurueck gehoeren ihr
+            if (eingabewahl::dd_ereignis(keycode, pressed)) { id(held_key) = 0; return; }
+            // Umschalttaste Display <-> Geraet (Standard OK lang) und Tastatur im Modus Geraet (2026-11-20)
+            if (eingabewahl::umschalt_ereignis(keycode, pressed)) { id(held_key) = 0; return; }
+            if (eingabewahl::geraet_ereignis(keycode, pressed)) { id(held_key) = 0; return; }
             if (tasten::ereignis(keycode, pressed)) return;
             // ---- Tasten-Test: alle Tasten nur auswerten und anzeigen, nichts geht an ein Geraet ----
             if (id(button_test_mode)) {
@@ -7829,208 +7917,255 @@ lvgl:
         - obj:
             id: qs_panel
             hidden: true
-            align: TOP_MID
-            y: 6
-            width: 236
+            # Popup als Karte (2026-11-20, Nutzer: "komplette Umrandung ... an allen 4 Seiten ... runde Ecken"): Rahmen
+            # ringsum, oben die Kopfzeile wie auf allen Seiten (blaues X-Feld + Linie), clip_corner rundet das X-Feld
+            # in der Ecke mit ab. Darunter qs_inhalt mit den Kacheln.
+            align: CENTER   # mittig (Nutzer 2026-11-20)
+            y: 0
+            width: 234
             height: SIZE_CONTENT
             bg_color: 0x111418
             bg_opa: COVER
             radius: 14
+            clip_corner: true
             border_width: 2
-            border_color: 0x3A424E
-            pad_all: 8
+            border_color: 0x3B82F6   # Akzentblau, beim Oeffnen = akzent::farbe()
+            pad_all: 0
             scrollable: false
-            styles: [st_fx_c10]
+            layout: {type: FLEX, flex_flow: COLUMN, flex_align_cross: start, pad_row: 0}
             widgets:
-              # Funkweg (2026-10-31, Nutzerwunsch "Dock und Bluetooth besser erklaert"): wie eine Taste zum Geraet der
-              # Aktivitaet kommt - Remote -> Dock -> Geraet, je Strecke blau (steht), rot (gestoert), grau (nicht benutzt).
-              # Darunter ein Satz dazu. Tippen = Geraete am Dock (statt der Schalter). Alles in qs_refresh.
               - obj:
-                  id: qs_weg
+                  id: qs_kopf
                   width: 100%
-                  height: 70
-                  bg_color: 0x1A1F27
+                  height: 40
+                  bg_color: 0x0E1116
                   bg_opa: COVER
-                  radius: 10
+                  radius: 0
                   border_width: 0
-                  pad_all: 0
+                  pad_left: 4
+                  pad_right: 4
+                  pad_top: 4
+                  pad_bottom: 4
                   scrollable: false
-                  on_click: [{lambda: 'funkweg::g_liste = !funkweg::g_liste;'}, {script.execute: qs_refresh}, {script.execute: hide_bri_overlay}]
+                  styles: [st_fx_r8]
                   widgets:
-                    - label: {id: qs_w_i0, x: 8, y: 0, text: "\U000F0454", text_font: ico_funk, text_color: 0xF1F3F5}
-                    - obj: {id: qs_w_l1, x: 37, y: 11, width: 54, height: 3, radius: 2, bg_color: 0x3A424E, bg_opa: COVER, border_width: 0, pad_all: 0, scrollable: false, clickable: false}
-                    - label: {id: qs_w_i1, x: 96, y: 0, text: "\U000F10AB", text_font: ico_funk, text_color: 0xF1F3F5}
-                    - obj: {id: qs_w_l2, x: 125, y: 11, width: 54, height: 3, radius: 2, bg_color: 0x3A424E, bg_opa: COVER, border_width: 0, pad_all: 0, scrollable: false, clickable: false}
-                    - label: {id: qs_w_i2, x: 184, y: 0, text: "\U000F0502", text_font: ico_funk, text_color: 0xF1F3F5}
-                    - label: {id: qs_w_n0, x: 2, y: 28, width: 66, height: 15, text: "Remote", text_font: a11, text_color: 0x8B94A3, long_mode: DOT}
-                    - label: {id: qs_w_n1, x: 68, y: 28, width: 80, height: 15, text: "-", text_font: a11, text_color: 0x8B94A3, text_align: CENTER, long_mode: DOT}
-                    - label: {id: qs_w_n2, x: 148, y: 28, width: 66, height: 15, text: "-", text_font: a11, text_color: 0x8B94A3, text_align: RIGHT, long_mode: DOT}
-                    - label: {id: qs_w_info, x: 0, y: 47, width: 216, height: 18, text: "-", text_font: a13, text_color: 0xF1F3F5, text_align: CENTER, long_mode: DOT}
-              # Geraete am Dock (aufgeklappt statt der Schalter)
+                    - button:
+                        id: qs_zu
+                        width: 46
+                        height: 30
+                        styles: [st_back]
+                        focused: {border_color: 0xF1F3F5}
+                        on_click:
+                          - script.stop: hide_bri_overlay
+                          - script.execute: close_bri_overlay
+                        widgets: [{label: {align: CENTER, text: "X", text_font: a15}}]
+                    - label: {text: "Einstellungen", styles: [st_title, st_grow], pad_bottom: 0, height: 22, long_mode: DOT}
               - obj:
-                  id: qs_w_liste
-                  hidden: true
+                  id: qs_inhalt
                   width: 100%
                   height: SIZE_CONTENT
                   bg_opa: TRANSP
                   border_width: 0
-                  pad_all: 0
+                  radius: 0
+                  pad_top: 6
+                  pad_bottom: 6
+                  pad_left: 7
+                  pad_right: 7
                   scrollable: false
-                  layout: {type: FLEX, flex_flow: COLUMN, pad_row: 0}
-                  on_click: [{lambda: 'funkweg::g_liste = false;'}, {script.execute: qs_refresh}]
+                  layout: {type: FLEX, flex_flow: COLUMN, flex_align_cross: start, pad_row: 5}
                   widgets:
-                    - obj:
-                        id: qs_wl_r0
-                        width: 100%
-                        height: 14
-                        bg_opa: TRANSP
-                        border_width: 0
-                        pad_all: 0
-                        scrollable: false
-                        clickable: false
-                        styles: [st_fx_sb]
-                        widgets:
-                          - label: {id: qs_wl_n0, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
-                          - label: {id: qs_wl_s0, text: "-", text_font: a11}
-                    - obj:
-                        id: qs_wl_r1
-                        width: 100%
-                        height: 14
-                        bg_opa: TRANSP
-                        border_width: 0
-                        pad_all: 0
-                        scrollable: false
-                        clickable: false
-                        styles: [st_fx_sb]
-                        widgets:
-                          - label: {id: qs_wl_n1, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
-                          - label: {id: qs_wl_s1, text: "-", text_font: a11}
-                    - obj:
-                        id: qs_wl_r2
-                        width: 100%
-                        height: 14
-                        bg_opa: TRANSP
-                        border_width: 0
-                        pad_all: 0
-                        scrollable: false
-                        clickable: false
-                        styles: [st_fx_sb]
-                        widgets:
-                          - label: {id: qs_wl_n2, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
-                          - label: {id: qs_wl_s2, text: "-", text_font: a11}
-                    - obj:
-                        id: qs_wl_r3
-                        width: 100%
-                        height: 14
-                        bg_opa: TRANSP
-                        border_width: 0
-                        pad_all: 0
-                        scrollable: false
-                        clickable: false
-                        styles: [st_fx_sb]
-                        widgets:
-                          - label: {id: qs_wl_n3, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
-                          - label: {id: qs_wl_s3, text: "-", text_font: a11}
-              # Drei Schalter, jeder mit einer Aufgabe: Dock-Betrieb, eigenes Bluetooth der Remote, WLAN jetzt
-              - obj:
-                  id: qs_kacheln
-                  width: 100%
-                  height: SIZE_CONTENT
-                  bg_opa: TRANSP
-                  border_width: 0
-                  pad_all: 0
-                  scrollable: false
-                  styles: [st_fx_sb8]
-                  widgets:
-                    - button:
-                        id: qs_dock_btn
-                        width: 68
-                        height: 58
-                        styles: [st_ctrlbtn]
-                        pad_all: 4
-                        on_click: [{script.execute: qs_dock_toggle}]
-                        widgets:
-                          - label: {align: TOP_MID, y: -1, text: "\U000F10AB", text_font: ico_funk}
-                          - label: {id: qs_dock_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
-                    - button:
-                        id: qs_bt_btn
-                        width: 68
-                        height: 58
-                        styles: [st_ctrlbtn]
-                        pad_all: 4
-                        on_click: [{script.execute: qs_bt_toggle}]
-                        widgets:
-                          - label: {align: TOP_MID, y: -1, text: "\U000F00AF", text_font: ico_funk}
-                          - label: {id: qs_bt_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
-                    - button:
-                        id: qs_wlan_btn
-                        width: 68
-                        height: 58
-                        styles: [st_ctrlbtn]
-                        pad_all: 4
-                        on_click: [{script.execute: qs_wlan_toggle}]
-                        widgets:
-                          - label: {align: TOP_MID, y: -1, text: "\U000F05A9", text_font: ico_funk}
-                          - label: {id: qs_wlan_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
-              # Regler wie im Menue (Einstellungen > Bildschirm): Zeile Name + Prozent,
-              # darunter waagerechter Regler. Groesse/Farben setzt fix_slider_geometry.
-              - obj:
-                  width: 100%
-                  height: 22
-                  bg_opa: TRANSP
-                  border_width: 0
-                  pad_all: 0
-                  scrollable: false
-                  styles: [st_fx_sb]
-                  widgets:
-                    - label: {text: "Display", styles: [st_muted]}
-                    - label: {id: qs_bri_pct, text: "--", text_font: a13, text_color: 0xF1F3F5}
-              - slider:
-                  id: home_bri_sld
-                  width: 180
-                  height: 26
-                  min_value: 5
-                  max_value: 100
-                  value: 100
-                  on_value:
-                    - lambda: 'id(disp_bri) = (int) x;'
-                    - script.execute: apply_brightness
-                    - script.execute: hide_bri_overlay
-              - obj:
-                  width: 100%
-                  height: 26
-                  bg_opa: TRANSP
-                  border_width: 0
-                  pad_all: 0
-                  scrollable: false
-                  styles: [st_fx_r10]
-                  widgets:
-                    - label: {text: "Tastenlicht", styles: [st_muted, st_grow]}
-                    - label: {id: qs_kbd_pct, text: "--", text_font: a13, text_color: 0xF1F3F5}
-                    # AN/AUS der Tastenbeleuchtung (s. kbd_box_refresh)
-                    - button:
-                        id: home_kbd_box
-                        width: 52
-                        height: 26
-                        radius: 8
-                        bg_color: 0x1A1F27
-                        border_width: 2
-                        border_color: 0x3A424E
-                        pad_all: 0
-                        pressed: {bg_color: 0x2563EB}
-                        on_click: [{script.execute: kbd_overlay_light}]
-                        widgets: [{label: {id: home_kbd_lbl, align: CENTER, text: "AUS", text_font: a13, text_color: 0x8B94A3}}]
-              - slider:
-                  id: home_kbd_sld
-                  width: 180
-                  height: 26
-                  min_value: 5
-                  max_value: 100
-                  value: 60
-                  on_value:
-                    - lambda: 'id(kbd_bri) = (int) x;'
-                    - script.execute: apply_brightness
-                    - script.execute: hide_bri_overlay
+                  # Funkweg (2026-10-31, Nutzerwunsch "Dock und Bluetooth besser erklaert"): wie eine Taste zum Geraet der
+                  # Aktivitaet kommt - Remote -> Dock -> Geraet, je Strecke blau (steht), rot (gestoert), grau (nicht benutzt).
+                  # Darunter ein Satz dazu. Tippen = Geraete am Dock (statt der Schalter). Alles in qs_refresh.
+                  - obj:
+                      id: qs_weg
+                      width: 100%
+                      height: 66
+                      bg_color: 0x1A1F27
+                      bg_opa: COVER
+                      radius: 10
+                      border_width: 0
+                      pad_all: 0
+                      scrollable: false
+                      on_click: [{lambda: 'funkweg::g_liste = !funkweg::g_liste;'}, {script.execute: qs_refresh}, {script.execute: hide_bri_overlay}]
+                      widgets:
+                        - label: {id: qs_w_i0, x: 8, y: 0, text: "\U000F0454", text_font: ico_funk, text_color: 0xF1F3F5}
+                        - obj: {id: qs_w_l1, x: 37, y: 11, width: 54, height: 3, radius: 2, bg_color: 0x3A424E, bg_opa: COVER, border_width: 0, pad_all: 0, scrollable: false, clickable: false}
+                        - label: {id: qs_w_i1, x: 96, y: 0, text: "\U000F10AB", text_font: ico_funk, text_color: 0xF1F3F5}
+                        - obj: {id: qs_w_l2, x: 125, y: 11, width: 54, height: 3, radius: 2, bg_color: 0x3A424E, bg_opa: COVER, border_width: 0, pad_all: 0, scrollable: false, clickable: false}
+                        - label: {id: qs_w_i2, x: 184, y: 0, text: "\U000F0502", text_font: ico_funk, text_color: 0xF1F3F5}
+                        # Verbindungsart je Strecke (2026-11-20, Nutzer: "ob Bluetooth, ESP-NOW ... auch zwischen Dock und TV")
+                        - label: {id: qs_w_t1, x: 31, y: 15, width: 66, height: 12, text: "", text_font: a9, text_color: 0x8B94A3, text_align: CENTER, long_mode: CLIP}
+                        - label: {id: qs_w_t2, x: 119, y: 15, width: 66, height: 12, text: "", text_font: a9, text_color: 0x8B94A3, text_align: CENTER, long_mode: CLIP}
+                        - label: {id: qs_w_n0, x: 2, y: 28, width: 66, height: 15, text: "Remote", text_font: a11, text_color: 0x8B94A3, long_mode: DOT}
+                        - label: {id: qs_w_n1, x: 68, y: 28, width: 80, height: 15, text: "-", text_font: a11, text_color: 0x8B94A3, text_align: CENTER, long_mode: DOT}
+                        - label: {id: qs_w_n2, x: 148, y: 28, width: 66, height: 15, text: "-", text_font: a11, text_color: 0x8B94A3, text_align: RIGHT, long_mode: DOT}
+                        - label: {id: qs_w_info, x: 0, y: 45, width: 216, height: 18, text: "-", text_font: a13, text_color: 0xF1F3F5, text_align: CENTER, long_mode: DOT}
+                  # Geraete am Dock (aufgeklappt statt der Schalter)
+                  - obj:
+                      id: qs_w_liste
+                      hidden: true
+                      width: 100%
+                      height: SIZE_CONTENT
+                      bg_opa: TRANSP
+                      border_width: 0
+                      pad_all: 0
+                      scrollable: false
+                      layout: {type: FLEX, flex_flow: COLUMN, pad_row: 0}
+                      on_click: [{lambda: 'funkweg::g_liste = false;'}, {script.execute: qs_refresh}]
+                      widgets:
+                        - obj:
+                            id: qs_wl_r0
+                            width: 100%
+                            height: 14
+                            bg_opa: TRANSP
+                            border_width: 0
+                            pad_all: 0
+                            scrollable: false
+                            clickable: false
+                            styles: [st_fx_sb]
+                            widgets:
+                              - label: {id: qs_wl_n0, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                              - label: {id: qs_wl_s0, text: "-", text_font: a11}
+                        - obj:
+                            id: qs_wl_r1
+                            width: 100%
+                            height: 14
+                            bg_opa: TRANSP
+                            border_width: 0
+                            pad_all: 0
+                            scrollable: false
+                            clickable: false
+                            styles: [st_fx_sb]
+                            widgets:
+                              - label: {id: qs_wl_n1, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                              - label: {id: qs_wl_s1, text: "-", text_font: a11}
+                        - obj:
+                            id: qs_wl_r2
+                            width: 100%
+                            height: 14
+                            bg_opa: TRANSP
+                            border_width: 0
+                            pad_all: 0
+                            scrollable: false
+                            clickable: false
+                            styles: [st_fx_sb]
+                            widgets:
+                              - label: {id: qs_wl_n2, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                              - label: {id: qs_wl_s2, text: "-", text_font: a11}
+                        - obj:
+                            id: qs_wl_r3
+                            width: 100%
+                            height: 14
+                            bg_opa: TRANSP
+                            border_width: 0
+                            pad_all: 0
+                            scrollable: false
+                            clickable: false
+                            styles: [st_fx_sb]
+                            widgets:
+                              - label: {id: qs_wl_n3, width: 130, height: 14, text: "-", text_font: a11, text_color: 0xF1F3F5, long_mode: DOT}
+                              - label: {id: qs_wl_s3, text: "-", text_font: a11}
+                  # Drei Schalter, jeder mit einer Aufgabe: Dock-Betrieb, eigenes Bluetooth der Remote, WLAN jetzt
+                  - obj:
+                      id: qs_kacheln
+                      width: 100%
+                      height: SIZE_CONTENT
+                      bg_opa: TRANSP
+                      border_width: 0
+                      pad_all: 0
+                      scrollable: false
+                      styles: [st_fx_sb8]
+                      widgets:
+                        - button:
+                            id: qs_dock_btn
+                            width: 68
+                            height: 54
+                            styles: [st_ctrlbtn]
+                            pad_all: 4
+                            on_click: [{script.execute: qs_dock_toggle}]
+                            widgets:
+                              - label: {align: TOP_MID, y: -1, text: "\U000F10AB", text_font: ico_funk}
+                              - label: {id: qs_dock_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
+                        - button:
+                            id: qs_bt_btn
+                            width: 68
+                            height: 54
+                            styles: [st_ctrlbtn]
+                            pad_all: 4
+                            on_click: [{script.execute: qs_bt_toggle}]
+                            widgets:
+                              - label: {align: TOP_MID, y: -1, text: "\U000F00AF", text_font: ico_funk}
+                              - label: {id: qs_bt_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
+                        - button:
+                            id: qs_wlan_btn
+                            width: 68
+                            height: 54
+                            styles: [st_ctrlbtn]
+                            pad_all: 4
+                            on_click: [{script.execute: qs_wlan_toggle}]
+                            widgets:
+                              - label: {align: TOP_MID, y: -1, text: "\U000F05A9", text_font: ico_funk}
+                              - label: {id: qs_wlan_lbl, align: BOTTOM_MID, y: 1, width: 60, text: "-", text_font: a13, text_align: CENTER, long_mode: CLIP}
+                  # Regler wie im Menue (Einstellungen > Bildschirm): Zeile Name + Prozent,
+                  # darunter waagerechter Regler. Groesse/Farben setzt fix_slider_geometry.
+                  - obj:
+                      width: 100%
+                      height: 22
+                      bg_opa: TRANSP
+                      border_width: 0
+                      pad_all: 0
+                      scrollable: false
+                      styles: [st_fx_sb]
+                      widgets:
+                        - label: {text: "Display", styles: [st_muted]}
+                        - label: {id: qs_bri_pct, text: "--", text_font: a13, text_color: 0xF1F3F5}
+                  - slider:
+                      id: home_bri_sld
+                      width: 180
+                      height: 26
+                      min_value: 5
+                      max_value: 100
+                      value: 100
+                      on_value:
+                        - lambda: 'id(disp_bri) = (int) x;'
+                        - script.execute: apply_brightness
+                        - script.execute: hide_bri_overlay
+                  - obj:
+                      width: 100%
+                      height: 26
+                      bg_opa: TRANSP
+                      border_width: 0
+                      pad_all: 0
+                      scrollable: false
+                      styles: [st_fx_r10]
+                      widgets:
+                        - label: {text: "Tastenlicht", styles: [st_muted, st_grow]}
+                        - label: {id: qs_kbd_pct, text: "--", text_font: a13, text_color: 0xF1F3F5}
+                        # AN/AUS der Tastenbeleuchtung (s. kbd_box_refresh)
+                        - button:
+                            id: home_kbd_box
+                            width: 52
+                            height: 26
+                            radius: 8
+                            bg_color: 0x1A1F27
+                            border_width: 2
+                            border_color: 0x3A424E
+                            pad_all: 0
+                            pressed: {bg_color: 0x2563EB}
+                            on_click: [{script.execute: kbd_overlay_light}]
+                            widgets: [{label: {id: home_kbd_lbl, align: CENTER, text: "AUS", text_font: a13, text_color: 0x8B94A3}}]
+                  - slider:
+                      id: home_kbd_sld
+                      width: 180
+                      height: 26
+                      min_value: 5
+                      max_value: 100
+                      value: 60
+                      on_value:
+                        - lambda: 'id(kbd_bri) = (int) x;'
+                        - script.execute: apply_brightness
+                        - script.execute: hide_bri_overlay
         - label: {hidden: true, text: !lambda "return lv_label_rueckrufe_leeren();"}   # schneller Start, s. esphomeremote-wifi.h
 
     # ================================================ 43: AKKU (Statistik)
@@ -8403,7 +8538,7 @@ lvgl:
             on_click:
               - lambda: 'id(maus_dpad) = !id(maus_dpad); extras::touchpad_auffrischen();'
             widgets:
-              - label: {text: "Steuerkreuz als Maus", text_font: a15, styles: [st_grow]}
+              - label: {text: "Tasten in Touchpad & Tastatur", text_font: a15, styles: [st_grow], long_mode: DOT}
               - label: {id: maus_dpad_lbl, text: "AN", text_font: a13, text_color: 0x22C55E}
         - obj:
             width: 100%
@@ -10453,6 +10588,7 @@ lvgl:
         - lambda: |-
             lv_obj_remove_state(id(back_keyboard), LV_STATE_FOCUSED);
             id(cur_focus) = nullptr;
+            eingabewahl::schub_anwenden(lv_obj_get_parent(id(back_keyboard)));   // vom Touchpad: Tasten hereinschieben
       widgets:
         - obj:
             width: 100%
@@ -10476,7 +10612,7 @@ lvgl:
                         then: [{script.execute: nav_back}]
                   widgets: [{label: {id: back_kbd_lbl, align: CENTER, text: "<", text_font: a15}}]
               - label: {id: kbd_title, text: "Tastatur", styles: [st_title, st_grow], pad_bottom: 0, height: 22, long_mode: DOT}
-              # Rechts: Umschalter Maus | Tastatur | Ziffern | Geraet (esphomeremote-mouse.h, eingabewahl - wird beim Laden angehaengt)
+              # Nach dem Titel: Geraete-Feld (Aufklappliste), rechts Umschalter Maus | Tastatur | Ziffern (esphomeremote-mouse.h, eingabewahl - wird beim Laden eingefuegt)
         - buttonmatrix:
             id: kbd_matrix
             width: 100%

@@ -765,6 +765,11 @@ def validate_menu(m: dict) -> dict:
                 pg["popup"]["excl"] = True   # Vorrang: andere Popups warten
             if pp.get("zu"):
                 pg["popup"]["zu"] = True     # nach einem Knopfdruck schliessen (2026-11-03)
+            # Verpasste Popups (2026-11-20): wertet nur HA aus (state.py DockStand), die Remote ignoriert die Felder
+            if pp.get("nachholen") is False:
+                pg["popup"]["nachholen"] = False
+            if (nm := max(0, min(1440, int(pp.get("nachholen_min") or 0)))):
+                pg["popup"]["nachholen_min"] = nm
             cond = [t for t in trig(pp.get("if")) if "entity" in t]   # "Nur wenn" (2026-10-13)
             if cond:
                 pg["popup"]["if"] = cond
@@ -1479,6 +1484,7 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .doorbell import einrichten as klingel_einrichten
 
     klingel_einrichten(hass, kd)   # Klingel-, Kamera- und Live-Bilder (2026-10-19)
+    # Klingeln als Anruf aufs Handy: seit 2026-11-21 eigene Integration "DoorCall Intercom" (custom_components/doorcall)
     from .streamer import einrichten as streamer_einrichten
 
     streamer_einrichten(hass, kd)   # Streamer-App per Webhook (vor dem Dock: die "Jetzt laeuft"-Player brauchen sie)

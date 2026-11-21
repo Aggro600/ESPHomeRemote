@@ -92,6 +92,7 @@ namespace funkweg {
 inline std::map<std::string, std::vector<std::pair<std::string, bool>>> g_bt;
 inline uint32_t g_bt_ms = 0;   // zuletzt bekommen
 inline bool g_liste = false;   // Geraeteliste aufgeklappt
+inline uint32_t g_wlan_scharf = 0;   // WLAN-Kachel bei "Update": Ausschalten braucht einen zweiten Tipp binnen 3 s (2026-11-20)
 inline uint32_t g_dock_scharf = 0;   // Dock-Kachel: erster Tipp (Ausschalten braucht einen zweiten binnen 3 s)
 }  // namespace funkweg
 

@@ -253,7 +253,7 @@ void OnlineImage::update() {
   a = Auftrag();
   a.url = this->url_;
   a.timeout_ms = this->parent_->get_timeout();
-  a.big_endian = this->is_big_endian_;
+  a.big_endian = this->big_endian_;   // ESPHome 2026.11: is_big_endian_ -> big_endian_
   if (!this->etag_.empty())
     a.headers.emplace_back("If-None-Match", this->etag_);
   if (!this->last_modified_.empty())

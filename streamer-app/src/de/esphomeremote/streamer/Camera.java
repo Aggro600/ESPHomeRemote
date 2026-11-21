@@ -4,8 +4,13 @@ import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
@@ -82,18 +87,31 @@ final class Camera {
         return c.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
     }
 
-    // X oben rechts (nur mit Touchscreen)
+    // X oben rechts (nur mit Touchscreen). 1.21: X selbst gezeichnet statt Schriftzeichen - "\u2715" sass je nach
+    // Schrift/Font-Padding nicht mittig im Kreis (Nutzer 2026-11-20: "Das X ist nicht richtig im Kreis mittig").
     private static void schliessKnopf(Context s, FrameLayout ziel, float dp) {
-        TextView x = new TextView(s);
-        x.setText("\u2715");
-        x.setTextColor(Color.WHITE);
-        x.setTextSize(18);
-        x.setGravity(Gravity.CENTER);
-        GradientDrawable kreis = new GradientDrawable();
-        kreis.setShape(GradientDrawable.OVAL);
-        kreis.setColor(0xB0000000);
-        kreis.setStroke(Math.max(1, Math.round(1.2f * dp)), 0x80FFFFFF);
-        x.setBackground(kreis);
+        View x = new View(s);
+        final float strich = 2.2f * dp, rand = Math.max(1, Math.round(1.2f * dp));
+        x.setBackground(new Drawable() {
+            final Paint f = new Paint(Paint.ANTI_ALIAS_FLAG), r = new Paint(Paint.ANTI_ALIAS_FLAG), l = new Paint(Paint.ANTI_ALIAS_FLAG);
+            {
+                f.setColor(0xB0000000);
+                r.setColor(0x80FFFFFF); r.setStyle(Paint.Style.STROKE); r.setStrokeWidth(rand);
+                l.setColor(Color.WHITE); l.setStyle(Paint.Style.STROKE); l.setStrokeWidth(strich); l.setStrokeCap(Paint.Cap.ROUND);
+            }
+            @Override public void draw(Canvas c) {
+                Rect b = getBounds();
+                float cx = b.exactCenterX(), cy = b.exactCenterY(), rad = Math.min(b.width(), b.height()) / 2f;
+                c.drawCircle(cx, cy, rad, f);
+                c.drawCircle(cx, cy, rad - rand / 2f, r);
+                float a = rad * 0.36f;   // halbe Kantenlaenge des X
+                c.drawLine(cx - a, cy - a, cx + a, cy + a, l);
+                c.drawLine(cx - a, cy + a, cx + a, cy - a, l);
+            }
+            @Override public void setAlpha(int a) { }
+            @Override public void setColorFilter(ColorFilter cf) { }
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        });
         x.setContentDescription("Schließen");
         final int gr = Math.round(40 * dp);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(gr, gr, Gravity.TOP | Gravity.END);

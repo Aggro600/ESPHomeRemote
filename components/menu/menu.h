@@ -155,6 +155,10 @@ class Menue : public Component {
   // Popup-Ausloeser (page.popup.open/close): Seite als Popup zeigen bzw. schliessen.
   std::function<void(const std::string &seite, bool wecken)> popup_auf;
   std::function<void(const std::string &seite)> popup_zu;
+  // Verpasste Popups (2026-11-20): Popup per Ausloeser geoeffnet -> HA melden (Merker weg); nachholen = beim Aufwachen
+  // vom Dock-Stand ("pv"). true = geht auf (Bedingungen erfuellt).
+  std::function<void(const std::string &seite)> popup_gezeigt;
+  bool nachholen(const std::string &id);
   // Popup mit eingebautem Inhalt (Seite "inhalt", z. B. "tastatur", 2026-10-13): statt der Menueseite zeigt die
   // YAML ihre eigene Seite. wert = Wert des ausloesenden Wechsels (Tastatur: "zahlen" -> Ziffernblock).
   std::function<void(const std::string &inhalt, const std::string &wert, bool wecken)> inhalt_auf;

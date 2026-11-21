@@ -101,12 +101,12 @@ inline void touchpad_auffrischen() {
   snprintf(b, sizeof(b), "%d %%", (int) maus_dpad_tempo->value());
   wert(maus_dpad_lbl2, b, maus_dpad->value());
   lv_slider_set_value(maus_dpad_sld, stufen::index(TEMPO, maus_dpad_tempo->value()), LV_ANIM_OFF);
-  an_aus(maus_dpad_lbl, maus_dpad->value());
+  wert(maus_dpad_lbl, maus_dpad->value() ? "Display" : "Gerät", true);   // Tastenmodus (2026-11-20)
   static const char *ZU[] = {"Schließt Touchpad", "Zurück am Gerät", "Rechtsklick"};
   wert(maus_zurueck_lbl, ZU[std::max(0, std::min(2, (int) maus_zurueck->value()))], true);
   lv_label_set_text(h_maus_dpad, maus_dpad->value()
-      ? "Im Touchpad bewegen die Pfeiltasten den Zeiger (halten = schneller), OK = Klick, OK lang = Rechtsklick, OK halten + Pfeile = Ziehen, Kanal +/- = Scrollen. Zurück lang = Knöpfe wählen (X, Umschalter, Klicktasten, Makros). Die Menütaste legt das Touchpad weg, nochmal Menütaste holt es zurück."
-      : "AUS: Im Touchpad steuern die Tasten wie auf der Startseite das Gerät der Aktivität - den Zeiger bewegt nur der Bildschirm.");
+      ? "Display: Im Touchpad bewegen die Pfeiltasten den Zeiger (halten = schneller), OK = Klick, OK halten + Pfeile = Ziehen, Kanal +/- = Scrollen, Zurück lang = Knöpfe wählen. In Tastatur und Ziffern wählen die Pfeile die Tasten. Umschalten: Knopf oben rechts oder die Umschalttaste (Konfigurator, Standard OK lang)."
+      : "Gerät: In Touchpad, Tastatur und Ziffern steuern die Tasten wie auf der Startseite das Gerät der Aktivität. Umschalten: Knopf oben rechts oder die Umschalttaste (Konfigurator, Standard OK lang).");
   lv_label_set_text(h_plaetze, neustart_spaeter->is_running()
       ? "Maus geändert: Die Remote startet 8 s nach der letzten Änderung neu (die Bluetooth-Tabelle ändert sich). Danach das Gerät einmal neu koppeln."
       : "Platz antippen, dann Verbinden / Koppeln / Löschen. Eingabe je Platz antippen zum Weiterschalten: Nur Tasten (Fernseher, Streamer) > Maus (Touchpad) > Tastatur (Buchstaben, Makros) > Maus + Tastatur. Danach das Gerät einmal neu koppeln.");
@@ -143,3 +143,20 @@ inline void fw_status(const std::string &text, int stufe) {
 }
 
 }  // namespace extras
+
+namespace eingabewahl {
+// Tastenmodus Display <-> Geraet umschalten (Kopfzeilen-Knopf, Umschalttaste, Funktion "eingabe_tasten")
+inline void tasten_umschalten() {
+  maus_dpad->value() = !maus_dpad->value();
+  modus_zeigen();
+  extras::touchpad_auffrischen();
+  gesten::hinweis(maus_dpad->value() ? "Tasten: Display" : "Tasten: Gerät");
+  // Tastatur: Markierung in der Matrix/Kopfzeile weg, wenn die Tasten jetzt dem Geraet gehoeren
+  if (!maus_dpad->value() && cur_page->value() == 41) {
+    lv_buttonmatrix_clear_button_ctrl_all(kbd_matrix->obj, LV_BUTTONMATRIX_CTRL_CHECKED);
+    kbd_sel->value() = -1;
+    kbd_kopf->value() = -1;
+  }
+  touchpad::knopfmodus(false);
+}
+}  // namespace eingabewahl

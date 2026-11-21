@@ -21,6 +21,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .mirror import spiegel_id
@@ -149,6 +150,18 @@ class DockStand:
         # [nr, zaehler] im Stand und fuehrt sie einmal je Zaehler aus; gilt AK_S lang oder bis die Remote sie meldet
         self._ak: dict[str, tuple[int, int, float]] = {}
         self._ak_nr = int(time.time()) % 100000
+        # Verpasste Popups (2026-11-20, Nutzer: "wenn die Remote gerade schlaeft, dann kommt der Pop-up ... dann wecke
+        # ich die Remote, dann holt sie sich nicht den Pop-up"): die Remote oeffnet ein Popup nur beim WECHSEL eines
+        # Ausloesers, den sie selbst mitbekommt - im Tiefschlaf nicht, und der erste Wert nach dem Aufwachen zaehlt
+        # absichtlich nicht (sonst ginge es bei jedem Aufwachen wieder auf). Darum merkt sich HA je Remote und Seite:
+        # Ausloeser "oeffnen" ging los -> Merker [nr, Zeit]; "schliessen" -> weg; die Remote meldet "gezeigt"
+        # (Ereignis esphome.remote_popup_gezeigt, direkt oder ueber das Dock) -> weg. Der Merker steht als "pv"
+        # [[seite, nr], ...] im Stand; die Remote fragt beim Aufwachen zuerst das Dock und oeffnet ihn einmal je nr.
+        # Je Popup abschaltbar ("nachholen": false) und mit Hoechstalter ("nachholen_min", 0 = ohne).
+        self._verpasst: dict[str, dict[str, list]] = {}
+        self._pv_nr = int(time.time()) % 100000
+        self._pv_store = Store(hass, 1, "esphomeremote_verpasst")
+        self._pv_geladen = False
 
     @callback
     def starten(self) -> None:
@@ -170,6 +183,94 @@ class DockStand:
         self._dock_abo = async_track_state_change_event(self.hass, docks, self._dock_da) if docks else None
         for d in self.kd.devices:
             self._planen(d, 3)
+
+    # ---- verpasste Popups
+    async def verpasst_laden(self) -> None:
+        try:
+            daten = await self._pv_store.async_load() or {}
+        except Exception as err:  # noqa: BLE001 - kaputte Datei: neu anfangen
+            _LOGGER.debug("verpasst laden: %s", err)
+            daten = {}
+        for dev, seiten in (daten.get("verpasst") or {}).items():
+            if isinstance(seiten, dict):
+                self._verpasst.setdefault(dev, {}).update({k: v for k, v in seiten.items() if isinstance(v, list) and len(v) == 2})
+        self._pv_nr = max([self._pv_nr] + [int(v[0]) for s in self._verpasst.values() for v in s.values()])
+        self._pv_geladen = True
+
+    @callback
+    def _verpasst_sichern(self) -> None:
+        self._pv_store.async_delay_save(lambda: {"verpasst": self._verpasst}, 2)
+
+    def _popup_seiten(self, dev: str) -> list[tuple[str, dict]]:
+        """Popups mit Ausloeser (ohne eingebauten Inhalt wie Tastatur - die folgen ohnehin dem Zustand)."""
+        try:
+            seiten = (self.kd.entry(dev)["config"].get("menu") or {}).get("pages") or []
+        except (KeyError, AttributeError, TypeError):
+            return []
+        return [(str(p["id"]), p["popup"]) for p in seiten
+                if p.get("id") and isinstance(p.get("popup"), dict) and not p.get("inhalt")]
+
+    @callback
+    def _verpasst_pruefen(self, dev: str, eid: str, ev: Event) -> None:
+        def wert(st, attr):
+            if st is None:
+                return None
+            if not attr:
+                return st.state[:40].lower()
+            v = st.attributes.get(attr)
+            return "" if v is None else str(v)[:40].lower()
+
+        alt_st, neu_st = ev.data.get("old_state"), ev.data.get("new_state")
+        geaendert = False
+        for sid, pp in self._popup_seiten(dev):
+            for art in ("close", "open"):
+                for a in pp.get(art) or []:
+                    if a.get("entity") != eid:
+                        continue
+                    attr = str(a.get("attr") or "")
+                    neu, alt = wert(neu_st, attr), wert(alt_st, attr)
+                    if neu is None or neu == alt or neu != str(a.get("to") or "").lower():
+                        continue
+                    merk = self._verpasst.setdefault(dev, {})
+                    if art == "close":
+                        geaendert |= merk.pop(sid, None) is not None
+                    elif pp.get("nachholen", True) is not False:
+                        self._pv_nr += 1
+                        merk[sid] = [self._pv_nr, time.time()]
+                        geaendert = True
+                    break
+        if geaendert:
+            self._verpasst_sichern()
+
+    @callback
+    def popup_gezeigt(self, dev: str, seite: str) -> None:
+        if self._verpasst.get(dev, {}).pop(seite, None) is not None:
+            _LOGGER.debug("Popup %s auf %s gezeigt - Merker weg", seite, dev)
+            self._verpasst_sichern()
+            self._planen(dev, 0.2)
+
+    def _verpasst_liste(self, dev: str) -> list[list]:
+        merk = self._verpasst.get(dev) or {}
+        if not merk:
+            return []
+        seiten = dict(self._popup_seiten(dev))
+        jetzt, out, weg = time.time(), [], []
+        for sid, (nr, ts) in merk.items():
+            pp = seiten.get(sid)
+            max_min = int((pp or {}).get("nachholen_min") or 0)
+            # gilt der Ausloeser noch? (manche Popups haben keinen Schliessen-Ausloeser, z. B. Bildmodus bei Netflix)
+            gilt = pp is not None and any(
+                str(_wert(self.hass, str(t.get("entity")), str(t.get("attr") or "")) or "").lower() == str(t.get("to") or "").lower()
+                for t in pp.get("open") or [] if t.get("entity"))
+            if not gilt or pp.get("nachholen", True) is False or (max_min > 0 and jetzt - ts > max_min * 60):
+                weg.append(sid)
+            else:
+                out.append([sid, int(nr)])
+        for sid in weg:
+            merk.pop(sid, None)
+        if weg:
+            self._verpasst_sichern()
+        return out
 
     def ausloeser(self, dev: str) -> list[tuple[str, str]]:
         try:
@@ -201,6 +302,7 @@ class DockStand:
             if eid.startswith(f"sensor.esphomeremote_spiegel_{d.replace('-', '_')}_"):
                 self._planen(d, 1)
             elif any(e == eid for e, _ in self._ausl.get(d, ())):
+                self._verpasst_pruefen(d, eid, ev)
                 self._halten(d, eid, ev)
                 self._planen(d, 0.05)   # Popup: schnell ans Dock (0,2 s bis 2026-10-26)
 
@@ -336,6 +438,8 @@ class DockStand:
             st["tp"] = [t[0], t[1]]
         if (ak := self._ak.get(dev)) and ak[2] > time.monotonic():
             st["ak"] = [ak[0], ak[1]]
+        if pv := self._verpasst_liste(dev):
+            st["pv"] = pv   # verpasste Popups [[seite, nr], ...]
         # Helligkeit nach Lichtsensor (2026-11-17): [Display, Tasten] in %, -1 = lassen (light_curve.py dock_werte)
         if (licht := self.hass.data.get("esphomeremote_licht")) is not None:
             hb = licht.dock_werte(dev)
@@ -415,5 +519,14 @@ def einrichten(hass: HomeAssistant, kd) -> DockStand:
     ds = DockStand(hass, kd)
     hass.data["esphomeremote_dockstand"] = ds
     ds.starten()
+    hass.async_create_task(ds.verpasst_laden())
+
+    @callback
+    def _gezeigt(ev: Event) -> None:
+        dev, seite = str(ev.data.get("geraet") or ""), str(ev.data.get("seite") or "")
+        if dev and seite:
+            ds.popup_gezeigt(dev, seite)
+
+    hass.bus.async_listen("esphome.remote_popup_gezeigt", _gezeigt)
     async_track_time_interval(hass, ds.alle, timedelta(minutes=10))
     return ds

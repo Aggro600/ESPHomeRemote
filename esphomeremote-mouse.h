@@ -26,15 +26,28 @@ namespace eingabewahl {
 enum { MAUS = 0, TASTATUR = 1, ZIFFERN = 2 };
 static const uint32_t ICON[3] = {0xF037D, 0xF097B, 0xF03A0};   // mouse, keyboard-outline, numeric
 
-// geraet (2026-11-19, Nutzer: "auch meine 4 Geraete umschalten ... auswaehlen, was ich bedienen moechte"): vierter
-// Knopf mit dem Namen des aktiven Bluetooth-Platzes, Antippen = naechstes Geraet
-struct Wahl { lv_obj_t *box{nullptr}; lv_obj_t *kn[3]{}; lv_obj_t *geraet{nullptr}; lv_obj_t *geraet_lbl{nullptr}; };
+// Geraete-Auswahl (2026-11-20, Nutzer: "Auswahl der Geraete ... gerne ein Dropdown-Feld", vorher eigener Knopf in der
+// Kopfzeile, der Titel und X verschoben hat): das Titelfeld IST die Auswahl - Name des aktiven Bluetooth-Platzes + Pfeil,
+// Antippen/OK oeffnet eine Aufklappliste wie im Menue (components/menu dd_auf_). Kopfzeile bleibt X | Feld | Umschalter.
+// kn[3] = Tastenmodus Display <-> Geraet (2026-11-20), Symbol = aktueller Modus
+struct Wahl { lv_obj_t *box{nullptr}; lv_obj_t *kn[4]{}; lv_obj_t *modus_lbl{nullptr}; lv_obj_t *feld{nullptr}; lv_obj_t *feld_lbl{nullptr}; };
 inline Wahl &kbd() { static Wahl w; return w; }    // Kopfzeile der Tastatur-Seite
 inline Wahl &maus() { static Wahl w; return w; }   // Kopfzeile des Touchpads
 
 inline void wechseln(int ziel);
-inline void geraet_weiter();
 inline void geraet_zeigen(Wahl &w);
+inline void dd_auf();
+inline std::string utf8(uint32_t cp);
+
+// Tastenmodus (2026-11-20, Nutzer: "Moeglichkeit zum Ein- und Ausschalten, dass die D-Pad-Tasten ... entweder das
+// Geraet steuern oder auf dem Display"): EINE Einstellung fuer Touchpad, Tastatur und Ziffern - maus_dpad
+// (true = Display: Zeiger bzw. Tasten-Markierung, false = Geraet: alle Tasten wie auf der Startseite).
+// Umschalten: Knopf in der Kopfzeile, Funktion "eingabe_tasten" im Tasten-Konfigurator und die Umschalttaste
+// (eingabe_taste/eingabe_geste, Standard OK lang, s. umschalt_ereignis).
+inline void modus_zeigen() {
+  for (Wahl *w : {&kbd(), &maus()})
+    if (w->modus_lbl != nullptr) lv_label_set_text(w->modus_lbl, utf8(maus_dpad->value() ? 0xF0379 : 0xF0454).c_str());   // monitor / remote
+}
 
 inline std::string utf8(uint32_t cp) {
   std::string s;
@@ -50,11 +63,11 @@ inline void aufbauen(lv_obj_t *kopf, Wahl &w) {
   lv_obj_remove_style_all(w.box);
   lv_obj_set_size(w.box, LV_SIZE_CONTENT, 30);
   lv_obj_set_flex_flow(w.box, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_column(w.box, 3, 0);
+  lv_obj_set_style_pad_column(w.box, 2, 0);
   lv_obj_remove_flag(w.box, LV_OBJ_FLAG_SCROLLABLE);
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 4; i++) {
     lv_obj_t *b = lv_button_create(w.box);
-    lv_obj_set_size(b, 32, 30);
+    lv_obj_set_size(b, 28, 30);   // vier Knoepfe (2026-11-20, vorher drei zu 32)
     lv_obj_set_style_radius(b, 10, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_style_pad_all(b, 0, 0);
@@ -63,39 +76,68 @@ inline void aufbauen(lv_obj_t *kopf, Wahl &w) {
     lv_obj_t *l = lv_label_create(b);
     lv_obj_set_style_text_font(l, mdi_klein->get_lv_font(), 0);
     lv_obj_set_style_text_color(l, lv_color_hex(0xF1F3F5), 0);
-    lv_label_set_text(l, utf8(ICON[i]).c_str());
     lv_obj_center(l);
+    w.kn[i] = b;
+    if (i == 3) {   // Tastenmodus: Display (Zeiger/Tasten am Display) <-> Geraet (Tasten wie auf der Startseite)
+      lv_obj_set_style_bg_color(b, lv_color_hex(0x232A35), 0);
+      lv_obj_set_style_border_color(b, lv_color_hex(0x232A35), 0);
+      lv_obj_set_style_border_color(b, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
+      w.modus_lbl = l;
+      modus_zeigen();
+      lv_obj_add_event_cb(b, [](lv_event_t *e) {
+        last_input_ms->value() = millis();
+        tasten_umschalten();
+      }, LV_EVENT_CLICKED, nullptr);
+      continue;
+    }
+    lv_label_set_text(l, utf8(ICON[i]).c_str());
     lv_obj_add_event_cb(b, [](lv_event_t *e) {
       last_input_ms->value() = millis();
       wechseln((int) (intptr_t) lv_event_get_user_data(e));
     }, LV_EVENT_CLICKED, (void *) (intptr_t) i);
-    w.kn[i] = b;
   }
-  // Geraet: Name des aktiven Platzes, Breite nach Inhalt (hoechstens 78 px)
-  lv_obj_t *g = lv_button_create(w.box);
-  lv_obj_set_size(g, LV_SIZE_CONTENT, 30);
-  lv_obj_set_style_min_width(g, 40, 0);
-  lv_obj_set_style_radius(g, 10, 0);
-  lv_obj_set_style_shadow_width(g, 0, 0);
-  lv_obj_set_style_pad_all(g, 0, 0);
-  lv_obj_set_style_pad_hor(g, 6, 0);
-  lv_obj_set_style_border_width(g, 2, 0);
-  lv_obj_set_style_bg_color(g, lv_color_hex(0x232A35), 0);
-  lv_obj_set_style_border_color(g, lv_color_hex(0x3A4452), 0);
-  lv_obj_set_style_border_color(g, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
-  lv_obj_t *gl = lv_label_create(g);
-  lv_obj_set_style_text_font(gl, a15->get_lv_font(), 0);
-  lv_obj_set_style_text_color(gl, lv_color_hex(0xF1F3F5), 0);
-  lv_obj_set_style_max_width(gl, 66, 0);
-  lv_label_set_long_mode(gl, LV_LABEL_LONG_DOT);
-  lv_obj_center(gl);
-  lv_obj_add_event_cb(g, [](lv_event_t *e) {
+}
+
+// Titelfeld = Geraete-Auswahl. Sitzt in der Kopfzeile an Stelle des Titels (flex_grow), Optik wie die dunklen
+// Umschalter (gleiche Hoehe, Ecken, Farben, Fokus = weisser Rahmen).
+inline lv_obj_t *feld_bauen(lv_obj_t *kopf, Wahl &w) {
+  if (w.feld != nullptr) return w.feld;
+  lv_obj_t *f = lv_button_create(kopf);
+  lv_obj_set_height(f, 30);
+  lv_obj_set_width(f, 10);
+  lv_obj_set_flex_grow(f, 1);
+  lv_obj_set_style_radius(f, 10, 0);
+  lv_obj_set_style_shadow_width(f, 0, 0);
+  lv_obj_set_style_pad_all(f, 0, 0);
+  lv_obj_set_style_pad_left(f, 7, 0);
+  lv_obj_set_style_pad_right(f, 1, 0);
+  lv_obj_set_style_border_width(f, 2, 0);
+  lv_obj_set_style_bg_color(f, lv_color_hex(0x232A35), 0);
+  lv_obj_set_style_border_color(f, lv_color_hex(0x232A35), 0);
+  lv_obj_set_style_border_color(f, lv_color_hex(0xF1F3F5), LV_STATE_FOCUSED);
+  lv_obj_set_flex_flow(f, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(f, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(f, 0, 0);
+  lv_obj_remove_flag(f, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *l = lv_label_create(f);
+  lv_obj_set_style_text_font(l, a13->get_lv_font(), 0);
+  lv_obj_set_style_text_color(l, lv_color_hex(0xF1F3F5), 0);
+  lv_obj_set_width(l, 10);
+  lv_obj_set_height(l, 17);   // eine Zeile (a13) - sonst bricht DOT den Namen auf zwei Zeilen um
+  lv_obj_set_flex_grow(l, 1);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  lv_obj_t *pf = lv_label_create(f);
+  lv_obj_set_style_text_font(pf, mdi_klein->get_lv_font(), 0);
+  lv_obj_set_style_text_color(pf, lv_color_hex(0x8B94A3), 0);
+  lv_label_set_text(pf, utf8(0xF0140).c_str());   // mdi:chevron-down
+  lv_obj_add_event_cb(f, [](lv_event_t *e) {
     last_input_ms->value() = millis();
-    geraet_weiter();
+    dd_auf();
   }, LV_EVENT_CLICKED, nullptr);
-  w.geraet = g;
-  w.geraet_lbl = gl;
+  w.feld = f;
+  w.feld_lbl = l;
   geraet_zeigen(w);
+  return f;
 }
 
 // Geraete = Plaetze mit Namen aus dem Konfigurator, am Remote gekoppelt oder ueber ein Dock erreichbar
@@ -109,21 +151,133 @@ inline std::string geraet_name(int k) {
   std::string n = tk_cfg->slot_name(k);
   return n.empty() ? "Platz " + std::to_string(k + 1) : n;
 }
-inline void geraet_zeigen(Wahl &w) {
-  if (w.geraet_lbl == nullptr) return;
-  lv_label_set_text(w.geraet_lbl, geraet_name(kb->active_host_slot()).c_str());
+inline void geraet_zeigen(Wahl &w, int k) {
+  if (w.feld_lbl != nullptr) lv_label_set_text(w.feld_lbl, geraet_name(k).c_str());
 }
-// Naechstes Geraet: wie "Verbinden" auf der Bluetooth-Seite (Platz wechseln, Aktivitaet dieses Platzes mitziehen)
-inline void geraet_weiter() {
-  const int jetzt = kb->active_host_slot();
-  for (int i = 1; i <= 4; i++) {
-    const int k = (jetzt + i) & 3;
-    if (k == jetzt || !geraet_da(k)) continue;
-    bt_platz_aktion->execute(std::string("verbinden"), k);
-    break;
+inline void geraet_zeigen(Wahl &w) { geraet_zeigen(w, kb->active_host_slot()); }
+
+// ---- Aufklappliste (lv_layer_top), Aussehen und Tasten wie components/menu (dd_auf_/dd_taste_)
+struct Liste { lv_obj_t *bg{nullptr}; std::vector<lv_obj_t *> zeilen; std::vector<int> plaetze; int sel{0}; };
+inline Liste &liste() { static Liste l; return l; }
+inline bool dd_offen() { return liste().bg != nullptr; }
+inline void dd_zu() {
+  auto &l = liste();
+  if (l.bg != nullptr) lv_obj_delete(l.bg);
+  l.bg = nullptr;
+  l.zeilen.clear();
+}
+inline void dd_markieren() {
+  auto &l = liste();
+  for (size_t i = 0; i < l.zeilen.size(); i++) {
+    const bool s = (int) i == l.sel;
+    lv_obj_set_style_bg_color(l.zeilen[i], lv_color_hex(s ? 0x2A3340 : 0x1A1F27), 0);
+    lv_obj_set_style_border_color(l.zeilen[i], lv_color_hex(s ? akzent::farbe() : 0x1A1F27), 0);
   }
-  geraet_zeigen(kbd());
-  geraet_zeigen(maus());
+  if (l.sel >= 0 && l.sel < (int) l.zeilen.size()) lv_obj_scroll_to_view(l.zeilen[l.sel], LV_ANIM_ON);
+}
+// Platz waehlen: wie "Verbinden" auf der Bluetooth-Seite (Platz wechseln, Aktivitaet dieses Platzes mitziehen)
+inline void dd_waehlen(int i) {
+  auto &l = liste();
+  const int k = i >= 0 && i < (int) l.plaetze.size() ? l.plaetze[i] : -1;
+  dd_zu();
+  if (k < 0) return;
+  if (k != kb->active_host_slot()) bt_platz_aktion->execute(std::string("verbinden"), k);
+  geraet_zeigen(kbd(), k);   // gleich anzeigen - der Wechsel selbst dauert einen Moment
+  geraet_zeigen(maus(), k);
+}
+inline void dd_auf() {
+  dd_zu();
+  auto &l = liste();
+  l.plaetze.clear();
+  const int jetzt = kb->active_host_slot();
+  for (int k = 0; k < 4; k++) if (k == jetzt || geraet_da(k)) l.plaetze.push_back(k);
+  l.sel = 0;
+  for (size_t i = 0; i < l.plaetze.size(); i++) if (l.plaetze[i] == jetzt) l.sel = (int) i;
+
+  lv_obj_t *bg = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(bg);
+  lv_obj_set_size(bg, lv_pct(100), lv_pct(100));
+  lv_obj_set_style_bg_color(bg, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(bg, LV_OPA_60, 0);
+  lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(bg, [](lv_event_t *e) {
+    if (lv_event_get_target(e) == lv_event_get_current_target(e)) dd_zu();   // daneben getippt
+  }, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *p = lv_obj_create(bg);
+  lv_obj_set_width(p, lv_pct(90));
+  lv_obj_set_height(p, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(p, lv_pct(85), 0);
+  lv_obj_center(p);
+  lv_obj_set_style_bg_color(p, lv_color_hex(0x11151B), 0);
+  lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(p, lv_color_hex(akzent::farbe()), 0);
+  lv_obj_set_style_border_width(p, 2, 0);
+  lv_obj_set_style_radius(p, 12, 0);
+  lv_obj_set_style_pad_all(p, 6, 0);
+  lv_obj_set_style_pad_row(p, 4, 0);
+  lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scrollbar_mode(p, LV_SCROLLBAR_MODE_AUTO);
+
+  lv_obj_t *t = lv_label_create(p);
+  lv_label_set_text(t, "Gerät");
+  lv_obj_set_style_text_color(t, lv_color_hex(0x8B94A3), 0);
+  lv_obj_set_style_text_font(t, a13->get_lv_font(), 0);
+  lv_obj_set_style_pad_left(t, 6, 0);
+  for (size_t i = 0; i < l.plaetze.size(); i++) {
+    lv_obj_t *z = lv_obj_create(p);
+    lv_obj_remove_style_all(z);
+    lv_obj_set_size(z, lv_pct(100), 36);
+    lv_obj_set_style_radius(z, 8, 0);
+    lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(z, 2, 0);
+    lv_obj_set_style_pad_hor(z, 10, 0);
+    lv_obj_add_flag(z, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(z, [](lv_event_t *e) {
+      lv_event_stop_bubbling(e);
+      last_input_ms->value() = millis();
+      dd_waehlen((int) (intptr_t) lv_event_get_user_data(e));
+    }, LV_EVENT_CLICKED, (void *) (intptr_t) i);
+    lv_obj_t *n = lv_label_create(z);
+    lv_label_set_text(n, geraet_name(l.plaetze[i]).c_str());   // aktives Geraet gruen
+    lv_label_set_long_mode(n, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(n, lv_pct(100));
+    lv_obj_set_style_text_color(n, lv_color_hex(l.plaetze[i] == jetzt ? 0x22C55E : 0xF1F3F5), 0);
+    lv_obj_set_style_text_font(n, a15->get_lv_font(), 0);
+    lv_obj_align(n, LV_ALIGN_LEFT_MID, 0, 0);
+    l.zeilen.push_back(z);
+  }
+  l.bg = bg;
+  dd_markieren();
+}
+// Tasten bei offener Liste (aus tasten::ereignis): Hoch/Runter (auch Links/Rechts) waehlt, OK nimmt, Zurueck/Menue zu
+inline bool dd_taste(int k, bool gedrueckt) {
+  if (!dd_offen()) return false;
+  switch (k) {
+    case 14: case 15: case 35: case 32: case 34: case 13: case 41: break;
+    default: return false;
+  }
+  if (!gedrueckt) return true;
+  auto &l = liste();
+  const int n = (int) l.zeilen.size();
+  if (n > 0 && (k == 14 || k == 15)) { l.sel = (l.sel + n - 1) % n; dd_markieren(); }
+  else if (n > 0 && (k == 35 || k == 32)) { l.sel = (l.sel + 1) % n; dd_markieren(); }
+  else if (k == 34) dd_waehlen(l.sel);
+  else dd_zu();
+  last_input_ms->value() = millis();
+  return true;
+}
+// Aus tasten::ereignis (eigene Funktion, nicht inline: der grosse Tasten-Verteiler sprengt sonst den Literal-Bereich)
+// Loslassen geht an die Liste, wenn sie das Druecken bekam.
+__attribute__((noinline)) bool dd_ereignis(int k, bool gedrueckt) {
+  static uint64_t bei_liste = 0;
+  const uint64_t bit = k >= 0 && k < 64 ? 1ULL << k : 0;
+  if (!gedrueckt) { if (bei_liste & bit) { bei_liste &= ~bit; return true; } return false; }
+  if (!dd_offen()) return false;
+  if (!dd_taste(k, true)) { dd_zu(); return false; }   // andere Taste (Home, Aktivitaet ...): Liste zu, Taste wirkt normal
+  bei_liste |= bit;
+  return true;
 }
 
 // Aktive Ansicht blau, die anderen dunkel (Rahmen in Feldfarbe, Fokus = weisser Rahmen)
@@ -135,18 +289,25 @@ inline void markieren(Wahl &w, int aktiv) {
     lv_obj_set_style_border_color(w.kn[i], lv_color_hex(f), 0);
     lv_obj_remove_state(w.kn[i], LV_STATE_FOCUSED);
   }
-  if (w.geraet != nullptr) lv_obj_remove_state(w.geraet, LV_STATE_FOCUSED);
+  if (w.feld != nullptr) lv_obj_remove_state(w.feld, LV_STATE_FOCUSED);
   geraet_zeigen(w);
 }
 
 // Tastatur-Seite: Umschalter in die YAML-Kopfzeile (Eltern von back_keyboard). Beim Namen-Eintippen der
 // Gesten-Seite ausgeblendet - dort soll man nicht umschalten.
+// Titel: Geraete-Feld (wie am Touchpad); nur beim Namen-Eintippen der normale Titel "Name: ..."
 inline void kbd_einrichten() {
+  dd_zu();
   Wahl &w = kbd();
-  aufbauen(lv_obj_get_parent(back_keyboard), w);
+  lv_obj_t *kopf = lv_obj_get_parent(back_keyboard);
+  if (w.feld == nullptr) lv_obj_move_to_index(feld_bauen(kopf, w), lv_obj_get_index(back_keyboard) + 1);
+  aufbauen(kopf, w);
   markieren(w, kbd_mode->value() == 0 ? ZIFFERN : TASTATUR);
-  if (gestenseite::namen_eingabe()) lv_obj_add_flag(w.box, LV_OBJ_FLAG_HIDDEN);
-  else lv_obj_remove_flag(w.box, LV_OBJ_FLAG_HIDDEN);
+  const bool name = gestenseite::namen_eingabe();
+  for (lv_obj_t *o : {w.box, w.feld}) {
+    if (name) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (name) lv_obj_remove_flag(kbd_title, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(kbd_title, LV_OBJ_FLAG_HIDDEN);
 }
 // Ziffernblock-Variante aus der Konfiguration "eingabe" (2026-11-01): zf_reihe 123|789, zf_unten auto|n|s
 inline void ziffern_einstellen() {
@@ -157,8 +318,47 @@ inline void ziffern_einstellen() {
 }
 inline bool kbd_umschalter_da() { return kbd().box != nullptr && !lv_obj_has_flag(kbd().box, LV_OBJ_FLAG_HIDDEN); }
 
+// Wechsel innerhalb der Gruppe (2026-11-20, Nutzer: "immer so wie zwischen Tastatur und Ziffern"): Seite ohne
+// Animation tauschen - die Kopfzeilen sind pixelgleich, bleiben also stehen - und nur den Inhalt darunter
+// hereinschieben. Richtung nach der Reihenfolge im Umschalter (Maus | Tastatur | Ziffern). Die Seite holt den
+// Schub beim Laden ab (schub_anwenden), dann ist ihr Inhalt schon aufgebaut.
+inline int &schub() { static int v = 0; return v; }
+inline bool &still() { static bool v = false; return v; }
+inline void still_zeigen(lvgl::LvPageType *seite) { seite->get_parent()->show_page(seite->index, LV_SCR_LOAD_ANIM_NONE, 0); }
+inline void inhalt_schieben(lv_obj_t *kopf, int von) {
+  lv_obj_t *seite = lv_obj_get_parent(kopf);
+  if (seite == nullptr) return;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(seite); i++) {
+    lv_obj_t *o = lv_obj_get_child(seite, i);
+    if (o == kopf || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) continue;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, o);
+    lv_anim_set_values(&a, von, 0);
+    lv_anim_set_duration(&a, 150);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, [](void *x, int32_t v) { lv_obj_set_style_translate_x((lv_obj_t *) x, v, 0); });
+    lv_anim_start(&a);
+  }
+}
+inline void schub_anwenden(lv_obj_t *kopf) {
+  const int v = schub();
+  schub() = 0;
+  if (v != 0 && kopf != nullptr) inhalt_schieben(kopf, v);
+}
+
+// Kopf-Knopf der Gruppe Touchpad/Tastatur/Ziffern (2026-11-20, Nutzer: "immer so, wie ich es am Anfang geoeffnet
+// habe"): "<" wenn die Gruppe aus dem Menue kam (als Menueseite offen oder Popup mit Herkunft Menue), sonst "X".
+// Beim Umschalten bleibt popup_von die Herkunft der Gruppe (s. wechseln) - das Zeichen bleibt also gleich.
+inline bool pfeil() {
+  if (popup_seite->value() != cur_page->value()) return true;   // als Menueseite geoeffnet
+  const int von = popup_von->value();
+  return von == 98 || (von > 0 && tasten::spezial_name(von) != nullptr);
+}
+
 // Ansicht wechseln: 0 Maus, 1 Tastatur, 2 Ziffern. Von ausserhalb der Gruppe: oeffnet als Popup.
 inline void wechseln(int ziel) {
+  dd_zu();
   const int p = cur_page->value();
   const bool gruppe = p == 41 || p == 51;
   // Herkunft der Gruppe: offenes Popup -> seine Herkunft; Tastatur als Menue-Seite -> das Menue; sonst diese Seite
@@ -170,7 +370,10 @@ inline void wechseln(int ziel) {
     if (gruppe) { popup_von->value() = von; popup_seite->value() = 51; popup_min->value() = -1; }
     else popup_oeffnet(51);   // von aussen wie jedes Popup (aus dem Menue: Stand fuer die Rueckkehr merken)
     wake_backlight->execute();
-    tasten::seite_zeigen(page_maus, gruppe ? LV_SCR_LOAD_ANIM_FADE_IN : LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    // in der Gruppe: Maus steht links von Tastatur/Ziffern -> nach rechts schieben (vorher Ueberblenden, kaum
+    // sichtbar - Tastatur -> Touchpad wirkte ohne Animation, umgekehrt mit; 2026-11-20 ueberall schieben)
+    if (gruppe) { schub() = -240; still_zeigen(page_maus); }   // Inhalt kommt von links, Kopf bleibt
+    else tasten::seite_zeigen(page_maus, LV_SCR_LOAD_ANIM_MOVE_LEFT);
     return;
   }
   const int modus = ziel == ZIFFERN ? 0 : 1;
@@ -183,13 +386,105 @@ inline void wechseln(int ziel) {
     kbd_setup->execute();
     lv_label_set_text(kbd_title, modus == 0 ? "Ziffern" : "Tastatur");
     markieren(kbd(), ziel);
+    // Gleiche Seite, nur andere Belegung: die Tasten hereinschieben wie beim Seitenwechsel (Ziffern rechts von
+    // Tastatur), Dauer wie tasten::seite_zeigen
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, kbd_matrix->obj);
+    lv_anim_set_values(&a, ziel == ZIFFERN ? 240 : -240, 0);
+    lv_anim_set_duration(&a, 150);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, [](void *o, int32_t v) { lv_obj_set_style_translate_x((lv_obj_t *) o, v, 0); });
+    lv_anim_start(&a);
     return;
   }
   kbd_popup_mode->value() = modus;
   kbd_popup_zu->value() = false;
+  if (p == 51) { schub() = 240; still() = true; }   // vom Touchpad: Tasten kommen von rechts, Kopf bleibt
   kbd_popup_zeigen->execute();   // popup_oeffnet(41) - die Herkunft gleich danach auf die der Gruppe setzen
+  still() = false;
   popup_von->value() = von;
   popup_seite->value() = 41;
+}
+
+// ---- Umschalttaste (Standard OK lang): in Touchpad/Tastatur/Ziffern faengt sie den Druck ab und reicht ihn nach,
+// wenn es doch nur ein kurzer (bzw. einzelner) Druck war (tca8418 nachspielen). Geste: 0 aus, 1 kurz, 2 lang, 3 doppelt.
+struct Umschalt { bool unten{false}, gefeuert{false}, warte{false}, los{false}, offen{false}, zweiter{false}, durch{false}; };
+inline Umschalt &us() { static Umschalt u; return u; }
+inline void nachreichen(int k, bool druck, bool los) {
+  App.scheduler.set_timeout(tk_cfg, "eingabe_nach", 0, [k, druck, los]() {
+    us().durch = true;
+    if (druck) keypad->nachspielen(k, true);
+    if (los) keypad->nachspielen(k, false);
+    us().durch = false;
+  });
+}
+__attribute__((noinline)) inline bool umschalt_ereignis(int k, bool gedrueckt) {
+  auto &u = us();
+  if (u.durch) return false;
+  const int geste = eingabe_geste->value();
+  if (geste <= 0 || geste > 3 || k != eingabe_taste->value()) return false;
+  // Druck, der vor dem Seitenwechsel begann: Loslassen hier noch zu Ende fuehren
+  const bool hier = (cur_page->value() == 41 || cur_page->value() == 51) && !key_was_dark->value() &&
+                    !button_test_mode->value() && !dd_offen();
+  if (gedrueckt && !hier) return false;
+  if (geste == 1) {   // kurz
+    if (gedrueckt) { tasten_umschalten(); u.unten = true; return true; }
+    if (!u.unten) return false;
+    u.unten = false;
+    return true;
+  }
+  if (geste == 2) {   // lang (600 ms), kurz = normaler Druck
+    if (gedrueckt) {
+      if (u.unten) return true;
+      u.unten = true;
+      u.gefeuert = false;
+      App.scheduler.set_timeout(tk_cfg, "eingabe_lang", 600, []() {
+        auto &u = us();
+        if (u.unten && !u.gefeuert) { u.gefeuert = true; tasten_umschalten(); }
+      });
+      return true;
+    }
+    if (!u.unten) return false;
+    u.unten = false;
+    App.scheduler.cancel_timeout(tk_cfg, "eingabe_lang");
+    if (!u.gefeuert) nachreichen(k, true, true);
+    return true;
+  }
+  // doppelt (350 ms): der erste Druck wartet kurz, ob ein zweiter kommt
+  if (gedrueckt) {
+    if (u.warte) {
+      u.warte = false;
+      App.scheduler.cancel_timeout(tk_cfg, "eingabe_dbl");
+      u.zweiter = true;
+      tasten_umschalten();
+      return true;
+    }
+    u.warte = true;
+    u.los = false;
+    App.scheduler.set_timeout(tk_cfg, "eingabe_dbl", 350, [k]() {
+      auto &u = us();
+      if (!u.warte) return;
+      u.warte = false;
+      if (u.los) nachreichen(k, true, true);
+      else { u.offen = true; nachreichen(k, true, false); }   // haelt noch: Loslassen kommt spaeter
+    });
+    return true;
+  }
+  if (u.zweiter) { u.zweiter = false; return true; }
+  if (u.warte) { u.los = true; return true; }
+  if (u.offen) { u.offen = false; nachreichen(k, false, true); return true; }
+  return false;
+}
+
+// Tastatur/Ziffern im Modus "Geraet": Steuerkreuz und OK gehen wie auf der Startseite an die Belegung (tasten::ereignis
+// laesst die Navigationstasten auf Menueseiten sonst durch). Nicht belegt: weiter an die Tastenmatrix.
+__attribute__((noinline)) inline bool geraet_ereignis(int k, bool gedrueckt) {
+  if (cur_page->value() != 41 || maus_dpad->value() || key_was_dark->value() || button_test_mode->value() || dd_offen()) return false;
+  if (!(k == 14 || k == 35 || k == 15 || k == 32 || k == 34 || k == 41)) return false;
+  auto *t = tk_cfg;
+  if (!t->aktiv()) return false;
+  return t->ereignis(k, gedrueckt, t->tasten_akt(activity->value(), akt_an->value()), key_was_dark->value(), true);
 }
 
 }  // namespace eingabewahl
@@ -277,6 +572,7 @@ inline void tippen(const std::string &t) {
 
 inline void makros_zeigen(bool an);
 inline void timer_an();
+inline lv_obj_t *&x_lbl() { static lv_obj_t *l = nullptr; return l; }
 
 // Als Popup oeffnen (aus der Tastatur heraus: gleiche Gruppe, Herkunft bleibt - s. eingabewahl)
 inline void oeffnen() { eingabewahl::wechseln(eingabewahl::MAUS); }
@@ -491,13 +787,12 @@ inline void knopf_fokus() {
     if ((int) i == s.kfi && s.knopfmodus) lv_obj_add_state(s.kn[i], LV_STATE_FOCUSED);
     else lv_obj_remove_state(s.kn[i], LV_STATE_FOCUSED);
   }
-  if (s.knopfmodus) lv_label_set_text(s.titel, "Knöpfe");
-  else hinweis_setzen();
+  hinweis_setzen();   // Titel bleibt das Geraet (ist jetzt die Auswahl); der Knopf-Modus zeigt sich am Fokus-Rahmen
 }
 inline void knopfmodus(bool an) {
   auto &s = z();
   s.knopfmodus = an;
-  s.kfi = an ? 2 : 0;   // Start auf "Tastatur" - der haeufigste Wechsel
+  s.kfi = an ? 3 : 0;   // Start auf "Tastatur" - der haeufigste Wechsel
   knopf_fokus();
 }
 
@@ -521,16 +816,16 @@ inline bool taste(int k, bool gedrueckt) {
   if (s.knopfmodus) {
     if (!gedrueckt) return k == 14 || k == 35 || k == 15 || k == 32 || k == 34;
     const int n = s.kn.size();
-    const bool oben = s.kfi <= 3;   // Kopf: X, Maus, Tastatur, Ziffern - unten: Links, Rechts, Makros
+    const bool oben = s.kfi <= 5;   // Kopf: X, Geraet, Maus, Tastatur, Ziffern, Tastenmodus - unten: Links, Rechts, Makros
     switch (k) {
-      case 15: s.kfi = oben ? (s.kfi + 3) % 4 : 4 + (s.kfi - 4 + 2) % 3; break;
-      case 32: s.kfi = oben ? (s.kfi + 1) % 4 : 4 + (s.kfi - 4 + 1) % 3; break;
-      case 14: if (!oben) s.kfi = 2; break;
-      case 35: if (oben) s.kfi = 4; break;
+      case 15: s.kfi = oben ? (s.kfi + 5) % 6 : 6 + (s.kfi - 6 + 2) % 3; break;
+      case 32: s.kfi = oben ? (s.kfi + 1) % 6 : 6 + (s.kfi - 6 + 1) % 3; break;
+      case 14: if (!oben) s.kfi = 3; break;
+      case 35: if (oben) s.kfi = 6; break;
       case 34: {
         if (s.kfi < 0 || s.kfi >= n) return true;
         lv_obj_t *b = s.kn[s.kfi];
-        const bool ende = s.kfi == 0 || s.kfi == 2 || s.kfi == 3;   // X / Tastatur / Ziffern verlassen die Seite
+        const bool ende = s.kfi == 0 || s.kfi == 3 || s.kfi == 4;   // X / Tastatur / Ziffern verlassen die Seite
         if (ende) s.knopfmodus = false;
         lv_obj_send_event(b, LV_EVENT_PRESSED, nullptr);
         lv_obj_send_event(b, LV_EVENT_RELEASED, nullptr);
@@ -580,13 +875,15 @@ inline void aufbauen() {
   lv_obj_t *hd = lv_obj_create(r);
   lv_obj_remove_style_all(hd);
   lv_obj_set_pos(hd, 0, 0);
-  lv_obj_set_size(hd, 240, 40);
+  // 44 hoch wie die Tastatur-/Ziffern-Seite (und alle Seiten mit Zurueck-Knopf, remote.yaml "Randlos"): vorher 40,
+  // dann sassen X, Umschalter und Linie beim Wechsel Tastatur <-> Touchpad 4 px versetzt (2026-11-20)
+  lv_obj_set_size(hd, 240, 44);
   lv_obj_set_style_bg_color(hd, lv_color_hex(0x0E1116), 0);
   lv_obj_set_style_bg_opa(hd, LV_OPA_COVER, 0);
   lv_obj_set_style_pad_left(hd, 6, 0);
   lv_obj_set_style_pad_right(hd, 6, 0);
   lv_obj_set_style_pad_top(hd, 6, 0);
-  lv_obj_set_style_pad_bottom(hd, 4, 0);
+  lv_obj_set_style_pad_bottom(hd, 8, 0);
   lv_obj_set_flex_flow(hd, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(hd, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(hd, 8, 0);
@@ -602,18 +899,23 @@ inline void aufbauen() {
   lv_obj_t *xl = lv_label_create(x);
   lv_obj_set_style_text_font(xl, a15->get_lv_font(), 0);
   lv_obj_set_style_text_color(xl, lv_color_hex(0xF1F3F5), 0);
-  lv_label_set_text(xl, "X");
+  lv_label_set_text(xl, "<");
   lv_obj_center(xl);
-  lv_obj_add_event_cb(x, [](lv_event_t *e) { makros_zeigen(false); schliessen(); }, LV_EVENT_CLICKED, nullptr);
-  s.titel = lv_label_create(hd);
-  lv_obj_set_style_text_font(s.titel, a15->get_lv_font(), 0);
-  lv_obj_set_style_text_color(s.titel, lv_color_hex(0xF1F3F5), 0);
-  lv_obj_set_height(s.titel, 22);
-  lv_obj_set_width(s.titel, 10);
-  lv_obj_set_flex_grow(s.titel, 1);
-  lv_label_set_long_mode(s.titel, LV_LABEL_LONG_DOT);
+  x_lbl() = xl;
+  // Wie die Tastatur (2026-11-20, Nutzer: "Touchpad hat ein X. Da moechte ich auch den Pfeil ... und die Funktion"):
+  // aus dem Menue geoeffnet "<" = zurueck ins Menue (popup_schliessen -> open_menu), sonst "X" = zu (Startseite).
+  // Beschriftung setzt geladen() (kopf_zeichen).
+  lv_obj_add_event_cb(x, [](lv_event_t *e) {
+    makros_zeigen(false);
+    // als Menueseite offen: eine Seite zurueck wie die Tastatur, sonst Popup zu (fuehrt ggf. ins Menue zurueck)
+    if (popup_seite->value() != cur_page->value()) nav_back->execute(); else schliessen();
+  }, LV_EVENT_CLICKED, nullptr);
+  // Titel = Geraete-Auswahl (eingabewahl::feld_bauen, 2026-11-20)
+  lv_obj_t *feld = eingabewahl::feld_bauen(hd, eingabewahl::maus());
+  s.titel = eingabewahl::maus().feld_lbl;
   eingabewahl::aufbauen(hd, eingabewahl::maus());
   s.kn.push_back(x);
+  s.kn.push_back(feld);
   for (lv_obj_t *b : eingabewahl::maus().kn) s.kn.push_back(b);
   tasten::kopf_linie(hd, x);
   // Flaeche
@@ -703,15 +1005,18 @@ inline void menue_anbinden() {
 
 // on_load der Seite
 inline void geladen() {
+  eingabewahl::dd_zu();
   aufbauen();
   anordnen();
   eingabewahl::markieren(eingabewahl::maus(), eingabewahl::MAUS);
   z().knopfmodus = false;
   z().zurueck_unten = false;
+  if (x_lbl() != nullptr) lv_label_set_text(x_lbl(), eingabewahl::pfeil() ? "<" : "X");   // wie die Tastatur
   knopf_fokus();
   makros_zeigen(false);
   hinweis_setzen();
   schnell();
+  if (eingabewahl::maus().feld != nullptr) eingabewahl::schub_anwenden(lv_obj_get_parent(eingabewahl::maus().feld));
 }
 
 }  // namespace touchpad
