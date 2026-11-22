@@ -1,5 +1,15 @@
 # What's new · Was ist neu
 
+## 2026.11.23.1 (2026-11-23)
+
+README: photos and short clips of the real remote
+
+<details><summary>Deutsch</summary>
+
+README: Fotos und kurze Clips der echten Fernbedienung
+
+</details>
+
 ## 2026.11.22.1 (2026-11-22)
 
 - **Streamer app 1.22: double-press the menu key** – new setting in the streamer menu (configurator, under "Menu key long press"): a double press cycles the camera size (small → medium → large → almost full screen).
