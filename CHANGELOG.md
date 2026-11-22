@@ -1,5 +1,17 @@
 # What's new · Was ist neu
 
+## 2026.11.22.1 (2026-11-22)
+
+- **Streamer app 1.22: double-press the menu key** – new setting in the streamer menu (configurator, under "Menu key long press"): a double press cycles the camera size (small → medium → large → almost full screen).
+- **Camera pop-up buttons**: a button for a different camera now switches the picture directly instead of closing the pop-up; only the same camera closes it.
+
+<details><summary>Deutsch</summary>
+
+- **Streamer-App 1.22: Menü-Taste doppelt drücken** – neue Einstellung im Streamer-Menü (Konfigurator, unter „Menü-Taste gedrückt halten“): Doppeldruck schaltet die Kamera-Größe weiter (Klein → Mittel → Groß → Fast Vollbild).
+- **Kamera-Popup-Knöpfe**: ein Knopf für eine andere Kamera wechselt jetzt direkt das Bild, statt das Popup zu schließen; nur dieselbe Kamera schließt es.
+
+</details>
+
 ## 2026.11.21.1 (2026-11-21)
 
 - **ESPHome 2026.11:** the firmware builds again with ESPHome 2026.11 (network/HALINK, atv_voice, online_image, header layout).

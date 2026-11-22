@@ -30,6 +30,10 @@ final class Tasten {
     static final String EINST_TASTEN = "esphomeremote_tasten";
     static final String EINST_LERNEN = "esphomeremote_tasten_lernen";
     private static final long LANG_MS = 600;
+    // Menue-Taste doppelt druecken (2026-11-22, App 1.22): settings put global esphomeremote_menue_doppelt 1 -> nach dem
+    // ersten kurzen Druck DOPPEL_MS auf einen zweiten warten; kommt er, wird "doppelt" gemeldet statt das Menue zu schalten.
+    static final String EINST_DOPPELT = "esphomeremote_menue_doppelt";
+    private static final long DOPPEL_MS = 400;
 
     private final Context ctx;
     private final Handler h;
@@ -41,6 +45,9 @@ final class Tasten {
     private int unten = -1;
     private boolean langGemeldet;
     private final Runnable lang = this::langErreicht;
+    private volatile boolean doppelt;
+    private boolean warteZweiten, zweiter;
+    private final Runnable einzeln = () -> { warteZweiten = false; menueSchalten(); };
 
     Tasten(Context c, Handler h) {
         this.ctx = c;
@@ -52,6 +59,7 @@ final class Tasten {
         c.getContentResolver().registerContentObserver(Settings.Global.getUriFor(EINST_LERNEN), false, beob);
         c.getContentResolver().registerContentObserver(Settings.Global.getUriFor(Menue.EINST_TASTE), false, beob);
         c.getContentResolver().registerContentObserver(Settings.Global.getUriFor(Menue.EINST_PUNKTE), false, beob);
+        c.getContentResolver().registerContentObserver(Settings.Global.getUriFor(EINST_DOPPELT), false, beob);
         laden();
         Menue.setMelder(this);
     }
@@ -59,6 +67,7 @@ final class Tasten {
     void aus() {
         try { ctx.getContentResolver().unregisterContentObserver(beob); } catch (Exception ignored) { }
         h.removeCallbacks(lang);
+        h.removeCallbacks(einzeln);
     }
 
     private void laden() {
@@ -78,7 +87,8 @@ final class Tasten {
         if (mt >= 0) s.add(mt);
         uebernommen = s;
         lernen = "1".equals(Settings.Global.getString(ctx.getContentResolver(), EINST_LERNEN));
-        Log.i(TAG, "Tasten fuer Home Assistant: " + s + (lernen ? " (Lernmodus)" : ""));
+        doppelt = "1".equals(Settings.Global.getString(ctx.getContentResolver(), EINST_DOPPELT));
+        Log.i(TAG, "Tasten fuer Home Assistant: " + s + (lernen ? " (Lernmodus)" : "") + (doppelt ? " (Menue-Taste doppelt)" : ""));
     }
 
     // true = die Taste gehoert Home Assistant (Android bekommt sie nicht)
@@ -90,6 +100,11 @@ final class Tasten {
         if (!uebernommen.contains(code)) return false;
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
             if (e.getRepeatCount() == 0) {
+                if (code == menueTaste && warteZweiten) {   // zweiter Druck innerhalb DOPPEL_MS
+                    h.removeCallbacks(einzeln);
+                    warteZweiten = false;
+                    zweiter = true;
+                }
                 unten = code;
                 langGemeldet = false;
                 h.removeCallbacks(lang);
@@ -100,19 +115,35 @@ final class Tasten {
         if (e.getAction() == KeyEvent.ACTION_UP) {
             h.removeCallbacks(lang);
             if (unten == code && !langGemeldet) {
-                if (code == menueTaste && !WebMenue.url(ctx).isEmpty()) {   // Menue aus dem Konfigurator (1.17)
-                    if (WebMenue.offen()) WebMenue.zu();
-                    else WebMenue.zeigen((android.accessibilityservice.AccessibilityService) ctx);
-                } else if (code == menueTaste && menuePunkte.length > 0) {
-                    if (Menue.offen()) Menue.zu();   // dieselbe Taste noch einmal: Menue zu
-                    else Menue.zeigen((android.accessibilityservice.AccessibilityService) ctx, "", menuePunkte, "haupt");
+                if (code == menueTaste && zweiter) {
+                    melden(code, "doppelt", e);
+                } else if (code == menueTaste && doppelt) {
+                    warteZweiten = true;   // erst sehen, ob ein zweiter Druck kommt
+                    h.postDelayed(einzeln, DOPPEL_MS);
+                } else if (code == menueTaste) {
+                    menueSchalten();
                 } else {
                     melden(code, "kurz", e);
                 }
             }
+            if (code == menueTaste) zweiter = false;
             unten = -1;
         }
         return true;
+    }
+
+    // Menue-Taste kurz: Popup-Menue auf/zu - ohne Menue nur "kurz" melden
+    private void menueSchalten() {
+        final int code = menueTaste;
+        if (!WebMenue.url(ctx).isEmpty()) {   // Menue aus dem Konfigurator (1.17)
+            if (WebMenue.offen()) WebMenue.zu();
+            else WebMenue.zeigen((android.accessibilityservice.AccessibilityService) ctx);
+        } else if (menuePunkte.length > 0) {
+            if (Menue.offen()) Menue.zu();   // dieselbe Taste noch einmal: Menue zu
+            else Menue.zeigen((android.accessibilityservice.AccessibilityService) ctx, "", menuePunkte, "haupt");
+        } else {
+            melden(code, "kurz", null);
+        }
     }
 
     private void langErreicht() {

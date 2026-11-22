@@ -63,6 +63,9 @@ E_KAMERA = "binary_sensor.esphomeremote_camera_tv"
 E_GROESSE = "sensor.esphomeremote_camera_size"
 E_ZIEL = "sensor.esphomeremote_camera_target"
 E_ZIEL_GROESSE = "sensor.esphomeremote_camera_target_size"
+E_POSITION = "sensor.esphomeremote_camera_position"   # 2026-11-22: Position je TV (für Dashboard-Anzeige), Attribut position
+POSITION_NAME = {"top-left": "Oben links", "top-right": "Oben rechts", "bottom-left": "Unten links", "bottom-right": "Unten rechts",
+                 "center": "Mitte"}
 ZIEL_WORTE = ("target", "ziel", "auswahl")
 E_ALT = ("binary_sensor.esphomeremote_kamera_tv", "sensor.esphomeremote_kamera_groesse", "sensor.esphomeremote_tv_eingang")   # bis 2026-11-03
 
@@ -349,7 +352,11 @@ class Funktionen:
             sid = next((i for i, g in GROESSE_ID.items() if g == k["groesse"]), "medium")
             zustaende(self.hass).setzen(eg, _t(self.hass, k["groesse"]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Größe") + (f" ({tvname})" if tvname else ""),
                                                                        "icon": "mdi:resize", "size": sid, "options": list(GROESSE_ID)})
-            jetzt |= {ek, eg}
+            ep = self._e(E_POSITION, tid)
+            pos = k.get("position") if k.get("position") in POSITIONEN else "top-right"
+            zustaende(self.hass).setzen(ep, _t(self.hass, POSITION_NAME[pos]), {"friendly_name": _t(self.hass, "ESPHomeRemote Kamera-Position") + (f" ({tvname})" if tvname else ""),
+                                                                              "icon": "mdi:arrow-all", "position": pos, "options": list(POSITIONEN)})
+            jetzt |= {ek, eg, ep}
         bereit = [(tid, k) for tid, k in self._tvs() if self._kamera_bereit(k)]
         if len(bereit) > 1:   # Ziel-Auswahl erst ab zwei Fernsehern
             tid, k = self._ziel()
@@ -362,7 +369,7 @@ class Funktionen:
                                         "size": next((i for i, g in GROESSE_ID.items() if g == k["groesse"]), "medium"),
                                         "tv": tid, "options": list(GROESSE_ID)})
             jetzt |= {E_ZIEL, E_ZIEL_GROESSE}
-        for e in self._gesetzt - jetzt | ({E_KAMERA, E_GROESSE, E_ZIEL, E_ZIEL_GROESSE} - jetzt):
+        for e in self._gesetzt - jetzt | ({E_KAMERA, E_GROESSE, E_POSITION, E_ZIEL, E_ZIEL_GROESSE} - jetzt):
             zustaende(self.hass).aus(e)
         self._gesetzt = jetzt
 
@@ -425,7 +432,8 @@ class Funktionen:
             k = {**k, **ov}
         z = self._zst(tid)
         # toggle (2026-11-06): laeuft schon eine Kamera, blendet derselbe Aufruf sie aus (z. B. eine Taste fuer an/aus)
-        if call.data.get("toggle") and kam != "off" and z.get("sichtbar"):
+        # 2026-11-22 (Nutzer): andere Kamera gedrueckt -> direkt wechseln; nur dieselbe Kamera (oder "last") schliesst
+        if call.data.get("toggle") and kam != "off" and z.get("sichtbar") and kam in ("last", z.get("letzte")):
             kam = "off"
         if not self._kamera_bereit(k):
             _LOGGER.warning("Kamera auf dem TV: kein Fernseher eingestellt (Konfigurator > Funktionen)")
@@ -541,6 +549,7 @@ class Funktionen:
             return
         k["position"] = p
         await self.kd.store.async_save(self.kd.data)
+        self._kamera_zustand()   # Positions-Sensor sofort aktualisieren (Dashboard)
         await self._nochmal(tid)
 
     async def _dienst_groesse(self, call) -> None:

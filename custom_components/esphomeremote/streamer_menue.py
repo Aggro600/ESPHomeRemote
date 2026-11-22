@@ -81,7 +81,11 @@ def validieren(d: dict) -> dict:
     halten = {"aktion": h.get("aktion") if h.get("aktion") in ("none", "camera") else "none",
               "kamera": str(h.get("kamera") or "")[:120],
               "groesse": h.get("groesse") if h.get("groesse") in ("small", "medium", "large", "almost_full") else ""}
+    # Menue-Taste doppelt druecken (2026-11-22, App 1.22): "none" = nur das Ereignis, "camera_size" = Kamera-Groesse weiter
+    dp = d.get("doppelt") if isinstance(d.get("doppelt"), dict) else {}
+    doppelt = {"aktion": dp.get("aktion") if dp.get("aktion") in ("none", "camera_size") else "none"}
     return {"an": bool(d.get("an")), "taste": taste, "groesse": groesse, "position": pos, "dauer": dauer, "halten": halten,
+            "doppelt": doppelt,
             "menu": {"start": start, "pages": sauber or STANDARD["menu"]["pages"]}}
 
 
@@ -106,6 +110,7 @@ async def anwenden(hass: HomeAssistant, sid: str) -> None:
     befehl = (f"settings put global esphomeremote_menue_url '{u}'; settings put global esphomeremote_menue_taste '{taste}'; "
               f"settings put global esphomeremote_menue_groesse {d['groesse']}; "
               f"settings put global esphomeremote_menue_position {d['position']}; "
+              f"settings put global esphomeremote_menue_doppelt {1 if d['an'] and (d.get('doppelt') or {}).get('aktion', 'none') != 'none' else 0}; "
               "pm grant de.esphomeremote.streamer android.permission.READ_LOGS 2>/dev/null")
     await st.adb(befehl)
 

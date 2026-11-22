@@ -2033,6 +2033,11 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       s.durchsage[t.dataset.dsg] = t.type === "checkbox" ? t.checked : t.dataset.dsg === "lautstaerke" ? Number(t.value) : t.value;
       this._durchsageSpeichern(); return;
     }
+    if (t.dataset.stmd) {   // Menue-Taste doppelt druecken (2026-11-22)
+      const m = s.stm[t.dataset.sid];
+      m.doppelt = { aktion: "none", ...(m.doppelt || {}), [t.dataset.stmd]: t.value };
+      this._stmSpeichern(t.dataset.sid).then(() => this._render()); return;
+    }
     if (t.dataset.stmh) {   // Menue-Taste gedrueckt halten
       const m = s.stm[t.dataset.sid];
       m.halten = { aktion: "none", kamera: "", groesse: "", ...(m.halten || {}), [t.dataset.stmh]: t.value };
@@ -7039,6 +7044,9 @@ const EinstTab = {
       <div class="ez"><span>Größe der Kamera</span><select data-stmh="groesse" data-sid="${sid}">${[["", "Wie eingestellt"], ["small", "Klein"], ["medium", "Mittel"], ["large", "Groß"], ["almost_full", "Fast Vollbild"]].map(([v, l]) => opt(v, l, h.groesse || "")).join("")}</select></div>`
         + (tvDa ? "" : `<small class="note warnz">Kein Fernseher nutzt diesen Streamer für die Kamera – unter Funktionen › Kamera auf dem Fernseher den Streamer wählen.</small>`);
     }
+    // Menue-Taste doppelt druecken (2026-11-22, App 1.22)
+    const dp = (m.doppelt || {}).aktion || "none";
+    html += `<div class="ez"><span>Menü-Taste doppelt drücken<small class="vtext">Ereignis esphomeremote_streamer_key mit press: double. Ist hier etwas gewählt, öffnet ein einfacher Druck das Menü 0,4 s später.</small></span><select data-stmd="aktion" data-sid="${sid}">${opt("none", "Nichts weiter", dp)}${opt("camera_size", "Kamera-Größe weiterschalten", dp)}</select></div>`;
     return html;
   },
   _stmKameras(sid) {

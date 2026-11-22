@@ -214,10 +214,12 @@ class Streamer:
             hass.bus.async_fire(f"{DOMAIN}_streamer_key", {
                 "streamer": self.cfg.get("id"), "streamer_name": self.cfg.get("name"),
                 "code": taste.get("code"), "name": taste.get("name"),
-                "press": {"kurz": "short", "lang": "long", "lernen": "learn"}.get(taste.get("art"), taste.get("art")),
+                "press": {"kurz": "short", "lang": "long", "lernen": "learn", "doppelt": "double"}.get(taste.get("art"), taste.get("art")),
                 "source": taste.get("quelle"), "cec": bool(taste.get("cec"))})
             if taste.get("art") == "lang":
                 hass.async_create_task(self._halten(taste.get("code")))
+            elif taste.get("art") == "doppelt":
+                hass.async_create_task(self._doppelt(taste.get("code")))
             return None
         # Einfaches Popup-Menue (App 1.16, Menue.java): {"menue": {id, wahl, text}} -> esphomeremote_streamer_menu_choice
         menue = daten.get("menue") if isinstance(daten, dict) else None
@@ -258,6 +260,20 @@ class Streamer:
         if h.get("groesse"):
             data["size"] = h["groesse"]
         await self.hass.services.async_call(DOMAIN, "camera_tv", data, blocking=False)
+
+    async def _doppelt(self, code) -> None:
+        """Menue-Taste doppelt druecken (2026-11-22, App 1.22) -> Kamera-Groesse weiterschalten, falls eingestellt."""
+        sid = self.cfg.get("id")
+        m = (self.kd.data.get("streamer_menue") or {}).get(sid) or {}
+        if (not m.get("an") or m.get("taste") is None or str(m.get("taste")) != str(code)
+                or (m.get("doppelt") or {}).get("aktion") != "camera_size"):
+            return
+        f = self.hass.data.get(DOMAIN + "_funktionen")
+        tv = f.tv_fuer_streamer(sid) if f else None
+        if tv is None:
+            _LOGGER.warning("Streamer %s: Taste doppelt = Kamera-Größe, aber kein Fernseher mit diesem Streamer", self.cfg.get("name"))
+            return
+        await self.hass.services.async_call(DOMAIN, "camera_size", {"tv": tv, "size": "next"}, blocking=False)
 
     # ---- ADB (androidtv-Integration): HDMI-CEC, App beenden, Neustart
     async def adb(self, befehl: str) -> str:
