@@ -26,6 +26,7 @@
 <p align="center">
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-startseite.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-startseite.jpg" alt="Startseite" title="Startseite" width="100"></a>
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-menue.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-menue.jpg" alt="Menü" title="Menü" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-licht.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-licht.jpg" alt="Licht steuern" title="Licht steuern" width="100"></a>
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-apps.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-apps.jpg" alt="Apps" title="Apps" width="100"></a>
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-musik-player.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-musik-player.jpg" alt="Musik-Player" title="Musik-Player" width="100"></a>
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-kamera.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-kamera.jpg" alt="Kamera" title="Kamera" width="100"></a>
@@ -36,8 +37,18 @@
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-ziffern.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-ziffern.jpg" alt="Ziffern" title="Ziffern" width="100"></a>
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-tastatur.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-tastatur.jpg" alt="Tastatur" title="Tastatur" width="100"></a>
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-touchpad.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-touchpad.jpg" alt="Touchpad" title="Touchpad" width="100"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-musik.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-musik.jpg" alt="Musik" title="Musik" width="100"></a>
   <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-display-aus.jpg"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/fotos/remote-display-aus.jpg" alt="Display aus" title="Display aus" width="100"></a>
   <br><sub>Fotos der echten Fernbedienung – zum Vergrößern anklicken.</sub>
+</p>
+
+<p align="center">
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/tastatur-tv.webp"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/tastatur-tv.webp" alt="Tippen am Fernseher" title="Tippen am Fernseher" width="49%"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/touchpad-tv.webp"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/touchpad-tv.webp" alt="Touchpad" title="Touchpad" width="49%"></a>
+  <br>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/kameras.webp"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/kameras.webp" alt="Kameras: Standbild und Live-Bild" title="Kameras: Standbild und Live-Bild" width="32%"></a>
+  <a href="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/rundgang.webp"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/videos/rundgang.webp" alt="Rundgang durch die Menüs" title="Rundgang durch die Menüs" width="32%"></a>
+  <br><sub>Kurze Clips der echten Fernbedienung (ohne Ton).</sub>
 </p>
 
 <p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/hero.png" alt="ESPHomeRemote: Fernbedienung mit Touch-Display und der Konfigurator in Home Assistant" width="100%"></p>
