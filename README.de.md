@@ -263,7 +263,7 @@ Einstellungen gleichen sich in beide Richtungen ab: was du an der Remote umstell
 | | |
 |---|---|
 | 🎛️ **Die Fernbedienung** | **OMOTE / Open Remote, Platine Rev6** (ESP32-S3) – Hardware: [OMOTE-Hardware](https://github.com/OMOTE-Community/OMOTE-Hardware). Platinen gibt es manchmal im [Discord](https://discord.com/invite/5PnYFAsKsG) (Kanal buy/sell). |
-| 🏠 **Home Assistant** | **OS oder Supervised**, 2026.9 oder neuer, mit dem Add-on **ESPHome Device Builder** und **[HACS](https://hacs.xyz)**. Container oder Core geht auch, dann baust und flashst du die Firmware aber selbst mit ESPHome – die Integration sagt es dir beim Hinzufügen. |
+| 🏠 **Home Assistant** | **OS oder Supervised**, 2026.9 oder neuer, mit dem Add-on **ESPHome Device Builder** (ESPHome **2026.11** oder neuer) und **[HACS](https://hacs.xyz)**. Container oder Core geht auch, dann baust und flashst du die Firmware aber selbst mit ESPHome – die Integration sagt es dir beim Hinzufügen. |
 | 🔌 **Fürs erste Aufspielen** | Ein **USB-C-Datenkabel** (kein reines Ladekabel) und ein PC mit **Chrome oder Edge**. |
 | 📶 **WLAN** | Ein **2,4-GHz**-Netz (5 GHz kann der ESP32 nicht). |
 | 🧲 **Dockingstation** | *Optional.* Original-Dock oder ein beliebiger ESP32 – siehe [Die Dockingstation](#die-dockingstation). |
