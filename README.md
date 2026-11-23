@@ -284,7 +284,7 @@ Settings sync both ways: what you change on the remote shows up in the configura
 | | |
 |---|---|
 | 🎛️ **The remote** | **OMOTE / Open Remote, board Rev6** (ESP32-S3) – hardware: [OMOTE-Hardware](https://github.com/OMOTE-Community/OMOTE-Hardware). PCBs are sometimes offered in the [Discord](https://discord.com/invite/5PnYFAsKsG) buy/sell channel. |
-| 🏠 **Home Assistant** | **OS or Supervised**, 2026.9 or newer, with the **ESPHome Device Builder** add-on and **[HACS](https://hacs.xyz)**. Container or Core works too, but then you build and flash the firmware yourself with ESPHome – the integration tells you so when you add it. |
+| 🏠 **Home Assistant** | **OS or Supervised**, 2026.9 or newer, with the **ESPHome Device Builder** add-on (ESPHome **2026.11** or newer) and **[HACS](https://hacs.xyz)**. Container or Core works too, but then you build and flash the firmware yourself with ESPHome – the integration tells you so when you add it. |
 | 🔌 **For the first flash** | A **USB-C data cable** (not a charge-only cable) and a PC with **Chrome or Edge**. |
 | 📶 **Wi-Fi** | A **2.4 GHz** network (the ESP32 can't use 5 GHz). |
 | 🧲 **Docking station** | *Optional.* Original dock or any spare ESP32 – see [The docking station](#the-docking-station). |
