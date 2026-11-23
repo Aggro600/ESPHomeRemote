@@ -25,7 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         ziel: [ci-remote.yaml, ci-dock.yaml]
-        esphome: ["2026.10.2", "latest"]
+        esphome: ["2026.11.0", "latest"]   # Mindestversion: seit dem Port vom 2026-11-20 nur noch 2026.11+ baubar
     steps:
       - uses: actions/checkout@v7
 
