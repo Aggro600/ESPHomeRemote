@@ -1130,7 +1130,7 @@ inline bool ereignis(int keycode, bool pressed) {
   }
   if (!pressed && beim_menue.erase(keycode)) { mn->taste(keycode, false); return true; }
   if (!pressed && beim_touchpad.erase(keycode)) { touchpad::taste(keycode, false); return true; }
-  if (!pressed && beim_showtime.erase(keycode)) return true;
+  if (!pressed && beim_showtime.erase(keycode)) { showtime::taste(keycode, false); return true; }   // OK lang/kurz
   if (pressed && p == 98 && !key_was_dark->value() && mn->taste(keycode, pressed)) {
     beim_menue.insert(keycode);
     held_key->value() = 0;

@@ -354,3 +354,10 @@ showtime:
       required: false
       selector:
         text:
+    queue:
+      name: Play next
+      description: Add to SmartTube's "Play next" queue instead of playing now (SmartTube 32.80+; plays right away if nothing is playing)
+      required: false
+      default: false
+      selector:
+        boolean:

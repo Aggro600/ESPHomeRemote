@@ -12,9 +12,9 @@
 
 namespace showtime {
 
-static const int ZEILEN = 4, KOPF = 32, ZH = 70, BB = 112, BH = 63;
+static const int ZEILEN = 4, KOPF = 32, ZH = 70, BB = 112, BH = 63, MENU_N = 6;
 
-struct Eintrag { std::string t, z, d; bool liste{false}; };
+struct Eintrag { std::string t, z, d; bool liste{false}, kanal{false}; };
 
 struct Zustand {
   bool gebaut{false};
@@ -36,6 +36,13 @@ struct Zustand {
   // Anzeige
   lv_obj_t *kopf{nullptr}, *seite{nullptr}, *bildobj{nullptr}, *meldung{nullptr};
   lv_obj_t *zeile[ZEILEN]{}, *titel[ZEILEN]{}, *unter[ZEILEN]{}, *dauer[ZEILEN]{};
+  // Aktionsmenue (langer Druck auf OK / langes Antippen): Abspielen, Als Naechstes, Spaeter ansehen, Kanal
+  lv_obj_t *menu{nullptr}, *menu_titel{nullptr}, *menu_z[MENU_N]{};
+  std::vector<std::pair<std::string, std::string>> menu_akt;   // (Text, Aktion fuer HA)
+  bool menu_offen{false};
+  int menu_sel{0}, menu_i{0};
+  uint32_t ok_unten_ms{0};
+  bool ok_lang{false};
 };
 
 inline Zustand &z() {
@@ -101,12 +108,13 @@ inline bool erreichbar() {
   return api || (tk_cfg->laden_ueber_dock && tk_cfg->laden_ueber_dock());
 }
 
-inline void abrufen(int tipp = -1) {
+inline void abrufen(int tipp = -1, bool auf = false, const char *aktion = "") {
   auto &s = z();
   if (s.laeuft || s.fertig) return;
   if (!erreichbar()) { meldung(sprache::englisch() ? "No connection to Home Assistant" : "Keine Verbindung zu Home Assistant"); return; }
   s.url = "http://" + tk_cfg->host() + "/api/esphomeremote/showtime/" + App.get_name() + "?k=" + tk_cfg->schluessel() +
-          "&kat=" + kodiert(s.kat) + "&s=" + std::to_string(s.s) + (tipp >= 0 ? "&tipp=" + std::to_string(tipp) : "");
+          "&kat=" + kodiert(s.kat) + "&s=" + std::to_string(s.s) + (tipp >= 0 ? "&tipp=" + std::to_string(tipp) : "") +
+          (auf ? "&auf=1" : "") + (*aktion ? std::string("&aktion=") + aktion : std::string());   // auf: Seite geoeffnet - HA waehlt evtl. die Start-Liste (Konfigurator)
   if (s.task == nullptr) {
     static StaticTask_t tcb;
     const size_t groesse = 6144;
@@ -116,7 +124,7 @@ inline void abrufen(int tipp = -1) {
   }
   s.laeuft = true;
   s.abruf_ms = millis();
-  if (tipp < 0) meldung(sprache::englisch() ? "Loading …" : "Lade …", 0);
+  if (tipp < 0 && (s.v.empty() || !auf)) meldung(sprache::englisch() ? "Loading …" : "Lade …", 0);   // beim Oeffnen nur, wenn noch nichts da
   xTaskNotifyGive((TaskHandle_t) s.task);
 }
 
@@ -132,8 +140,10 @@ inline lv_obj_t *label(lv_obj_t *p, const lv_font_t *f, uint32_t farbe) {
 
 inline void tippen(int i);
 inline void geste(lv_event_t *e);
+void menu_zeigen(int i);
+inline void menu_waehlen(int k);
 
-inline void aufbauen() {
+__attribute__((noinline)) void aufbauen() {
   auto &s = z();
   if (s.gebaut) return;
   s.gebaut = true;
@@ -174,8 +184,11 @@ inline void aufbauen() {
     lv_obj_set_style_pad_all(zl, 0, 0);
     lv_obj_remove_flag(zl, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(zl, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(zl, [](lv_event_t *e) { tippen((int) (intptr_t) lv_event_get_user_data(e)); }, LV_EVENT_CLICKED,
+    // Kurz antippen = abspielen, lang = Aktionsmenue (SHORT_CLICKED kommt nach einem langen Druck nicht)
+    lv_obj_add_event_cb(zl, [](lv_event_t *e) { tippen((int) (intptr_t) lv_event_get_user_data(e)); }, LV_EVENT_SHORT_CLICKED,
                         (void *) (intptr_t) i);
+    lv_obj_add_event_cb(zl, [](lv_event_t *e) { menu_zeigen((int) (intptr_t) lv_event_get_user_data(e)); },
+                        LV_EVENT_LONG_PRESSED, (void *) (intptr_t) i);
     s.titel[i] = label(zl, a11->get_lv_font(), 0xFFFFFF);
     lv_obj_set_width(s.titel[i], 116);
     lv_label_set_long_mode(s.titel[i], LV_LABEL_LONG_DOT);
@@ -194,6 +207,35 @@ inline void aufbauen() {
     lv_obj_set_style_radius(s.dauer[i], 3, 0);
     lv_obj_align(s.dauer[i], LV_ALIGN_TOP_LEFT, 4 + BB - 40, (ZH - BH) / 2 + BH - 16);
   }
+  // Aktionsmenue
+  s.menu = lv_obj_create(r);
+  lv_obj_set_size(s.menu, 210, LV_SIZE_CONTENT);
+  lv_obj_align(s.menu, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_bg_color(s.menu, lv_color_hex(0x1E1E1E), 0);
+  lv_obj_set_style_bg_opa(s.menu, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(s.menu, lv_color_hex(0xE53935), 0);
+  lv_obj_set_style_border_width(s.menu, 2, 0);
+  lv_obj_set_style_radius(s.menu, 10, 0);
+  lv_obj_set_style_pad_all(s.menu, 8, 0);
+  lv_obj_set_style_pad_row(s.menu, 4, 0);
+  lv_obj_set_flex_flow(s.menu, LV_FLEX_FLOW_COLUMN);
+  lv_obj_remove_flag(s.menu, LV_OBJ_FLAG_SCROLLABLE);
+  s.menu_titel = label(s.menu, a10->get_lv_font(), 0xA0A0A0);
+  lv_obj_set_width(s.menu_titel, 190);
+  lv_label_set_long_mode(s.menu_titel, LV_LABEL_LONG_DOT);
+  lv_obj_set_height(s.menu_titel, 26);
+  for (int k = 0; k < MENU_N; k++) {
+    lv_obj_t *z = s.menu_z[k] = label(s.menu, a13->get_lv_font(), 0xFFFFFF);
+    lv_obj_set_width(z, 190);
+    lv_obj_set_style_pad_ver(z, 5, 0);
+    lv_obj_set_style_pad_hor(z, 6, 0);
+    lv_obj_set_style_radius(z, 6, 0);
+    lv_obj_set_style_bg_color(z, lv_color_hex(0xE53935), 0);
+    lv_obj_add_flag(z, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(z, [](lv_event_t *e) { menu_waehlen((int) (intptr_t) lv_event_get_user_data(e)); }, LV_EVENT_CLICKED,
+                        (void *) (intptr_t) k);
+  }
+  lv_obj_add_flag(s.menu, LV_OBJ_FLAG_HIDDEN);
   s.meldung = label(r, a12->get_lv_font(), 0xFFFFFF);
   lv_obj_set_width(s.meldung, 220);
   lv_label_set_long_mode(s.meldung, LV_LABEL_LONG_WRAP);
@@ -214,7 +256,7 @@ inline void markieren() {
 
 inline void kopf_zeigen() {
   auto &s = z();
-  const bool liste = s.kat.rfind("pl:", 0) == 0;
+  const bool liste = s.kat.rfind("pl:", 0) == 0 || s.kat.rfind("zu:", 0) == 0;
   std::string k = (liste ? "‹ " : "‹ ") + (s.kat_name.empty() ? std::string("Showtime") : s.kat_name) + " ›";
   (lv_label_set_text)(s.kopf, k.c_str());
   char b[24];
@@ -243,8 +285,9 @@ inline void zeigen_liste() {
   kopf_zeigen();
 }
 
-// Antwort von HA uebernehmen (Hauptschleife)
-inline void anwenden() {
+// Antwort von HA uebernehmen (Hauptschleife). Nicht inline: sonst "l32r: literal target out of range" (2026-11-26,
+// wie dd_ereignis in esphomeremote-mouse.h) - die Literale landen zu weit weg vom Code in der riesigen main.cpp
+__attribute__((noinline)) void anwenden() {
   auto &s = z();
   s.fertig = false;
   if (s.antwort == nullptr) { meldung(sprache::englisch() ? "Home Assistant not reachable" : "Home Assistant nicht erreichbar"); return; }
@@ -266,14 +309,17 @@ inline void anwenden() {
     return;
   }
   if (!doc["kat"].isNull()) {
-    s.kat = doc["kat"] | "empfohlen";
+    const std::string neu = doc["kat"] | "empfohlen";
+    auto unter = [](const std::string &k) { return k.rfind("pl:", 0) == 0 || k.rfind("zu:", 0) == 0; };
+    if (unter(neu) && !unter(s.kat)) s.vor_liste = s.kat;   // Playlist/Kanal/Aehnliche: Zurueck fuehrt hierher
+    s.kat = neu;
     s.kat_name = doc["kn"] | "";
     s.s = doc["s"] | 0;
     s.n = doc["n"] | 1;
     s.mehr = (doc["mehr"] | 0) == 1;
     s.v.clear();
     for (JsonObjectConst e : doc["v"].as<JsonArrayConst>())
-      s.v.push_back({e["t"] | "", e["z"] | "", e["d"] | "", (e["p"] | 0) == 1});
+      s.v.push_back({e["t"] | "", e["z"] | "", e["d"] | "", (e["p"] | 0) == 1, (e["k"] | 0) == 1});
     zeigen_liste();
     s.geladen_ms = millis();
     const std::string b = doc["b"] | "";
@@ -285,6 +331,12 @@ inline void anwenden() {
   }
   if (*m) meldung(m);
   else if (s.meldung_bis == 0 && s.meldung) lv_obj_add_flag(s.meldung, LV_OBJ_FLAG_HIDDEN);
+  // Nach dem Abspielen (Konfigurator): "media" = Jetzt-laeuft-Seite, "home" = Startseite, sonst hier bleiben
+  if ((doc["play"] | 0) == 1) {
+    const std::string nach = doc["nach"] | "";
+    if (nach == "media") tasten::spezial_zeigen("media");
+    else if (nach == "home") go_home->execute();
+  }
 }
 
 // online_image fertig (on_download_finished)
@@ -299,7 +351,7 @@ inline void bild_da() {
 inline void laden(const std::string &kat, int seite, int sel = 0) {
   auto &s = z();
   if (s.laeuft || s.fertig) return;
-  if (kat.rfind("pl:", 0) != 0 && kat != s.kat) s.vor_liste = kat;
+  if (kat.rfind("pl:", 0) != 0 && kat.rfind("zu:", 0) != 0 && kat != s.kat) s.vor_liste = kat;
   s.kat = kat;
   s.s = seite < 0 ? 0 : seite;
   s.sel = sel;
@@ -309,7 +361,10 @@ inline void laden(const std::string &kat, int seite, int sel = 0) {
 inline void kategorie(int schritt) {
   auto &s = z();
   if (s.kats.empty()) { abrufen(); return; }
-  if (s.kat.rfind("pl:", 0) == 0) { laden("playlists", 0); return; }   // aus der Playlist: zurueck zur Liste
+  if (s.kat.rfind("pl:", 0) == 0 || s.kat.rfind("zu:", 0) == 0) {   // aus Playlist/Kanal/Aehnliche: zurueck
+    laden(s.vor_liste.empty() ? "playlists" : s.vor_liste, 0);
+    return;
+  }
   int i = 0;
   for (int j = 0; j < (int) s.kats.size(); j++) if (s.kats[j].first == s.kat) i = j;
   i = (i + schritt + (int) s.kats.size()) % (int) s.kats.size();
@@ -347,11 +402,85 @@ inline void geste(lv_event_t *) {
   }
 }
 
+inline void menu_markieren() {
+  auto &s = z();
+  for (int k = 0; k < MENU_N; k++) lv_obj_set_style_bg_opa(s.menu_z[k], k == s.menu_sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+}
+
+inline void menu_zu() {
+  auto &s = z();
+  s.menu_offen = false;
+  if (s.menu) lv_obj_add_flag(s.menu, LV_OBJ_FLAG_HIDDEN);
+}
+
+__attribute__((noinline)) void menu_zeigen(int i) {
+  auto &s = z();
+  if (i < 0 || i >= (int) s.v.size() || !s.menu) return;
+  const bool en = sprache::englisch();
+  const Eintrag &e = s.v[i];
+  s.menu_i = i;
+  s.menu_akt.clear();
+  if (e.liste) {
+    s.menu_akt.push_back({en ? "Open" : "Öffnen", ""});
+  } else {
+    s.menu_akt.push_back({en ? "Play" : "Abspielen", ""});
+    // SmartTubes Wiedergabe-Warteschlange - von aussen nur ans Ende (Extra add_to_queue), daher "(Ende)"
+    s.menu_akt.push_back({en ? "Play next (end)" : "Als nächstes (Ende)", "naechstes"});
+    s.menu_akt.push_back({en ? "Similar videos" : "Ähnliche Videos", "aehnlich"});
+    if (e.kanal) s.menu_akt.push_back({en ? "Open channel" : "Kanal öffnen", "kanal"});
+    s.menu_akt.push_back({s.kat == "spaeter" ? (en ? "Remove from Watch later" : "Aus „Später“ entfernen")
+                                             : (en ? "Watch later" : "Später ansehen"), "spaeter"});
+    s.menu_akt.push_back({en ? "Like" : "Mag ich", "mag"});
+  }
+  (lv_label_set_text)(s.menu_titel, e.t.c_str());
+  for (int k = 0; k < MENU_N; k++) {
+    if (k < (int) s.menu_akt.size()) {
+      (lv_label_set_text)(s.menu_z[k], s.menu_akt[k].first.c_str());
+      lv_obj_remove_flag(s.menu_z[k], LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s.menu_z[k], LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  s.menu_sel = 0;
+  menu_markieren();
+  s.menu_offen = true;
+  lv_obj_remove_flag(s.menu, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s.menu);
+}
+
+inline void menu_waehlen(int k) {
+  auto &s = z();
+  if (!s.menu_offen || k < 0 || k >= (int) s.menu_akt.size() || s.laeuft || s.fertig) return;
+  const std::string akt = s.menu_akt[k].second;
+  const int i = s.menu_i;
+  menu_zu();
+  if (akt.empty()) { tippen(i); return; }
+  s.sel = i;
+  markieren();
+  abrufen(i, false, akt.c_str());
+}
+
 // Tasten auf der Seite (14 hoch, 35 runter, 15 links, 32 rechts, 34 OK, 13 Zurueck); true = verbraucht
 inline bool taste(int k, bool gedrueckt) {
   auto &s = z();
   if (k != 14 && k != 35 && k != 15 && k != 32 && k != 34 && k != 13) return false;
+  // OK: kurz = abspielen (beim Loslassen), lang (0,6 s, s. takt) = Aktionsmenue
+  if (k == 34 && !s.menu_offen) {
+    if (gedrueckt) { s.ok_unten_ms = millis(); s.ok_lang = false; }
+    else if (s.ok_unten_ms) { const bool lang = s.ok_lang; s.ok_unten_ms = 0; if (!lang) tippen(s.sel); }
+    return true;
+  }
   if (!gedrueckt) return true;
+  if (s.menu_offen) {
+    const int n = (int) s.menu_akt.size();
+    switch (k) {
+      case 14: s.menu_sel = (s.menu_sel + n - 1) % n; menu_markieren(); break;
+      case 35: s.menu_sel = (s.menu_sel + 1) % n; menu_markieren(); break;
+      case 34: menu_waehlen(s.menu_sel); break;
+      default: menu_zu(); break;   // Zurueck/links/rechts schliessen
+    }
+    return true;
+  }
   switch (k) {
     case 14:
       if (s.sel > 0) { s.sel--; markieren(); } else blaettern(-1);
@@ -361,9 +490,8 @@ inline bool taste(int k, bool gedrueckt) {
       break;
     case 15: kategorie(-1); break;
     case 32: kategorie(1); break;
-    case 34: tippen(s.sel); break;
     case 13:
-      if (s.kat.rfind("pl:", 0) == 0) laden(s.vor_liste.empty() ? "playlists" : s.vor_liste, 0);
+      if (s.kat.rfind("pl:", 0) == 0 || s.kat.rfind("zu:", 0) == 0) laden(s.vor_liste.empty() ? "playlists" : s.vor_liste, 0);
       else go_home->execute();
       break;
   }
@@ -374,9 +502,13 @@ inline bool taste(int k, bool gedrueckt) {
 inline void geladen() {
   auto &s = z();
   aufbauen();
+  menu_zu();
+  s.ok_unten_ms = 0;
   zeigen_liste();
-  // Liste aelter als 5 min (oder noch keine): neu holen - HA haelt sie 10 min vor
-  if (s.v.empty() || millis() - s.geladen_ms > 300000) abrufen();
+  // Liste aelter als 5 min (oder noch keine): neu holen - HA haelt sie 10 min vor. "Aehnliche" immer: sie haengen am
+  // gerade laufenden Video (HA nimmt es aus dem YouTube-Verlauf)
+  // Beim Oeffnen immer fragen (auf=1): HA kennt die Start-Liste aus dem Konfigurator ("zuletzt" = bleibt, wie sie war)
+  abrufen(-1, true);
 }
 
 inline void oeffnen() {
@@ -388,6 +520,7 @@ inline void oeffnen() {
 inline void takt() {
   auto &s = z();
   if (s.fertig) anwenden();
+  if (s.ok_unten_ms && !s.ok_lang && millis() - s.ok_unten_ms > 600) { s.ok_lang = true; menu_zeigen(s.sel); }
   if (s.meldung_bis && (int32_t) (millis() - s.meldung_bis) > 0) {
     s.meldung_bis = 0;
     if (s.meldung) lv_obj_add_flag(s.meldung, LV_OBJ_FLAG_HIDDEN);

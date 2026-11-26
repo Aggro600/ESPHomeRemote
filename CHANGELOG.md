@@ -1,5 +1,23 @@
 # What's new · Was ist neu
 
+## 2026.11.26.2 (2026-11-26)
+
+- **Showtime: action menu** – long-press OK or long-tap a video: Play, **Play next (end)** (appends to SmartTube’s playback queue, SmartTube 32.80+), Similar videos, Open channel, Watch later (add/remove), Like.
+- **Showtime: new list “Continue watching”** – started videos, resumes roughly where you stopped. Red progress bars on thumbnails.
+- **Showtime: “Up next” for what is playing** – also when started directly in SmartTube (via YouTube history); the header shows the video it is based on.
+- **Showtime: own configurator page** – lists on/off and order, start list, what comes after playing, hide Shorts/watched videos, test field.
+- Action `esphomeremote.showtime`: field `queue` (append to the queue).
+
+<details><summary>Deutsch</summary>
+
+- **Showtime: Aktionsmenü** – OK lang drücken oder Video lang antippen: Abspielen, **Als nächstes (Ende)** (hängt das Video an SmartTubes Warteschlange, SmartTube ab 32.80), Ähnliche Videos, Kanal öffnen, Später ansehen (hinzufügen/entfernen), Mag ich.
+- **Showtime: neue Liste „Weiterschauen“** – angefangene Videos, setzt ungefähr dort fort, wo du aufgehört hast. Rote Fortschrittsbalken auf den Vorschaubildern.
+- **Showtime: „Ähnliche“ zum laufenden Video** – auch wenn es direkt in SmartTube gestartet wurde (über den YouTube-Verlauf); oben steht, worauf sich die Liste bezieht.
+- **Showtime: eigene Seite im Konfigurator** – Listen an/aus und Reihenfolge, Start-Liste, was nach dem Abspielen kommt, Shorts bzw. gesehene ausblenden, Testfeld.
+- Aktion `esphomeremote.showtime`: Feld `queue` (an die Warteschlange anhängen).
+
+</details>
+
 ## 2026.11.26.1 (2026-11-26)
 
 - **Showtime: YouTube on the remote** – Recommended, Subscriptions, Up next, Watch later, History, Liked and playlists with thumbnails on the display; tap to play the video in SmartTube on the streamer (full screen, wakes streamer and TV). Sign in like on a TV with a code (configurator › Playback › Showtime), no cookies. Special page “Showtime (YouTube)” or key function “Show Showtime”, action `esphomeremote.showtime`.

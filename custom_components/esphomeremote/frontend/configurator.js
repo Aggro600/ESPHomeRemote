@@ -2060,6 +2060,17 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       s.strm.streamer[Number(t.dataset.si)][t.dataset.st] = t.type === "checkbox" ? t.checked : t.value;
       this._strmSpeichern(); return;
     }
+    if (t.dataset.sht === "opt") {   // Showtime: Optionen (Start-Liste, nach dem Abspielen, Filter)
+      const k = t.dataset.k, v = t.type === "checkbox" ? t.checked : t.value;
+      this._hass.callWS({ type: "esphomeremote/showtime_set", [k]: v }).then((r) => { s.showtime = r; this._render(); })
+        .catch((e) => { s.msg = { err: true, text: "Showtime: " + (e.message || e) }; this._render(); });
+      return;
+    }
+    if (t.dataset.sht === "kat") {   // Showtime: Liste ein-/ausblenden
+      const k = (s.showtime.kategorien || []).find((x) => x.id === t.dataset.k);
+      if (k) k.an = t.checked;
+      this._showtimeKatSpeichern(); return;
+    }
     if (t.dataset.sht === "streamer") {   // Showtime: Streamer zum Abspielen
       this._hass.callWS({ type: "esphomeremote/showtime_set", streamer: t.value }).then((r) => { s.showtime = r; this._render(); });
       return;
@@ -6797,6 +6808,19 @@ const EinstTab = {
       catch (e) { s.msg = { err: true, text: "Showtime: " + (e.message || e) }; }
       this._showtimeWarten(); return true;
     }
+    if (a === "sht_hoch" || a === "sht_runter") {   // Showtime: Reihenfolge der Listen
+      const l = s.showtime.kategorien || [], i = l.findIndex((x) => x.id === t.dataset.k), j = i + (a === "sht_hoch" ? -1 : 1);
+      if (i < 0 || j < 0 || j >= l.length) return true;
+      [l[i], l[j]] = [l[j], l[i]];
+      await this._showtimeKatSpeichern(); return true;
+    }
+    if (a === "sht_test") {   // Video zum Testen abspielen (ID oder Link)
+      const v = (this.shadowRoot.querySelector("#sht-test")?.value || "").trim();
+      if (!v) { s.msg = { err: true, text: "Bitte eine Video-ID oder einen YouTube-Link eingeben." }; return true; }
+      try { s.showtime = await this._hass.callWS({ type: "esphomeremote/showtime_set", test: v }); s.msg = { text: "Showtime: Video wird am Streamer gestartet." }; }
+      catch (e) { s.msg = { err: true, text: "Showtime: " + (e.message || e) }; }
+      return true;
+    }
     if (a === "sht_logout") {
       if (!confirm("Showtime von YouTube abmelden? Die Listen auf der Remote sind dann leer.")) return true;
       s.showtime = await this._hass.callWS({ type: "esphomeremote/showtime_logout" }); return true;
@@ -6910,7 +6934,7 @@ const EinstTab = {
       <p class="hint">Ein <b>„Jetzt läuft“-Player</b> fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu <b>einem</b> Media Player zusammen – er zeigt immer, was gerade läuft (Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher). Welche Remote welchen nutzt, stellst du unter <i>Verknüpfungen</i> ein. Jede Quelle ist optional; Änderungen gelten sofort.</p>
       <div class="egrid">${karten}</div>
       <p><button class="btn" data-a="jz_add"><ha-icon icon="mdi:plus"></ha-icon>„Jetzt läuft“-Player anlegen</button></p>
-      ${this._showtimeHtml()}
+      <small class="note"><ha-icon icon="mdi:youtube"></ha-icon> YouTube-Listen auf der Remote: <button class="linkbtn" data-a="o_geh" data-b="showtime">Showtime</button></small>
       ${mitStreamer ? this._strmHtml(name) : `<small class="note">Streamer (App, Titel, Cover) richtest du unter <button class="linkbtn" data-a="o_geh" data-b="werk">Werkstatt</button> ein.</small>`}</div>`;
   },
   // "Jetzt laeuft"-Player direkt im Medien-Widget (2026-10-30, Nutzer: nicht ueberall ein eigener Knopf): ist der gewaehlte
@@ -6938,6 +6962,28 @@ const EinstTab = {
     catch (e) { this.s.showtime = { fehler: e.message || String(e) }; }
     this._shtLaedt = false; this._render();
   },
+  _showtimeOptHtml(sh, kats) {
+    const o = sh.optionen || {}, sichtbar = kats.filter((k) => k.an);
+    const wahl = (k, liste) => `<select data-sht="opt" data-k="${k}">${liste.map(([v, l]) => `<option value="${esc(v)}" ${v === o[k] ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+    const haken = (k, t, u) => `<div class="ez"><span>${t}<small class="vtext">${u}</small></span><input type="checkbox" data-sht="opt" data-k="${k}" ${o[k] ? "checked" : ""}></div>`;
+    return `<h4 style="margin:12px 0 4px">Bedienung</h4>
+      <div class="ez"><span>Beim Öffnen zeigen<small class="vtext">Welche Liste kommt, wenn du Showtime auf der Remote öffnest</small></span>
+        ${wahl("start", [["zuletzt", "Die zuletzt gezeigte Liste"], ["aehnlich_wenn", "„Ähnliche“, wenn gerade ein Video läuft – sonst die erste"], ...sichtbar.map((k) => [k.id, "Immer: " + k.name])])}</div>
+      <div class="ez"><span>Nach dem Abspielen<small class="vtext">Was die Remote zeigt, wenn ein Video startet</small></span>
+        ${wahl("nach", [["bleiben", "Auf Showtime bleiben"], ["media", "„Jetzt läuft“-Seite (Pause, Spulen, Lautstärke)"], ["home", "Startseite"]])}</div>
+      ${haken("shorts", "Shorts ausblenden", "Kurzvideos (hochkant) nicht anzeigen – vor allem in den Abos")}
+      ${haken("gesehene", "Fertig gesehene ausblenden", "Videos, die du zu 90 % oder mehr gesehen hast (nicht im Verlauf). Angefangene zeigen immer einen roten Balken.")}
+      <h4 style="margin:12px 0 4px">Testen</h4>
+      <div class="inl"><input id="sht-test" placeholder="Video-ID oder YouTube-Link" style="flex:1"><button class="btn small" data-a="sht_test"><ha-icon icon="mdi:play"></ha-icon>Am Streamer abspielen</button></div>
+      <small class="note">Spielt das Video wie von der Remote: Streamer wecken, SmartTube im Vollbild. Gut zum Prüfen von Streamer und ADB.</small>`;
+  },
+  async _showtimeKatSpeichern() {
+    const s = this.s, l = s.showtime.kategorien || [];
+    if (!l.some((x) => x.an)) { l[0].an = true; s.msg = { err: true, text: "Mindestens eine Liste muss sichtbar bleiben." }; }
+    try { s.showtime = await this._hass.callWS({ type: "esphomeremote/showtime_set", kategorien: l.map((x) => [x.id, x.an]) }); }
+    catch (e) { s.msg = { err: true, text: "Showtime: " + (e.message || e) }; }
+    this._render();
+  },
   _showtimeWarten() {   // waehrend der Anmeldung alle 3 s nachsehen
     clearTimeout(this._shtTimer);
     const sh = this.s.showtime;
@@ -6947,7 +6993,7 @@ const EinstTab = {
       this._render(); this._showtimeWarten();
     }, 3000);
   },
-  _showtimeHtml() {
+  _showtimeHtml(seite = false) {
     const sh = this.s.showtime;
     if (!sh) { this._showtimeLaden(); return ""; }
     if (sh.fehler) return "";
@@ -6966,12 +7012,19 @@ const EinstTab = {
         <p>Melde dich einmal an – wie an einem Fernseher, mit einem Code. HA speichert nur einen Zugangsschlüssel, kein Passwort und keine Cookies.</p>
         <p><button class="btn primary" data-a="sht_login"><ha-icon icon="mdi:youtube"></ha-icon>Mit YouTube anmelden</button></p>`;
     }
-    const sts = sh.streamers || [];
+    const sts = sh.streamers || [], kats = sh.kategorien || [];
+    const listen = kats.map((k, i) => `<div class="inl shtkat"><label style="flex:1"><input type="checkbox" data-sht="kat" data-k="${esc(k.id)}" ${k.an ? "checked" : ""}> ${esc(k.name)}${i === kats.findIndex((x) => x.an) ? ` <small class="note">(Start)</small>` : ""}</label>
+        <button class="icon sm" data-a="sht_hoch" data-k="${esc(k.id)}" ${i ? "" : "disabled"} title="Nach oben"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+        <button class="icon sm" data-a="sht_runter" data-k="${esc(k.id)}" ${i < kats.length - 1 ? "" : "disabled"} title="Nach unten"><ha-icon icon="mdi:arrow-down"></ha-icon></button></div>`).join("");
     return `<div class="karte sht"><h3><ha-icon icon="mdi:youtube"></ha-icon> Showtime – YouTube auf der Remote</h3>
       <p class="hint">Auf der Remote (Menü › Showtime oder eine Taste mit „Showtime“) siehst du deine YouTube-Listen mit Vorschaubildern; antippen oder OK spielt das Video in <b>SmartTube</b> auf dem Streamer ab. Aktion für eigene Automationen: <code>esphomeremote.showtime</code>.</p>
       ${inhalt}
       <div class="ez"><span>Abspielen auf<small class="vtext">Streamer mit SmartTube (ADB)</small></span>
         <select data-sht="streamer"><option value="">— erster Streamer —</option>${sts.map((x) => `<option value="${esc(x.id)}" ${x.id === sh.streamer ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+      ${seite ? this._showtimeOptHtml(sh, kats) : ""}
+      ${kats.length ? `<h4 style="margin:12px 0 4px">Listen auf der Remote</h4>
+      <small class="note">Häkchen = auf der Remote zu sehen. Reihenfolge = Reihenfolge beim Blättern mit links/rechts; die erste sichtbare Liste kommt beim ersten Öffnen, danach merkt sich die Remote die zuletzt gezeigte. Gilt sofort für alle Remotes.</small>
+      ${listen}` : ""}
     </div>`;
   },
   _jetztModal() {
@@ -8297,6 +8350,7 @@ const SEITEN_SYSTEM = [
   ["ircodes", "IR-Codes", "mdi:remote-tv"],
   ["sync", "Abgleich", "mdi:sync"],
   ["funktionen", "Funktionen", "mdi:home-lightning-bolt-outline"],
+  ["showtime", "Showtime", "mdi:youtube"],
   ["pruef", "Prüfen & Finden", "mdi:clipboard-check-outline"],
   // "Firmware & Geraete" steckt seit 2026-10-31 in der Werkstatt (Bereich "fw" fuehrt dorthin)
   ["werk", "Werkstatt", "mdi:toolbox-outline"],
@@ -8728,6 +8782,7 @@ const OberflaecheTab = {
       case "dockgeraet": return this._dockGeraetHtml();
       case "ircodes": return this._ircHtml();
       case "jetzt": return this._jetztHtml();
+      case "showtime": return `<div class="einst sht-seite">${this._showtimeHtml(true)}</div>`;
       case "klingel": return this._klingelHtml();
       case "fw": return this._fwHtml();
       case "werk": return this._werkHtml();

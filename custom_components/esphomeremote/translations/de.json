@@ -288,6 +288,10 @@
         "streamer": {
           "name": "Streamer",
           "description": "Optional – ID oder Name des Streamers (Standard: Konfigurator › Showtime)"
+        },
+        "queue": {
+          "name": "Als nächstes abspielen",
+          "description": "In SmartTubes Warteschlange „Als nächstes abspielen“ legen statt sofort abspielen (SmartTube ab 32.80; läuft nichts, startet es sofort)"
         }
       }
     }

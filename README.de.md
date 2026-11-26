@@ -362,18 +362,26 @@ Fernseher** (Taste, Größe, Lage, Einblenddauer, **Menü bearbeiten**) und **So
 
 ### Showtime: YouTube auf der Remote
 
-Deine YouTube-Listen auf dem Display der Remote – **Empfohlen, Abos, Ähnliche (zum zuletzt gesehenen Video), Später
-ansehen, Verlauf, Mag ich und deine Playlists** – mit Vorschaubild, Titel, Kanal und Länge. Video antippen (oder OK) und
+Deine YouTube-Listen auf dem Display der Remote – **Empfohlen, Abos, Ähnliche (zum gerade in SmartTube laufenden Video),
+Weiterschauen, Später ansehen, Verlauf, Mag ich und deine Playlists** – mit Vorschaubild, Titel, Kanal und Länge. Video antippen (oder OK) und
 es läuft in **SmartTube** auf dem Streamer, im Vollbild; der Streamer wacht auf und schaltet den Fernseher per HDMI-CEC ein.
 
-- **Anmelden wie am Fernseher** – Konfigurator *Wiedergabe → Showtime → Mit YouTube anmelden*. Es erscheint ein Code;
+- **Anmelden wie am Fernseher** – Konfigurator-Seite *Showtime → Mit YouTube anmelden*. Es erscheint ein Code;
   am Handy `google.com/device` öffnen, Code eingeben und mit dem Google-Konto bestätigen (am besten dasselbe wie in
   SmartTube). Das Passwort gibst du nur bei Google ein – Home Assistant speichert einen Zugangsschlüssel, kein Passwort,
   keine Cookies. *Abmelden* löscht ihn.
 - **Auf der Remote** – Spezialseite *Showtime (YouTube)* in ein Menü hängen oder einer Taste die Funktion *Showtime
   zeigen* geben. Hoch/runter wählt und blättert, links/rechts wechselt die Liste, OK/Antippen spielt ab bzw. öffnet eine
   Playlist, Zurück verlässt die Playlist. Wischen: links/rechts Liste, hoch/runter Seite.
-- **Automationen** – `esphomeremote.showtime` spielt jede Video-ID oder jeden YouTube-Link (`video`, optional `streamer`).
+- **Aktionsmenü** – OK lang drücken (oder Video lang antippen): *Abspielen*, **Als nächstes (Ende)** (hängt das Video
+  mit kurzem Hinweis an SmartTubes Warteschlange, SmartTube ab 32.80 – SmartTube erlaubt nur das Anhängen ans Ende),
+  *Ähnliche Videos*, *Kanal öffnen*, *Später ansehen* (hinzufügen/entfernen) und *Mag ich*.
+- **Konfigurator-Seite *Showtime*** – Listen an/aus und Reihenfolge, welche Liste beim Öffnen kommt (zuletzt gezeigte,
+  eine feste oder *Ähnliche*, wenn gerade ein Video läuft), was die Remote nach dem Start zeigt (bleiben, *Jetzt läuft*,
+  Startseite), Shorts ausblenden, gesehene ausblenden, Testfeld. Angefangene Videos zeigen einen roten Balken;
+  *Weiterschauen* setzt ungefähr dort fort, wo du aufgehört hast.
+- **Automationen** – `esphomeremote.showtime` spielt jede Video-ID oder jeden YouTube-Link (`video`, optional `streamer`,
+  `queue: true` = als nächstes abspielen).
 - Braucht einen Streamer mit ADB (siehe *Streamer-App*) und installiertes SmartTube.
 
 ### Updates

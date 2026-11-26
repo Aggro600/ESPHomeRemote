@@ -59,6 +59,7 @@ KATS = [
     ("empfohlen", "FEwhat_to_watch", "Empfohlen", "Recommended"),
     ("abos", "FEsubscriptions", "Abos", "Subscriptions"),
     ("aehnlich", None, "Ähnliche", "Up next"),
+    ("weiter", None, "Weiterschauen", "Continue watching"),
     ("spaeter", "VLWL", "Später ansehen", "Watch later"),
     ("verlauf", "FEhistory", "Verlauf", "History"),
     ("mag_ich", "VLLL", "Mag ich", "Liked"),
@@ -140,9 +141,20 @@ def _eintrag(t: dict) -> dict | None:
         vid = m.group(1) if m and t.get("contentType") == "TILE_CONTENT_TYPE_VIDEO" else None
     if not titel:   # geloeschte/private Videos haben keinen Titel
         return None
+    gesehen = 0
+    for ov in hdr.get("thumbnailOverlays") or []:
+        if "thumbnailOverlayResumePlaybackRenderer" in ov:
+            gesehen = int(ov["thumbnailOverlayResumePlaybackRenderer"].get("percentDurationWatched") or 0)
+    extra = {"w": gesehen} if gesehen else {}
+    m = re.search(r'"browseId": "(UC[\w-]{20,})"', json.dumps(t.get("onLongPressCommand") or {}))
+    if m:
+        extra["kanal"] = m.group(1)
+        extra["kanal_name"] = kanal
+    if t.get("contentType") == "TILE_CONTENT_TYPE_SHORTS":
+        extra["short"] = True
     if vid and VID_RE.match(vid):
         return {"id": vid, "t": titel, "z": " · ".join(x for x in (kanal, alter) if x), "d": dauer,
-                "bild": f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"}
+                "bild": f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg", **extra}
     be = cmd.get("browseEndpoint") or _finde(cmd, "browseEndpoint") or {}
     if be.get("browseId"):
         anzahl = " · ".join(" ".join(z) for z in zeilen[1:] if z)
@@ -161,9 +173,9 @@ def _fortsetzung(d) -> str | None:
     return None
 
 
-def _bild_bauen(bilder: list[bytes | None]) -> bytes:
-    """4 Vorschaubilder untereinander (Executor)."""
-    from PIL import Image
+def _bild_bauen(bilder: list[bytes | None], gesehen: list[int] | None = None) -> bytes:
+    """4 Vorschaubilder untereinander (Executor); gesehen = Prozent je Video -> roter Balken unten wie bei YouTube."""
+    from PIL import Image, ImageDraw
     out = Image.new("RGB", (BB, ZEILE * PRO_SEITE), (0, 0, 0))
     for i, b in enumerate(bilder[:PRO_SEITE]):
         if not b:
@@ -177,7 +189,13 @@ def _bild_bauen(bilder: list[bytes | None]) -> bytes:
         w, h = (round(BH * r), BH) if r > BB / BH else (BB, round(BB / r))
         src = src.resize((w, h), Image.LANCZOS)
         l, o = (w - BB) // 2, (h - BH) // 2
-        out.paste(src.crop((l, o, l + BB, o + BH)), (0, i * ZEILE + (ZEILE - BH) // 2))
+        y = i * ZEILE + (ZEILE - BH) // 2
+        out.paste(src.crop((l, o, l + BB, o + BH)), (0, y))
+        p = (gesehen or [0] * PRO_SEITE)[i] if gesehen and i < len(gesehen) else 0
+        if p > 0:
+            d = ImageDraw.Draw(out)
+            d.rectangle((0, y + BH - 3, BB - 1, y + BH - 1), fill=(80, 80, 80))
+            d.rectangle((0, y + BH - 3, max(2, BB * min(p, 100) // 100) - 1, y + BH - 1), fill=(229, 57, 53))
     b = io.BytesIO()
     out.save(b, "JPEG", quality=80)
     return b.getvalue()
@@ -194,7 +212,9 @@ class Showtime:
         self.listen: dict[str, dict] = {}     # kat -> {"v": [...], "cont": token, "zeit": t}
         self.bilder: dict[tuple, bytes] = {}
         self.letztes: str | None = None       # zuletzt per Showtime gestartetes Video
+        self.letztes_zeit = 0.0
         self.konto = ""
+        self.pl_namen: dict[str, str] = {}   # "pl:<id>" -> Name (Playlist/Kanal) fuers Blaettern
 
     # ------------------------------------------------------------ Einstellungen
     @property
@@ -208,9 +228,19 @@ class Showtime:
     def sprache_de(self) -> bool:
         return str(self.hass.config.language or "de").startswith("de")
 
+    def kat_reihe(self) -> list[tuple[str, bool]]:
+        """Reihenfolge und Sichtbarkeit aus dem Konfigurator (cfg["kategorien"] = [[kat, an], ...]); neue Kategorien hinten."""
+        alle = [k for k, *_ in KATS]
+        gespeichert = [(str(k), bool(an)) for k, an in (self.cfg.get("kategorien") or []) if k in alle]
+        bekannt = {k for k, _ in gespeichert}
+        return gespeichert + [(k, True) for k in alle if k not in bekannt]
+
     def kategorien(self) -> list[list[str]]:
+        """Sichtbare Kategorien in der eingestellten Reihenfolge (mindestens eine)."""
         de = self.sprache_de()
-        return [[k, n_de if de else n_en] for k, _b, n_de, n_en in KATS]
+        namen = {k: (n_de if de else n_en) for k, _b, n_de, n_en in KATS}
+        an = [[k, namen[k]] for k, sichtbar in self.kat_reihe() if sichtbar]
+        return an or [["empfohlen", namen["empfohlen"]]]
 
     # ------------------------------------------------------------ YouTube-TV-Client
     async def client(self, neu: bool = False) -> dict:
@@ -335,7 +365,41 @@ class Showtime:
         return {"angemeldet": self.angemeldet, "konto": self.konto,
                 "anmeldung": {"code": a["code"], "url": a["url"], "rest": max(0, int(a["ablauf"] - time.time())),
                               "fehler": a["fehler"]} if a else None,
-                "streamer": self.cfg.get("streamer") or "", "streamers": self._streamer_liste()}
+                "streamer": self.cfg.get("streamer") or "", "streamers": self._streamer_liste(),
+                "kategorien": [{"id": k, "an": an, "name": next(n for kk, _b, n, _e in KATS if kk == k)}
+                               for k, an in self.kat_reihe()],
+                "optionen": {k: self.opt(k) for k in self.OPTIONEN}}
+
+    # ------------------------------------------------------------ Optionen (Konfigurator)
+    OPTIONEN = {"start": "zuletzt", "nach": "bleiben", "shorts": False, "gesehene": False}
+
+    def opt(self, k: str):
+        return self.cfg.get(k, self.OPTIONEN[k])
+
+    def _zeigen(self, e: dict) -> bool:
+        """Filter: Shorts ausblenden, fertig gesehene (>= 90 %) ausblenden - nie im Verlauf."""
+        if self.opt("shorts") and e.get("short"):
+            return False
+        if self.opt("gesehene") and e.get("w", 0) >= 90 and not getattr(self, "_im_verlauf", False):
+            return False
+        return True
+
+    def laeuft(self) -> bool:
+        """Spielt der Streamer gerade SmartTube? (Streamer-App: Status + App)"""
+        st = self._streamer(None)
+        if st is None:
+            return False
+        sid = st.cfg.get("id")
+        a = self.hass.states.get(f"sensor.esphomeremote_streamer_{sid}_app")
+        z = self.hass.states.get(f"sensor.esphomeremote_streamer_{sid}_status")
+        return bool(a and a.state == "SmartTube" and z and z.state in ("playing", "paused"))
+
+    def start_kat(self, sichtbar: list[str]) -> str | None:
+        """Liste beim Oeffnen der Seite: None = die zuletzt gezeigte (Remote merkt sie sich)."""
+        st = self.opt("start")
+        if st == "aehnlich_wenn":
+            return "aehnlich" if "aehnlich" in sichtbar and self.laeuft() else sichtbar[0]
+        return st if st in sichtbar else None
 
     # ------------------------------------------------------------ Listen
     def _streamer_liste(self) -> list[dict]:
@@ -345,45 +409,67 @@ class Showtime:
         return [{"id": sid, "name": st.cfg.get("name")} for sid, st in s.alle.items()
                 if st.cfg.get("adb") and not st.cfg.get("nur_kamera")]
 
-    async def _aehnlich_zu(self) -> str | None:
-        if self.letztes:
-            return self.letztes
+    async def _aehnlich_zu(self) -> tuple[str | None, str]:
+        """Video, zu dem "Aehnliche" gezeigt wird: das gerade/zuletzt in SmartTube gesehene. SmartTube traegt jedes Video
+        in den YouTube-Verlauf ein (2026-11-26 geprueft) - oben steht also das laufende, egal wie es gestartet wurde.
+        Direkt nach einem Start ueber Showtime (90 s) dieses, der Verlauf haengt ein paar Sekunden nach."""
+        if self.letztes and time.time() - self.letztes_zeit < 90:
+            return self.letztes, ""
+        l = self.listen.get("verlauf")
+        if not l or time.time() - l["zeit"] > 30:   # Verlauf fuer "Aehnliche" frisch halten
+            self.listen.pop("verlauf", None)
         v = await self.liste("verlauf")
-        return v["v"][0]["id"] if v["v"] and v["v"][0].get("id") else None
+        for e in v["v"]:
+            if e.get("id"):
+                return e["id"], e["t"]
+        return self.letztes, ""
 
     async def liste(self, kat: str, mehr: bool = False) -> dict:
         """kat: Kategorie-Schluessel oder "pl:<browseId>" (geoeffnete Playlist)."""
         # "Aehnliche" braucht das Video vorher (Verlauf) - nicht unter der Sperre holen, sie ist nicht wiedereintrittsfaehig
-        vid = None
+        if kat == "weiter":
+            # Angefangene Videos (5-90 % gesehen) aus dem Verlauf - kein eigener Abruf bei YouTube
+            l = self.listen.get("verlauf")
+            if not l or time.time() - l["zeit"] > 60:
+                self.listen.pop("verlauf", None)
+            v = await self.liste("verlauf")
+            return {"v": [e for e in v["v"] if e.get("id") and 5 <= e.get("w", 0) < 90], "cont": None, "zeit": time.time()}
+        vid, vid_titel = None, ""
         if kat == "aehnlich" and not mehr:
-            l = self.listen.get(kat)
-            if not (l and time.time() - l["zeit"] < LISTE_GUELTIG):
-                vid = await self._aehnlich_zu()
+            vid, vid_titel = await self._aehnlich_zu()
         async with self._sperre:
             l = self.listen.get(kat)
-            if l and not mehr and time.time() - l["zeit"] < LISTE_GUELTIG:
+            if l and not mehr and time.time() - l["zeit"] < LISTE_GUELTIG and (kat != "aehnlich" or l.get("zu") == vid):
                 return l
             if mehr and l and l.get("cont"):
+                self._im_verlauf = kat == "verlauf"
                 d = await self.api("browse", {"continuation": l["cont"]})
-                neu = [e for e in (_eintrag(t) for t in _kacheln(d)) if e]
+                neu = [e for e in (_eintrag(t) for t in _kacheln(d)) if e and self._zeigen(e)]
                 bekannt = {e.get("id") or e.get("browse") for e in l["v"]}
                 l["v"] += [e for e in neu if (e.get("id") or e.get("browse")) not in bekannt]
                 l["cont"] = _fortsetzung(d) if neu else None
                 return l
             if kat == "aehnlich":
                 d = await self.api("next", {"videoId": vid}) if vid else {}
+            elif kat.startswith("zu:"):   # Aktionsmenue "Aehnliche Videos" zu einem bestimmten Video
+                d = await self.api("next", {"videoId": kat[3:]})
             else:
                 browse = kat[3:] if kat.startswith("pl:") else next((b for k, b, *_ in KATS if k == kat), None)
                 if not browse:
                     raise KeyError(kat)
                 d = await self.api("browse", {"browseId": browse})
+            self._im_verlauf = kat == "verlauf"
             v, gesehen = [], set()
             for e in (_eintrag(t) for t in _kacheln(d)):
-                schl = e and (e.get("id") or e.get("browse"))
+                schl = e and self._zeigen(e) and (e.get("id") or e.get("browse"))
                 if schl and schl not in gesehen:
                     gesehen.add(schl)
                     v.append(e)
             l = self.listen[kat] = {"v": v, "cont": _fortsetzung(d), "zeit": time.time()}
+            if kat == "aehnlich":
+                l["zu"] = vid
+                l["zu_titel"] = vid_titel or next((e["t"] for x in self.listen.values() for e in x["v"]
+                                                   if e.get("id") == vid), "")
             return l
 
     async def seite(self, kat: str, s: int) -> tuple[list[dict], int, bool]:
@@ -400,7 +486,7 @@ class Showtime:
 
     async def bild(self, kat: str, s: int) -> bytes:
         eintraege, _n, _m = await self.seite(kat, s)
-        schl = tuple(e.get("bild") for e in eintraege)
+        schl = tuple((e.get("bild"), e.get("w", 0)) for e in eintraege)
         if schl in self.bilder:
             return self.bilder[schl]
         sess = async_get_clientsession(self.hass)
@@ -414,12 +500,21 @@ class Showtime:
             except Exception:  # noqa: BLE001
                 return None
 
-        roh = await asyncio.gather(*(holen(u) for u in schl))
-        jpg = await self.hass.async_add_executor_job(_bild_bauen, list(roh))
+        roh = await asyncio.gather(*(holen(u) for u, _w in schl))
+        jpg = await self.hass.async_add_executor_job(_bild_bauen, list(roh), [w for _u, w in schl])
         if len(self.bilder) > 60:
             self.bilder.clear()
         self.bilder[schl] = jpg
         return jpg
+
+    async def spaeter(self, vid: str, hinzu: bool) -> None:
+        """Video in "Spaeter ansehen" legen bzw. herausnehmen (InnerTube browse/edit_playlist)."""
+        aktion = ({"addedVideoId": vid, "action": "ACTION_ADD_VIDEO"} if hinzu else
+                  {"removedVideoId": vid, "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID"})
+        r = await self.api("browse/edit_playlist", {"playlistId": "WL", "actions": [aktion]})
+        if r.get("status") != "STATUS_SUCCEEDED":
+            raise RuntimeError(f"Später ansehen: {r.get('status') or r}")
+        self.listen.pop("spaeter", None)
 
     # ------------------------------------------------------------ Abspielen
     def _streamer(self, wahl: str | None):
@@ -432,7 +527,8 @@ class Showtime:
             st = next((x for x in s.alle.values() if x.cfg.get("adb") and not x.cfg.get("nur_kamera")), None)
         return st
 
-    async def abspielen(self, video: str, streamer: str | None = None) -> None:
+    async def abspielen(self, video: str, streamer: str | None = None, als_naechstes: bool = False,
+                        ab: int = 0) -> None:
         m = re.search(r"(?:v=|youtu\.be/|/shorts/|/live/|^)([\w-]{11})(?:[?&#]|$)", str(video or "").strip())
         if not m:
             raise vol.Invalid(f"Keine YouTube-Video-ID: {video}")
@@ -440,13 +536,20 @@ class Showtime:
         st = self._streamer(streamer)
         if st is None:
             raise vol.Invalid("Kein Streamer mit ADB eingerichtet (Konfigurator › Wiedergabe)")
+        if als_naechstes:
+            # "Als Naechstes" (2026-11-26): SmartTube ab 32.80 haengt das Video an die Wiedergabe-Warteschlange an
+            # (Extra add_to_queue, SmartTube PR #6401); laeuft der Player nicht, spielt es sofort. Nicht beenden.
+            # Achtung (2026-11-26 getestet): der Aufruf oeffnet kurz SmartTubes Startbildschirm - ist in SmartTube
+            # Bild-im-Bild als Hintergrundwiedergabe eingestellt, rutscht der laufende Player dabei in die Ecke.
+            await st.adb(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={vid}' "
+                         f"--ez add_to_queue true -p {SMARTTUBE}")
+            return
         # Aufwecken (schaltet per CEC auch den Fernseher ein), SmartTube beenden, dann mit dem Video starten.
         # Ohne Beenden landete das Video im Bild-im-Bild-Fenster (2026-11-26): der Start schiebt SmartTubes
         # Startbildschirm vor den laufenden Player, der wechselt dabei in Bild-im-Bild und laedt dort das neue Video.
         await st.adb(f"input keyevent KEYCODE_WAKEUP; am force-stop {SMARTTUBE}; am start -a android.intent.action.VIEW "
-                     f"-d 'https://www.youtube.com/watch?v={vid}' -p {SMARTTUBE}")
-        self.letztes = vid
-        self.listen.pop("aehnlich", None)
+                     f"-d 'https://www.youtube.com/watch?v={vid}{f'&t={ab}s' if ab > 0 else ''}' -p {SMARTTUBE}")
+        self.letztes, self.letztes_zeit = vid, time.time()
 
 
 # ---------------------------------------------------------------- Remote-Schnittstelle
@@ -468,9 +571,13 @@ class ShowtimeView(HomeAssistantView):
             antwort["m"] = ("Showtime: im Konfigurator (Wiedergabe › Showtime) bei YouTube anmelden" if de else
                             "Showtime: sign in to YouTube in the configurator (Playback › Showtime)")
             return _json(antwort)
-        kat = request.query.get("kat") or "empfohlen"
-        if not (kat.startswith("pl:") or any(k == kat for k, *_ in KATS)):
-            kat = "empfohlen"
+        sichtbar = [k for k, _n in antwort["k"]]
+        kat = request.query.get("kat") or sichtbar[0]
+        if request.query.get("auf") == "1" and (sk := sh.start_kat(sichtbar)) and sk != kat:
+            kat = sk   # Seite geoeffnet: Start-Liste aus dem Konfigurator
+            request = request.clone(rel_url=request.rel_url.update_query({"s": "0"}))
+        if not (kat.startswith(("pl:", "zu:")) or kat in sichtbar):
+            kat = sichtbar[0]   # ausgeblendet (Konfigurator) oder unbekannt: erste sichtbare
         try:
             s = max(0, int(request.query.get("s", "0")))
         except ValueError:
@@ -480,12 +587,41 @@ class ShowtimeView(HomeAssistantView):
             if tipp not in (None, ""):
                 eintraege, _n, _m = await sh.seite(kat, s)
                 i = int(tipp)
+                aktion = request.query.get("aktion") or ""   # Aktionsmenue der Remote (langer Druck)
                 if 0 <= i < len(eintraege):
                     e = eintraege[i]
-                    if e.get("id"):
-                        await sh.abspielen(e["id"])
-                        antwort["m"] = "» " + sauber(e["t"])[:80]
+                    titel = sauber(e["t"])[:70]
+                    if e.get("id") and aktion == "naechstes":
+                        await sh.abspielen(e["id"], als_naechstes=True)
+                        antwort["m"] = ("In der Warteschlange (Ende): " if de else "Queued (end): ") + titel
+                    elif e.get("id") and aktion == "spaeter":
+                        raus = kat == "spaeter"
+                        await sh.spaeter(e["id"], not raus)
+                        antwort["m"] = (("Aus „Später ansehen“ entfernt: " if raus else "Zu „Später ansehen“: ") if de else
+                                        ("Removed from Watch later: " if raus else "Added to Watch later: ")) + titel
+                    elif e.get("id") and aktion == "aehnlich":
+                        kat, s = "zu:" + e["id"], 0
+                        antwort["titel"] = ("Ähnlich: " if de else "Like: ") + titel[:40]
+                    elif e.get("id") and aktion == "mag":
+                        await sh.api("like/like", {"target": {"videoId": e["id"]}})
+                        sh.listen.pop("mag_ich", None)
+                        antwort["m"] = ("Mag ich: " if de else "Liked: ") + titel
+                    elif aktion == "kanal" and e.get("kanal"):
+                        kat, s = "pl:" + e["kanal"], 0
+                        antwort["titel"] = sauber(e.get("kanal_name") or "Kanal")[:40]
+                    elif e.get("id"):
+                        # Weiterschauen: an der gesehenen Stelle einsteigen (Prozent x Dauer, 5 s davor)
+                        ab = 0
+                        if kat == "weiter" and e.get("w") and e.get("d"):
+                            sek = 0
+                            for teil in e["d"].split(":"):
+                                sek = sek * 60 + int(teil) if teil.isdigit() else sek
+                            ab = max(0, sek * e["w"] // 100 - 5)
+                        await sh.abspielen(e["id"], ab=ab)
+                        antwort["m"] = "» " + titel
                         antwort["play"] = 1
+                        if (n := sh.opt("nach")) != "bleiben":
+                            antwort["nach"] = n   # Remote: "media" = Jetzt-laeuft-Seite, "home" = Startseite
                     elif e.get("browse"):
                         kat, s = "pl:" + e["browse"], 0
                         antwort["titel"] = e["t"][:40]
@@ -500,9 +636,15 @@ class ShowtimeView(HomeAssistantView):
             antwort.update({"kat": kat, "s": s, "n": 1, "v": [], "m": ("YouTube nicht erreichbar" if de else
                                                                          "YouTube not reachable")})
             return _json(antwort)
-        name = next((n_de if de else n_en for k, _b, n_de, n_en in KATS if k == kat), antwort.get("titel") or "Playlist")
+        if antwort.get("titel"):
+            sh.pl_namen[kat] = antwort["titel"]
+        name = next((n_de if de else n_en for k, _b, n_de, n_en in KATS if k == kat),
+                    antwort.get("titel") or sh.pl_namen.get(kat) or "Playlist")
+        if kat == "aehnlich" and (zu := (sh.listen.get("aehnlich") or {}).get("zu_titel")):
+            name = ("Ähnlich: " if de else "Like: ") + zu
         antwort.update({"kat": kat, "kn": sauber(name), "s": min(s, n - 1), "n": n, "mehr": 1 if mehr else 0,
-                        "v": [{"t": sauber(e["t"])[:120], "z": sauber(e["z"])[:80], "d": sauber(e["d"]), **({"p": 1} if e.get("browse") else {})}
+                        "v": [{"t": sauber(e["t"])[:120], "z": sauber(e["z"])[:80], "d": sauber(e["d"]),
+                               **({"p": 1} if e.get("browse") else {}), **({"k": 1} if e.get("kanal") else {})}
                               for e in eintraege],
                         "b": f"/api/esphomeremote/showtime_bild/{dev}?kat={quote(kat)}&s={min(s, n - 1)}"
                              f"&v={abs(hash(tuple(e.get('bild') for e in eintraege))) % 100000}"})
@@ -559,12 +701,32 @@ async def ws_logout(hass, connection, msg) -> None:
     connection.send_result(msg["id"], sh.status())
 
 
-@websocket_api.websocket_command({vol.Required("type"): "esphomeremote/showtime_set", vol.Optional("streamer"): str})
+@websocket_api.websocket_command({vol.Required("type"): "esphomeremote/showtime_set", vol.Optional("streamer"): str,
+                                  vol.Optional("kategorien"): [[vol.Any(str, bool)]],
+                                  vol.Optional("start"): str, vol.Optional("nach"): vol.In(["bleiben", "media", "home"]),
+                                  vol.Optional("shorts"): bool, vol.Optional("gesehene"): bool,
+                                  vol.Optional("test"): str})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_set(hass, connection, msg) -> None:
     sh = hass.data[DOMAIN + "_showtime"]
-    sh.cfg["streamer"] = str(msg.get("streamer") or "")
+    if "streamer" in msg:
+        sh.cfg["streamer"] = str(msg.get("streamer") or "")
+    if "kategorien" in msg:   # [[kat, an], ...] in der gewuenschten Reihenfolge
+        alle = {k for k, *_ in KATS}
+        sh.cfg["kategorien"] = [[str(k), bool(an)] for k, an in msg["kategorien"] if k in alle]
+    for k in ("start", "nach", "shorts", "gesehene"):
+        if k in msg:
+            sh.cfg[k] = msg[k]
+    if any(k in msg for k in ("shorts", "gesehene")):   # Filter geaendert: Listen neu holen
+        sh.listen.clear()
+        sh.bilder.clear()
+    if msg.get("test"):   # Konfigurator: Video zum Testen abspielen
+        try:
+            await sh.abspielen(msg["test"])
+        except vol.Invalid as err:
+            connection.send_error(msg["id"], "showtime", str(err))
+            return
     await sh.kd.store.async_save(sh.kd.data)
     connection.send_result(msg["id"], sh.status())
 
@@ -578,10 +740,10 @@ def einrichten(hass: HomeAssistant, kd) -> Showtime:
         websocket_api.async_register_command(hass, fn)
 
     async def dienst(call) -> None:
-        await sh.abspielen(call.data["video"], call.data.get("streamer"))
+        await sh.abspielen(call.data["video"], call.data.get("streamer"), als_naechstes=call.data.get("queue", False))
 
     hass.services.async_register(DOMAIN, "showtime", dienst, schema=vol.Schema({
-        vol.Required("video"): str, vol.Optional("streamer"): str}))
+        vol.Required("video"): str, vol.Optional("streamer"): str, vol.Optional("queue", default=False): bool}))
     if sh.angemeldet:
         hass.async_create_background_task(sh._konto_lesen(), "esphomeremote_showtime_konto")
     return sh

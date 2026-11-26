@@ -288,6 +288,10 @@
         "streamer": {
           "name": "Streamer",
           "description": "Optional – ID or name of the streamer (default = Configurator › Showtime)"
+        },
+        "queue": {
+          "name": "Play next",
+          "description": "Add to SmartTube's playback queue instead of playing now (SmartTube 32.80+; plays right away if nothing is playing)"
         }
       }
     }

@@ -154,19 +154,27 @@ Android TV streamer – Google TV Streamer, MagentaTV Stick or any other Android
 
 ### Showtime: YouTube on the remote
 
-Browse your YouTube lists on the remote's display – **Recommended, Subscriptions, Up next (related to what you watched
-last), Watch later, History, Liked and your playlists** – with thumbnails, title, channel and length. Tap a video (or
+Browse your YouTube lists on the remote's display – **Recommended, Subscriptions, Up next (related to what is playing
+in SmartTube right now), Continue watching, Watch later, History, Liked and your playlists** – with thumbnails, title, channel and length. Tap a video (or
 press OK) and it plays in **SmartTube** on your streamer, full screen; the streamer wakes up and switches the TV on
 via HDMI-CEC.
 
-- **Sign in like on a TV** – configurator *Playback → Showtime → Sign in with YouTube*. A code appears; open
+- **Sign in like on a TV** – configurator page *Showtime → Sign in with YouTube*. A code appears; open
   `google.com/device` on your phone, enter the code and confirm with your Google account (ideally the same one as in
   SmartTube). Your password is only entered at Google – Home Assistant stores an access token, no password, no
   cookies. *Sign out* removes it.
 - **On the remote** – add the special page *Showtime (YouTube)* to a menu or give a key the function *Show
   Showtime*. Up/down picks a video and pages, left/right switches the list, OK/tap plays or opens a playlist, Back
   leaves a playlist. Swipe left/right for lists, up/down for pages.
-- **Automations** – `esphomeremote.showtime` plays any video ID or YouTube link (`video`, optional `streamer`).
+- **Action menu** – long-press OK (or long-tap a video): *Play*, **Play next (end)** (appends it to SmartTube's
+  playback queue with a short notice, SmartTube 32.80+ – SmartTube only allows adding at the end), *Similar videos*,
+  *Open channel*, *Watch later* (add/remove) and *Like*.
+- **Configurator page *Showtime*** – lists on/off and their order, which list opens first (last one, a fixed one or
+  *Up next* while a video is playing), what the remote shows after starting a video (stay, *Now playing*, home), hide
+  Shorts, hide watched videos, a test field. Started videos show a red progress bar; *Continue watching* resumes
+  roughly where you stopped.
+- **Automations** – `esphomeremote.showtime` plays any video ID or YouTube link (`video`, optional `streamer`,
+  `queue: true` = play next).
 - Needs a streamer with ADB (see *Streamer app*) and SmartTube installed.
 
 ## Opening apps, made easy
