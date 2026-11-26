@@ -795,7 +795,8 @@ async def liste(hass: HomeAssistant) -> dict:
             x["test"] = _test_stand(hass, e) if e else None
         elif f["art"] == "dock":
             slug = dev_name.replace("-", "_")
-            sender = f"infrared.{slug}_ir_sender"
+            from .dock_entitaeten import dock_entitaet   # noqa: PLC0415
+            sender = dock_entitaet(hass, slug, "IR-Sender", "infrared")
             x["sender"] = sender if hass.states.get(sender) else None
             x["bt_mac"] = e.data.get("bluetooth_mac_address") if e else None
         else:

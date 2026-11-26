@@ -276,6 +276,20 @@
           "description": "Optional – center, left, right, top, bottom oder eine Ecke. Leer = Einstellung im Konfigurator."
         }
       }
+    },
+    "showtime": {
+      "name": "Showtime",
+      "description": "Spielt ein YouTube-Video in SmartTube am Streamer ab (weckt ihn vorher). Die Anmeldung braucht es nur für die Listen auf der Remote.",
+      "fields": {
+        "video": {
+          "name": "Video",
+          "description": "YouTube-Video-ID oder Link"
+        },
+        "streamer": {
+          "name": "Streamer",
+          "description": "Optional – ID oder Name des Streamers (Standard: Konfigurator › Showtime)"
+        }
+      }
     }
   },
   "issues": {

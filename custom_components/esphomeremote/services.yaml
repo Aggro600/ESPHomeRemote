@@ -337,3 +337,20 @@ streamer_menu:
       selector:
         select:
           options: [center, left, right, top, bottom, top-left, top-right, bottom-left, bottom-right]
+showtime:
+  name: Showtime
+  description: Plays a YouTube video in SmartTube on a streamer (wakes it first). Sign-in is only needed for the lists on the remote.
+  fields:
+    video:
+      name: Video
+      description: YouTube video ID or link
+      required: true
+      example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+      selector:
+        text:
+    streamer:
+      name: Streamer
+      description: Optional – ID or name of the streamer (default = Configurator › Showtime)
+      required: false
+      selector:
+        text:

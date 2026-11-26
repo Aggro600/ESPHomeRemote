@@ -360,6 +360,22 @@ Fernseher** (Taste, Größe, Lage, Einblenddauer, **Menü bearbeiten**) und **So
 - **Soundbar per HDMI-CEC** – Soundbar oder AV-Receiver am HDMI-ARC des Fernsehers über den Streamer ein- und
   ausschalten, ohne Infrarot (`switch.…_soundbar`, `esphomeremote.streamer_cec`).
 
+### Showtime: YouTube auf der Remote
+
+Deine YouTube-Listen auf dem Display der Remote – **Empfohlen, Abos, Ähnliche (zum zuletzt gesehenen Video), Später
+ansehen, Verlauf, Mag ich und deine Playlists** – mit Vorschaubild, Titel, Kanal und Länge. Video antippen (oder OK) und
+es läuft in **SmartTube** auf dem Streamer, im Vollbild; der Streamer wacht auf und schaltet den Fernseher per HDMI-CEC ein.
+
+- **Anmelden wie am Fernseher** – Konfigurator *Wiedergabe → Showtime → Mit YouTube anmelden*. Es erscheint ein Code;
+  am Handy `google.com/device` öffnen, Code eingeben und mit dem Google-Konto bestätigen (am besten dasselbe wie in
+  SmartTube). Das Passwort gibst du nur bei Google ein – Home Assistant speichert einen Zugangsschlüssel, kein Passwort,
+  keine Cookies. *Abmelden* löscht ihn.
+- **Auf der Remote** – Spezialseite *Showtime (YouTube)* in ein Menü hängen oder einer Taste die Funktion *Showtime
+  zeigen* geben. Hoch/runter wählt und blättert, links/rechts wechselt die Liste, OK/Antippen spielt ab bzw. öffnet eine
+  Playlist, Zurück verlässt die Playlist. Wischen: links/rechts Liste, hoch/runter Seite.
+- **Automationen** – `esphomeremote.showtime` spielt jede Video-ID oder jeden YouTube-Link (`video`, optional `streamer`).
+- Braucht einen Streamer mit ADB (siehe *Streamer-App*) und installiertes SmartTube.
+
 ### Updates
 
 - **Konfigurator:** Home Assistant meldet neue Versionen wie bei jeder HACS-Integration (*Einstellungen → Updates*),

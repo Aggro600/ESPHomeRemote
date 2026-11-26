@@ -26,6 +26,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
+from .dock_entitaeten import dock_entitaet
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
@@ -162,7 +163,7 @@ class DockScan:
                 continue
             # Nur an Docks, die online sind (2026-10-31): sonst jede Minute Fehlerzeilen im HA-Log; kommt das Dock
             # wieder, geht die Stufe mit der naechsten Minute raus
-            if (on := self.hass.states.get(f"binary_sensor.{dock}_status")) is None or on.state != "on":
+            if (on := self.hass.states.get(dock_entitaet(self.hass, dock, "Status", "binary_sensor"))) is None or on.state != "on":
                 continue
             if self.gesendet.get(dock, (None,)) != sig:
                 _LOGGER.info("Suchtempo %s: %s (%s von %s ms)", dock, daten["grund"], st["f"], st["i"])
@@ -180,7 +181,7 @@ class DockScan:
 
         async_track_time_interval(self.hass, kurz, timedelta(seconds=10))
         async_track_time_interval(self.hass, self.pruefen, timedelta(minutes=1))
-        docks = [f"binary_sensor.{d}_status" for d in self.kd.dock_macs()]
+        docks = [dock_entitaet(self.hass, d, "Status", "binary_sensor") for d in self.kd.dock_macs()]
         if docks:
             @callback
             def dock_da(ev: Event) -> None:

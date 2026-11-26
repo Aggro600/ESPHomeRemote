@@ -19,6 +19,7 @@ from datetime import timedelta
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
+from .dock_entitaeten import dock_entitaet
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
@@ -174,12 +175,13 @@ class DockStand:
         self._werte = {d: self._popup_werte(d) for d in self.devs}
         ids += sorted({e for l in self._ausl.values() for e, _ in l} - set(ids))
         # Bluetooth-Geraete der Docks (2026-10-31, Funkweg-Anzeige der Schnelleinstellungen)
-        ids += [f"sensor.{d}_bluetooth_geraete" for d in self.kd.dock_macs()]
+        self._bt_ids = {dock_entitaet(self.hass, d, "Bluetooth-Geraete") for d in self.kd.dock_macs()}
+        ids += sorted(self._bt_ids)
         self._abo = async_track_state_change_event(self.hass, ids, self._geaendert)
         # Dock (wieder) online (Neustart, Strom): gleich alle Staende schicken - es hat sie im RAM verloren
         if getattr(self, "_dock_abo", None):
             self._dock_abo()
-        docks = [f"binary_sensor.{d}_status" for d in self.kd.dock_macs()]
+        docks = [dock_entitaet(self.hass, d, "Status", "binary_sensor") for d in self.kd.dock_macs()]
         self._dock_abo = async_track_state_change_event(self.hass, docks, self._dock_da) if docks else None
         for d in self.kd.devices:
             self._planen(d, 3)
@@ -294,7 +296,7 @@ class DockStand:
     @callback
     def _geaendert(self, ev: Event) -> None:
         eid = ev.data["entity_id"]
-        if eid.endswith("_bluetooth_geraete"):
+        if eid in getattr(self, "_bt_ids", ()) or eid.endswith("_bluetooth_geraete"):
             for d in self.kd.devices:
                 self._planen(d, 1)
             return
@@ -447,12 +449,13 @@ class DockStand:
                 st["hb"] = hb
         # Docks, die gerade online sind (2026-10-25): die Remote probiert sie zuerst
         st["do"] = [d for d in self.kd.dock_macs()
-                    if (s := self.hass.states.get(f"binary_sensor.{d}_status")) is not None and s.state == "on"]
+                    if (s := self.hass.states.get(dock_entitaet(self.hass, d, "Status", "binary_sensor"))) is not None
+                    and s.state == "on"]
         # Geraete am Dock (2026-10-31): {"<dock>": [[name, verbunden], ...]} - Index = Platz am Dock
         bt = {}
         for d in st["do"]:
             try:
-                p = json.loads(self.hass.states.get(f"sensor.{d}_bluetooth_geraete").state).get("p") or []
+                p = json.loads(self.hass.states.get(dock_entitaet(self.hass, d, "Bluetooth-Geraete")).state).get("p") or []
                 bt[d] = [[str(x.get("n") or "")[:16], 1 if x.get("v") else 0] if x.get("b") else ["", 0] for x in p][:4]
             except (AttributeError, ValueError, TypeError):
                 pass

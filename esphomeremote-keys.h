@@ -1,6 +1,7 @@
 #pragma once
 // Musik-Anzeige (esphomeremote-music.h, spaeter eingebunden)
 namespace musik { inline void zeigen(bool vom_dock); }
+namespace showtime { inline void oeffnen(); inline bool taste(int k, bool gedrueckt); }   // esphomeremote-showtime.h
 #include <deque>
 #include <set>
 // Tasten-Konfigurator (2026-10-03): Bindeglied zwischen der Komponente tasten_konfig
@@ -687,6 +688,7 @@ inline void intern(const char *fn, int arg, const Ctx &c) {
     eingabewahl::wechseln(cur_page->value() == 51 ? 1 : 0);
   else if (!strcmp(fn, "dock_anzeige")) { popup_seite->value() = -1; seite_zeigen(page_dock, LV_SCR_LOAD_ANIM_FADE_IN); }
   else if (!strcmp(fn, "musik_anzeige")) musik::zeigen(false);
+  else if (!strcmp(fn, "showtime")) showtime::oeffnen();
   else if (!strcmp(fn, "keymode")) { if (cur_page->value() == 98) mn->tastenmodus(-1); }
   else if (!strcmp(fn, "popup_close")) { if (popup_seite->value() >= 0 && popup_seite->value() == cur_page->value()) popup_schliessen->execute(); }
   // Menue schliessen (2026-10-30): offenes Popup zu, sonst zur Startseite
@@ -708,6 +710,7 @@ inline const std::vector<Spezial> &spezial_tabelle() {
     {"cam_live", page_cam_live, 38}, {"keyboard", page_keyboard, 41}, {"ziffern", page_keyboard, 41},
     {"tastatur", page_keyboard, 41}, {"sd", page_sd, 42}, {"akku", page_akku, 43},
     {"dock", page_dock, 50}, {"touchpad", page_maus, 51}, {"musik", page_musik, 52}, {"extras", page_extras, 44}, {"gesten", page_gesten, 45},
+    {"showtime", page_showtime, 53},
   };
   return T;
 }
@@ -1119,7 +1122,7 @@ inline bool ereignis(int keycode, bool pressed) {
   // Loslassen geht an den, der das Druecken bekam (2026-10-26): Leiser kurz "Lautstaerke + Popup oeffnen" mit
   // Wiederholen - das Popup ging beim Druecken auf, das Loslassen landete im Menue, die Wiederholung der Belegung lief
   // endlos weiter. Umgekehrt bekommt das Menue sein Loslassen auch, wenn die Seite inzwischen zu ist.
-  static std::set<int> beim_menue, beim_touchpad;
+  static std::set<int> beim_menue, beim_touchpad, beim_showtime;
   // Tastatur-Seite: OK gehalten wiederholt die markierte Taste (Skript kbd_wdh, 2026-10-26)
   if (p == 41 && keycode == 34) {
     kbd_ok_halten->value() = pressed;
@@ -1127,6 +1130,7 @@ inline bool ereignis(int keycode, bool pressed) {
   }
   if (!pressed && beim_menue.erase(keycode)) { mn->taste(keycode, false); return true; }
   if (!pressed && beim_touchpad.erase(keycode)) { touchpad::taste(keycode, false); return true; }
+  if (!pressed && beim_showtime.erase(keycode)) return true;
   if (pressed && p == 98 && !key_was_dark->value() && mn->taste(keycode, pressed)) {
     beim_menue.insert(keycode);
     held_key->value() = 0;
@@ -1141,12 +1145,18 @@ inline bool ereignis(int keycode, bool pressed) {
     held_key->value() = 0;
     return true;
   }
+  // Showtime (2026-11-26): Steuerkreuz/OK/Zurueck blaettern und spielen ab, Lautstaerke usw. wie auf der Startseite
+  if (pressed && p == 53 && !dunkel && !button_test_mode->value() && showtime::taste(keycode, pressed)) {
+    beim_showtime.insert(keycode);
+    held_key->value() = 0;
+    return true;
+  }
   // Tasten eines laufenden Folgemodus gehoeren ihm auch auf den Menueseiten
   // Dock-Anzeige (50) und Touchpad (51): Tasten wie auf der Startseite (2026-10-17), ebenso die Begruessung (24):
   // sie steht nur da, die Remote ist sofort bedienbar (2026-10-20) - weg per Tippen oder Menuetaste.
   // Sprachantwort (26) ebenso (2026-10-28, Nutzer: "keine Ausnahme fuer diesen Bildschirm").
   const bool darf = t->aktiv() && !button_test_mode->value() &&
-                    (t->modus_taste(keycode) || !(p != 0 && p != 24 && p != 26 && p != 50 && p != 51 && !dunkel && nav_taste(keycode)));
+                    (t->modus_taste(keycode) || !(p != 0 && p != 24 && p != 26 && p != 50 && p != 51 && p != 53 && !dunkel && nav_taste(keycode)));
   const bool r = t->ereignis(keycode, pressed, t->tasten_akt(activity->value(), akt_an->value()), key_was_dark->value(), darf);
   if (r && pressed) held_key->value() = 0;
   return r;

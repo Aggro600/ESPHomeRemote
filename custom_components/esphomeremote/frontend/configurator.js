@@ -117,6 +117,7 @@ const INT_FNS = [
   ["eingabe_tasten", "Touchpad/Tastatur: Tasten Display ↔ Gerät"],
   ["dock_anzeige", "Smart Display zeigen (Uhr, Wetter, Termine)"],
   ["musik_anzeige", "Musik-Anzeige zeigen (Spektrum übers Mikrofon)"],
+  ["showtime", "Showtime zeigen (YouTube-Listen, spielt in SmartTube)"],
   ["popup_open", "Menüseite als Popup öffnen …"],
 ];
 const INT_LABEL = Object.fromEntries(INT_FNS);
@@ -567,6 +568,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       try { this.s.aktOffen = localStorage.getItem("erk_aktset") === "1"; } catch (e) { /* egal */ }   // zu = Standard (2026-11-10)
       this.s.einstStandard = r.einst_standard || {};
       this.s.dockEinst = r.docks_einst || { ordnung: [], farben: {} };
+      this.s.dockEnts = r.dock_ents || {};   // {dock: {bt, status}} - entity_id kann einen Bereich davor haben
       this.s.maxBytes = r.max_bytes || 90000;
       this.s.loaded = true;
       if (!this._seiteDa) {
@@ -2058,6 +2060,10 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       s.strm.streamer[Number(t.dataset.si)][t.dataset.st] = t.type === "checkbox" ? t.checked : t.value;
       this._strmSpeichern(); return;
     }
+    if (t.dataset.sht === "streamer") {   // Showtime: Streamer zum Abspielen
+      this._hass.callWS({ type: "esphomeremote/showtime_set", streamer: t.value }).then((r) => { s.showtime = r; this._render(); });
+      return;
+    }
     if (t.dataset.jz) {
       const j = s.jetzt.jetzt[Number(t.dataset.ji)];
       j[t.dataset.jz] = t.type === "checkbox" ? t.checked : t.value;
@@ -2303,6 +2309,7 @@ const M_SPECIAL = [
   ["ble", "Bluetooth"], ["voice_set", "Sprache"], ["bright", "Bildschirm"], ["show", "Anzeige"],
   ["power", "Energie & Wecken"], ["akku", "Akku"], ["service", "Wartung & Tests"], ["sd", "SD-Karte"],
   ["touchpad", "Touchpad (Maus)"], ["dock", "Smart Display"], ["musik", "Musik-Anzeige"], ["extras", "Smart Display (Einstellungen)"], ["gesten", "Gesten (Seite der Remote)"],
+  ["showtime", "Showtime (YouTube)"],
 ];
 const M_SPECIAL_L = Object.fromEntries(M_SPECIAL);
 // Eingebauter Inhalt eines Popups statt Eintraegen (2026-10-13 Tastatur, 2026-10-27 Ziffern/Touchpad)
@@ -5190,14 +5197,19 @@ const DBT_OPT = [[0, "Nur Tasten (Fernseher, Streamer)"], [1, "Maus (Touchpad)"]
 const DockBt = {
   // Alle Docks mit Bluetooth-Plaetzen: [{slug, dockName, online, k, ks, p: [...]}]
   _dbtDocks() {
-    const S = this._hass.states, out = [];
+    // Sensor "Bluetooth-Geraete" je Dock: von HA ueber das Geraet ermittelt (dock_ents), sonst ueber den Namen
+    // (2026-11-26: bei einem Tester hiess er z. B. sensor.wohnzimmer_dock_..., die Plaetze fehlten dann)
+    const S = this._hass.states, out = [], ids = {};
+    for (const [slug, e] of Object.entries(this.s.dockEnts || {})) if (e?.bt && S[e.bt]) ids[slug] = e.bt;
     for (const id of Object.keys(S)) {
       const m = id.match(/^sensor\.(dock_[a-z0-9_]+)_bluetooth_geraete$/);
-      if (!m) continue;
+      if (m && !ids[m[1]] && !Object.values(ids).includes(id)) ids[m[1]] = id;
+    }
+    for (const [slug, id] of Object.entries(ids)) {
       let st = null;
       try { st = JSON.parse(S[id].state); } catch (e) { /* offline/unbekannt */ }
-      const name = (S[id].attributes.friendly_name || m[1]).replace(/\s*Bluetooth-Ger(ae|ä)te$/i, "");
-      out.push({ slug: m[1], dockName: name, online: !!st, k: st ? st.k : -1, ks: st ? st.ks || 0 : 0, p: st ? st.p || [] : [] });
+      const name = (S[id].attributes.friendly_name || slug).replace(/\s*Bluetooth-Ger(ae|ä)te$/i, "");
+      out.push({ slug, dockName: name, online: !!st, k: st ? st.k : -1, ks: st ? st.ks || 0 : 0, p: st ? st.p || [] : [] });
     }
     return out.sort((a, b) => a.dockName.localeCompare(b.dockName));
   },
@@ -6780,6 +6792,15 @@ const EinstTab = {
   },
   async _jetztClick(a, t) {
     const s = this.s;
+    if (a === "sht_login") {   // Showtime: Anmeldung per Geraete-Code (wie am Fernseher)
+      try { s.showtime = await this._hass.callWS({ type: "esphomeremote/showtime_login" }); }
+      catch (e) { s.msg = { err: true, text: "Showtime: " + (e.message || e) }; }
+      this._showtimeWarten(); return true;
+    }
+    if (a === "sht_logout") {
+      if (!confirm("Showtime von YouTube abmelden? Die Listen auf der Remote sind dann leer.")) return true;
+      s.showtime = await this._hass.callWS({ type: "esphomeremote/showtime_logout" }); return true;
+    }
     if (a === "stm_lernen") {   // Taste anlernen: Lernmodus der App, erste Taste der Streamer-Fernbedienung nehmen
       const sid = t.dataset.sid;
       if (s.stmLernen) return true;
@@ -6889,6 +6910,7 @@ const EinstTab = {
       <p class="hint">Ein <b>„Jetzt läuft“-Player</b> fasst Fernseher, Streamer, Multiroom-Musik und Chromecast zu <b>einem</b> Media Player zusammen – er zeigt immer, was gerade läuft (Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher). Welche Remote welchen nutzt, stellst du unter <i>Verknüpfungen</i> ein. Jede Quelle ist optional; Änderungen gelten sofort.</p>
       <div class="egrid">${karten}</div>
       <p><button class="btn" data-a="jz_add"><ha-icon icon="mdi:plus"></ha-icon>„Jetzt läuft“-Player anlegen</button></p>
+      ${this._showtimeHtml()}
       ${mitStreamer ? this._strmHtml(name) : `<small class="note">Streamer (App, Titel, Cover) richtest du unter <button class="linkbtn" data-a="o_geh" data-b="werk">Werkstatt</button> ein.</small>`}</div>`;
   },
   // "Jetzt laeuft"-Player direkt im Medien-Widget (2026-10-30, Nutzer: nicht ueberall ein eigener Knopf): ist der gewaehlte
@@ -6907,6 +6929,50 @@ const EinstTab = {
       ${wahl("multiroom", "Multiroom-Musik")}${wahl("cast", "Chromecast / Lautsprecher")}
       <label>Streamer<select data-jz="streamer" data-ji="${ji}"><option value="">— keiner —</option>${(d.streamer || []).map((x) => `<option value="${esc(x.id)}" ${x.id === j.streamer ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
       <small class="note">Rangfolge: App am Fernseher, Streamer, Multiroom, Chromecast, Fernseher. Play/Pause, Weiter und Lautstärke gehen an die gerade laufende Quelle. Streamer-App: Werkstatt.</small>`, false);
+  },
+  // Showtime (2026-11-26, showtime.py): YouTube-Listen auf der Remote, Abspielen in SmartTube. Anmeldung per Geraete-Code.
+  async _showtimeLaden() {
+    if (this._shtLaedt) return;
+    this._shtLaedt = true;
+    try { this.s.showtime = await this._hass.callWS({ type: "esphomeremote/showtime" }); }
+    catch (e) { this.s.showtime = { fehler: e.message || String(e) }; }
+    this._shtLaedt = false; this._render();
+  },
+  _showtimeWarten() {   // waehrend der Anmeldung alle 3 s nachsehen
+    clearTimeout(this._shtTimer);
+    const sh = this.s.showtime;
+    if (!sh?.anmeldung || sh.anmeldung.fehler) return;
+    this._shtTimer = setTimeout(async () => {
+      try { this.s.showtime = await this._hass.callWS({ type: "esphomeremote/showtime" }); } catch (e) { return; }
+      this._render(); this._showtimeWarten();
+    }, 3000);
+  },
+  _showtimeHtml() {
+    const sh = this.s.showtime;
+    if (!sh) { this._showtimeLaden(); return ""; }
+    if (sh.fehler) return "";
+    const a = sh.anmeldung;
+    let inhalt;
+    if (sh.angemeldet) {
+      inhalt = `<p>✅ Angemeldet${sh.konto ? ` als <b>${esc(sh.konto)}</b>` : ""}. Die Remote zeigt Empfohlen, Abos, Ähnliche, Später ansehen, Verlauf, Mag ich und Playlists.</p>
+        <p><button class="btn" data-a="sht_logout"><ha-icon icon="mdi:logout"></ha-icon>Abmelden</button></p>`;
+    } else if (a && !a.fehler) {
+      inhalt = `<ol class="sht"><li>Am Handy oder PC <a href="${esc(a.url)}" target="_blank" rel="noopener"><b>${esc(a.url.replace(/^https?:\/\//, ""))}</b></a> öffnen</li>
+        <li>Diesen Code eingeben: <code style="font-size:1.6em;letter-spacing:.08em">${esc(a.code)}</code></li>
+        <li>Das Google-Konto wählen (am besten dasselbe wie in SmartTube) und bestätigen</li></ol>
+        <small class="note">Wartet auf die Bestätigung … noch ${Math.ceil(a.rest / 60)} min. Dein Passwort gibst du nur bei Google ein.</small>`;
+    } else {
+      inhalt = `${a?.fehler ? `<div class="msg err">Anmeldung ${a.fehler === "abgelaufen" ? "abgelaufen" : "nicht bestätigt (" + esc(a.fehler) + ")"} – bitte nochmal.</div>` : ""}
+        <p>Melde dich einmal an – wie an einem Fernseher, mit einem Code. HA speichert nur einen Zugangsschlüssel, kein Passwort und keine Cookies.</p>
+        <p><button class="btn primary" data-a="sht_login"><ha-icon icon="mdi:youtube"></ha-icon>Mit YouTube anmelden</button></p>`;
+    }
+    const sts = sh.streamers || [];
+    return `<div class="karte sht"><h3><ha-icon icon="mdi:youtube"></ha-icon> Showtime – YouTube auf der Remote</h3>
+      <p class="hint">Auf der Remote (Menü › Showtime oder eine Taste mit „Showtime“) siehst du deine YouTube-Listen mit Vorschaubildern; antippen oder OK spielt das Video in <b>SmartTube</b> auf dem Streamer ab. Aktion für eigene Automationen: <code>esphomeremote.showtime</code>.</p>
+      ${inhalt}
+      <div class="ez"><span>Abspielen auf<small class="vtext">Streamer mit SmartTube (ADB)</small></span>
+        <select data-sht="streamer"><option value="">— erster Streamer —</option>${sts.map((x) => `<option value="${esc(x.id)}" ${x.id === sh.streamer ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+    </div>`;
   },
   _jetztModal() {
     return `<div class="modal" data-a="modalbg"><div class="dlg wide jzdlg">

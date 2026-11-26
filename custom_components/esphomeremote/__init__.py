@@ -802,6 +802,9 @@ def device_payload(cfg: dict) -> bytes:
         '"t":"dropdown"', '"t":"select","dd":true').encode()
 
 
+from .dock_entitaeten import dock_entitaet, dock_entitaeten  # noqa: E402
+
+
 def ist_dock(hass: HomeAssistant, ce) -> bool:
     """ESPHome-Eintrag ein Dock? Name "dock-..." oder Firmware-Projekt aggro600.esphomeremote-dock (2026-10-26: von
     Hand eingerichtete Docks mit anderem Namen fehlten im Konfigurator)."""
@@ -1577,6 +1580,10 @@ async def _starten(hass: HomeAssistant, key: str, devices: list[str]) -> None:
     from .streamer_menue import einrichten as stmenue_einrichten
 
     stmenue_einrichten(hass, kd)
+    # Showtime (2026-11-26): YouTube-Listen auf der Remote, abgespielt in SmartTube am Streamer
+    from .showtime import einrichten as showtime_einrichten
+
+    showtime_einrichten(hass, kd)
     # Sprache per HTTP (2026-11-06): Assist ohne WLAN (ueber das Dock) und Durchsage
     from .sprache import einrichten as sprache_einrichten
 
@@ -1789,7 +1796,8 @@ def ws_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg:
             "entfernbar": kd.entfernbar(dev),
         }
     connection.send_result(msg["id"], {"devices": out, "order": reihenfolge(kd), "einst_standard": kd.data.get("einst_standard") or {},
-                                       "docks_einst": docks_einst(kd), "max_bytes": MAX_BYTES})
+                                       "docks_einst": docks_einst(kd), "max_bytes": MAX_BYTES,
+                                       "dock_ents": dock_entitaeten(hass, kd.dock_macs())})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/einst_set", vol.Required("device"): str,

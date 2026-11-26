@@ -276,6 +276,20 @@
           "description": "Optional – center, left, right, top, bottom or a corner. Empty = Configurator setting."
         }
       }
+    },
+    "showtime": {
+      "name": "Showtime",
+      "description": "Plays a YouTube video in SmartTube on a streamer (wakes it first). Sign-in is only needed for the lists on the remote.",
+      "fields": {
+        "video": {
+          "name": "Video",
+          "description": "YouTube video ID or link"
+        },
+        "streamer": {
+          "name": "Streamer",
+          "description": "Optional – ID or name of the streamer (default = Configurator › Showtime)"
+        }
+      }
     }
   },
   "issues": {

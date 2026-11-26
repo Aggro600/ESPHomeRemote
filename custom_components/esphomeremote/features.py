@@ -34,6 +34,7 @@ import re
 import time
 from datetime import timedelta
 
+from .dock_entitaeten import dock_entitaet
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
@@ -623,10 +624,10 @@ class Funktionen:
             return
         jetzt = time.monotonic()
         for d in self.kd.dock_macs():
-            st = self.hass.states.get(f"binary_sensor.{d}_status")
+            st = self.hass.states.get(dock_entitaet(self.hass, d, "Status", "binary_sensor"))
             name = (st.attributes.get("friendly_name") or d).replace(" Status", "") if st else d
-            frei = self.hass.states.get(f"sensor.{d}_freier_speicher")
-            block = self.hass.states.get(f"sensor.{d}_groesster_freier_block")
+            frei = self.hass.states.get(dock_entitaet(self.hass, d, "Freier Speicher"))
+            block = self.hass.states.get(dock_entitaet(self.hass, d, "Groesster freier Block"))
             if st is not None and st.state == "off":
                 seit = self._dock_off.setdefault(d, jetzt)
                 if jetzt - seit > 30 and seit != -1:

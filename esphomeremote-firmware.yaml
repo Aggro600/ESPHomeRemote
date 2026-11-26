@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.23.1"
+    version: "2026.11.26.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
@@ -87,6 +87,7 @@ esphome:
     - esphomeremote-extras.h   # Einstellungsseite Smart Display + Bluetooth "Maus & Tastatur" (2026-10-17)
     - esphomeremote-gestures-page.h   # Seite Gesten: Liste, Belegung, Anlernen (2026-10-17)
     - esphomeremote-music.h   # Musik-Anzeige: Spektrum ueber das Mikrofon (2026-10-18)
+    - esphomeremote-showtime.h   # Showtime: YouTube-Listen, Abspielen in SmartTube (2026-11-26)
   # Schnellweg (2026-11-05): vor dem Tiefschlaf die Weck-Tabelle der aktuellen Aktivitaet ablegen (nur geschrieben, wenn
   # sich etwas geaendert hat) und das ROM beim Aufwachen schweigen lassen
   on_shutdown:
@@ -1852,6 +1853,17 @@ image:
           ESP_LOGW("cover", "Startseiten-Cover-Download fehlgeschlagen - beim naechsten Anzeigen neu");
           id(cover_home_offen) = true;   // 2026-10-31: statt WLAN einzuschalten spaeter noch einmal
 
+  # Showtime (2026-11-26, esphomeremote-showtime.h): 4 Vorschaubilder einer Seite als ein JPEG (112x280, HA showtime.py)
+  - platform: online_image
+    id: showtime_bild
+    url: "http://${ha_host}/"
+    format: JPEG
+    type: RGB565
+    on_download_finished:
+      - lambda: 'showtime::bild_da();'
+    on_error:
+      - lambda: 'ESP_LOGW("showtime", "Vorschaubilder nicht geladen");'
+
   # Bildplaetze der Widgets (2026-10-27): Kamera-Schnappschuss bzw. Cover, in HA passend verkleinert
   # (/api/esphomeremote/bild, custom_components/esphomeremote/widgets.py)
   - platform: online_image
@@ -2254,7 +2266,7 @@ interval:
   # Dock-Anzeige (im Dock? zurueck zur Dock-Seite, Uhr, Daten) und Bewegungsgesten (FIFO abholen), 2026-10-17
   - interval: 250ms
     then:
-      - lambda: 'dockanz::takt();'
+      - lambda: 'dockanz::takt(); showtime::takt();'
   - interval: 100ms
     then:
       - lambda: 'gesten::takt(); gestenseite::takt();'
@@ -10739,6 +10751,26 @@ lvgl:
             clickable: true
             on_click:
               - lambda: 'musik::beruehrt();'
+
+    # ================================================ 53: SHOWTIME (esphomeremote-showtime.h)
+    - id: page_showtime
+      styles: [st_screen]
+      scrollbar_mode: "off"
+      scrollable: false
+      pad_all: 0
+      on_load:
+        - lambda: 'id(cur_page) = 53; showtime::geladen();'
+      widgets:
+        - obj:
+            id: showtime_root
+            x: 0
+            y: 0
+            width: 240
+            height: 320
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollable: false
 
     # ================================================ 51: TOUCHPAD (esphomeremote-mouse.h)
     - id: page_maus

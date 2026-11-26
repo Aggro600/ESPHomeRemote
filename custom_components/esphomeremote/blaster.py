@@ -69,9 +69,13 @@ def sender_liste(hass: HomeAssistant) -> list[dict]:
         plattform = e.platform if e else ""
         if st.domain == "remote" and plattform not in REMOTE_PLATTFORMEN:
             continue   # kennt nur eigene Befehlsnamen
-        if st.domain == "infrared" and plattform == "esphome" and st.entity_id.endswith("_ir_sender") \
-                and hass.services.has_service("esphome", st.entity_id[len("infrared."):-len("_ir_sender")] + "_ir_roh"):
-            continue   # eigenes Dock - steht schon als Dock in der Liste
+        if st.domain == "infrared" and plattform == "esphome" and e and e.config_entry_id:
+            # eigenes Dock - steht schon als Dock in der Liste (ueber den ESPHome-Eintrag, nicht die entity_id: die kann
+            # einen Bereich davor haben, 2026-11-26)
+            ce = hass.config_entries.async_get_entry(e.config_entry_id)
+            dn = str(ce.data.get("device_name") or "").replace("-", "_") if ce else ""
+            if dn and hass.services.has_service("esphome", dn + "_ir_roh"):
+                continue
         out.append({"entity_id": st.entity_id, "name": st.attributes.get("friendly_name") or st.entity_id,
                     "plattform": plattform, "rf": st.domain == "remote" and REMOTE_PLATTFORMEN[plattform][1],
                     "online": st.state != STATE_UNAVAILABLE})

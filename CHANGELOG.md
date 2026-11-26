@@ -1,5 +1,17 @@
 # What's new · Was ist neu
 
+## 2026.11.26.1 (2026-11-26)
+
+- **Showtime: YouTube on the remote** – Recommended, Subscriptions, Up next, Watch later, History, Liked and playlists with thumbnails on the display; tap to play the video in SmartTube on the streamer (full screen, wakes streamer and TV). Sign in like on a TV with a code (configurator › Playback › Showtime), no cookies. Special page “Showtime (YouTube)” or key function “Show Showtime”, action `esphomeremote.showtime`.
+- **Bluetooth slots of the dock** were not shown (“the dock needs current firmware”) when HA had named the dock entities differently (e.g. with the area in front). Dock entities are now found via the device – also for online status, quick settings, scan pace, memory watchdog and IR sender.
+
+<details><summary>Deutsch</summary>
+
+- **Showtime: YouTube auf der Remote** – Empfohlen, Abos, Ähnliche, Später ansehen, Verlauf, Mag ich und Playlists mit Vorschaubildern auf dem Display; antippen spielt das Video in SmartTube auf dem Streamer (Vollbild, weckt Streamer und Fernseher). Anmeldung wie am Fernseher mit Code (Konfigurator › Wiedergabe › Showtime), keine Cookies. Spezialseite „Showtime (YouTube)“ bzw. Tastenfunktion „Showtime zeigen“, Aktion `esphomeremote.showtime`.
+- **Bluetooth-Plätze am Dock** wurden nicht angezeigt („braucht das Dock eine aktuelle Firmware“), wenn HA die Entitäten des Docks anders benannt hatte (z. B. mit Raum davor). Dock-Entitäten werden jetzt über das Gerät gefunden – auch für Online-Status, Schnelleinstellungen, Suchtempo, Speicher-Wächter und IR-Sender.
+
+</details>
+
 ## 2026.11.23.1 (2026-11-23)
 
 README: photos and short clips of the real remote

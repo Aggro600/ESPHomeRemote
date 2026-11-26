@@ -152,6 +152,23 @@ Android TV streamer – Google TV Streamer, MagentaTV Stick or any other Android
   no infrared needed (`switch.…_soundbar`, `esphomeremote.streamer_cec`).
 - **Now playing** – title, cover, position and the on-screen keyboard of every app with a media session.
 
+### Showtime: YouTube on the remote
+
+Browse your YouTube lists on the remote's display – **Recommended, Subscriptions, Up next (related to what you watched
+last), Watch later, History, Liked and your playlists** – with thumbnails, title, channel and length. Tap a video (or
+press OK) and it plays in **SmartTube** on your streamer, full screen; the streamer wakes up and switches the TV on
+via HDMI-CEC.
+
+- **Sign in like on a TV** – configurator *Playback → Showtime → Sign in with YouTube*. A code appears; open
+  `google.com/device` on your phone, enter the code and confirm with your Google account (ideally the same one as in
+  SmartTube). Your password is only entered at Google – Home Assistant stores an access token, no password, no
+  cookies. *Sign out* removes it.
+- **On the remote** – add the special page *Showtime (YouTube)* to a menu or give a key the function *Show
+  Showtime*. Up/down picks a video and pages, left/right switches the list, OK/tap plays or opens a playlist, Back
+  leaves a playlist. Swipe left/right for lists, up/down for pages.
+- **Automations** – `esphomeremote.showtime` plays any video ID or YouTube link (`video`, optional `streamer`).
+- Needs a streamer with ADB (see *Streamer app*) and SmartTube installed.
+
 ## Opening apps, made easy
 
 <p align="center"><img src="https://raw.githubusercontent.com/Aggro600/ESPHomeRemote/master/docs/bilder/konfig-app.png" alt="App assistant" width="100%"></p>
