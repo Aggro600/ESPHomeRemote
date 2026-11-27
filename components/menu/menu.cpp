@@ -298,6 +298,7 @@ void Menue::popup_ausloesen_(const Seite &s, bool auf, const std::string &wert) 
   if (!auf) {
     for (size_t i = 0; i < warten_.size(); i++)   // wartet es noch: erledigt
       if (warten_[i].first == id) { warten_.erase(warten_.begin() + i); break; }
+    if (pp["liste"] | false) { liste_zu(id); return; }
     if (!inhalt.empty()) { if (inhalt_zu) inhalt_zu(inhalt); }
     else if (popup_zu) popup_zu(id);
     return;
@@ -317,6 +318,7 @@ void Menue::popup_ausloesen_(const Seite &s, bool auf, const std::string &wert) 
   const uint32_t sek = pp["timeout"] | 0;
   if (sek > 0) {
     set_timeout("popup_zeit", sek * 1000, [this, id, inhalt]() {
+      if (dd_liste_ == id) { liste_zu(id); return; }
       if (!inhalt.empty()) { if (inhalt_zu) inhalt_zu(inhalt); }
       else if (popup_ && popup_id_ == id && popup_zu) popup_zu(id);
     });
@@ -387,6 +389,7 @@ void Menue::abfrage_starten_() {
     const char *e = it.j["entity"] | "";
     const bool extras = !it.j["zst"].isNull() || !it.j["map"].isNull();
     if (it.wert != nullptr || it.teil != P_KEIN || extras || it.typ == T_WIDGET) dazu(e);
+    for (JsonObjectConst g : it.j["geraete"].as<JsonArrayConst>()) dazu(g["e"] | "");   // Geraete-Liste (lang)
     if (it.typ == T_WIDGET) {
       dazu(it.j["we"] | "");
       dazu(it.j["me"] | "");
@@ -1108,6 +1111,28 @@ void Menue::bauen_(bool alles) {
     bool st = false;
     it.h = zeilen_(it, zelle, &st);
     it.gestapelt = st;
+    alle.push_back(it);
+  }
+  // Gleich hohe Reihen (2026-11-27, Nutzer: "Alle dazu | Alle raus" unterschiedlich hoch): stehen schmale Eintraege
+  // im Fluss nebeneinander und braucht einer mehr Zeilen (Text umgebrochen), bekommen alle der Reihe diese Hoehe.
+  if (flow) {
+    size_t i = 0;
+    while (i < alle.size()) {
+      size_t k = i;
+      int summe = 0, mh = 0;
+      while (k < alle.size() && summe + alle[k].w <= SPALTEN) {
+        summe += alle[k].w;
+        mh = std::max(mh, (int) alle[k].h);
+        k++;
+        if (summe == SPALTEN) break;
+      }
+      if (k - i > 1)
+        for (size_t m = i; m < k; m++)
+          if (alle[m].typ != T_TEXT && (int) (alle[m].j["h"] | 1) > 0) alle[m].h = mh;
+      i = k > i ? k : i + 1;
+    }
+  }
+  for (auto &it : alle) {
     if (flow) {
       int pos = cur;
       while (pos < MAX_ZEILEN * SPALTEN && !frei(pos % SPALTEN, pos / SPALTEN, it.w, it.h)) pos++;
@@ -1115,12 +1140,11 @@ void Menue::bauen_(bool alles) {
       it.y = pos / SPALTEN;
       cur = pos + it.w;
     } else {
-      it.x = std::max(0, std::min(SPALTEN - it.w, (int) (j["x"] | 0)));
-      it.y = std::max(0, std::min(MAX_ZEILEN - 1, (int) (j["y"] | 0)));
+      it.x = std::max(0, std::min(SPALTEN - it.w, (int) (it.j["x"] | 0)));
+      it.y = std::max(0, std::min(MAX_ZEILEN - 1, (int) (it.j["y"] | 0)));
     }
     for (int r = it.y; r < it.y + it.h && r < MAX_ZEILEN; r++)
       for (int c = it.x; c < it.x + it.w; c++) belegt[r] |= (1 << c);
-    alle.push_back(it);
   }
   // Fokus: gemerkt oder erstes bedienbares Element (Index in der ganzen Liste)
   auto f = fokus_mem_.find(PStr(stapel_.back().c_str()));
@@ -1904,7 +1928,8 @@ bool Menue::taste(int k, bool gedrueckt) {
   // Licht-Widget mit Unterseite (2026-11-01): kurz = Unterseite, lang = an/aus
   auto licht_lang = [this](Item &x) { return x.typ == T_WIDGET && x.wart == W_LICHT && *(x.j["ziel"] | ""); };
   if (k == 34 && !tmodus_ && fokus_ >= 0 && fokus_ < (int) items_.size() &&
-      (!items_[fokus_].j["lang"].isNull() || licht_lang(items_[fokus_])) && !items_[fokus_].gesperrt) {
+      (!items_[fokus_].j["lang"].isNull() || !items_[fokus_].j["geraete"].isNull() || licht_lang(items_[fokus_])) &&
+      !items_[fokus_].gesperrt) {
     if (gedrueckt) {
       ok_lang_i_ = fokus_;
       ok_lang_fertig_ = false;
@@ -1912,7 +1937,8 @@ bool Menue::taste(int k, bool gedrueckt) {
         if (ok_lang_i_ < 0 || ok_lang_i_ >= (int) items_.size()) return;
         ok_lang_fertig_ = true;
         Item &x = items_[ok_lang_i_];
-        if (!x.j["lang"].isNull()) tk_->schritte(x.j["lang"].as<JsonArrayConst>());
+        if (!x.j["geraete"].isNull()) dd_geraete_auf_(x);
+        else if (!x.j["lang"].isNull()) tk_->schritte(x.j["lang"].as<JsonArrayConst>());
         else if (licht_lang(x)) { licht_senden_(x, "toggle", ""); licht_zustand_(x); }
       });
     } else {
@@ -2517,7 +2543,11 @@ std::string Menue::quelle_(JsonObjectConst q, const Item &it) const {
 // Einzeiliger Regler (2026-10-29): Name links, Regler in der Mitte, Wert rechts - alles senkrecht mittig
 void Menue::regler_einzeilig_(Item &it, lv_obj_t *k, lv_obj_t *sl) {
   const int innen = (int) (it.w * zelle_) - LUECKE - 2 * lv_obj_get_style_pad_left(k, LV_PART_MAIN);
-  const int nb = innen * 30 / 100, wb = 36;
+  // Wertspalte so breit wie der breiteste uebliche Wert ("100%") plus Abstand zum Knopf - vorher
+  // ueberlappte "100%" den Knopf am rechten Ende (2026-11-27, gilt fuer alle einzeiligen Regler)
+  lv_point_t g;
+  lv_text_get_size(&g, "100%", lv_obj_get_style_text_font(it.wert, LV_PART_MAIN), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const int nb = innen * 30 / 100, wb = std::max(36, (int) g.x + 2) + 6;
   lv_obj_set_width(it.name, nb);
   lv_obj_align(it.name, LV_ALIGN_LEFT_MID, 0, 0);
   lv_label_set_long_mode(it.wert, LV_LABEL_LONG_CLIP);
@@ -2615,7 +2645,7 @@ void Menue::extras_(Item &it) {
     lv_obj_align(it.badge, LV_ALIGN_TOP_RIGHT, 8, -3);
     lv_obj_add_flag(it.badge, LV_OBJ_FLAG_HIDDEN);
   }
-  if (!j["lang"].isNull() && it.fokusierbar() && !(j["hold"] | false)) {
+  if ((!j["lang"].isNull() || !j["geraete"].isNull()) && it.fokusierbar() && !(j["hold"] | false)) {
     lv_obj_add_event_cb(it.obj, Menue::lang_cb_, LV_EVENT_PRESSED, this);
     lv_obj_add_event_cb(it.obj, Menue::lang_cb_, LV_EVENT_LONG_PRESSED, this);
   }
@@ -2757,6 +2787,7 @@ void Menue::lang_cb_(lv_event_t *e) {
   if (i < 0 || i >= (int) self->items_.size() || self->items_[i].gesperrt) return;
   self->lang_war_ = true;
   self->fokus_setzen_(i);
+  if (!self->items_[i].j["geraete"].isNull()) { self->dd_geraete_auf_(self->items_[i]); return; }
   self->tk_->schritte(self->items_[i].j["lang"].as<JsonArrayConst>());
 }
 
@@ -2813,10 +2844,65 @@ void Menue::dd_auf_(Item &it) {
     return;
   }
   dd_ent_ = e;
+  dd_g_ = -1;
   dd_sel_ = 0;
   const std::string jetzt = zi->second.state.c_str();
-  for (size_t i = 0; i < dd_opts_.size(); i++) if (dd_opts_[i] == jetzt) dd_sel_ = (int) i;
+  std::vector<bool> gruen(dd_opts_.size(), false);
+  for (size_t i = 0; i < dd_opts_.size(); i++) if (dd_opts_[i] == jetzt) { dd_sel_ = (int) i; gruen[i] = true; }
+  dd_bauen_(it.j["label"] | "", gruen);
+}
 
+// Geraete-Liste (2026-11-27): Eintrag mit "geraete" [{n, e, svc, d}] - lang druecken zeigt die Aufklappliste mit den
+// Geraeten (gruen = an); Antippen ruft svc mit d auf und laesst die Liste offen (mehrere umschalten).
+void Menue::dd_geraete_auf_(Item &it) {
+  dd_zu_();
+  JsonArrayConst g = it.j["geraete"].as<JsonArrayConst>();
+  if (g.isNull() || g.size() == 0) return;
+  dd_opts_.clear();
+  std::vector<bool> gruen;
+  for (JsonObjectConst x : g) {
+    dd_opts_.emplace_back(x["n"] | "?");
+    gruen.push_back(geraet_an_(x["e"] | ""));
+  }
+  dd_ent_.clear();
+  dd_g_ = (int) (&it - items_.data());
+  dd_sel_ = 0;
+  dd_bauen_(it.j["label"] | "", gruen);
+}
+
+void Menue::liste_zeigen(const std::string &id) {
+  const int si = seite_index_(id);
+  if (si < 0) return;
+  dd_zu_();
+  dd_liste_items_ = seiten_[si].j["items"].as<JsonArrayConst>();
+  dd_opts_.clear();
+  std::vector<bool> gruen;
+  for (JsonObjectConst x : dd_liste_items_) {
+    const char *t = x["t"] | "";
+    if (!strcmp(t, "text")) continue;
+    dd_opts_.emplace_back(x["label"] | "?");
+    gruen.push_back(!strcmp(t, "toggle") && geraet_an_(x["entity"] | ""));
+  }
+  if (dd_opts_.empty()) return;
+  dd_g_ = -2;
+  dd_liste_ = id;
+  dd_sel_ = 0;
+  std::string titel = seiten_[si].j["title"] | "";
+  for (JsonObjectConst x : dd_liste_items_)   // erster Text = Hinweis unter dem Titel
+    if (!strcmp(x["t"] | "", "text")) { titel = x["label"] | titel.c_str(); break; }
+  dd_bauen_(titel.c_str(), gruen);
+}
+
+void Menue::liste_zu(const std::string &id) {
+  if (dd_g_ == -2 && dd_liste_ == id) dd_zu_();
+}
+
+bool Menue::geraet_an_(const char *e) {
+  auto zi = zustand_cache_.find(PStr(e));
+  return zi != zustand_cache_.end() && zi->second.state == "on";
+}
+
+void Menue::dd_bauen_(const char *titel, const std::vector<bool> &gruen) {
   lv_obj_t *bg = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(bg);
   lv_obj_set_size(bg, lv_pct(100), lv_pct(100));
@@ -2841,7 +2927,6 @@ void Menue::dd_auf_(Item &it) {
   lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scrollbar_mode(p, LV_SCROLLBAR_MODE_AUTO);
 
-  const char *titel = it.j["label"] | "";
   if (*titel) {
     lv_obj_t *t = lv_label_create(p);
     lv_label_set_text(t, titel);
@@ -2861,8 +2946,8 @@ void Menue::dd_auf_(Item &it) {
     lv_obj_set_user_data(z, (void *) (intptr_t) i);
     lv_obj_add_event_cb(z, Menue::dd_opt_cb_, LV_EVENT_CLICKED, this);
     lv_obj_t *l = lv_label_create(z);
-    const bool aktiv = dd_opts_[i] == jetzt;
-    lv_label_set_text(l, dd_opts_[i].c_str());   // aktuelle Option gruen
+    const bool aktiv = i < gruen.size() && gruen[i];
+    lv_label_set_text(l, dd_opts_[i].c_str());   // aktuelle Option bzw. eingeschaltetes Geraet gruen
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
     lv_obj_set_width(l, lv_pct(100));
     lv_obj_set_style_text_color(l, lv_color_hex(aktiv ? C_AN : C_TEXT), 0);
@@ -2888,9 +2973,59 @@ void Menue::dd_zu_() {
   if (dd_box_ != nullptr) lv_obj_delete(dd_box_);
   dd_box_ = nullptr;
   dd_zeilen_.clear();
+  dd_g_ = -1;
+  dd_liste_.clear();
 }
 
 void Menue::dd_waehlen_(int i) {
+  if (dd_g_ == -2) {   // Popup-Liste: Schalter umschalten (offen lassen), Knopf ausfuehren (dann zu)
+    int n = -1;
+    for (JsonObjectConst x : dd_liste_items_) {
+      const char *t = x["t"] | "";
+      if (!strcmp(t, "text")) continue;
+      if (++n != i) continue;
+      const char *e = x["entity"] | "";
+      JsonArrayConst st = x["steps"].as<JsonArrayConst>();
+      if (!strcmp(t, "toggle")) {
+        if (!st.isNull() && st.size() > 0) tk_->schritte(st);
+        else if (*e) tk_->ha_aufruf("homeassistant.toggle", {{"entity_id", e}});
+        const bool an = !geraet_an_(e);
+        if (*e) zustand_cache_[PStr(e)].state = an ? "on" : "off";
+        lv_obj_t *l = i < (int) dd_zeilen_.size() ? lv_obj_get_child(dd_zeilen_[i], 0) : nullptr;
+        if (l) lv_obj_set_style_text_color(l, lv_color_hex(an ? C_AN : C_TEXT), 0);
+        dd_sel_ = i;
+        dd_markieren_();
+        cancel_timeout("popup_zeit");   // wer waehlt, bekommt Zeit
+        return;
+      }
+      dd_zu_();
+      if (!st.isNull()) tk_->schritte(st);
+      return;
+    }
+    dd_zu_();
+    return;
+  }
+  if (dd_g_ >= 0) {   // Geraete-Liste: Schritte des Geraets, Zeile sofort umfaerben, Liste bleibt offen
+    if (dd_g_ >= (int) items_.size() || i < 0 || i >= (int) dd_zeilen_.size()) { dd_zu_(); return; }
+    JsonArrayConst g = items_[dd_g_].j["geraete"].as<JsonArrayConst>();
+    if (i >= (int) g.size()) return;
+    JsonObjectConst x = g[i];
+    const char *svc = x["svc"] | "";
+    if (*svc) {   // flach (svc + d): Schritte waeren fuer die Remote zu tief verschachtelt
+      std::map<std::string, std::string> d;
+      for (JsonPairConst kv : x["d"].as<JsonObjectConst>()) d[kv.key().c_str()] = kv.value() | "";
+      tk_->ha_aufruf(svc, d);
+    }
+    const char *e = x["e"] | "";
+    const bool an = !geraet_an_(e);
+    if (*e) zustand_cache_[PStr(e)].state = an ? "on" : "off";
+    lv_obj_t *l = lv_obj_get_child(dd_zeilen_[i], 0);
+    if (l) lv_obj_set_style_text_color(l, lv_color_hex(an ? C_AN : C_TEXT), 0);
+    dd_sel_ = i;
+    dd_markieren_();
+    abf_ab_ = millis() + 1500;
+    return;
+  }
   if (i < 0 || i >= (int) dd_opts_.size() || dd_ent_.empty()) { dd_zu_(); return; }
   const std::string opt = dd_opts_[i], e = dd_ent_;
   dd_zu_();

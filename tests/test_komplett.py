@@ -28,8 +28,10 @@ async def test_komplett_rundlauf(hass, eingerichtet, hass_ws_client, tmp_path):
     assert set(ohne["dateien"]) == {"remote-wz-test.yaml", "dock-wz.yaml"}
     assert "secrets" not in ohne, "Secrets nur auf Wunsch"
     assert ohne["extra"] == ["remote-wz-zwei"]
+    kd.data["klingel_webhook"] = "wh-alt"   # interne Schluessel (2026-11-27) nur mit Secrets
     mit = await _ws(ws, type="esphomeremote/sicherung_komplett", secrets=True)
     assert "wifi_password: geheim" in mit["secrets"]
+    assert mit["geheim"] == {"klingel_webhook": "wh-alt"} and "geheim" not in ohne
 
     # Neues System: leerer Ordner, andere secrets, Remote fehlt
     neu = tmp_path / "neu"
@@ -39,7 +41,10 @@ async def test_komplett_rundlauf(hass, eingerichtet, hass_ws_client, tmp_path):
     (neu / "dock-wz.yaml").write_text("# schon da\n")
     kd.devices.remove("remote-wz-zwei")
 
-    r = await _ws(ws, type="esphomeremote/einspielen_dateien", dateien=mit["dateien"], secrets=mit["secrets"], extra=mit["extra"])
+    kd.data["klingel_webhook"] = "wh-neu"
+    r = await _ws(ws, type="esphomeremote/einspielen_dateien", dateien=mit["dateien"], secrets=mit["secrets"], extra=mit["extra"],
+                  geheim=mit["geheim"])
+    assert kd.data["klingel_webhook"] == "wh-alt", "Klingel-Apps funktionieren nach dem Umzug weiter"
     assert r["dateien_neu"] == ["remote-wz-test.yaml"] and r["dateien_da"] == ["dock-wz.yaml"]
     assert (neu / "dock-wz.yaml").read_text() == "# schon da\n", "vorhandene Dateien bleiben"
     assert (neu / "remote-wz-test.yaml").read_text().startswith("packages:")

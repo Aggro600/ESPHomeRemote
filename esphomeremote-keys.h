@@ -115,6 +115,12 @@ inline void menue_popup(const std::string &seite, bool wecken = true) {
     eingabewahl::wechseln(inhalt == "touchpad" ? 0 : 2);
     return;
   }
+  // Popup als Aufklappliste (2026-11-27): ueber dem, was gerade zu sehen ist
+  if (mn->seite_als_liste(seite)) {
+    if (wecken) wake_backlight->execute();
+    mn->liste_zeigen(seite);
+    return;
+  }
   // Schon offen (z. B. im Kamera-Popup eine andere Kamera gewaehlt): nur wecken, Fokus behalten
   if (popup_seite->value() == 98 && cur_page->value() == 98 && mn->ist_popup() && mn->popup_seite() == seite) {
     if (wecken) wake_backlight->execute();
@@ -1131,7 +1137,7 @@ inline bool ereignis(int keycode, bool pressed) {
   if (!pressed && beim_menue.erase(keycode)) { mn->taste(keycode, false); return true; }
   if (!pressed && beim_touchpad.erase(keycode)) { touchpad::taste(keycode, false); return true; }
   if (!pressed && beim_showtime.erase(keycode)) { showtime::taste(keycode, false); return true; }   // OK lang/kurz
-  if (pressed && p == 98 && !key_was_dark->value() && mn->taste(keycode, pressed)) {
+  if (pressed && (p == 98 || mn->dd_offen()) && !key_was_dark->value() && mn->taste(keycode, pressed)) {
     beim_menue.insert(keycode);
     held_key->value() = 0;
     return true;

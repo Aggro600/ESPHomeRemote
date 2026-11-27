@@ -1593,6 +1593,16 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         catch (e) { s.msg = { err: true, text: "Merken ging nicht: " + (e.message || e.code) }; }
         break;
       }
+      case "tasten_leeren": {   // Neuanfang ohne Vorlage (2026-11-27): Aktivitaeten bleiben, alle Tasten leer
+        const akts = this.cfg.activities || [];
+        if (!confirm(`${devName(s.dev)}: alle Tasten in allen ${akts.length} Aktivitäten leeren?\n\nDie Aktivitäten selbst (Name, Bluetooth-Platz, Startseite) bleiben. Bis zum Speichern holt „Verwerfen“ den alten Stand zurück.`)) return;
+        for (const akt of akts) akt.keys = {};
+        if (this.cfg.ohne) this.cfg.ohne.keys = {};
+        this._touch();
+        s.key = null;
+        s.msg = { text: "Alle Tasten geleert – noch nicht gespeichert." };
+        break;
+      }
       case "werk_laden": case "werk_menu": case "werk_tasten": {
         let w;
         try { w = await this._hass.callWS({ type: "esphomeremote/werk_get" }); }
@@ -1782,7 +1792,7 @@ class EsphomeremoteKonfigurator extends HTMLElement {
           const secrets = confirm("Auch die secrets.yaml des ESPHome-Add-ons mitsichern (WLAN-Passwort, Schlüssel)?\n\nOK = ja, die Datei enthält dann Passwörter – sicher aufbewahren. Abbrechen = ohne Secrets.");
           komplett = await this._hass.callWS({ type: "esphomeremote/sicherung_komplett", secrets });
           daten.files = komplett.dateien; daten.created_remotes = komplett.extra; daten.channel = komplett.kanal;
-          if (secrets) daten.secrets = komplett.secrets;
+          if (secrets) { daten.secrets = komplett.secrets; if (komplett.geheim) daten.internal_keys = komplett.geheim; }
         }
         const blob = new Blob([JSON.stringify(daten, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
@@ -1842,7 +1852,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
         if (T.files || T.created_remotes || T.secrets) {   // Komplett-Sicherung (2026-11-12)
           try {
             const r = await this._hass.callWS({ type: "esphomeremote/einspielen_dateien", dateien: T.files ? m.daten.files || {} : {},
-              secrets: T.secrets ? m.daten.secrets || "" : "", extra: T.created_remotes ? m.daten.created_remotes || [] : [] });
+              secrets: T.secrets ? m.daten.secrets || "" : "", extra: T.created_remotes ? m.daten.created_remotes || [] : [],
+              geheim: T.secrets ? m.daten.internal_keys || {} : {} });
             if (r.dateien_neu.length) fertig.push(`${r.dateien_neu.length} Gerätedatei(en)`);
             if (r.secrets.length) fertig.push(`${r.secrets.length} Secrets-Zeile(n)`);
             if (r.remotes.length) { fertig.push(`${r.remotes.length} Remote(s) angelegt`); await this._load(); }
@@ -1885,7 +1896,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
           try { await this._hass.callWS({ type: "esphomeremote/sync_set", ...G.sync }); fertig.push(BK_NAMEN.sync); }
           catch (e) { fehler.push(`${BK_NAMEN.sync}: ${e.message || e.code}`); }
         }
-        const rest = Object.fromEntries(["funktionen", "docks_einst", "einst_standard", "werk", "reihenfolge", "ircodes", "gesperrt"]
+        const rest = Object.fromEntries(["funktionen", "docks_einst", "einst_standard", "werk", "reihenfolge", "ircodes", "gesperrt",
+          "showtime", "klingel_app", "bruecke"]
           .filter((k) => T[k] && G[k] != null).map((k) => [k, G[k]]));
         if (Object.keys(rest).length) {
           try { await this._hass.callWS({ type: "esphomeremote/sicherung_global", werte: rest }); fertig.push(...Object.keys(rest).map((k) => BK_NAMEN[k])); }
@@ -2360,7 +2372,8 @@ const BK_NAMEN = { jetzt: "Wiedergabe („Jetzt läuft“)", streamer: "Streamer
   dock: "Dock-Geräte (Infrarot)", dockscan: "Dock-Suche", sync: "Abgleich-Gruppe", ircodes: "Eigene IR-Codes",
   funktionen: "Funktionen (Kamera, TV-Eingang, Neustart)", docks_einst: "Dock-Einstellungen", einst_standard: "Standard-Einstellungen",
   werk: "Werkseinstellung", reihenfolge: "Reihenfolge der Remotes", gesperrt: "Gesperrte Firmware",
-  durchsage: "Durchsage", streamer_menue: "Menü auf dem Fernseher" };
+  durchsage: "Durchsage", streamer_menue: "Menü auf dem Fernseher", showtime: "Showtime (Optionen)",
+  klingel_app: "Klingel-Anruf (Geräte)", bruecke: "Bluetooth-Brücke (Ports)" };
 
 // Sicherungsdatei englisch (Version 4, 2026-11-04, Tester: "die JSON-Formate haben noch deutsche Keys"): Huelle und Namen
 // der gemeinsamen Bereiche. Innen (Konfigurator, HA) heissen sie weiter wie bisher - BK_EN uebersetzt beim Herunterladen,
@@ -2368,7 +2381,8 @@ const BK_NAMEN = { jetzt: "Wiedergabe („Jetzt läuft“)", streamer: "Streamer
 const BK_EN = { jetzt: "now_playing", streamer: "streamer", klingel: "doorbell", licht: "light_curves", anzeige: "smart_display",
   dock: "dock_devices", dockscan: "dock_scan", sync: "sync_group", ircodes: "ir_codes", funktionen: "functions",
   docks_einst: "dock_settings", einst_standard: "default_settings", werk: "factory_settings", reihenfolge: "remote_order",
-  gesperrt: "locked_firmware", durchsage: "announcement", streamer_menue: "tv_menu" };
+  gesperrt: "locked_firmware", durchsage: "announcement", streamer_menue: "tv_menu", showtime: "showtime",
+  klingel_app: "doorbell_devices", bruecke: "bridge_ports" };
 const BK_DE = Object.fromEntries(Object.entries(BK_EN).map(([k, v]) => [v, k]));
 // Eigene IR-Codes in Dateien englisch: geraete -> devices, quelle -> source, zeit -> time (innen deutsch, irdb.py)
 const irEn = (e) => ({ devices: (e?.geraete || []).map((g) => ({ name: g.name, codes: (g.codes || []).map(({ quelle, zeit, ...c }) =>
@@ -2856,6 +2870,7 @@ const MenuEditor = {
       <small class="note">Die <b>Menütaste</b> minimiert ein offenes Popup immer – ein zweiter Druck holt es zurück, solange die Zeit „Menü-Position merken für“ (Einstellungen) läuft. Der Knopf oben links (und die Zurück-Taste) macht, was hier eingestellt ist. Geschlossen kommt es erst beim nächsten Auslöser wieder${p.inhalt === "tastatur" ? " – die Tastatur also, wenn sie am Fernseher neu aufgeht (spätestens nach 30 min)" : ""}.</small>
       ${p.inhalt ? "" : `<label class="sw small"><input type="checkbox" data-ppg="zu" ${pp.zu ? "checked" : ""}><span><b>Nach einem Knopfdruck schließen</b> – drückst du einen Knopf, Schalter oder eine Auswahl, geht das Popup danach zu (wie bei der HDMI-Auswahl). Aus: es bleibt offen, z. B. zum Schwenken der Kamera. Unterseiten, Regler und das Steuerkreuz im Tastenmodus schließen es nie.</span></label>`}
       ${p.inhalt ? "" : `<label class="sw small"><input type="checkbox" data-ppg="excl" ${pp.excl ? "checked" : ""}><span>Vorrang – solange es offen ist, warten andere Popups und gehen erst danach auf</span></label>`}
+      ${p.inhalt ? "" : `<label class="sw small"><input type="checkbox" data-ppg="liste" ${pp.liste ? "checked" : ""}><span>Als Aufklappliste – statt der Seite eine kleine Auswahlliste über dem, was gerade zu sehen ist (Schalter umschalten, Knöpfe auslösen; erster Text = Überschrift)</span></label>`}
       <small class="note">Ein Auslöser greift beim <b>Wechsel</b> auf den Wert (z. B. Skript → on, Schalter → on, App → com.netflix.ninja). Ein Knopf mit „Popup schließen“ schließt es nach einer Auswahl.</small>
     </div>`;
   },
@@ -3884,6 +3899,7 @@ const MenuEditor = {
       else if (k === "timeout") p.popup.timeout = Math.max(0, Number(t.value) || 0);
       else if (k === "wake") p.popup.wake = t.checked;
       else if (k === "excl") { if (t.checked) p.popup.excl = true; else delete p.popup.excl; }
+      else if (k === "liste") { if (t.checked) p.popup.liste = true; else delete p.popup.liste; }
       else if (k === "zu") { if (t.checked) p.popup.zu = true; else delete p.popup.zu; }
       else if (k === "nachholen") { if (t.checked) delete p.popup.nachholen; else p.popup.nachholen = false; }
       else if (k === "nachholen_min") { const n = Math.max(0, Math.min(1440, Math.round(Number(t.value) || 0))); if (n) p.popup.nachholen_min = n; else delete p.popup.nachholen_min; }
@@ -8899,6 +8915,7 @@ const OberflaecheTab = {
           <button class="${tabelle ? "on" : ""}" data-a="o_ansicht" data-v="tabelle" title="Alle Aktivitäten nebeneinander"><ha-icon icon="mdi:table-large"></ha-icon><span class="wide">Tabelle</span></button></div>
         ${tabelle ? "" : `<button class="btn ghost small" data-a="copyact" title="Layout einer anderen Aktivität übernehmen"><ha-icon icon="mdi:content-copy"></ha-icon><span class="wide">Layout kopieren</span></button>`}
         <button class="btn ghost small" data-a="werk_tasten" title="Aktivitäten und Tastenbelegung aus der Werkseinstellung übernehmen"><ha-icon icon="mdi:backup-restore"></ha-icon><span class="wide">Standardtasten laden</span></button>
+        <button class="btn ghost small" data-a="tasten_leeren" title="Alle Tasten in allen Aktivitäten leeren – zum Neuanfang ohne Vorlage"><ha-icon icon="mdi:eraser"></ha-icon><span class="wide">Alle Tasten leeren</span></button>
         <button class="btn ghost small" data-a="p_spick" title="Alle Aktivitäten als Übersicht zum Ausdrucken"><ha-icon icon="mdi:printer-outline"></ha-icon><span class="wide">Spickzettel</span></button>
       </div>${zeile}`;
     if (tabelle) return leiste + this._matrixHtml();

@@ -136,7 +136,7 @@ code { font-size:12px; background:rgba(127,127,127,.15); padding:1px 4px; border
 .pi .tx { color:var(--fg, #8b94a3); font-size:var(--fs, 11px); text-align:var(--al, left); } .pi .tx.wrap { white-space:normal; align-self:flex-start; line-height:1.25; }
 .pi .row1 { display:flex; width:100%; justify-content:space-between; position:absolute; top:4px; left:0; padding:0 8px; box-sizing:border-box; }
 .pi .sl { position:absolute; bottom:8px; left:5%; width:90%; height:6px; background:#4b5563; border-radius:3px; } .pi .sl span { display:block; height:100%; background:#3b82f6; border-radius:3px; }
-.pi b.rz1 { width:30%; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .pi .sl.sl1 { position:static; flex:1; margin:0 10px; width:auto; } .pi .rz1w { width:36px; flex:none; text-align:right; }
+.pi b.rz1 { width:30%; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .pi .sl.sl1 { position:static; flex:1; margin:0 10px; width:auto; } .pi .rz1w { min-width:36px; flex:none; text-align:right; margin-left:6px; white-space:nowrap; }
 .pi .cb { position:absolute; bottom:3px; left:0; width:100%; display:flex; justify-content:space-between; padding:0 6px; box-sizing:border-box; }
 .pi .cb em { font-style:normal; font-size:10px; background:#232a35; border-radius:6px; width:31%; text-align:center; padding:4px 0; }
 .pi.t-camera { background:#000; flex-direction:column; justify-content:center; }

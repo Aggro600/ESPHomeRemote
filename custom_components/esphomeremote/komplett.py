@@ -23,6 +23,7 @@ from . import firmware as _fw
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "esphomeremote"
 REPO = "github.com/Aggro600/ESPHomeRemote"
+GEHEIM = ("klingel_webhook", "streamer_menue_geheim")
 _DATEI = re.compile(r"^(remote|dock)-[a-z0-9-]+(-halink)?\.yaml$")
 _SECRET_ZEILE = re.compile(r"^([A-Za-z0-9_]+)\s*:\s*(.*?)\s*$")
 
@@ -91,19 +92,28 @@ async def ws_sicherung_komplett(hass: HomeAssistant, connection: websocket_api.A
            "esphome_ordner": str(_fw.ESPHOME_DIR)}
     if msg["secrets"]:
         out["secrets"] = await hass.async_add_executor_job(_secrets_lesen)
+        # interne Schluessel (2026-11-27): Klingel-Webhook (DoorCall-Apps) und Adresse des TV-Menues (Streamer-App) -
+        # ohne sie muessten Apps und Streamer nach einem Umzug neu eingerichtet werden
+        out["geheim"] = {g: kd.data[g] for g in GEHEIM if isinstance(kd.data.get(g), str)}
     connection.send_result(msg["id"], out)
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/einspielen_dateien",
                                   vol.Optional("dateien", default={}): {str: str},
                                   vol.Optional("secrets", default=""): str,
-                                  vol.Optional("extra", default=[]): [str]})
+                                  vol.Optional("extra", default=[]): [str],
+                                  vol.Optional("geheim", default={}): {str: str}})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_einspielen_dateien(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     kd = hass.data[DOMAIN]
     neu, da = await hass.async_add_executor_job(_dateien_schreiben, msg["dateien"])
     secrets = await hass.async_add_executor_job(_secrets_ergaenzen, msg["secrets"]) if msg["secrets"] else []
+    for g, v in msg["geheim"].items():
+        if g in GEHEIM and v:
+            kd.data[g] = v
+    if msg["geheim"]:
+        await kd.store.async_save(kd.data)
     remotes = []
     for dev in msg["extra"]:
         if re.fullmatch(r"remote-[a-z0-9-]+", dev) and dev not in kd.devices:

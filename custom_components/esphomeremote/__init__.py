@@ -588,6 +588,19 @@ def kachel_optionen(it: dict, pid: str) -> dict:
         o["rad"] = max(0, min(20, int(it["rad"])))
     if it.get("lang"):
         o["lang"] = validate_steps(it["lang"], f"Seite {pid}")
+    # Geraete-Liste (2026-11-27): lang druecken zeigt eine Aufklappliste der Geraete (z. B. eines Raums),
+    # gruen = an; Antippen ruft den Dienst auf. [{n: Name, e: Entitaet fuer den Zustand, svc: Dienst, d: Daten}]
+    if isinstance(it.get("geraete"), list):
+        gl = []
+        for g in it["geraete"][:12]:
+            if not isinstance(g, dict) or not g.get("n"):
+                continue
+            # flach (svc + d statt Schritte): Schritte waeren 11 Ebenen tief - die Remote liest nur 10
+            d = g.get("d") if isinstance(g.get("d"), dict) else {}
+            gl.append({"n": str(g["n"])[:40], "e": str(g.get("e") or "")[:80], "svc": str(g.get("svc") or "")[:80],
+                       "d": {str(k)[:40]: str(v)[:120] for k, v in list(d.items())[:6]}})
+        if gl:
+            o["geraete"] = gl
     if it.get("t") == "vpreset" and isinstance(it.get("werte"), list):
         ws = [max(0, min(100, int(v))) for v in it["werte"][:6]]
         if len(ws) >= 2:
@@ -761,6 +774,8 @@ def validate_menu(m: dict) -> dict:
                 return out
             pg["popup"] = {"open": trig(pp.get("open")), "close": trig(pp.get("close")),
                            "timeout": max(0, min(3600, int(pp.get("timeout") or 0))), "wake": bool(pp.get("wake", True))}
+            if pp.get("liste"):   # als Aufklappliste statt Seite zeigen (2026-11-27)
+                pg["popup"]["liste"] = True
             if pp.get("excl"):
                 pg["popup"]["excl"] = True   # Vorrang: andere Popups warten
             if pp.get("zu"):
@@ -792,6 +807,18 @@ def validate_menu(m: dict) -> dict:
     if isinstance(m.get("hl"), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", m["hl"]):
         out["hl"] = m["hl"].lower()
     return out
+
+
+MAX_TIEFE = 10
+
+
+def json_tiefe(o) -> int:
+    """Verschachtelungstiefe wie ArduinoJson sie zaehlt (Objekt/Liste = eine Ebene)."""
+    if isinstance(o, dict):
+        return 1 + max((json_tiefe(v) for v in o.values()), default=0)
+    if isinstance(o, list):
+        return 1 + max((json_tiefe(v) for v in o), default=0)
+    return 0
 
 
 def device_payload(cfg: dict) -> bytes:
@@ -837,7 +864,7 @@ class KonfigData:
             if dev not in self.data["devices"]:
                 # An (2026-11-09, Tester: "Aktivitaetsleiste nur eine Linie"): die Firmware hat keine eingebaute Belegung
                 # mehr - aus hiess keine Aktivitaeten, Tasten ohne Wirkung, nur die i-Taste weckte das Display
-                self.data["devices"][dev] = {"config": default_config(), "enabled": True}
+                self.data["devices"][dev] = {"config": self.start_config(), "enabled": True}
             self.data["devices"][dev]["config"].setdefault("menu", default_menu())
         # Einmalige Menue-Umbauten vom 17.10. (menue_rev 3-6) sind gelaufen und seit 2026-10-18 entfernt
         umgebaut = self._timer_popup() | self._vol_aufraeumen()
@@ -966,7 +993,7 @@ class KonfigData:
             self.data["devices"][dev] = {"config": copy.deepcopy(src["config"]), "enabled": bool(src.get("enabled"))}
             werte = self.einst_werte(vorlage)[0]
         else:
-            self.data["devices"][dev] = {"config": default_config(), "enabled": True}   # an, s. load()
+            self.data["devices"][dev] = {"config": self.start_config(), "enabled": True}   # an, s. load()
             werte = self.data.get("einst_standard") or EINST_STANDARD
         await self.store.async_save(self.data)
         self.announce(dev)
@@ -1154,6 +1181,17 @@ class KonfigData:
             ds.konfig_neu(dev)   # andere Popup-Ausloeser (2026-10-24)
             ds._planen(dev, 1)   # neuer Soll-Stand -> auch an die Docks (Remote ohne eigene HA-Verbindung)
 
+    def start_config(self) -> dict:
+        """Belegung fuer eine neue Remote (2026-11-27): die gemerkte Werkseinstellung (Konfigurator "Als
+        Werkseinstellung speichern"), sonst die eingebaute. Ohne die Bindungen der Vorlage an ihr Dock (ir, bt)."""
+        w = self.data.get("werk") or {}
+        if not isinstance(w.get("config"), dict):
+            return default_config()
+        cfg = copy.deepcopy(w["config"])
+        for k in ("ir", "bt"):
+            cfg.pop(k, None)
+        return cfg
+
     async def save(self, dev: str, cfg: dict, enabled: bool, user: str | None) -> str:
         clean = validate_config(cfg)
         from .aliases import migrate_config
@@ -1164,6 +1202,10 @@ class KonfigData:
         body = device_payload({**clean, "on": bool(enabled), **({"einst": e["einst"]} if e.get("einst") else {})})
         if len(body) > MAX_BYTES:
             raise vol.Invalid(f"Belegung zu gross ({len(body)} Byte, max. {MAX_BYTES})")
+        # Verschachtelung (2026-11-27): ArduinoJson auf der Remote liest hoechstens 10 Ebenen - tiefer verwirft sie
+        # die ganze Belegung ("Fehler: ungueltige Daten"). Lieber hier ablehnen.
+        if (tf := json_tiefe(json.loads(body))) > MAX_TIEFE:
+            raise vol.Invalid(f"Belegung zu tief verschachtelt ({tf} Ebenen, die Remote liest höchstens {MAX_TIEFE})")
         e["config"] = clean
         e["enabled"] = bool(enabled)
         e["saved_by"] = user
@@ -1999,8 +2041,13 @@ async def wlan_fenster(hass: HomeAssistant, dev: str, sek: int, grund: str = "Ko
 
 
 # ---- Sicherung (2026-10-26): alles, was der Konfigurator verwaltet, und Einspielen ohne Abgleich ----
+# PFLEGEN (2026-11-27): Wer etwas Neues speichert (kd.data-Schluessel, eigener Store, Feld je Remote), traegt es hier
+# UND in ws_sicherung_global (Einspielen), komplett.py GEHEIM (nur Schluessel/Zugaenge), configurator.js BK_NAMEN/BK_EN
+# und der "rest"-Liste in "bk_do" sowie in tests/test_sicherung.py ein. Zugaenge (Tokens) nie in die normale Sicherung.
+# Geraetegebundenes (Dock, MAC, IP) zusaetzlich in KonfigData.start_config() aus der Standardbelegung herausnehmen.
 SICHERUNG_GLOBAL = ("jetzt", "streamer", "klingel", "licht", "anzeige", "dock", "dockscan", "funktionen", "docks_einst",
-                    "einst_standard", "werk", "reihenfolge", "durchsage", "streamer_menue", "ladelimit")
+                    "einst_standard", "werk", "reihenfolge", "durchsage", "streamer_menue", "ladelimit",
+                    "klingel_app", "bruecke")   # 2026-11-27: Klingel-Geraete und Bridge-Ports fehlten
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/sicherung"})
@@ -2018,6 +2065,9 @@ async def ws_sicherung(hass: HomeAssistant, connection: websocket_api.ActiveConn
     glob = {k: copy.deepcopy(kd.data[k]) for k in SICHERUNG_GLOBAL if kd.data.get(k) is not None}
     if kd.data.get("sync"):
         glob["sync"] = {k: copy.deepcopy(kd.data["sync"].get(k)) for k in ("an", "geraete", "aus")}
+    # Showtime-Optionen (2026-11-27, fehlten) - ohne das YouTube-Anmelde-Token (Zugang zum Konto)
+    if isinstance(kd.data.get("showtime"), dict):
+        glob["showtime"] = {k: copy.deepcopy(v) for k, v in kd.data["showtime"].items() if k != "token"}
     # Eigene IR-Codes und gesperrte Firmware liegen in eigenen Speichern (2026-11-03: fehlten in der Sicherung)
     if (db := hass.data.get(DOMAIN + "_irdb")) is not None and db.eigen.get("geraete"):
         glob["ircodes"] = copy.deepcopy(db.eigen)
@@ -2043,6 +2093,14 @@ async def ws_sicherung_global(hass: HomeAssistant, connection: websocket_api.Act
                 kd.data[k] = w[k]
         if isinstance(w.get("reihenfolge"), list):
             kd.data["reihenfolge"] = [d for d in w["reihenfolge"] if isinstance(d, str)]
+        # 2026-11-27: Showtime-Optionen (Token bleibt, wie es ist), Klingel-Geraete, Bridge-Ports
+        if isinstance(w.get("showtime"), dict):
+            st = kd.data.setdefault("showtime", {})
+            st.update({k: v for k, v in w["showtime"].items() if k != "token"})
+        if isinstance(w.get("klingel_app"), list):
+            kd.data["klingel_app"] = [d for d in w["klingel_app"] if isinstance(d, str)]
+        if isinstance(w.get("bruecke"), dict):
+            kd.data["bruecke"] = {k: v for k, v in w["bruecke"].items() if isinstance(v, dict)}
         if "ircodes" in w and (db := hass.data.get(DOMAIN + "_irdb")) is not None:
             from .irdb import EIGEN
             db.eigen = EIGEN(w["ircodes"])

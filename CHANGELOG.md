@@ -1,5 +1,29 @@
 # What's new · Was ist neu
 
+## 2026.11.27.1 (2026-11-27)
+
+- **Dropdown instead of buttons** – popups can open as a dropdown list (configurator: popup → “As dropdown”); toggles stay open, actions close it.
+- **Long-press an item with a device list** – opens a dropdown with the single devices (e.g. the speakers of a room) to switch them one by one.
+- **Equal button heights** – items in the same row get the same height.
+- **Sliders at 100 %** – the value no longer overlaps the knob (all single-row sliders).
+- **Clock/brightness popup** no longer jumps when the dock device list expands.
+- **New remotes start with the saved standard layout** (without dock binding); configurator: **“Clear all keys”** button.
+- **More complete backup** – Showtime settings (without login), doorbell devices, bridge ports; internal keys only with “Secrets”.
+- Configurations nested too deeply are rejected on save with a clear message instead of “invalid data” on the remote.
+
+<details><summary>Deutsch</summary>
+
+- **Aufklappliste statt Knöpfe** – Popups können als Aufklappliste erscheinen (Konfigurator: Popup → „Als Aufklappliste“); Schalter bleiben offen, Aktionen schließen.
+- **Lang drücken auf einen Eintrag mit Geräteliste** – öffnet eine Aufklappliste mit den einzelnen Geräten (z. B. Lautsprecher eines Raums) zum einzeln Schalten.
+- **Gleich hohe Knöpfe** – Einträge in derselben Zeile bekommen dieselbe Höhe.
+- **Schieberegler bei 100 %** – der Wert überdeckt den Regler nicht mehr (alle einzeiligen Regler).
+- **Uhr-/Helligkeits-Popup** springt nicht mehr, wenn die Dock-Geräteliste aufklappt.
+- **Neue Remotes starten mit der gespeicherten Standardbelegung** (ohne Dock-Zuordnung); Konfigurator: Knopf **„Alle Tasten leeren“**.
+- **Sicherung vollständiger** – Showtime-Einstellungen (ohne Login), Klingel-Geräte, Bridge-Ports; interne Schlüssel nur mit „Secrets“.
+- Zu tief verschachtelte Konfigurationen werden beim Speichern mit klarer Meldung abgelehnt statt auf der Remote „ungültige Daten“ zu zeigen.
+
+</details>
+
 ## 2026.11.26.2 (2026-11-26)
 
 - **Showtime: action menu** – long-press OK or long-tap a video: Play, **Play next (end)** (appends to SmartTube’s playback queue, SmartTube 32.80+), Similar videos, Open channel, Watch later (add/remove), Like.

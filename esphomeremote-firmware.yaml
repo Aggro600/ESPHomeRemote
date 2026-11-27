@@ -59,7 +59,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:   # Version: setzt tools/release.py, der Konfigurator vergleicht sie mit der Integration (Update-Hinweis)
     name: aggro600.esphomeremote
-    version: "2026.11.26.2"
+    version: "2026.11.27.1"
   # Bringt esp_pm.h fuer die Prozessor-Drosselung mit.
   includes:
     - <esp_flash.h>
@@ -4322,6 +4322,16 @@ script:
             snprintf(b, sizeof(b), "%u:%02u", (unsigned) (wlan_zugriff::g_rest / 60), (unsigned) (wlan_zugriff::g_rest % 60));
             kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, b);
           } else kachel(id(qs_wlan_btn), id(qs_wlan_lbl), 1, wlan_ok ? "an" : "endet");
+      - lambda: |-
+          // Oberkante festhalten (2026-11-27, Nutzer: Popup "streckt sich nach oben und unten", wenn die Geraete-
+          // liste aufklappt): beim Oeffnen mittig, danach waechst es nur nach unten (und rutscht nur hoch, wenn es
+          // sonst unten aus dem Bild ginge).
+          if (funkweg::g_qs_top < 0) return;
+          lv_obj_t *p = id(qs_panel);
+          lv_obj_update_layout(p);
+          const int32_t h = lv_obj_get_height(p), H = lv_obj_get_height(lv_obj_get_parent(p));
+          const int32_t y = std::max<int32_t>(4, std::min<int32_t>(funkweg::g_qs_top, H - 4 - h));
+          lv_obj_align(p, LV_ALIGN_TOP_MID, 0, y);
   - id: toggle_bri_overlay
     then:
       - if:
@@ -4342,7 +4352,16 @@ script:
                 snprintf(b, sizeof(b), "%d%%", id(disp_bri)); lv_label_set_text(id(qs_bri_pct), b);
                 snprintf(b, sizeof(b), "%d%%", id(kbd_bri));  lv_label_set_text(id(qs_kbd_pct), b);
             - script.execute: kbd_box_refresh
+            - lambda: |-
+                // beim Oeffnen mittig nach der eingeklappten Hoehe, dann Oberkante festhalten (qs_refresh)
+                funkweg::g_qs_top = -1;
             - script.execute: qs_refresh
+            - lambda: |-
+                lv_obj_t *p = id(qs_panel);
+                lv_obj_update_layout(p);
+                const int32_t h = lv_obj_get_height(p), H = lv_obj_get_height(lv_obj_get_parent(p));
+                funkweg::g_qs_top = std::max<int32_t>(4, (H - h) / 2);
+                lv_obj_align(p, LV_ALIGN_TOP_MID, 0, funkweg::g_qs_top);
             - script.execute: hide_bri_overlay
   - id: toggle_kbd_overlay
     then: [{script.execute: toggle_bri_overlay}]

@@ -204,6 +204,14 @@ class Menue : public Component {
 
   bool aktiv() const { return an_ && !seiten_.empty(); }
   bool hat_seite(const std::string &id) const { return seite_index_(id) >= 0; }
+  // Popup als Aufklappliste (2026-11-27, page.popup.liste): statt der Seite die Liste ihrer Eintraege zeigen
+  bool seite_als_liste(const std::string &id) const {
+    const int i = seite_index_(id);
+    return i >= 0 && (seiten_[i].j["popup"]["liste"] | false);
+  }
+  void liste_zeigen(const std::string &id);
+  bool dd_offen() const { return dd_box_ != nullptr; }   // Aufklappliste offen (auch ueber anderen Seiten)
+  void liste_zu(const std::string &id);
   // Eingebauter Inhalt einer Seite ("inhalt", z. B. "tastatur"), leer = normale Menueseite
   std::string seiten_inhalt(const std::string &id) const {
     const int i = seite_index_(id);
@@ -329,6 +337,9 @@ class Menue : public Component {
   // Popup-Option "zu" (2026-11-03): nach einem Knopfdruck schliessen
   void nach_aktion_(const Item &it);
   void dd_auf_(Item &it);
+  void dd_geraete_auf_(Item &it);
+  void dd_bauen_(const char *titel, const std::vector<bool> &gruen);
+  bool geraet_an_(const char *e);
   void dd_zu_();
   void dd_markieren_();
   void dd_waehlen_(int i);
@@ -340,6 +351,9 @@ class Menue : public Component {
   std::vector<std::string> dd_opts_;
   std::string dd_ent_;
   int dd_sel_{0};
+  int dd_g_{-1};   // Geraete-Liste: Index des Eintrags, -1 = normale Auswahl
+  std::string dd_liste_;   // offene Popup-Liste (Seiten-ID), dd_g_ == -2
+  JsonArrayConst dd_liste_items_;
   static void regler_cb_(lv_event_t *e);
   static void halt_cb_(lv_event_t *e);
   void halten_(int idx, bool an);     // Halte-Knopf druecken (an) / loslassen
