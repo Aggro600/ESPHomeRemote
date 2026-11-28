@@ -155,16 +155,18 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
                     r[k] = soll[k]
             # Akku/Verbindung aus den Entitaeten (nur Werte)
             pre = f"remote_wz_{dev[10:]}" if dev.startswith("remote-wz-") else dev.replace("-", "_")
-            for feld, eid in (("akku", f"sensor.{pre}_akku"), ("ha_verbunden", f"binary_sensor.{pre}_ha_verbunden"),
+            from .dock_entitaeten import aufloesen   # noqa: PLC0415
+            # "akku" war bis 2026-11-28 sensor.<remote>_akku - den gibt es nicht (Firmware: "Akkustand")
+            for feld, eid in (("akku", f"sensor.{pre}_akkustand"), ("ha_verbunden", f"binary_sensor.{pre}_ha_verbunden"),
                               ("wlan_aktiv", f"binary_sensor.{pre}_wlan_aktiv")):
-                st = hass.states.get(eid) or hass.states.get(f"{eid.split('.')[0]}.esphomeremote_{eid.split('.', 1)[1]}")
+                st = hass.states.get(aufloesen(hass, eid)) or hass.states.get(f"{eid.split('.')[0]}.esphomeremote_{eid.split('.', 1)[1]}")
                 if st is not None:
                     r[feld] = st.state
                     r[feld + "_vor_s"] = int(time.time() - st.last_reported.timestamp())
             w = hass.data.get(DOMAIN + "_warnungen")
             if w is not None and pre in getattr(w, "flash_rate", {}):
                 r["flash_schreibzugriffe_je_tag"] = round(w.flash_rate[pre])
-            st = hass.states.get(f"sensor.{pre}_flash_schreibzugriffe") or hass.states.get(f"sensor.esphomeremote_{pre}_flash_schreibzugriffe")
+            st = hass.states.get(aufloesen(hass, f"sensor.{pre}_flash_schreibzugriffe")) or hass.states.get(f"sensor.esphomeremote_{pre}_flash_schreibzugriffe")
             if st is not None:
                 r["flash_schreibzugriffe_seit_start"] = st.state
             rem[an.name(dev, "remote")] = r

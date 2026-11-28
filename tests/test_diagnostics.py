@@ -10,7 +10,7 @@ async def test_diagnose_anonym(hass, eingerichtet):
     kd = hass.data["esphomeremote"]
     # Etwas Persoenliches in den Stand legen, das NICHT in der Datei landen darf
     kd.entry("remote-wz-test")["config"]["activities"][0]["name"] = "Fernseher von Familie Mustermann"
-    hass.states.async_set("sensor.remote_wz_test_akku", "73")
+    hass.states.async_set("sensor.remote_wz_test_akkustand", "73")
     hass.states.async_set("binary_sensor.remote_wz_test_wlan_aktiv", "on")
 
     d = await async_get_config_entry_diagnostics(hass, eingerichtet)

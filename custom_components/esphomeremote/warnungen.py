@@ -62,8 +62,10 @@ class Warnungen:
                  f"binary_sensor.esphomeremote_{slug}_")
         best = None
         reg = er.async_get(self.hass)
+        from .dock_entitaeten import geraet_ids   # noqa: PLC0415
+        eigene = geraet_ids(self.hass, slug)   # echte entity_ids der Remote (Bereich davor moeglich, 2026-11-28)
         for st in self.hass.states.async_all(("sensor", "binary_sensor")):
-            if not st.entity_id.startswith(vorne) or st.state in FREI or st.attributes.get("wiederhergestellt"):
+            if not (st.entity_id.startswith(vorne) or st.entity_id in eigene) or st.state in FREI or st.attributes.get("wiederhergestellt"):
                 continue
             # Nur was die Remote selbst meldet: ihre ESPHome-Entitaeten oder Werte ueber das Dock. Andere Entitaeten mit
             # ihrem Namen (z. B. Vorlagen wie "..._ha_verbunden") schreibt HA auch, wenn sie stumm ist.

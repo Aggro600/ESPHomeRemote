@@ -162,15 +162,17 @@ def _zahl(v) -> bool:
 async def ws_akku_auswertung(hass, connection, msg) -> None:
     from homeassistant.components.recorder import get_instance, history
     slug = msg["device"].replace("-", "_")
-    ids = {"akku": f"sensor.{slug}_akkustand", "lade": f"binary_sensor.{slug}_ladekabel",
-           "wlan": f"binary_sensor.{slug}_wlan_aktiv", "grund": f"sensor.{slug}_tiefschlaf_status"}
+    from .dock_entitaeten import aufloesen   # noqa: PLC0415
+    ueblich = {"akku": f"sensor.{slug}_akkustand", "lade": f"binary_sensor.{slug}_ladekabel",
+               "wlan": f"binary_sensor.{slug}_wlan_aktiv", "grund": f"sensor.{slug}_tiefschlaf_status"}
+    ids = {k: aufloesen(hass, e) for k, e in ueblich.items()}   # echte entity_id (Bereich davor moeglich)
     ende = dt_util.utcnow()
     start = ende - timedelta(days=msg["tage"])
     roh = await get_instance(hass).async_add_executor_job(
         lambda: history.get_significant_states(hass, start, ende, list(ids.values()), None, True, False, False, True))
     # Werte, die die Remote ohne eigene Verbindung uebers Dock gemeldet hat, stehen seit 2026-11-04 in eigenen
     # Entitaeten (dockstatus.py) - mit denen von ESPHome zu einer Reihe zusammenlegen
-    dock = {k: "{}.esphomeremote_{}".format(*e.split(".", 1)) for k, e in ids.items()}
+    dock = {k: "{}.esphomeremote_{}".format(*e.split(".", 1)) for k, e in ueblich.items()}
     roh2 = await get_instance(hass).async_add_executor_job(
         lambda: history.get_significant_states(hass, start, ende, list(dock.values()), None, True, False, False, True))
     reihen = {k: sorted(_reihe(roh.get(e)) + [x for x in _reihe(roh2.get(dock[k])) if x[1] not in ("unavailable", "unknown")])

@@ -50,6 +50,11 @@ class AktBasis:
         # ESPHome-Sensor "Aktivität" der Remote (sensor.remote_wz_wohnzimmer_aktivitat) - einmal suchen, dann merken
         if self._sensor_id and self.hass.states.get(self._sensor_id) is not None:
             return self._sensor_id
+        from .dock_entitaeten import aufloesen   # noqa: PLC0415
+        echt = aufloesen(self.hass, f"sensor.{self.slug}_aktivitat")   # Bereich/Anzeigename davor moeglich (2026-11-28)
+        if self.hass.states.get(echt) is not None:
+            self._sensor_id = echt
+            return echt
         self._sensor_id = next((st.entity_id for st in self.hass.states.async_all("sensor")
                                 if st.entity_id.startswith(f"sensor.{self.slug}_aktivit")), None)
         return self._sensor_id
@@ -84,7 +89,9 @@ class AktBasis:
 
         @callback
         def passt(d) -> bool:
-            return d["entity_id"].startswith((f"sensor.{self.slug}_aktivit", f"sensor.esphomeremote_{self.slug}_aktivit"))
+            from .dock_entitaeten import aufloesen   # noqa: PLC0415
+            return (d["entity_id"].startswith((f"sensor.{self.slug}_aktivit", f"sensor.esphomeremote_{self.slug}_aktivit"))
+                    or d["entity_id"] == aufloesen(self.hass, f"sensor.{self.slug}_aktivitat"))
 
         # Der Sensor ist beim Start evtl. noch nicht da: nach dem Namensmuster filtern statt fester ID
         self.async_on_remove(self.hass.bus.async_listen("state_changed", neu, event_filter=passt))

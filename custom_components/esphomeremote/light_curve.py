@@ -24,6 +24,7 @@ import math
 
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
+from .dock_entitaeten import aufloesen, ueblich
 
 _LOGGER = logging.getLogger(__name__)
 ZIELE = ("disp", "kbd", "dock")
@@ -140,7 +141,7 @@ class Licht:
 
     @callback
     def _dock_zustand(self, ev: Event) -> None:
-        eid = ev.data.get("entity_id", "")
+        eid = ueblich(self.hass, ev.data.get("entity_id", ""))   # echte ID kann einen Bereich davor haben (2026-11-28)
         if not (eid.startswith("number.dock_") and eid.endswith("_led_helligkeit")):
             return
         dock = eid[len("number."):-len("_led_helligkeit")]
@@ -197,8 +198,9 @@ class Licht:
 
     # ------------------------------------------------------------------ Senden
     def docks(self) -> list[str]:
-        return sorted(s.entity_id[len("number."):-len("_led_helligkeit")] for s in self.hass.states.async_all("number")
-                      if s.entity_id.startswith("number.dock_") and s.entity_id.endswith("_led_helligkeit"))
+        ids = (ueblich(self.hass, s.entity_id) for s in self.hass.states.async_all("number"))
+        return sorted(e[len("number."):-len("_led_helligkeit")] for e in ids
+                      if e.startswith("number.dock_") and e.endswith("_led_helligkeit"))
 
     def dock_werte(self, dev: str) -> list[int]:
         """[disp, kbd] fuer den Dock-Stand: aendert sich erst ab SCHWELLE (wie ueber die API), -1 = Automatik aus."""
@@ -253,7 +255,7 @@ class Licht:
                 self.gesendet[dev].pop(z, None)
 
     async def dock_senden(self, dock: str, erzwingen: bool = False) -> None:
-        eid = f"number.{dock}_led_helligkeit"
+        eid = aufloesen(self.hass, f"number.{dock}_led_helligkeit")
         st = self.hass.states.get(eid)
         if st is None or st.state in ("unavailable", "unknown"):
             return
@@ -267,7 +269,7 @@ class Licht:
             self.gesendet.setdefault(dock, {})["dock"] = v
             if round(float(st.state)) != v:
                 await self.hass.services.async_call("number", "set_value", {"entity_id": eid, "value": v}, blocking=False)
-        sw = f"switch.{dock}_led_beim_senden_blinken"
+        sw = aufloesen(self.hass, f"switch.{dock}_led_beim_senden_blinken")
         b = einst.get("blinkt")
         s2 = self.hass.states.get(sw)
         if b is not None and s2 is not None and s2.state in ("on", "off") and (s2.state == "on") != b:
@@ -283,8 +285,8 @@ class Licht:
             key=lambda x: x["name"].lower())
         docks = []
         for d in self.docks():
-            st = self.hass.states.get(f"number.{d}_led_helligkeit")
-            sw = self.hass.states.get(f"switch.{d}_led_beim_senden_blinken")
+            st = self.hass.states.get(aufloesen(self.hass, f"number.{d}_led_helligkeit"))
+            sw = self.hass.states.get(aufloesen(self.hass, f"switch.{d}_led_beim_senden_blinken"))
             e = c["docks"].get(d, {})
             docks.append({"id": d, "name": (st.attributes.get("friendly_name") or d).replace(" LED-Helligkeit", ""),
                           "online": st.state not in ("unavailable", "unknown"),

@@ -47,7 +47,8 @@ class Ladelimit:
         return {k: int(v) for k, v in (self.kd.data.get("ladelimit") or {}).items() if int(v) > 0}
 
     def _schalter(self, dock: str) -> str | None:
-        eid = f"switch.{dock.replace('-', '_')}_ladekontakte"
+        from .dock_entitaeten import aufloesen   # noqa: PLC0415
+        eid = aufloesen(self.hass, f"switch.{dock.replace('-', '_')}_ladekontakte")
         return eid if self.hass.states.get(eid) is not None else None
 
     def _stand(self, dev: str) -> tuple[float | None, bool, str, float]:

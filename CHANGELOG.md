@@ -1,5 +1,17 @@
 # What's new · Was ist neu
 
+## 2026.11.28.1 (2026-11-28)
+
+- **Entities with an area or name in front of their ID** are now found everywhere (battery analysis, configurator charts and dock diagnostics, warnings, dock light automation, charge limit, Wi-Fi window, voice pipeline). Values were missing there before when HA had assigned e.g. `sensor.living_room_dock_…` instead of `sensor.dock_…`.
+- **Diagnostics:** the remotes' battery level was always missing there – fixed.
+
+<details><summary>Deutsch</summary>
+
+- **Entitäten mit Bereich oder Namen vor der ID** werden jetzt überall gefunden (Akku-Auswertung, Diagramme und Dock-Diagnose im Konfigurator, Warnungen, Licht-Automatik der Docks, Ladelimit, WLAN-Fenster, Sprach-Pipeline). Bisher fehlten dort Werte, wenn HA z. B. `sensor.wohnzimmer_dock_…` statt `sensor.dock_…` vergeben hatte.
+- **Diagnose:** Der Akkustand der Remotes fehlte dort immer – behoben.
+
+</details>
+
 ## 2026.11.27.1 (2026-11-27)
 
 - **Dropdown instead of buttons** – popups can open as a dropdown list (configurator: popup → “As dropdown”); toggles stay open, actions close it.

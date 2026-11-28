@@ -237,10 +237,15 @@ function symbolSchrift() {
   st.textContent = SYMBOL_CSS;
   document.head.appendChild(st);
 }
+// Uebliche entity_id einer Remote-/Dock-Entitaet -> die, die HA wirklich vergeben hat (Bereich/Anzeigename davor
+// moeglich, 2026-11-28). Karte kommt mit der get-Antwort (ent_karte, nur Abweichungen).
+let ENT_KARTE = {}, ENT_ZURUECK = {};
+const eid = (id) => ENT_KARTE[id] || id;
+// Werte ueber das Dock (eigene Entitaet <domain>.esphomeremote_<remote>_<wert>) - immer aus der UEBLICHEN entity_id
+const dockId = (id) => { const [d, o] = String(ENT_ZURUECK[id] || id).split("."); return `${d}.esphomeremote_${o}`; };
 // Wert einer ESPHome-Entitaet der Remote; schlaeft sie (nicht verfuegbar), der zuletzt uebers Dock gemeldete aus der
 // eigenen Entitaet <domain>.esphomeremote_<remote>_<wert> (2026-11-04, dockstatus.py - vorher stand er in der ESPHome-Entitaet)
-const dockId = (id) => { const [d, o] = String(id).split("."); return `${d}.esphomeremote_${o}`; };
-const remZ = (S, id) => { const s = S?.[id]; if (s && !["unavailable", "unknown"].includes(s.state)) return s; const [d, o] = String(id).split("."); return S?.[`${d}.esphomeremote_${o}`] || s; };
+const remZ = (S, id) => { const s = S?.[eid(id)]; if (s && !["unavailable", "unknown"].includes(s.state)) return s; const [d, o] = String(id).split("."); return S?.[`${d}.esphomeremote_${o}`] || s; };
 // ESPHome-Eintrag der Remote zeigt nicht auf ihren Brücken-Port (2026-11-04: wird nur noch per Knopf umgestellt)
 const brueckeFalsch = (g) => !!(g.bruecke?.eintrag && (g.bruecke.eintrag.host !== "127.0.0.1" || g.bruecke.eintrag.port !== g.bruecke.port));
 const prompt = (m, v) => window.prompt(tr(m), v);
@@ -568,6 +573,8 @@ class EsphomeremoteKonfigurator extends HTMLElement {
       try { this.s.aktOffen = localStorage.getItem("erk_aktset") === "1"; } catch (e) { /* egal */ }   // zu = Standard (2026-11-10)
       this.s.einstStandard = r.einst_standard || {};
       this.s.dockEinst = r.docks_einst || { ordnung: [], farben: {} };
+      ENT_KARTE = r.ent_karte || {};
+      ENT_ZURUECK = Object.fromEntries(Object.entries(ENT_KARTE).map(([k, v]) => [v, k]));
       this.s.dockEnts = r.dock_ents || {};   // {dock: {bt, status}} - entity_id kann einen Bereich davor haben
       this.s.maxBytes = r.max_bytes || 90000;
       this.s.loaded = true;
@@ -5100,7 +5107,7 @@ const BtEditor = {
         ${(this.s.meta[this.s.dev]?.einst || {}).ha_link_modus === 3 ? "" : `<details class="btprox"><summary>Home Assistant über Bluetooth (Proxys)</summary>
         <small class="note">Proxys, über die HA die Remote per Bluetooth erreichen darf (HA wählt den mit dem besten Empfang). Das Dock steht direkt am Ladeplatz und ist dafür ideal – seine Adresse steht im Dock unter „Bluetooth-Adresse“.</small>
         ${m.proxies ? zeilen || `<div class="none">Keine Bluetooth-Proxys in Home Assistant gefunden.</div>` : `<div class="none">Lade …</div>`}
-        <div class="inl"><input id="btmac" placeholder="Adresse von Hand, z. B. AA:BB:CC:DD:EE:05" maxlength="17"><button class="btn small" data-a="bt_add"><ha-icon icon="mdi:plus"></ha-icon>Hinzufügen</button></div>
+        <div class="inl"><input id="btmac" placeholder="Adresse von Hand, z. B. AA:BB:CC:DD:EE:07" maxlength="17"><button class="btn small" data-a="bt_add"><ha-icon icon="mdi:plus"></ha-icon>Hinzufügen</button></div>
         <small class="note">Gilt nach dem Speichern. Die fest in der Firmware eingetragenen Proxys bleiben immer erlaubt.</small></details>`}
       </div>
       <div class="dfoot"><button class="btn primary" data-a="modalx">Fertig</button></div>
@@ -5185,7 +5192,7 @@ const BtEditor = {
     }
     if (a === "bt_add") {
       const v = (this.shadowRoot.querySelector("#btmac")?.value || "").trim().toUpperCase();
-      if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(v)) { alert("Bitte eine Bluetooth-Adresse wie AA:BB:CC:DD:EE:05 eingeben."); return true; }
+      if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(v)) { alert("Bitte eine Bluetooth-Adresse wie AA:BB:CC:DD:EE:07 eingeben."); return true; }
       this._btSetProxies(new Set([...(this.cfg.bt?.proxies || []), v]));
       return true;
     }
@@ -5342,10 +5349,10 @@ const DockScan = {
       .finally(() => { this._scanLaedt = false; this._scanZeit = Date.now(); });
   },
   _scanIst(slug) {
-    const st = this._hass.states[`sensor.${slug}_suchtempo`];
+    const st = this._hass.states[eid(`sensor.${slug}_suchtempo`)];
     try { return st ? { ...JSON.parse(st.state), seit: new Date(st.last_updated).getTime() } : null; } catch (e) { return null; }
   },
-  _scanSig() { return this._dbtDocks().map((d) => this._hass.states[`sensor.${d.slug}_suchtempo`]?.state).join("|"); },
+  _scanSig() { return this._dbtDocks().map((d) => this._hass.states[eid(`sensor.${d.slug}_suchtempo`)]?.state).join("|"); },
   _scanHtml() {
     const S = this.s.scan;
     if (!S || Date.now() - (this._scanZeit || 0) > 15000) this._scanLaden();
@@ -7321,7 +7328,7 @@ const EinstTab = {
     if (this._akLaedt) return;
     this._akLaedt = true;
     try {
-      const slug = this.s.meta[dev]?.slug, ida = `sensor.${slug}_akkustand`, idl = `binary_sensor.${slug}_ladekabel`;
+      const slug = this.s.meta[dev]?.slug, ida = eid(`sensor.${slug}_akkustand`), idl = eid(`binary_sensor.${slug}_ladekabel`);
       const [d, h] = await Promise.all([this._hass.callWS({ type: "esphomeremote/akku_auswertung", device: dev, tage }),
         this._hass.callWS({ type: "history/history_during_period", start_time: new Date(Date.now() - tage * 864e5).toISOString(),
           entity_ids: [ida, idl, dockId(ida), dockId(idl)], minimal_response: true, no_attributes: true, significant_changes_only: false }).catch(() => ({}))]);
@@ -8411,27 +8418,27 @@ const OberflaecheTab = {
     const fwFrisch = this.s.fw?.zeit && Date.now() - this.s.fw.zeit < 90000;
     const g = (this.s.fw?.geraete || []).find((x) => x.name === d);
     const gz = fwFrisch ? g : null;
-    const akku = num(`sensor.${slug}_akkustand`), rate = num(`sensor.${slug}_akku_rate`);
-    const laden = st(`binary_sensor.${slug}_ladekabel`)?.state === "on";
-    const haE = st(`binary_sensor.${slug}_ha_verbunden`), wlan = st(`binary_sensor.${slug}_wlan_aktiv`)?.state === "on";
+    const akku = num(eid(`sensor.${slug}_akkustand`)), rate = num(eid(`sensor.${slug}_akku_rate`));
+    const laden = st(eid(`binary_sensor.${slug}_ladekabel`))?.state === "on";
+    const haE = st(eid(`binary_sensor.${slug}_ha_verbunden`)), wlan = st(eid(`binary_sensor.${slug}_wlan_aktiv`))?.state === "on";
     // Verbindung: die Firmware-Liste aus HA weiss es am besten (Sensoren behalten im Tiefschlaf ihren letzten Wert)
     let zustand = gz ? (gz.online ? "wlan" : gz.ha_da ? "ble" : "schlaf") : haE?.state === "on" ? (wlan ? "wlan" : "ble") : "schlaf";
     // Ohne eigene HA-Verbindung, aber Werte kamen uebers Dock (2026-10-23, dockstatus.py): "Ueber Dock", solange die
     // letzte Meldung juenger als 11 min ist (2026-10-25: Status kommt nur noch bei Aenderung, sonst alle 10 min) und die Remote nicht "Tiefschlaf" gemeldet hat
-    const dA = st(`sensor.${slug}_akkustand`), dTs = st(`sensor.${slug}_tiefschlaf_status`)?.state;
+    const dA = st(eid(`sensor.${slug}_akkustand`)), dTs = st(eid(`sensor.${slug}_tiefschlaf_status`))?.state;
     const dock = zustand === "schlaf" && dA?.attributes?.quelle === "dock" && Date.now() - new Date(dA.last_updated).getTime() < 660000
       && dTs !== "Tiefschlaf" ? (dA.attributes.dock || "Dock") : null;
     if (dock) zustand = "dock";
     const restH = akku != null && rate != null && rate < -0.2 && !laden ? akku / -rate : null;
-    const aktI = num(`sensor.${slug}_aktivitat`);
+    const aktI = num(eid(`sensor.${slug}_aktivitat`));
     const dockName = dock ? devName(String(dock).replace(/_/g, "-")) : "";
     const ztext = { wlan: "Online · WLAN", ble: "Online · Bluetooth", dock: `Online · über ${dockName}`, schlaf: "Schläft" }[zustand];
     const kurz = [akku != null ? `${Math.round(akku)} %${laden ? " ⚡" : ""}` : "", { wlan: "WLAN", ble: "Bluetooth", dock: "Dock", schlaf: "schläft" }[zustand]].filter(Boolean).join(" · ");
     let akt = aktI != null ? this.s.cfg[d]?.activities?.[Math.round(aktI)]?.name : null;
-    if (!akt) akt = (this.s.cfg[d]?.activities || []).find((a) => st(`switch.${slug}_aktivitat_${norm(a.name).replace(/[^a-z0-9]+/g, "_")}`)?.state === "on")?.name || null;
+    if (!akt) akt = (this.s.cfg[d]?.activities || []).find((a) => st(eid(`switch.${slug}_aktivitat_${norm(a.name).replace(/[^a-z0-9]+/g, "_")}`))?.state === "on")?.name || null;
     return { slug, g, akku, rate, laden, zustand, ztext, kurz, restH, akt,
-      verbunden: ["unknown", "unavailable", "", undefined].includes(st(`sensor.${slug}_verbunden_mit`)?.state) ? null : st(`sensor.${slug}_verbunden_mit`).state,
-      neustart: ["unknown", "unavailable", ""].includes(st(`sensor.${slug}_letzter_neustart`)?.state) ? null : st(`sensor.${slug}_letzter_neustart`)?.state, gemeldet: st(`sensor.${slug}_akkustand`)?.last_updated };
+      verbunden: ["unknown", "unavailable", "", undefined].includes(st(eid(`sensor.${slug}_verbunden_mit`))?.state) ? null : st(eid(`sensor.${slug}_verbunden_mit`)).state,
+      neustart: ["unknown", "unavailable", ""].includes(st(eid(`sensor.${slug}_letzter_neustart`))?.state) ? null : st(eid(`sensor.${slug}_letzter_neustart`))?.state, gemeldet: st(eid(`sensor.${slug}_akkustand`))?.last_updated };
   },
   // Wie voll ist die Datei, die die Remote laedt? (HA lehnt Speichern ueber max_bytes ab)
   _groesse(d = this.s.dev) {
@@ -8600,7 +8607,7 @@ const OberflaecheTab = {
   // (Grund|Restsekunden, Firmware ab 2026.10.29.3) - Restzeit zaehlt hier weiter. Klick: Menue mit Dauer bzw. "Jetzt aus".
   _wlanInfo(d) {
     const slug = d.replace(/-/g, "_"), H = this._hass.states;
-    const an = H[`binary_sensor.${slug}_wlan_aktiv`]?.state === "on";
+    const an = H[eid(`binary_sensor.${slug}_wlan_aktiv`)]?.state === "on";
     const z = remZ(H, `sensor.${slug}_wlan_zustand`);
     let grund = "", rest = 0;
     if (z && !["unknown", "unavailable"].includes(z.state)) {
@@ -9085,7 +9092,7 @@ const OberflaecheTab = {
     this._verlaufHolt = true;
     const daten = {};
     try {
-      const id = (d) => `sensor.${s.meta[d].slug}_akkustand`;
+      const id = (d) => eid(`sensor.${s.meta[d].slug}_akkustand`);
       const r = await this._hass.callWS({ type: "history/history_during_period", start_time: new Date(Date.now() - 864e5).toISOString(),
         entity_ids: [...s.order.map(id), ...s.order.map((d) => dockId(id(d)))], minimal_response: true, no_attributes: true, significant_changes_only: false });
       for (const d of s.order) daten[d] = [...(r[id(d)] || []), ...(r[dockId(id(d))] || [])].sort((x, y) => (x.lu ?? x.lc) - (y.lu ?? y.lc)).map((x) => [(x.lu ?? x.lc) * 1000, parseFloat(x.s)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
@@ -9153,7 +9160,7 @@ const OberflaecheTab = {
   _dockKarte(g) {
     const S = this._hass.states, slug = g.name.replace(/-/g, "_");
     const v = (id) => S[id]?.state;
-    const sig = parseFloat(v(`sensor.${slug}_wlan_signal`)), lauf = parseFloat(v(`sensor.${slug}_laufzeit`)), led = parseFloat(v(`number.${slug}_led_helligkeit`));
+    const sig = parseFloat(v(eid(`sensor.${slug}_wlan_signal`))), lauf = parseFloat(v(eid(`sensor.${slug}_laufzeit`))), led = parseFloat(v(eid(`number.${slug}_led_helligkeit`)));
     const stufe = !Number.isFinite(sig) ? 0 : sig > -55 ? 4 : sig > -65 ? 3 : sig > -75 ? 2 : 1;
     return `<div class="dkarte ${g.online ? "on" : ""}" data-odk="${esc(g.name)}" title="Ziehen = Reihenfolge ändern">
       <div class="dk1"><span class="ki dkm">${miniDock(this._df(g.name), 20)}</span><span><b>${esc(g.friendly || g.name)}</b><small><i class="zp"></i>${g.online ? "online" : g.geflasht ? "offline" : "noch nicht geflasht"}${g.ip && g.online ? " · " + esc(g.ip) : ""}</small></span>
@@ -9919,8 +9926,8 @@ const PruefTab = {
           entity_ids: ids, minimal_response: true, no_attributes: true, significant_changes_only: false });
         for (const id of ids) daten[id] = (r[id] || []).map((x) => [(x.lu ?? x.lc) * 1000, x.s]);
       };
-      await hol(docks.map((g) => `binary_sensor.${sl(g)}_status`), 30);
-      await hol(docks.flatMap((g) => [`sensor.${sl(g)}_laufzeit`, `sensor.${sl(g)}_groesster_freier_block`]), 1);
+      await hol(docks.map((g) => eid(`binary_sensor.${sl(g)}_status`)), 30);
+      await hol(docks.flatMap((g) => [eid(`sensor.${sl(g)}_laufzeit`), eid(`sensor.${sl(g)}_groesster_freier_block`)]), 1);
     } catch (e) { /* ohne Verlauf */ }
     s.dockVerlauf = { zeit: Date.now(), daten };
     this._dvHolt = false;
@@ -9929,7 +9936,7 @@ const PruefTab = {
   _dockZustand(g) {
     const S = this._hass.states, sl = g.name.replace(/-/g, "_"), V = this.s.dockVerlauf?.daten || {};
     const num = (id) => { const v = parseFloat(S[id]?.state); return Number.isFinite(v) ? v : null; };
-    const st = V[`binary_sensor.${sl}_status`] || [], lauf = V[`sensor.${sl}_laufzeit`] || [], blk = V[`sensor.${sl}_groesster_freier_block`] || [];
+    const st = V[eid(`binary_sensor.${sl}_status`)] || [], lauf = V[eid(`sensor.${sl}_laufzeit`)] || [], blk = V[eid(`sensor.${sl}_groesster_freier_block`)] || [];
     const t24 = Date.now() - 864e5;
     // Offline seit: Ende der letzten "on"-Phase im Verlauf (die Zeit der HA-Sensoren springt bei jedem HA-Neustart)
     let seit = null, mind = false;
@@ -9945,7 +9952,7 @@ const PruefTab = {
     for (const [t, v] of lauf) { const b = parseFloat(v); if (!Number.isFinite(b)) continue; if (vorher != null && b + 60 < vorher && t >= t24) neustarts++; vorher = b; }
     const bw = blk.filter(([t]) => t >= t24).map(([t, v]) => [t, parseFloat(v)]).filter(([, v]) => Number.isFinite(v));
     const minBlk = bw.length ? Math.min(...bw.map(([, v]) => v)) : null;
-    const sig = num(`sensor.${sl}_wlan_signal`), frei = num(`sensor.${sl}_freier_speicher`), klein = num(`sensor.${sl}_kleinster_freier_speicher`), block = num(`sensor.${sl}_groesster_freier_block`), lz = num(`sensor.${sl}_laufzeit`);
+    const sig = num(eid(`sensor.${sl}_wlan_signal`)), frei = num(eid(`sensor.${sl}_freier_speicher`)), klein = num(eid(`sensor.${sl}_kleinster_freier_speicher`)), block = num(eid(`sensor.${sl}_groesster_freier_block`)), lz = num(eid(`sensor.${sl}_laufzeit`));
     const kurve = (() => {
       if (bw.length < 2) return "";
       const W = 300, H = 40, max = Math.max(40, ...bw.map(([, v]) => v));
@@ -9963,7 +9970,7 @@ const PruefTab = {
       if ((block != null && block < 3) || (minBlk != null && minBlk < 3) || neustarts >= 2 || (klein != null && klein < 5)) farbe = "rot";
       else if ((block != null && block < 8) || (minBlk != null && minBlk < 6) || neustarts === 1 || ausfaelle > 0 || stufe === 1) farbe = "gelb";
       if (minBlk != null && minBlk < 6) warum.push(`Der Speicher war zeitweise knapp (größtes freies Stück nur ${Math.round(minBlk)} kB). Bei Firmware-Updates oder Protokoll-Mitschnitten ist das normal – sonst beobachten.`);
-      if (neustarts) warum.push(`${neustarts}× neu gestartet in 24 h${S[`sensor.${sl}_neustartgrund`] ? ` (zuletzt: ${S[`sensor.${sl}_neustartgrund`].state})` : ""}.`);
+      if (neustarts) warum.push(`${neustarts}× neu gestartet in 24 h${S[eid(`sensor.${sl}_neustartgrund`)] ? ` (zuletzt: ${S[eid(`sensor.${sl}_neustartgrund`)].state})` : ""}.`);
       if (ausfaelle) warum.push(`WLAN ${ausfaelle}× länger als 1 min weg.`);
       if (stufe === 1) warum.push(`Schwaches WLAN (${sig} dBm) – näher an den Router oder einen Repeater.`);
     }

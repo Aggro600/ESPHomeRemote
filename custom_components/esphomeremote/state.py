@@ -361,7 +361,8 @@ class DockStand:
         # WLAN-Phase stoert ausserdem den Dock-Weg, s. dock_direkt "Kam das Paket per Funk".
         if (alt := self._wartung_abo.pop(dev, None)) is not None:
             alt()
-        eid = f"binary_sensor.{dev.replace('-', '_')}_wlan_aktiv"
+        from .dock_entitaeten import aufloesen   # noqa: PLC0415
+        eid = aufloesen(self.hass, f"binary_sensor.{dev.replace('-', '_')}_wlan_aktiv")
 
         @callback
         def _wlan(ev: Event, d=dev) -> None:

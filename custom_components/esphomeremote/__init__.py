@@ -829,7 +829,7 @@ def device_payload(cfg: dict) -> bytes:
         '"t":"dropdown"', '"t":"select","dd":true').encode()
 
 
-from .dock_entitaeten import dock_entitaet, dock_entitaeten  # noqa: E402
+from .dock_entitaeten import dock_entitaet, dock_entitaeten, entitaeten_karte  # noqa: E402
 
 
 def ist_dock(hass: HomeAssistant, ce) -> bool:
@@ -1839,7 +1839,8 @@ def ws_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg:
         }
     connection.send_result(msg["id"], {"devices": out, "order": reihenfolge(kd), "einst_standard": kd.data.get("einst_standard") or {},
                                        "docks_einst": docks_einst(kd), "max_bytes": MAX_BYTES,
-                                       "dock_ents": dock_entitaeten(hass, kd.dock_macs())})
+                                       "dock_ents": dock_entitaeten(hass, kd.dock_macs()),
+                                       "ent_karte": entitaeten_karte(hass, [*kd.devices, *kd.dock_macs()])})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "esphomeremote/einst_set", vol.Required("device"): str,
@@ -2025,7 +2026,8 @@ async def wlan_fenster(hass: HomeAssistant, dev: str, sek: int, grund: str = "Ko
             return None
         ds.wlan_aus(dev)
         return "dock"
-    knopf = f"button.{slug}_wartungsfenster_jetzt"
+    from .dock_entitaeten import aufloesen   # noqa: PLC0415
+    knopf = aufloesen(hass, f"button.{slug}_wartungsfenster_jetzt")
     st = hass.states.get(knopf)
     # Alte Firmware ohne Dienst: Knopf (immer 3 min)
     if st is not None and st.state != "unavailable" and not hass.services.has_service("esphome", f"{slug}_wlan_fenster"):

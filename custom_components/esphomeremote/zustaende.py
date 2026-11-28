@@ -207,8 +207,10 @@ def holen(hass: HomeAssistant) -> Zustaende:
 
 def remote_wert(hass: HomeAssistant, eid: str):
     """Zustand einer ESPHome-Entitaet der Remote; ist sie nicht verfuegbar, der zuletzt uebers Dock gemeldete Wert
-    (eigene Entitaet <domain>.esphomeremote_<remote>_<wert>, dockstatus.py)."""
-    st = hass.states.get(eid)
+    (eigene Entitaet <domain>.esphomeremote_<remote>_<wert>, dockstatus.py). eid = die uebliche entity_id; die echte
+    kann einen Bereich/Anzeigenamen davor haben (dock_entitaeten.aufloesen, 2026-11-28)."""
+    from .dock_entitaeten import aufloesen   # noqa: PLC0415
+    st = hass.states.get(aufloesen(hass, eid))
     if st is not None and st.state not in FREI:
         return st
     dom, obj = eid.split(".", 1)

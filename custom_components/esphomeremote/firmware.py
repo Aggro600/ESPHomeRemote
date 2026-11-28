@@ -801,8 +801,9 @@ async def liste(hass: HomeAssistant) -> dict:
             x["bt_mac"] = e.data.get("bluetooth_mac_address") if e else None
         else:
             pre = f.get("ha") or f"remote_wz_{f['slug']}"
-            ha = hass.states.get(f"binary_sensor.{pre}_ha_verbunden")
-            wlan = hass.states.get(f"binary_sensor.{pre}_wlan_aktiv")
+            from .dock_entitaeten import aufloesen   # noqa: PLC0415
+            ha = hass.states.get(aufloesen(hass, f"binary_sensor.{pre}_ha_verbunden"))
+            wlan = hass.states.get(aufloesen(hass, f"binary_sensor.{pre}_wlan_aktiv"))
             x["ha_da"] = bool(ha and ha.state == "on")
             b = hass.data.get("esphomeremote_bruecke")
             x["bruecke"] = b.info().get(dev_name) if b else None

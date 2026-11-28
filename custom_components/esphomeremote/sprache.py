@@ -270,9 +270,12 @@ def _pipeline_select(hass: HomeAssistant, dev: str) -> str:
     """Pipeline-Auswahl der Remote (von HAs ESPHome-Integration angelegt). Ihre ID haengt an der HA-Sprache
     ("_assistent" deutsch, "_assistant" englisch) - darum ueber die Registry suchen (2026-11-09)."""
     from homeassistant.helpers import entity_registry as er
+    from .dock_entitaeten import geraet_ids   # noqa: PLC0415
     vorn = f"select.{dev.replace('-', '_')}_"
+    eigene = geraet_ids(hass, dev)   # auch mit Bereich/Anzeigenamen vor der entity_id (2026-11-28)
     for e in er.async_get(hass).entities.values():
-        if e.domain == "select" and e.platform == "esphome" and e.translation_key == "pipeline" and e.entity_id.startswith(vorn):
+        if e.domain == "select" and e.platform == "esphome" and e.translation_key == "pipeline" and (
+                e.entity_id.startswith(vorn) or e.entity_id in eigene):
             return e.entity_id
     return vorn + "assistent"
 
